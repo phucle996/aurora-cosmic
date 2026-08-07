@@ -1,4 +1,4 @@
-package mast_test
+package tests
 
 import (
 	"context"
