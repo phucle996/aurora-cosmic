@@ -1,6 +1,6 @@
 # STAGE.MD — Project Execution Roadmap
 
-Tài liệu quy định lộ trình phát triển của **AURORA Cosmic Data Platform**, được chia thành **8 Stage** và **43 Phase** tuân thủ chặt chẽ theo **Data Flow Isolation** và **Dependency Matrix**.
+Tài liệu quy định lộ trình phát triển của **AURORA Cosmic Data Platform**, được chia thành **8 Stage** và **44 Phase** tuân thủ chặt chẽ theo **Data Flow Isolation** và **Dependency Matrix**.
 
 ---
 
@@ -43,13 +43,13 @@ STAGE 8: Observability, Benchmark & System Hardening (Prometheus/Grafana -> Stre
 | :--- | :--- | :---: | :--- |
 | **Stage 1** | Foundation & Infrastructure [DONE] | 5 | Monorepo skeleton, Docker Compose runtime, Makefile, Service stubs |
 | **Stage 2** | Data Source & Go Ingestion | 6 | Ingestion FITS stream sang MinIO Bronze, NATS ingestion events |
-| **Stage 3** | Rust Preprocessing Pipeline | 5 | Rust FITS parser, Tokio workers, MinIO Silver Parquet datasets |
+| **Stage 3** | Rust Preprocessing Pipeline | 6 | Bounded Tokio consumer, FITS decode, LC/TPF/FFI preprocessing, MinIO Silver Parquet |
 | **Stage 4** | Checkpoint, Recovery & Rolling Lifecycle | 5 | State checkpoints, idempotency, rolling Bronze window ~50 GiB |
 | **Stage 5** | Gold Dataset & Scientific Analytics | 5 | Feature engineering, catalog/labels integration, Gold snapshots |
 | **Stage 6** | ML Platform & Model Evolution | 6 | Candidate & anomaly models, ONNX export, Champion/Challenger |
 | **Stage 7** | Rust Inference, Go API & Dashboard | 5 | Rust ONNX serving, Go Query API, Interactive Scientific Dashboard |
 | **Stage 8** | Observability, Benchmark & Hardening | 6 | Prometheus/Grafana metrics, system benchmarks, end-to-end resilience |
-| **Tổng** | **8 Stages** | **43 Phases** | **Full Production-Grade Data & ML Pipeline** |
+| **Tổng** | **8 Stages** | **44 Phases** | **Full Production-Grade Data & ML Pipeline** |
 
 ---
 
@@ -101,22 +101,35 @@ Stage 2
 
 ### Stage 3 — Rust Preprocessing Pipeline
 
-Mục tiêu: Rust Preprocessor nhận NATS event, tải FITS từ MinIO Bronze, parse & clean signal, ghi Parquet sang MinIO Silver.
+Mục tiêu: Rust Preprocessor nhận NATS `bronze-object-ready` event, tải FITS từ MinIO Bronze, parse & clean signal theo từng product kind (LC / TPF / FFI), ghi Arrow/Parquet sang MinIO Silver, ACK JetStream chỉ sau khi Silver write durable.
+
+> ⚠️ **Scope boundary Stage 3:**
+> - `output/gold.rs` **KHÔNG implement** — Gold thuộc Stage 5.
+> - `checkpoint.rs` chỉ là **stub** — Full checkpoint/idempotency thuộc Stage 4.
+> - `spawn_blocking` bắt buộc cho mọi FITS parsing (CFITSIO blocking I/O không chạy trực tiếp trong async Tokio executor).
+> - ACK JetStream **chỉ sau khi Silver write verify durable**, không ACK sớm.
 
 ```text
 Stage 3
-├── Phase 3.1: NATS Consumer & Event Handler
-├── Phase 3.2: FITS Reader & HDU Extraction
-├── Phase 3.3: Preprocessing & Data Cleaning
-├── Phase 3.4: Silver Parquet Encoding
-└── Phase 3.5: Preprocessing Event Publishing
+├── Phase 3.1: JetStream Consumer & Bounded Runtime
+├── Phase 3.2: Bronze Fetch & FITS Decode
+├── Phase 3.3: Light Curve Preprocessing
+├── Phase 3.4: TPF / FFI Image Preprocessing
+├── Phase 3.5: Silver Schema & Materialization
+└── Phase 3.6: End-to-End Preprocessing Validation
 ```
 
-* **Phase 3.1 — NATS Consumer & Event Handler**: Rust Preprocessor subscribe JetStream consumer `bronze-object-ready`.
-* **Phase 3.2 — FITS Reader & HDU Extraction**: Tải FITS byte stream từ MinIO, parse Header & Data Units (Primary HDU, Light Curve Table HDU).
-* **Phase 3.3 — Preprocessing & Data Cleaning**: Lọc mảng chất lượng (`QUALITY == 0`), normalize flux, remove background noise & outliers.
-* **Phase 3.4 — Silver Parquet Encoding**: Encode mảng thời gian & flux thành Apache Parquet format nén Snappy/ZSTD.
-* **Phase 3.5 — Preprocessing Event Publishing**: Ghi Parquet vào MinIO Silver (`silver/tess/...`) và publish `silver-object-ready` sang NATS.
+* **Phase 3.1 — JetStream Consumer & Bounded Runtime**: Rust Preprocessor subscribe JetStream consumer `bronze-object-ready`. Bounded concurrency bắt buộc qua `Semaphore(N)` (config: `AURORA_PREPROCESS_WORKERS`). Không dùng `tokio::spawn` vô hạn. ACK strategy: chỉ ACK sau khi downstream output durable.
+
+* **Phase 3.2 — Bronze Fetch & FITS Decode**: Nhận `bucket` + `object_key` + `product_kind` từ NATS event, GET object từ MinIO Bronze, verify `size` & `sha256`, decode FITS qua `spawn_blocking`. Hỗ trợ: `TARGET_PIXEL`, `LIGHT_CURVE`, `FFI`.
+
+* **Phase 3.3 — Light Curve Preprocessing**: Đọc `TIME`, `PDCSAP_FLUX`, `PDCSAP_FLUX_ERR`, `QUALITY` từ `*_lc.fits`. Pipeline: remove invalid rows → quality mask → normalize flux → basic outlier handling → Silver Light Curve. Không nhét transit feature engineering (Period, BLS score, Transit depth) — đó là Stage 5 Gold.
+
+* **Phase 3.4 — TPF / FFI Image Preprocessing**: TPF: quality filtering → background normalization → cutout statistics → Silver. FFI: metadata extraction → optional bounded cutout → Silver image metadata. Không convert toàn bộ FFI thành giant tensor cho ML.
+
+* **Phase 3.5 — Silver Schema & Materialization**: Freeze Arrow/Parquet schema cho Silver Light Curve và Silver Image trước Stage 5. Output layout `silver/tess/lightcurve/sector=NNNN/tic=NNNNNNNNN/` và `silver/tess/target-pixel/...`. Schema contract có thể document tại `contracts/data/`.
+
+* **Phase 3.6 — End-to-End Preprocessing Validation**: Test flow thật: `NATS bronze-object-ready` → MinIO Bronze → Rust Preprocessor → MinIO Silver cho cả 3 loại (LC event, TPF event, FFI event). Validate ACK ordering: Silver write → verify durable → ACK (không ACK trước khi process).
 
 ---
 
