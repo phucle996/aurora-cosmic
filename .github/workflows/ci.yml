@@ -75,7 +75,7 @@ jobs:
           cargo build
 
   python-checks:
-    name: Python Verification (python-ml-worker & dashboard)
+    name: Python Verification (python-ml-worker)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -97,12 +97,25 @@ jobs:
           ruff check .
           PYTHONPATH=. pytest
 
-      - name: Verify dashboard
+  dashboard-checks:
+    name: Dashboard Verification (React TSX & Vite)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'apps/dashboard/package-lock.json'
+
+      - name: Build Dashboard
         run: |
           cd apps/dashboard
-          ruff format --check .
-          ruff check .
-          PYTHONPATH=. pytest
+          npm ci
+          npm run build
 
   changes:
     name: Detect Changed Sub-Projects
