@@ -1,7 +1,11 @@
-FROM python:3.12-slim
+FROM node:20-alpine AS builder
 WORKDIR /app
-COPY pyproject.toml README.md ./
+COPY package*.json ./
+RUN npm ci
 COPY . .
-RUN pip install --no-cache-dir .
+RUN npm run build
+
+FROM nginx:alpine
+COPY --from=builder /app/dist /usr/share/nginx/html
 EXPOSE 8501
-CMD ["python", "app.py"]
+CMD ["nginx", "-g", "daemon off;"]
