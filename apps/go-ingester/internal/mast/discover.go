@@ -67,15 +67,25 @@ func DiscoverTESS(ctx context.Context, client *Client, opts DiscoverOptions, log
 }
 
 func queryMASTObservations(ctx context.Context, client *Client, opts DiscoverOptions, log *slog.Logger) ([]model.Observation, error) {
+	log.Debug("mast: querying MAST observations API", slog.Int("sector", opts.Sector))
+
+	filters := []map[string]any{
+		{"paramName": "obs_collection", "values": []string{"TESS"}},
+		{"paramName": "dataproduct_type", "values": []string{"timeseries", "image"}},
+	}
+	if opts.Sector > 0 {
+		filters = append(filters, map[string]any{
+			"paramName": "sequence_number",
+			"values":    []string{fmt.Sprintf("%d", opts.Sector)},
+		})
+	}
+
 	requestMap := map[string]any{
 		"service": "Mashup.Table.Query",
 		"format":  "json",
 		"params": map[string]any{
 			"columns": "*",
-			"filters": []map[string]any{
-				{"paramName": "obs_collection", "values": []string{"TESS"}},
-				{"paramName": "dataproduct_type", "values": []string{"timeseries", "image"}},
-			},
+			"filters": filters,
 		},
 	}
 
