@@ -9,7 +9,7 @@ import (
 	"go-ingester/internal/checkpoint"
 	"go-ingester/internal/config"
 	"go-ingester/internal/model"
-	storageinfra "go-ingester/pkg/infra/storage"
+	storageinfra "go-ingester/infra/storage"
 )
 
 // runStatus executes the `aurora-ingester status` subcommand.

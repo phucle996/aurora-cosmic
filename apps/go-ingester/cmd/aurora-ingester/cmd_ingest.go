@@ -14,8 +14,8 @@ import (
 	"go-ingester/internal/manifest"
 	"go-ingester/internal/mast"
 	"go-ingester/internal/model"
-	eventsinfra "go-ingester/pkg/infra/events"
-	storageinfra "go-ingester/pkg/infra/storage"
+	eventsinfra "go-ingester/infra/events"
+	storageinfra "go-ingester/infra/storage"
 
 	"github.com/google/uuid"
 )
