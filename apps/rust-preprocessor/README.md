@@ -1,12 +1,13 @@
 # aurora-rust-preprocessor
 
 `aurora-preprocessor` consumes `bronze-object-ready` events from NATS JetStream,
-processes raw FITS objects from MinIO Bronze, and materializes normalized
-Arrow/Parquet outputs into MinIO Silver.
+fetches raw FITS objects from MinIO Bronze, verifies object integrity and SHA-256 checksums,
+decodes Light Curve, TPF, and FFI FITS files into typed in-memory representations,
+and materializes normalized Arrow/Parquet outputs into MinIO Silver.
 
 ---
 
-## Phase 3.1 — Current Boundary
+## Phase 3.2 — Current Boundary
 
 ```text
 NATS JetStream (AURORA_BRONZE)
@@ -15,26 +16,44 @@ NATS JetStream (AURORA_BRONZE)
 aurora.v1.bronze.*.ready
         |
         v
-Rust Preprocessor
+Rust Consumer
         |
         v
 Semaphore(N) — bounded Tokio concurrency
         |
-        +--> handler (placeholder — Phase 3.1)
-        +--> handler
-        +--> handler
+        v
+MinIO Bronze GET (Async stream)
         |
-     success -> ACK
-     failure -> NAK
-     malformed -> TERM
+        v
+Stream & Hash SHA-256 + Byte count
+        |
+        v
+Verify size & SHA-256 checksum
+        |
+        v
+spawn_blocking
+        |
+        v
+fits::decode (CFITSIO)
+        |
+  +-----+-----+
+  |     |     |
+  v     v     v
+ RawLC RawTPF RawFFI
 ```
 
-**Not yet implemented in Phase 3.1:**
-- MinIO Bronze object fetch
-- FITS decoding
-- Light Curve preprocessing
-- TPF / FFI Image preprocessing
-- Silver Parquet write
+**Implemented in Phase 3.2:**
+- MinIO Bronze object stat and size verification
+- Streaming MinIO GET with on-the-fly SHA-256 checksum & byte count computation
+- Temporary local file staging with auto-deletion on scope exit
+- `spawn_blocking` FITS decoding using `fitsio` (CFITSIO)
+- Decoded typed structures: `RawLightCurve`, `RawTargetPixel`, `RawFfi`
+- FITS header vs event identity validation (TIC ID, Sector)
+
+**Not yet implemented in Phase 3.2:**
+- Light Curve scientific preprocessing (Phase 3.3)
+- TPF / FFI scientific preprocessing (Phase 3.4)
+- Silver Parquet write (Phase 3.5)
 
 ---
 
@@ -43,19 +62,28 @@ Semaphore(N) — bounded Tokio concurrency
 ```text
 src/
 ├── main.rs         — Entrypoint (tiny)
-├── app.rs          — NATS connect, shutdown wiring
+├── app.rs          — NATS & MinIO StorageClient initialization, shutdown wiring
 ├── config.rs       — Configuration from environment
 ├── logger.rs       — Structured JSON logger
 ├── event.rs        — BronzeObjectReady + ProductKind typed structs
 ├── consumer.rs     — JetStream consumer, Semaphore, JoinSet, ACK/NAK/TERM
+├── storage.rs      — MinIO client, stat_and_verify_size, fetch_to_temp + SHA-256
 │
-├── storage.rs      — MinIO client (UNUSED until Phase 3.2)
-├── checkpoint.rs   — Checkpoint store (UNUSED until Stage 4)
+├── fits/           — FITS decoding (Phase 3.2)
+│   ├── mod.rs      — DecodedProduct enum, DecodedSource struct, decode dispatch
+│   ├── lightcurve.rs — RawLightCurve, decode_lc
+│   └── image.rs    — RawTargetPixel, RawFfi, decode_tpf, decode_ffi
 │
-├── fits/           — FITS parsing (UNUSED until Phase 3.2+)
 ├── pipeline/       — Preprocessing pipelines (UNUSED until Phase 3.3+)
-└── output/         — Silver materialization (UNUSED until Phase 3.5)
-    └── silver.rs
+├── output/         — Silver materialization (UNUSED until Phase 3.5)
+│   └── silver.rs
+│
+└── tests/          — Unit & integration tests
+    ├── mod.rs
+    ├── config_tests.rs
+    ├── consumer_tests.rs
+    ├── event_tests.rs
+    └── fits_tests.rs
 ```
 
 ---
@@ -67,29 +95,26 @@ src/
 | `AURORA_ENV` | ✅ | — | Runtime environment (`development`, `production`) |
 | `AURORA_LOG_LEVEL` | ✅ | — | Log level (`info`, `debug`, `warn`) |
 | `NATS_URL` | ✅ | — | NATS server URL |
-| `MINIO_ENDPOINT` | ✅ | — | MinIO endpoint (unused Phase 3.1) |
-| `MINIO_BUCKET` | ✅ | — | MinIO bucket (unused Phase 3.1) |
+| `MINIO_ENDPOINT` | ✅ | — | MinIO API endpoint |
+| `MINIO_ACCESS_KEY` | ✅ | — | MinIO access key |
+| `MINIO_SECRET_KEY` | ✅ | — | MinIO secret key |
+| `MINIO_BUCKET` | ✅ | — | MinIO bucket name (`aurora`) |
 | `AURORA_PREPROCESS_WORKERS` | ✅ | — | Max concurrent processing jobs (must be ≥ 1) |
 | `AURORA_PREPROCESS_DURABLE` | ❌ | `aurora-rust-preprocessor` | JetStream durable consumer name |
 | `AURORA_PREPROCESS_STREAM` | ❌ | `AURORA_BRONZE` | JetStream stream name |
 | `AURORA_PREPROCESS_ACK_WAIT` | ❌ | `30s` | JetStream ACK wait duration |
 | `AURORA_PREPROCESS_SHUTDOWN_TIMEOUT` | ❌ | `30` | Drain timeout in seconds on shutdown |
+| `AURORA_PREPROCESS_TMP_DIR` | ❌ | `/tmp/aurora-preprocessor` | Temp staging directory for FITS files |
 
 ---
 
-## Phase 3.1 Invariants
+## System Requirements
 
-1. JetStream is the durable queue — no in-memory re-queuing.
-2. Manual ACK only — no auto-acknowledgement.
-3. Processing concurrency bounded by `Semaphore(AURORA_PREPROCESS_WORKERS)`.
-4. Backpressure: when all workers are busy, no new messages are fetched.
-5. Failed work is never ACKed as successful → NAK for redelivery.
-6. Malformed/poison messages → TERM (no infinite redelivery).
-7. Durable consumer survives service restart.
-8. No FITS bytes pass through the runtime.
+Building `aurora-preprocessor` requires `cfitsio` (CFITSIO C library):
 
-> ⚠️ **ACK boundary (Phase 3.5 TODO):** Currently ACK is issued after placeholder
-> handler success. In Phase 3.5 this changes to: `Silver durable write → verify → ACK`.
+- **Alpine Linux / Docker**: `apk add cfitsio-dev pkgconfig musl-dev`
+- **Ubuntu / Debian**: `apt-get install libcfitsio-dev pkg-config`
+- **macOS**: `brew install cfitsio pkg-config`
 
 ---
 
@@ -97,7 +122,6 @@ src/
 
 ```bash
 cp .env.example .env
-# Edit NATS_URL to point at your NATS instance
 cargo run
 ```
 

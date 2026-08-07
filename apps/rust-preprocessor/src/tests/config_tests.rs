@@ -6,6 +6,8 @@ fn set_required_vars(workers: &str) {
     env::set_var("AURORA_ENV", "test");
     env::set_var("AURORA_LOG_LEVEL", "debug");
     env::set_var("MINIO_ENDPOINT", "http://localhost:9000");
+    env::set_var("MINIO_ACCESS_KEY", "minioadmin");
+    env::set_var("MINIO_SECRET_KEY", "minioadmin");
     env::set_var("MINIO_BUCKET", "aurora");
     env::set_var("NATS_URL", "nats://localhost:4222");
     env::set_var("AURORA_PREPROCESS_WORKERS", workers);
@@ -41,7 +43,6 @@ fn test_defaults_applied() {
 #[test]
 fn test_custom_durable_and_stream() {
     set_required_vars("2");
-    // Remove first to ensure clean state regardless of parallel test order.
     env::remove_var("AURORA_PREPROCESS_DURABLE");
     env::remove_var("AURORA_PREPROCESS_STREAM");
     env::set_var("AURORA_PREPROCESS_DURABLE", "my-consumer");
@@ -49,7 +50,6 @@ fn test_custom_durable_and_stream() {
     let cfg = Config::from_env().unwrap();
     assert_eq!(cfg.consumer.durable, "my-consumer");
     assert_eq!(cfg.consumer.stream, "MY_STREAM");
-    // Clean up for other tests.
     env::remove_var("AURORA_PREPROCESS_DURABLE");
     env::remove_var("AURORA_PREPROCESS_STREAM");
 }

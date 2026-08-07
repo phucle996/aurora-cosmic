@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -8,31 +9,20 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::ConsumerConfig;
-use crate::event::{BronzeObjectReady, ProductKind};
+use crate::event::BronzeObjectReady;
+use crate::fits::{self, DecodedSource};
+use crate::storage::StorageClient;
 
 /// Subjects to subscribe from AURORA_BRONZE stream.
 const BRONZE_FILTER_SUBJECT: &str = "aurora.v1.bronze.*.ready";
 
 /// Run the JetStream consumer with bounded Tokio concurrency.
-///
-/// # Phase 3.1 invariants
-/// - Manual ACK only — never auto-ACK.
-/// - Bounded concurrency via Semaphore(N).
-/// - ACK only after placeholder handler returns success.
-/// - NAK on recoverable handler failure.
-/// - TERM on malformed/poison messages (no endless redelivery).
-/// - Active tasks tracked via JoinSet.
-/// - Backpressure: when Semaphore is exhausted, no new messages are fetched.
-/// - Graceful drain on cancellation.
-///
-/// # TODO Phase 3.5
-/// Change ACK boundary from "placeholder success" to "Silver durable write".
 pub async fn run(
     jetstream: jetstream::Context,
+    storage: Arc<StorageClient>,
     cfg: &ConsumerConfig,
     cancel: CancellationToken,
 ) -> Result<()> {
-    // Verify the expected stream exists before starting.
     let stream = jetstream
         .get_stream(&cfg.stream)
         .await
@@ -46,7 +36,6 @@ pub async fn run(
         "JetStream consumer starting"
     );
 
-    // Open or create the durable pull consumer.
     let consumer = stream
         .get_or_create_consumer(
             &cfg.durable,
@@ -55,7 +44,7 @@ pub async fn run(
                 filter_subject: BRONZE_FILTER_SUBJECT.to_string(),
                 ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
                 ack_wait: parse_duration(&cfg.ack_wait),
-                max_deliver: 10, // allow redelivery up to 10x before terminal
+                max_deliver: 10,
                 ..Default::default()
             },
         )
@@ -68,35 +57,25 @@ pub async fn run(
         "Durable consumer ready"
     );
 
-    // Bounded concurrency semaphore.
     let semaphore = Arc::new(Semaphore::new(cfg.workers));
-
-    // Task set for tracking all in-flight processing tasks.
     let mut tasks: JoinSet<()> = JoinSet::new();
-
-    // Pull messages with fetch size aligned to worker capacity.
     let fetch_size = cfg.workers;
 
     loop {
         tokio::select! {
             biased;
 
-            // Shutdown signal.
             _ = cancel.cancelled() => {
                 tracing::info!("Shutdown signal received — stopping message fetch");
                 break;
             }
 
-            // Try to acquire a permit before fetching the next batch.
-            // This is the backpressure point: when all workers are busy, we
-            // do not pull more messages from JetStream.
             permit = semaphore.clone().acquire_owned() => {
                 let permit = match permit {
                     Ok(p) => p,
-                    Err(_) => break, // semaphore closed
+                    Err(_) => break,
                 };
 
-                // Fetch a small batch bounded by worker capacity.
                 let messages = match consumer
                     .fetch()
                     .max_messages(fetch_size)
@@ -106,25 +85,21 @@ pub async fn run(
                     Ok(msgs) => msgs,
                     Err(e) => {
                         tracing::error!(error = %e, "Failed to fetch messages from JetStream");
-                        // Release permit and retry after a brief pause.
                         drop(permit);
                         tokio::time::sleep(Duration::from_secs(1)).await;
                         continue;
                     }
                 };
 
-                // Collect at most fetch_size messages.
                 use futures::StreamExt;
                 let msgs: Vec<_> = messages.take(fetch_size).collect().await;
 
                 if msgs.is_empty() {
-                    // No messages available — release permit, wait briefly.
                     drop(permit);
                     tokio::time::sleep(Duration::from_millis(500)).await;
                     continue;
                 }
 
-                // Spawn one task per message. Each task holds a permit until done.
                 for msg_result in msgs {
                     let msg = match msg_result {
                         Ok(m) => m,
@@ -134,46 +109,22 @@ pub async fn run(
                         }
                     };
 
-                    // Acquire individual permit for this task (first permit already
-                    // held from semaphore.acquire_owned above is used for the first msg).
-                    // For subsequent msgs in the batch, try_acquire.
-                    let task_permit = if tasks.len() == 0 {
-                        // Re-use the batch permit for first message.
-                        // (permit is moved into the first task below)
-                        None
-                    } else {
-                        match semaphore.clone().try_acquire_owned() {
-                            Ok(p) => Some(p),
-                            Err(_) => {
-                                // All slots occupied — NAK this message so it is
-                                // redelivered later when capacity is available.
-                        if let Err(e) = msg.ack_with(AckKind::Nak(None)).await {
-                                    tracing::warn!(error = %e, "Failed to NAK message (capacity full)");
-                                }
-                                continue;
-                            }
-                        }
-                    };
-
-                    let _ = task_permit; // silence unused warning; permit dropped at end of task
+                    let storage_ref = storage.clone();
+                    let tmp_dir = cfg.tmp_dir.clone();
 
                     let batch_permit = if tasks.len() == 0 {
-                        // Move the original permit into first task.
                         Some(permit)
                     } else {
                         None
                     };
 
                     tasks.spawn(async move {
-                        process_message(msg, batch_permit).await;
+                        process_message(msg, storage_ref, tmp_dir, batch_permit).await;
                     });
 
-                    // After spawning first task with original permit, break inner loop.
-                    // Remaining messages in batch need their own permit — handled above.
                     break;
                 }
 
-                // Reap finished tasks to avoid JoinSet growing unbounded.
                 while let Some(result) = tasks.try_join_next() {
                     if let Err(e) = result {
                         tracing::error!(error = %e, "Processing task panicked — message was not ACKed");
@@ -183,7 +134,6 @@ pub async fn run(
         }
     }
 
-    // Graceful drain: wait for all active tasks to finish.
     tracing::info!(active_tasks = tasks.len(), "Draining active processing tasks");
     while let Some(result) = tasks.join_next().await {
         if let Err(e) = result {
@@ -195,22 +145,22 @@ pub async fn run(
     Ok(())
 }
 
-/// Process one JetStream message.
-///
-/// Message lifecycle:
-/// - Decode JSON → BronzeObjectReady (fail → TERM)
-/// - Dispatch to placeholder handler (fail → NAK; success → ACK)
-///
-/// Permit is dropped at end of this function, releasing a concurrency slot.
+/// Process one JetStream message:
+/// 1. Decode event JSON
+/// 2. Stat & verify object size in MinIO Bronze
+/// 3. Stream object to temp file & verify SHA-256 checksum on the fly
+/// 4. spawn_blocking FITS decode
+/// 5. ACK on success, NAK on error
 async fn process_message(
     msg: async_nats::jetstream::Message,
+    storage: Arc<StorageClient>,
+    tmp_dir: PathBuf,
     _permit: Option<tokio::sync::OwnedSemaphorePermit>,
 ) {
     let subject = msg.subject.clone();
 
     tracing::debug!(subject = %subject, "Message received");
 
-    // --- Decode ---
     let event = match serde_json::from_slice::<BronzeObjectReady>(&msg.payload) {
         Ok(e) => e,
         Err(decode_err) => {
@@ -229,7 +179,7 @@ async fn process_message(
     };
 
     let event_id = event.event_id.clone();
-    let product_kind = &event.product_kind;
+    let product_kind = event.product_kind.clone();
 
     tracing::info!(
         event_id = %event_id,
@@ -241,29 +191,28 @@ async fn process_message(
         "Processing event"
     );
 
-    // Validate product kind is supported (should already be enforced by serde,
-    // but guard explicitly for clarity).
-    match product_kind {
-        ProductKind::TargetPixel | ProductKind::LightCurve | ProductKind::Ffi => {}
-    }
+    match process_bronze_event(storage, &tmp_dir, event).await {
+        Ok(decoded) => {
+            tracing::info!(
+                event_id = %event_id,
+                product = ?decoded.product,
+                lifecycle = "decoded",
+                "FITS decoded successfully"
+            );
 
-    // --- Placeholder handler ---
-    // TODO Phase 3.2: replace with MinIO GET + FITS decode.
-    // TODO Phase 3.5: replace ACK boundary with "Silver durable write → ACK".
-    match placeholder_handle(&event).await {
-        Ok(()) => {
+            // TODO Phase 3.5: change ACK boundary to "Silver durable write → ACK"
             if let Err(e) = msg.ack().await {
                 tracing::error!(event_id = %event_id, error = %e, "Failed to ACK message");
             } else {
                 tracing::info!(event_id = %event_id, lifecycle = "acked", "Event processed and ACKed");
             }
         }
-        Err(handler_err) => {
+        Err(err) => {
             tracing::warn!(
                 event_id = %event_id,
-                error = %handler_err,
+                error = %err,
                 lifecycle = "nak",
-                "Handler failed — NAKing for redelivery"
+                "Processing failed — NAKing for redelivery"
             );
             if let Err(e) = msg.ack_with(AckKind::Nak(None)).await {
                 tracing::error!(event_id = %event_id, error = %e, "Failed to NAK message");
@@ -272,35 +221,46 @@ async fn process_message(
     }
 }
 
-/// Placeholder handler — Phase 3.1 only.
-///
-/// Validates the event and logs metadata. No MinIO, no FITS, no Silver.
-///
-/// # TODO Phase 3.2
-/// Replace with Bronze MinIO GET + FITS decode logic.
-pub(crate) async fn placeholder_handle(event: &BronzeObjectReady) -> Result<()> {
-    // Basic field validation.
-    if event.sha256.len() != 64 {
-        anyhow::bail!("sha256 length invalid for event_id={}", event.event_id);
-    }
-    if event.object_key.is_empty() {
-        anyhow::bail!("object_key is empty for event_id={}", event.event_id);
-    }
+/// Helper function to perform storage fetch, verification, and blocking FITS decode.
+pub(crate) async fn process_bronze_event(
+    storage: Arc<StorageClient>,
+    tmp_dir: &PathBuf,
+    event: BronzeObjectReady,
+) -> Result<DecodedSource> {
+    // 1. Stat & verify object size
+    storage
+        .stat_and_verify_size(&event.bucket, &event.object_key, event.size_bytes)
+        .await?;
 
-    tracing::info!(
-        event_id = %event.event_id,
-        product_kind = ?event.product_kind,
-        sector = event.sector,
-        size_bytes = event.size_bytes,
-        lifecycle = "processing",
-        "Placeholder: validated event (Phase 3.1)"
-    );
+    // 2. Fetch to temp file & verify SHA-256 checksum on the fly
+    let temp_file = storage
+        .fetch_to_temp(
+            &event.bucket,
+            &event.object_key,
+            event.size_bytes,
+            &event.sha256,
+            tmp_dir,
+        )
+        .await?;
 
-    Ok(())
+    // 3. spawn_blocking for CPU/blocking FITS decode
+    let event_clone = event.clone();
+    let temp_path = temp_file.path.clone();
+
+    let product = tokio::task::spawn_blocking(move || {
+        fits::decode(&temp_path, &event_clone)
+    })
+    .await
+    .context("FITS decode task panicked")??;
+
+    // `temp_file` goes out of scope here and automatically deletes the temporary FITS file.
+
+    Ok(DecodedSource {
+        event,
+        product,
+    })
 }
 
-/// Parse a simple duration string like "30s", "5m" into std::time::Duration.
-/// Falls back to 30 seconds on parse failure.
 pub(crate) fn parse_duration(s: &str) -> Duration {
     if let Some(secs_str) = s.strip_suffix('s') {
         if let Ok(n) = secs_str.parse::<u64>() {
@@ -315,4 +275,3 @@ pub(crate) fn parse_duration(s: &str) -> Duration {
     tracing::warn!(value = s, "Could not parse ack_wait duration — defaulting to 30s");
     Duration::from_secs(30)
 }
-

@@ -5,52 +5,7 @@ use std::time::Duration;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
-use crate::consumer::{parse_duration, placeholder_handle};
-use crate::event::{BronzeObjectReady, ProductKind};
-
-fn make_event(event_id: &str, kind: ProductKind) -> BronzeObjectReady {
-    BronzeObjectReady {
-        event_id: event_id.to_string(),
-        event_type: "bronze.object.ready".to_string(),
-        source_product_id: "mast-001".to_string(),
-        sample_id: None,
-        bucket: "aurora".to_string(),
-        object_key: "bronze/tess/sector-0042/123/file.fits".to_string(),
-        product_kind: kind,
-        sector: 42,
-        tic_id: Some(123456789),
-        camera: None,
-        ccd: None,
-        size_bytes: 1024,
-        sha256: "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899".to_string(),
-        occurred_at: "2026-08-07T00:00:00Z".to_string(),
-    }
-}
-
-#[tokio::test]
-async fn test_placeholder_handle_target_pixel() {
-    let event = make_event("evt-tp", ProductKind::TargetPixel);
-    assert!(placeholder_handle(&event).await.is_ok());
-}
-
-#[tokio::test]
-async fn test_placeholder_handle_light_curve() {
-    let event = make_event("evt-lc", ProductKind::LightCurve);
-    assert!(placeholder_handle(&event).await.is_ok());
-}
-
-#[tokio::test]
-async fn test_placeholder_handle_ffi() {
-    let event = make_event("evt-ffi", ProductKind::Ffi);
-    assert!(placeholder_handle(&event).await.is_ok());
-}
-
-#[tokio::test]
-async fn test_placeholder_handle_invalid_sha256() {
-    let mut event = make_event("evt-bad", ProductKind::LightCurve);
-    event.sha256 = "tooshort".to_string();
-    assert!(placeholder_handle(&event).await.is_err());
-}
+use crate::consumer::parse_duration;
 
 /// Mandatory bounded concurrency test.
 /// Proves that at most N handlers run simultaneously even with more jobs queued.

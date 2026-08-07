@@ -1,4 +1,5 @@
 use std::env;
+use std::path::PathBuf;
 use std::str::FromStr;
 
 /// Core application config.
@@ -8,10 +9,12 @@ pub struct CoreConfig {
     pub log_level: String,
 }
 
-/// MinIO connection config (unused until Phase 3.2, kept for startup validation).
+/// MinIO / S3-compatible storage config.
 #[derive(Debug, Clone)]
 pub struct MinioConfig {
     pub endpoint: String,
+    pub access_key: String,
+    pub secret_key: String,
     pub bucket: String,
 }
 
@@ -34,6 +37,8 @@ pub struct ConsumerConfig {
     pub ack_wait: String,
     /// Shutdown drain timeout in seconds.
     pub shutdown_timeout_secs: u64,
+    /// Temporary directory for FITS download staging.
+    pub tmp_dir: PathBuf,
 }
 
 /// Full application configuration.
@@ -52,6 +57,10 @@ impl Config {
             return Err("AURORA_PREPROCESS_WORKERS must be >= 1 (got 0)".to_string());
         }
 
+        let tmp_dir = env::var("AURORA_PREPROCESS_TMP_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("/tmp/aurora-preprocessor"));
+
         Ok(Self {
             core: CoreConfig {
                 env: require_env("AURORA_ENV")?,
@@ -59,6 +68,8 @@ impl Config {
             },
             minio: MinioConfig {
                 endpoint: require_env("MINIO_ENDPOINT")?,
+                access_key: require_env("MINIO_ACCESS_KEY")?,
+                secret_key: require_env("MINIO_SECRET_KEY")?,
                 bucket: require_env("MINIO_BUCKET")?,
             },
             nats: NatsConfig {
@@ -76,6 +87,7 @@ impl Config {
                     .ok()
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(30),
+                tmp_dir,
             },
         })
     }
@@ -86,8 +98,11 @@ impl Config {
             log_level = %self.core.log_level,
             workers = self.consumer.workers,
             nats_url = %self.nats.url,
+            minio_endpoint = %self.minio.endpoint,
+            minio_bucket = %self.minio.bucket,
             stream = %self.consumer.stream,
             durable = %self.consumer.durable,
+            tmp_dir = %self.consumer.tmp_dir.display(),
             "Configuration summary loaded"
         );
     }
@@ -102,4 +117,3 @@ fn require_env_parse<T: FromStr>(key: &str) -> Result<T, String> {
     val.parse::<T>()
         .map_err(|_| format!("Invalid value for environment variable '{key}': '{val}'"))
 }
-

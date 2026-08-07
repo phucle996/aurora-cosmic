@@ -1,30 +1,21 @@
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::Config;
 use crate::consumer;
+use crate::storage::StorageClient;
 
 /// Application entry point.
 ///
 /// Flow:
 /// ```text
-/// main.rs
-///    |
-///    v
-/// load config
-///    |
-///    v
-/// app::run()
-///    |
-///    +--> connect NATS
-///    |
-///    +--> start consumer
-///    |
-///    +--> wait for shutdown signal
+/// main.rs -> config -> app::run() -> NATS + MinIO -> consumer::run() -> shutdown
 /// ```
 pub async fn run(config: Config) -> Result<()> {
-    // Connect to NATS.
+    // 1. Connect to NATS
     tracing::info!(
         nats_url = %config.nats.url,
         "Connecting to NATS"
@@ -43,19 +34,31 @@ pub async fn run(config: Config) -> Result<()> {
 
     let jetstream = async_nats::jetstream::new(nats_client.clone());
 
-    // Shared cancellation token for graceful shutdown.
+    // 2. Initialize MinIO / S3 StorageClient once at startup
+    tracing::info!(
+        minio_endpoint = %config.minio.endpoint,
+        minio_bucket = %config.minio.bucket,
+        "Initializing StorageClient"
+    );
+
+    let storage = Arc::new(
+        StorageClient::new(&config.minio)
+            .context("Failed to initialize MinIO StorageClient")?,
+    );
+
+    // 3. Shared cancellation token for graceful shutdown
     let cancel = CancellationToken::new();
     let cancel_consumer = cancel.clone();
 
-    // Spawn the consumer as a tracked task.
+    // 4. Spawn consumer task
     let cfg_consumer = config.consumer.clone();
     let consumer_task = tokio::spawn(async move {
-        if let Err(e) = consumer::run(jetstream, &cfg_consumer, cancel_consumer).await {
+        if let Err(e) = consumer::run(jetstream, storage, &cfg_consumer, cancel_consumer).await {
             tracing::error!(error = %e, "Consumer task exited with error");
         }
     });
 
-    // Wait for shutdown signal.
+    // 5. Wait for shutdown signal
     let shutdown_timeout = config.consumer.shutdown_timeout_secs;
     tokio::select! {
         _ = signal::ctrl_c() => {
@@ -66,10 +69,9 @@ pub async fn run(config: Config) -> Result<()> {
         }
     }
 
-    // Signal consumer to stop accepting new work.
+    // 6. Signal consumer to stop accepting new work
     cancel.cancel();
 
-    // Wait for consumer to drain with timeout.
     let drain_result = tokio::time::timeout(
         std::time::Duration::from_secs(shutdown_timeout),
         consumer_task,
@@ -85,13 +87,10 @@ pub async fn run(config: Config) -> Result<()> {
         ),
     }
 
-    // NATS connection closes cleanly on drop.
     tracing::info!("NATS connection closed");
-
     Ok(())
 }
 
-/// Wait for SIGTERM (Unix only). On non-Unix platforms this never resolves.
 async fn wait_sigterm() {
     #[cfg(unix)]
     {
@@ -101,7 +100,6 @@ async fn wait_sigterm() {
     }
     #[cfg(not(unix))]
     {
-        // Non-Unix: only ctrl-c is used for shutdown.
         std::future::pending::<()>().await;
     }
 }

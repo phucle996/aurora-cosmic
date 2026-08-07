@@ -2,24 +2,18 @@ mod app;
 mod config;
 mod consumer;
 mod event;
+mod fits;
 mod logger;
+mod storage;
 
 #[cfg(test)]
 mod tests;
 
-// Unused until Phase 3.2 — kept as stubs.
-#[allow(dead_code)]
-mod storage;
 // Unused until Stage 4 — kept as stub.
 #[allow(dead_code)]
 mod checkpoint;
 
-// Unused until Phase 3.2+ — kept as stubs.
-#[allow(dead_code)]
-mod fits {
-    pub mod image;
-    pub mod lightcurve;
-}
+// Unused until Phase 3.3+ — kept as stubs.
 #[allow(dead_code)]
 mod pipeline {
     pub mod image;
