@@ -12,7 +12,7 @@ import (
 	"go-ingester/internal/config"
 	"go-ingester/internal/ingest"
 	"go-ingester/internal/manifest"
-	"go-ingester/internal/mast"
+	"go-ingester/infra/mast"
 	"go-ingester/internal/model"
 	eventsinfra "go-ingester/infra/events"
 	storageinfra "go-ingester/infra/storage"

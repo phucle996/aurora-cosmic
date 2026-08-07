@@ -6,10 +6,10 @@ import (
 	"log/slog"
 	"time"
 
+	storageinfra "go-ingester/infra/storage"
 	"go-ingester/internal/checkpoint"
 	"go-ingester/internal/config"
 	"go-ingester/internal/model"
-	storageinfra "go-ingester/infra/storage"
 )
 
 // runStatus executes the `aurora-ingester status` subcommand.

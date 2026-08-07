@@ -13,7 +13,7 @@ import (
 
 	"go-ingester/internal/checkpoint"
 	"go-ingester/internal/ingest"
-	"go-ingester/internal/mast"
+	"go-ingester/infra/mast"
 	"go-ingester/internal/model"
 )
 

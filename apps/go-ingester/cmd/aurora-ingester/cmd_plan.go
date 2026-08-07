@@ -9,7 +9,7 @@ import (
 
 	"go-ingester/internal/config"
 	"go-ingester/internal/manifest"
-	"go-ingester/internal/mast"
+	"go-ingester/infra/mast"
 	"go-ingester/internal/model"
 )
 

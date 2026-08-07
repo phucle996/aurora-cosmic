@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"go-ingester/internal/mast"
+	"go-ingester/infra/mast"
 	"go-ingester/internal/model"
 )
 
