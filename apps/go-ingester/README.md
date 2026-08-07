@@ -7,7 +7,7 @@
 * `cmd/aurora-ingester/` — Entrypoint, subcommand routing (`plan`, `ingest`, `status`)
 * `internal/app/` — Application runner and lifecycle
 * `internal/config/` — Environment-based configuration
-* `internal/logger/` — Structured JSON logger (stdlib slog)
+* `pkg/logger/` — Structured JSON logger (stdlib slog)
 * `internal/mast/` — MAST API client, product discovery, classification, streaming download
 * `internal/manifest/` — Product selection, TPF/LC pairing, manifest write/read
 * `internal/ingest/` — Streaming ingestion pipeline (SHA256, worker pool, verification)

@@ -10,7 +10,7 @@ import (
 
 	"go-ingester/internal/app"
 	"go-ingester/internal/config"
-	"go-ingester/internal/logger"
+	"go-ingester/pkg/logger"
 )
 
 func main() {

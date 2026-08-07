@@ -10,7 +10,7 @@ import (
 
 	"go-api/internal/app"
 	"go-api/internal/config"
-	"go-api/internal/logger"
+	"go-api/pkg/logger"
 )
 
 func main() {
