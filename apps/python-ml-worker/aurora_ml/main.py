@@ -1,4 +1,6 @@
+import signal
 import sys
+import time
 from pathlib import Path
 
 # Add project root to sys.path so pkg module can be imported
@@ -15,6 +17,21 @@ def main():
         cfg = Config()
         logger.setLevel(cfg.log_level.upper())
         cfg.log_summary()
+
+        stop_event = False
+
+        def handle_signal(sig, frame):
+            nonlocal stop_event
+            logger.info("Shutdown signal received, stopping ML worker...")
+            stop_event = True
+
+        signal.signal(signal.SIGINT, handle_signal)
+        signal.signal(signal.SIGTERM, handle_signal)
+
+        logger.info("ML Worker service active and running.")
+        while not stop_event:
+            time.sleep(1)
+
     except Exception:
         logger.exception("Failed to start service")
 
