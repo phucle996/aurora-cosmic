@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"go-ingester/internal/manifest"
 	"go-ingester/internal/model"
+	"go-ingester/internal/pipeline/plan"
 )
 
 func TestPairedBothPresent(t *testing.T) {
@@ -21,7 +21,7 @@ func TestPairedBothPresent(t *testing.T) {
 		RequirePair: true,
 	}
 
-	m, err := manifest.Build(products, opts)
+	m, err := plan.Build(products, opts)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestTPFOnly(t *testing.T) {
 		RequirePair: false,
 	}
 
-	m, err := manifest.Build(products, opts)
+	m, err := plan.Build(products, opts)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestLCOnly(t *testing.T) {
 		RequirePair: false,
 	}
 
-	m, err := manifest.Build(products, opts)
+	m, err := plan.Build(products, opts)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestRequirePairExcludesIncomplete(t *testing.T) {
 		RequirePair: true,
 	}
 
-	_, err := manifest.Build(products, opts)
+	_, err := plan.Build(products, opts)
 	if err == nil {
 		t.Errorf("expected error when no paired samples exist and RequirePair=true, got nil")
 	}
@@ -125,7 +125,7 @@ func TestDifferentSectorsNotPaired(t *testing.T) {
 		RequirePair: false,
 	}
 
-	m, err := manifest.Build(products, opts)
+	m, err := plan.Build(products, opts)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestByteBudgetAtomicPair(t *testing.T) {
 		MaxTotalBytes: 1200, // Budget allows 1 pair (1000 bytes), but NOT 2 pairs (2000 bytes)
 	}
 
-	m, err := manifest.Build(products, opts)
+	m, err := plan.Build(products, opts)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestStatisticsCorrect(t *testing.T) {
 		IncludeFFI: true,
 	}
 
-	m, err := manifest.Build(products, opts)
+	m, err := plan.Build(products, opts)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -195,11 +195,11 @@ func TestStatisticsCorrect(t *testing.T) {
 	tmpDir := t.TempDir()
 	outPath := filepath.Join(tmpDir, "manifest.json")
 
-	if err := manifest.Write(m, outPath); err != nil {
+	if err := plan.Write(m, outPath); err != nil {
 		t.Fatalf("manifest write failed: %v", err)
 	}
 
-	loaded, err := manifest.Read(outPath)
+	loaded, err := plan.Read(outPath)
 	if err != nil {
 		t.Fatalf("manifest read failed: %v", err)
 	}

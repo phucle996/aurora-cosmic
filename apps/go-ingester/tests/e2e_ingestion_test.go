@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"go-ingester/internal/checkpoint"
-	"go-ingester/internal/ingest"
 	"go-ingester/infra/mast"
 	"go-ingester/internal/model"
+	"go-ingester/internal/pipeline/checkpoint"
+	"go-ingester/internal/pipeline/ingest"
 )
 
 func TestE2EIngestionOfflinePipeline(t *testing.T) {

@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"go-ingester/internal/checkpoint"
-	"go-ingester/internal/ingest"
 	"go-ingester/infra/mast"
 	"go-ingester/internal/model"
+	"go-ingester/internal/pipeline/checkpoint"
+	"go-ingester/internal/pipeline/ingest"
 )
 
 func TestCheckpointStateTransitions(t *testing.T) {
@@ -72,9 +72,6 @@ func TestCheckpointStateTransitions(t *testing.T) {
 }
 
 func TestCheckpointCrashRecoveryStoredToPublished(t *testing.T) {
-	// Scenario: MinIO PUT succeeded in prior run (StateStored), but crash occurred before NATS event publish.
-	// On pipeline restart: pipeline must NOT redownload FITS, but MUST publish NATS event and transition to StatePublished!
-
 	downloadCount := 0
 	fitsPayload := "RECOVERED_FITS_PAYLOAD_BINARY"
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -103,7 +100,6 @@ func TestCheckpointCrashRecoveryStoredToPublished(t *testing.T) {
 	}
 
 	objectKey := "bronze/tess/target-pixel/sector=0005/tic=555/crash_tp.fits"
-	// Populate mock storage with valid existing Bronze object
 	mockStorage.objects[objectKey] = &model.ObjectInfo{
 		Key:          objectKey,
 		Size:         int64(len(fitsPayload)),
@@ -111,7 +107,6 @@ func TestCheckpointCrashRecoveryStoredToPublished(t *testing.T) {
 	}
 	mockStorage.content[objectKey] = []byte(fitsPayload)
 
-	// Set up checkpoint with state STORED
 	cpStore := checkpoint.NewStore(mockStorage, "aurora")
 	cp := model.CreateNewInitialCheckpoint("run-crash", "manifest.json", "hash-crash", []model.ManifestProduct{prod})
 	cp.Products["p-crash"].State = model.StateStored
@@ -141,12 +136,10 @@ func TestCheckpointCrashRecoveryStoredToPublished(t *testing.T) {
 		t.Fatalf("unexpected pipeline error: %v", err)
 	}
 
-	// Invariant 1: FITS file was NOT downloaded again!
 	if downloadCount != 0 {
 		t.Errorf("FITS file was downloaded %d times, expected 0 downloads during recovery!", downloadCount)
 	}
 
-	// Invariant 2: NATS event was published!
 	if summary.PublishedCount != 1 {
 		t.Errorf("expected 1 published event during recovery, got %d", summary.PublishedCount)
 	}
@@ -154,7 +147,6 @@ func TestCheckpointCrashRecoveryStoredToPublished(t *testing.T) {
 		t.Errorf("expected status PUBLISHED, got %s", results[0].Status)
 	}
 
-	// Invariant 3: Checkpoint state updated to StatePublished!
 	pc, _ := mgr.GetProductCheckpoint("p-crash")
 	if pc.State != model.StatePublished {
 		t.Errorf("expected final checkpoint state PUBLISHED, got %s", pc.State)
@@ -162,9 +154,6 @@ func TestCheckpointCrashRecoveryStoredToPublished(t *testing.T) {
 }
 
 func TestCheckpointIdempotentRerun(t *testing.T) {
-	// Scenario: Manifest run already fully PUBLISHED.
-	// Rerunning same manifest must result in 0 downloads, 0 NATS publishes, 100% skipped!
-
 	downloadCount := 0
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		downloadCount++

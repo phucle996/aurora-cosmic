@@ -7,10 +7,10 @@ import (
 	"log/slog"
 	"time"
 
-	"go-ingester/internal/config"
-	"go-ingester/internal/manifest"
 	"go-ingester/infra/mast"
+	"go-ingester/internal/config"
 	"go-ingester/internal/model"
+	"go-ingester/internal/pipeline/plan"
 )
 
 // runPlan executes the `aurora-ingester plan` subcommand.
@@ -57,12 +57,12 @@ func runPlan(ctx context.Context, cfg *config.Config, log *slog.Logger, args []s
 	}
 
 	log.Info("manifest: building ingestion plan")
-	m, err := manifest.Build(results, opts)
+	m, err := plan.Build(results, opts)
 	if err != nil {
 		return fmt.Errorf("manifest build: %w", err)
 	}
 
-	if err := manifest.Write(m, *output); err != nil {
+	if err := plan.Write(m, *output); err != nil {
 		return fmt.Errorf("manifest write: %w", err)
 	}
 

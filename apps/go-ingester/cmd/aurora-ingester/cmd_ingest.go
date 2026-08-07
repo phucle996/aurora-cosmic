@@ -8,14 +8,14 @@ import (
 	"os"
 	"time"
 
-	"go-ingester/internal/checkpoint"
-	"go-ingester/internal/config"
-	"go-ingester/internal/ingest"
-	"go-ingester/internal/manifest"
-	"go-ingester/infra/mast"
-	"go-ingester/internal/model"
 	eventsinfra "go-ingester/infra/events"
+	"go-ingester/infra/mast"
 	storageinfra "go-ingester/infra/storage"
+	"go-ingester/internal/config"
+	"go-ingester/internal/model"
+	"go-ingester/internal/pipeline/checkpoint"
+	"go-ingester/internal/pipeline/ingest"
+	"go-ingester/internal/pipeline/plan"
 
 	"github.com/google/uuid"
 )
@@ -37,7 +37,7 @@ func runIngest(ctx context.Context, cfg *config.Config, log *slog.Logger, args [
 	}
 
 	log.Info("manifest: loading ingestion plan", slog.String("path", *manifestPath))
-	m, err := manifest.Read(*manifestPath)
+	m, err := plan.Read(*manifestPath)
 	if err != nil {
 		return fmt.Errorf("read manifest: %w", err)
 	}

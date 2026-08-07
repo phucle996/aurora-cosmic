@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"go-ingester/internal/ingest"
 	"go-ingester/infra/mast"
 	"go-ingester/internal/model"
+	"go-ingester/internal/pipeline/ingest"
 )
 
 type mockPublisher struct {
@@ -143,7 +143,6 @@ func TestPipelinePublishOrdering(t *testing.T) {
 		t.Errorf("expected result status PUBLISHED, got %v", results[0].Status)
 	}
 
-	// Verify MinIO storage verification happened BEFORE event publish
 	key := "bronze/tess/target-pixel/sector=0001/tic=100/order_tp.fits"
 	if _, exists := mockStorage.objects[key]; !exists {
 		t.Fatalf("MinIO object key %s missing", key)
@@ -172,7 +171,7 @@ func TestPipelinePublishFailurePreservesStorage(t *testing.T) {
 	mastClient.SetDownloadURL(ts.URL)
 
 	mockStorage := newMockStorageClient()
-	mockPub := &mockPublisher{failNext: true} // simulate NATS publish error
+	mockPub := &mockPublisher{failNext: true}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	pipe := ingest.NewPipeline(mastClient, mockStorage, mockPub, nil, "aurora", 1, logger)
 
@@ -210,7 +209,6 @@ func TestPipelinePublishFailurePreservesStorage(t *testing.T) {
 		t.Errorf("expected result status STORED_EVENT_FAILED, got %v", results[0].Status)
 	}
 
-	// Verify Bronze object in MinIO remains INTACT even though NATS publish failed!
 	key := "bronze/tess/target-pixel/sector=0002/tic=200/fail_pub_tp.fits"
 	if _, exists := mockStorage.objects[key]; !exists {
 		t.Fatalf("MinIO object key %s missing despite NATS publish failure!", key)

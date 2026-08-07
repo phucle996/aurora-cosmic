@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"go-ingester/internal/ingest"
 	"go-ingester/infra/mast"
 	"go-ingester/internal/model"
+	"go-ingester/internal/pipeline/ingest"
 )
 
 type mockStorageClient struct {
