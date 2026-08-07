@@ -1,10 +1,6 @@
 package config
 
-import (
-	"fmt"
-	"os"
-	"strconv"
-)
+import "fmt"
 
 type CoreConfig struct {
 	Env      string
@@ -60,20 +56,4 @@ func (c *Config) Validate() error {
 func (c *Config) LogSummary() {
 	fmt.Printf("[aurora-api] Config: env=%s, log_level=%s, listen=%s:%d, minio=%s, bucket=%s\n",
 		c.Core.Env, c.Core.LogLevel, c.Server.Host, c.Server.Port, c.MinIO.Endpoint, c.MinIO.Bucket)
-}
-
-func getEnv(key, fallback string) string {
-	if val := os.Getenv(key); val != "" {
-		return val
-	}
-	return fallback
-}
-
-func getEnvInt(key string, fallback int) int {
-	if val := os.Getenv(key); val != "" {
-		if i, err := strconv.Atoi(val); err == nil {
-			return i
-		}
-	}
-	return fallback
 }

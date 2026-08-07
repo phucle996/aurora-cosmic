@@ -1,10 +1,6 @@
 package config
 
-import (
-	"fmt"
-	"os"
-	"strconv"
-)
+import "fmt"
 
 type CoreConfig struct {
 	Env      string
@@ -81,38 +77,4 @@ func (c *Config) Validate() error {
 func (c *Config) LogSummary() {
 	fmt.Printf("[aurora-ingester] Config: env=%s, log_level=%s, concurrency=%d, minio=%s, bucket=%s, nats=%s, high_wm=%.2f, low_wm=%.2f\n",
 		c.Core.Env, c.Core.LogLevel, c.Ingest.Concurrency, c.MinIO.Endpoint, c.MinIO.Bucket, c.NATS.URL, c.Bronze.HighWatermark, c.Bronze.LowWatermark)
-}
-
-func getEnv(key, fallback string) string {
-	if val := os.Getenv(key); val != "" {
-		return val
-	}
-	return fallback
-}
-
-func getEnvInt(key string, fallback int) int {
-	if val := os.Getenv(key); val != "" {
-		if i, err := strconv.Atoi(val); err == nil {
-			return i
-		}
-	}
-	return fallback
-}
-
-func getEnvInt64(key string, fallback int64) int64 {
-	if val := os.Getenv(key); val != "" {
-		if i, err := strconv.ParseInt(val, 10, 64); err == nil {
-			return i
-		}
-	}
-	return fallback
-}
-
-func getEnvFloat(key string, fallback float64) float64 {
-	if val := os.Getenv(key); val != "" {
-		if f, err := strconv.ParseFloat(val, 64); err == nil {
-			return f
-		}
-	}
-	return fallback
 }
