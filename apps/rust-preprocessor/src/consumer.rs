@@ -8,7 +8,7 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-use crate::config::{ConsumerConfig, LightCurveConfig};
+use crate::config::{ConsumerConfig, ImageConfig, LightCurveConfig};
 use crate::event::BronzeObjectReady;
 use crate::fits::{self, DecodedProduct, DecodedSource};
 use crate::pipeline;
@@ -23,6 +23,7 @@ pub async fn run(
     storage: Arc<StorageClient>,
     cfg: &ConsumerConfig,
     lc_cfg: LightCurveConfig,
+    img_cfg: ImageConfig,
     cancel: CancellationToken,
 ) -> Result<()> {
     let stream = jetstream
@@ -114,6 +115,7 @@ pub async fn run(
                     let storage_ref = storage.clone();
                     let tmp_dir = cfg.tmp_dir.clone();
                     let lc_config = lc_cfg.clone();
+                    let img_config = img_cfg.clone();
 
                     let batch_permit = if tasks.len() == 0 {
                         Some(permit)
@@ -122,7 +124,7 @@ pub async fn run(
                     };
 
                     tasks.spawn(async move {
-                        process_message(msg, storage_ref, tmp_dir, lc_config, batch_permit).await;
+                        process_message(msg, storage_ref, tmp_dir, lc_config, img_config, batch_permit).await;
                     });
 
                     break;
@@ -152,13 +154,14 @@ pub async fn run(
 /// 1. Decode event JSON
 /// 2. Stat & verify object size in MinIO Bronze
 /// 3. Stream object to temp file & verify SHA-256 checksum on the fly
-/// 4. spawn_blocking FITS decode + Phase 3.3 Light Curve preprocessing
+/// 4. spawn_blocking FITS decode + Phase 3.3/3.4 scientific preprocessing (LC, TPF, FFI)
 /// 5. ACK on success, NAK on error
 async fn process_message(
     msg: async_nats::jetstream::Message,
     storage: Arc<StorageClient>,
     tmp_dir: PathBuf,
     lc_cfg: LightCurveConfig,
+    img_cfg: ImageConfig,
     _permit: Option<tokio::sync::OwnedSemaphorePermit>,
 ) {
     let subject = msg.subject.clone();
@@ -195,13 +198,13 @@ async fn process_message(
         "Processing event"
     );
 
-    match process_bronze_event(storage, &tmp_dir, &lc_cfg, event).await {
+    match process_bronze_event(storage, &tmp_dir, &lc_cfg, &img_cfg, event).await {
         Ok(decoded) => {
             tracing::info!(
                 event_id = %event_id,
                 product = ?decoded.product,
                 lifecycle = "processed",
-                "FITS processed successfully (Phase 3.3)"
+                "FITS decoded and preprocessed successfully (Phase 3.4)"
             );
 
             // TODO Phase 3.5: change ACK boundary to "Silver durable write → ACK"
@@ -226,11 +229,12 @@ async fn process_message(
 }
 
 /// Helper function to perform storage fetch, verification, blocking FITS decode,
-/// and Phase 3.3 Light Curve scientific preprocessing.
+/// and Phase 3.3 / Phase 3.4 scientific preprocessing.
 pub(crate) async fn process_bronze_event(
     storage: Arc<StorageClient>,
     tmp_dir: &PathBuf,
     lc_cfg: &LightCurveConfig,
+    img_cfg: &ImageConfig,
     event: BronzeObjectReady,
 ) -> Result<DecodedSource> {
     // 1. Stat & verify object size
@@ -249,24 +253,54 @@ pub(crate) async fn process_bronze_event(
         )
         .await?;
 
-    // 3. spawn_blocking for CPU FITS decode + Phase 3.3 Light Curve preprocessing
+    // 3. spawn_blocking for CPU FITS decode + Phase 3.3/3.4 preprocessing
     let event_clone = event.clone();
     let temp_path = temp_file.path.clone();
     let lc_config = lc_cfg.clone();
+    let img_config = img_cfg.clone();
 
     let product = tokio::task::spawn_blocking(move || -> Result<DecodedProduct> {
         let decoded = fits::decode(&temp_path, &event_clone)?;
-        if let DecodedProduct::LightCurve(raw_lc) = decoded {
-            let processed_lc = pipeline::lightcurve::preprocess_lc(raw_lc, &event_clone, &lc_config)?;
-            // Keep in DecodedProduct variant or wrap for downstream
-            tracing::info!(
-                object_key = %event_clone.object_key,
-                points = processed_lc.time.len(),
-                "Light Curve pipeline preprocessing finished"
-            );
-            Ok(DecodedProduct::LightCurve(raw_light_curve_from_processed(processed_lc)))
-        } else {
-            Ok(decoded)
+        match decoded {
+            DecodedProduct::LightCurve(raw_lc) => {
+                let processed_lc = pipeline::lightcurve::preprocess_lc(raw_lc, &event_clone, &lc_config)?;
+                tracing::info!(
+                    object_key = %event_clone.object_key,
+                    points = processed_lc.time.len(),
+                    "Light Curve pipeline preprocessing finished"
+                );
+                Ok(DecodedProduct::LightCurve(raw_light_curve_from_processed(processed_lc)))
+            }
+            DecodedProduct::TargetPixel(raw_tpf) => {
+                let processed_tpf = pipeline::image::preprocess_target_pixel(raw_tpf, &event_clone, &img_config)?;
+                tracing::info!(
+                    object_key = %event_clone.object_key,
+                    cadences = processed_tpf.time.len(),
+                    rows = processed_tpf.rows,
+                    cols = processed_tpf.cols,
+                    "TPF image pipeline preprocessing finished"
+                );
+                Ok(DecodedProduct::TargetPixel(raw_tpf_from_processed(processed_tpf)))
+            }
+            DecodedProduct::Ffi(raw_ffi) => {
+                let processed_ffi = pipeline::image::preprocess_ffi(raw_ffi, &event_clone, &img_config, None)?;
+                tracing::info!(
+                    object_key = %event_clone.object_key,
+                    width = processed_ffi.width,
+                    height = processed_ffi.height,
+                    cutouts = processed_ffi.cutouts.len(),
+                    "FFI image pipeline preprocessing finished"
+                );
+                // Return FFI decoded product
+                Ok(DecodedProduct::Ffi(fits::RawFfi {
+                    width: processed_ffi.width,
+                    height: processed_ffi.height,
+                    pixels: Vec::new(), // full FFI pixel buffer not cloned into RAM
+                    sector: processed_ffi.sector,
+                    camera: processed_ffi.camera,
+                    ccd: processed_ffi.ccd,
+                }))
+            }
         }
     })
     .await
@@ -280,7 +314,6 @@ pub(crate) async fn process_bronze_event(
     })
 }
 
-/// Helper converter if needed for DecodedProduct variant compatibility
 fn raw_light_curve_from_processed(lc: pipeline::lightcurve::ProcessedLightCurve) -> fits::RawLightCurve {
     fits::RawLightCurve {
         time: lc.time,
@@ -293,6 +326,18 @@ fn raw_light_curve_from_processed(lc: pipeline::lightcurve::ProcessedLightCurve)
         sector: lc.sector,
         camera: lc.camera,
         ccd: lc.ccd,
+    }
+}
+
+fn raw_tpf_from_processed(tpf: pipeline::image::ProcessedTargetPixel) -> fits::RawTargetPixel {
+    fits::RawTargetPixel {
+        time: tpf.time,
+        quality: tpf.quality,
+        flux: tpf.flux,
+        rows: tpf.rows,
+        cols: tpf.cols,
+        tic_id: tpf.tic_id,
+        sector: tpf.sector,
     }
 }
 

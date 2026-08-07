@@ -54,6 +54,19 @@ pub struct LightCurveConfig {
     pub sigma_clip: Option<f64>,
 }
 
+/// TPF and FFI image preprocessing configuration.
+#[derive(Debug, Clone)]
+pub struct ImageConfig {
+    /// Quality mode for TPF: "strict" (quality == 0) or "none".
+    pub tpf_quality_mode: String,
+    /// TPF normalization strategy: "temporal-median" (default) or "global-median".
+    pub tpf_normalization: String,
+    /// FFI normalization strategy: "median" (default) or "none".
+    pub ffi_normalization: String,
+    /// FFI cutout side dimension (e.g. 32 for 32x32). Must be >= 1.
+    pub ffi_cutout_size: usize,
+}
+
 /// Full application configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -62,6 +75,7 @@ pub struct Config {
     pub nats: NatsConfig,
     pub consumer: ConsumerConfig,
     pub lc_pipeline: LightCurveConfig,
+    pub image_pipeline: ImageConfig,
 }
 
 impl Config {
@@ -102,6 +116,31 @@ impl Config {
             .and_then(|v| v.parse::<f64>().ok())
             .filter(|&v| v > 0.0);
 
+        let tpf_quality_mode = env::var("AURORA_TPF_QUALITY_MODE")
+            .unwrap_or_else(|_| "strict".to_string())
+            .to_lowercase();
+        if tpf_quality_mode != "strict" && tpf_quality_mode != "none" {
+            return Err(format!(
+                "Invalid AURORA_TPF_QUALITY_MODE '{tpf_quality_mode}' (allowed: 'strict', 'none')"
+            ));
+        }
+
+        let tpf_normalization = env::var("AURORA_TPF_NORMALIZATION")
+            .unwrap_or_else(|_| "temporal-median".to_string())
+            .to_lowercase();
+
+        let ffi_normalization = env::var("AURORA_FFI_NORMALIZATION")
+            .unwrap_or_else(|_| "median".to_string())
+            .to_lowercase();
+
+        let ffi_cutout_size: usize = env::var("AURORA_FFI_CUTOUT_SIZE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(32);
+        if ffi_cutout_size < 1 {
+            return Err("AURORA_FFI_CUTOUT_SIZE must be >= 1".to_string());
+        }
+
         Ok(Self {
             core: CoreConfig {
                 env: require_env("AURORA_ENV")?,
@@ -136,6 +175,12 @@ impl Config {
                 allow_sap_fallback,
                 sigma_clip,
             },
+            image_pipeline: ImageConfig {
+                tpf_quality_mode,
+                tpf_normalization,
+                ffi_normalization,
+                ffi_cutout_size,
+            },
         })
     }
 
@@ -152,8 +197,10 @@ impl Config {
             tmp_dir = %self.consumer.tmp_dir.display(),
             lc_min_points = self.lc_pipeline.min_points,
             lc_quality_mode = %self.lc_pipeline.quality_mode,
-            lc_sap_fallback = self.lc_pipeline.allow_sap_fallback,
-            lc_sigma_clip = ?self.lc_pipeline.sigma_clip,
+            tpf_quality_mode = %self.image_pipeline.tpf_quality_mode,
+            tpf_normalization = %self.image_pipeline.tpf_normalization,
+            ffi_normalization = %self.image_pipeline.ffi_normalization,
+            ffi_cutout_size = self.image_pipeline.ffi_cutout_size,
             "Configuration summary loaded"
         );
     }
