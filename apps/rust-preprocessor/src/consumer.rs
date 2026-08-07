@@ -8,9 +8,10 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-use crate::config::ConsumerConfig;
+use crate::config::{ConsumerConfig, LightCurveConfig};
 use crate::event::BronzeObjectReady;
-use crate::fits::{self, DecodedSource};
+use crate::fits::{self, DecodedProduct, DecodedSource};
+use crate::pipeline;
 use crate::storage::StorageClient;
 
 /// Subjects to subscribe from AURORA_BRONZE stream.
@@ -21,6 +22,7 @@ pub async fn run(
     jetstream: jetstream::Context,
     storage: Arc<StorageClient>,
     cfg: &ConsumerConfig,
+    lc_cfg: LightCurveConfig,
     cancel: CancellationToken,
 ) -> Result<()> {
     let stream = jetstream
@@ -111,6 +113,7 @@ pub async fn run(
 
                     let storage_ref = storage.clone();
                     let tmp_dir = cfg.tmp_dir.clone();
+                    let lc_config = lc_cfg.clone();
 
                     let batch_permit = if tasks.len() == 0 {
                         Some(permit)
@@ -119,7 +122,7 @@ pub async fn run(
                     };
 
                     tasks.spawn(async move {
-                        process_message(msg, storage_ref, tmp_dir, batch_permit).await;
+                        process_message(msg, storage_ref, tmp_dir, lc_config, batch_permit).await;
                     });
 
                     break;
@@ -149,12 +152,13 @@ pub async fn run(
 /// 1. Decode event JSON
 /// 2. Stat & verify object size in MinIO Bronze
 /// 3. Stream object to temp file & verify SHA-256 checksum on the fly
-/// 4. spawn_blocking FITS decode
+/// 4. spawn_blocking FITS decode + Phase 3.3 Light Curve preprocessing
 /// 5. ACK on success, NAK on error
 async fn process_message(
     msg: async_nats::jetstream::Message,
     storage: Arc<StorageClient>,
     tmp_dir: PathBuf,
+    lc_cfg: LightCurveConfig,
     _permit: Option<tokio::sync::OwnedSemaphorePermit>,
 ) {
     let subject = msg.subject.clone();
@@ -191,13 +195,13 @@ async fn process_message(
         "Processing event"
     );
 
-    match process_bronze_event(storage, &tmp_dir, event).await {
+    match process_bronze_event(storage, &tmp_dir, &lc_cfg, event).await {
         Ok(decoded) => {
             tracing::info!(
                 event_id = %event_id,
                 product = ?decoded.product,
-                lifecycle = "decoded",
-                "FITS decoded successfully"
+                lifecycle = "processed",
+                "FITS processed successfully (Phase 3.3)"
             );
 
             // TODO Phase 3.5: change ACK boundary to "Silver durable write → ACK"
@@ -221,10 +225,12 @@ async fn process_message(
     }
 }
 
-/// Helper function to perform storage fetch, verification, and blocking FITS decode.
+/// Helper function to perform storage fetch, verification, blocking FITS decode,
+/// and Phase 3.3 Light Curve scientific preprocessing.
 pub(crate) async fn process_bronze_event(
     storage: Arc<StorageClient>,
     tmp_dir: &PathBuf,
+    lc_cfg: &LightCurveConfig,
     event: BronzeObjectReady,
 ) -> Result<DecodedSource> {
     // 1. Stat & verify object size
@@ -243,15 +249,28 @@ pub(crate) async fn process_bronze_event(
         )
         .await?;
 
-    // 3. spawn_blocking for CPU/blocking FITS decode
+    // 3. spawn_blocking for CPU FITS decode + Phase 3.3 Light Curve preprocessing
     let event_clone = event.clone();
     let temp_path = temp_file.path.clone();
+    let lc_config = lc_cfg.clone();
 
-    let product = tokio::task::spawn_blocking(move || {
-        fits::decode(&temp_path, &event_clone)
+    let product = tokio::task::spawn_blocking(move || -> Result<DecodedProduct> {
+        let decoded = fits::decode(&temp_path, &event_clone)?;
+        if let DecodedProduct::LightCurve(raw_lc) = decoded {
+            let processed_lc = pipeline::lightcurve::preprocess_lc(raw_lc, &event_clone, &lc_config)?;
+            // Keep in DecodedProduct variant or wrap for downstream
+            tracing::info!(
+                object_key = %event_clone.object_key,
+                points = processed_lc.time.len(),
+                "Light Curve pipeline preprocessing finished"
+            );
+            Ok(DecodedProduct::LightCurve(raw_light_curve_from_processed(processed_lc)))
+        } else {
+            Ok(decoded)
+        }
     })
     .await
-    .context("FITS decode task panicked")??;
+    .context("FITS decode/preprocess task panicked")??;
 
     // `temp_file` goes out of scope here and automatically deletes the temporary FITS file.
 
@@ -259,6 +278,22 @@ pub(crate) async fn process_bronze_event(
         event,
         product,
     })
+}
+
+/// Helper converter if needed for DecodedProduct variant compatibility
+fn raw_light_curve_from_processed(lc: pipeline::lightcurve::ProcessedLightCurve) -> fits::RawLightCurve {
+    fits::RawLightCurve {
+        time: lc.time,
+        sap_flux: None,
+        sap_flux_err: None,
+        pdcsap_flux: Some(lc.flux),
+        pdcsap_flux_err: lc.flux_err,
+        quality: lc.quality,
+        tic_id: lc.tic_id,
+        sector: lc.sector,
+        camera: lc.camera,
+        ccd: lc.ccd,
+    }
 }
 
 pub(crate) fn parse_duration(s: &str) -> Duration {

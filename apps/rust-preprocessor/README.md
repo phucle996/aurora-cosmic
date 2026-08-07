@@ -3,11 +3,12 @@
 `aurora-preprocessor` consumes `bronze-object-ready` events from NATS JetStream,
 fetches raw FITS objects from MinIO Bronze, verifies object integrity and SHA-256 checksums,
 decodes Light Curve, TPF, and FFI FITS files into typed in-memory representations,
+performs scientific quality filtering and median normalization on Light Curves,
 and materializes normalized Arrow/Parquet outputs into MinIO Silver.
 
 ---
 
-## Phase 3.2 — Current Boundary
+## Phase 3.3 — Current Boundary
 
 ```text
 NATS JetStream (AURORA_BRONZE)
@@ -22,38 +23,40 @@ Rust Consumer
 Semaphore(N) — bounded Tokio concurrency
         |
         v
-MinIO Bronze GET (Async stream)
-        |
-        v
-Stream & Hash SHA-256 + Byte count
-        |
-        v
-Verify size & SHA-256 checksum
+MinIO Bronze GET (Async stream) + SHA-256 verification
         |
         v
 spawn_blocking
         |
-        v
-fits::decode (CFITSIO)
+        +--> FITS decode (CFITSIO)
         |
-  +-----+-----+
-  |     |     |
-  v     v     v
- RawLC RawTPF RawFFI
+        +--> Light Curve Pipeline Preprocessing
+                 |
+                 +-- 1. Select PDCSAP_FLUX (or SAP_FLUX fallback)
+                 +-- 2. Filter non-finite TIME/FLUX/FLUX_ERR values
+                 +-- 3. Strict quality filtering (QUALITY == 0)
+                 +-- 4. Time ascending sort & deterministic deduplication
+                 +-- 5. Median normalization (baseline = 0.0)
+                 +-- 6. Conservative outlier handling (optional, preserves transits)
+                 |
+                 v
+        ProcessedLightCurve
 ```
 
-**Implemented in Phase 3.2:**
-- MinIO Bronze object stat and size verification
-- Streaming MinIO GET with on-the-fly SHA-256 checksum & byte count computation
-- Temporary local file staging with auto-deletion on scope exit
-- `spawn_blocking` FITS decoding using `fitsio` (CFITSIO)
-- Decoded typed structures: `RawLightCurve`, `RawTargetPixel`, `RawFfi`
-- FITS header vs event identity validation (TIC ID, Sector)
+**Implemented in Phase 3.3:**
+- `pipeline::lightcurve::preprocess_lc`: pure CPU transformation
+- Deterministic quality filtering (Strict mode `quality == 0`)
+- Non-finite (`NaN` / `Inf`) value removal preserving row alignment
+- Baseline median normalization (`normalized_flux = (flux / median) - 1.0`)
+- Flux error normalization (`normalized_err = err / median`)
+- Time-series sorting and deduplication preserving observation gaps
+- Transit preservation (default configuration does NOT strip shallow dip signals)
+- Tracking pipeline metadata (`processor_version = "lc-preprocess-v1"`, counts for input/output/quality/invalid)
 
-**Not yet implemented in Phase 3.2:**
-- Light Curve scientific preprocessing (Phase 3.3)
+**Not yet implemented in Phase 3.3:**
 - TPF / FFI scientific preprocessing (Phase 3.4)
 - Silver Parquet write (Phase 3.5)
+- Detrending, phase folding, or transit search (Stage 5 Gold)
 
 ---
 
@@ -63,7 +66,7 @@ fits::decode (CFITSIO)
 src/
 ├── main.rs         — Entrypoint (tiny)
 ├── app.rs          — NATS & MinIO StorageClient initialization, shutdown wiring
-├── config.rs       — Configuration from environment
+├── config.rs       — Configuration from environment (including LightCurveConfig)
 ├── logger.rs       — Structured JSON logger
 ├── event.rs        — BronzeObjectReady + ProductKind typed structs
 ├── consumer.rs     — JetStream consumer, Semaphore, JoinSet, ACK/NAK/TERM
@@ -74,7 +77,11 @@ src/
 │   ├── lightcurve.rs — RawLightCurve, decode_lc
 │   └── image.rs    — RawTargetPixel, RawFfi, decode_tpf, decode_ffi
 │
-├── pipeline/       — Preprocessing pipelines (UNUSED until Phase 3.3+)
+├── pipeline/       — Scientific Preprocessing Pipelines (Phase 3.3+)
+│   ├── mod.rs      — Re-exports ProcessedLightCurve & preprocess_lc
+│   ├── lightcurve.rs — Pure CPU Light Curve quality filter & median normalization
+│   └── image.rs    — TPF / FFI pipeline (UNUSED until Phase 3.4)
+│
 ├── output/         — Silver materialization (UNUSED until Phase 3.5)
 │   └── silver.rs
 │
@@ -83,7 +90,8 @@ src/
     ├── config_tests.rs
     ├── consumer_tests.rs
     ├── event_tests.rs
-    └── fits_tests.rs
+    ├── fits_tests.rs
+    └── pipeline_lc_tests.rs
 ```
 
 ---
@@ -105,6 +113,10 @@ src/
 | `AURORA_PREPROCESS_ACK_WAIT` | ❌ | `30s` | JetStream ACK wait duration |
 | `AURORA_PREPROCESS_SHUTDOWN_TIMEOUT` | ❌ | `30` | Drain timeout in seconds on shutdown |
 | `AURORA_PREPROCESS_TMP_DIR` | ❌ | `/tmp/aurora-preprocessor` | Temp staging directory for FITS files |
+| `AURORA_LC_MIN_POINTS` | ❌ | `100` | Minimum points required for a valid Light Curve |
+| `AURORA_LC_QUALITY_MODE` | ❌ | `strict` | Quality mode (`strict` = keep quality==0, `none`) |
+| `AURORA_LC_ALLOW_SAP_FALLBACK` | ❌ | `false` | Fallback to SAP_FLUX if PDCSAP_FLUX is missing |
+| `AURORA_LC_SIGMA_CLIP` | ❌ | — | Optional sigma clipping threshold (disabled by default) |
 
 ---
 

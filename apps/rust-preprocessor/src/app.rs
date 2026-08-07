@@ -52,8 +52,9 @@ pub async fn run(config: Config) -> Result<()> {
 
     // 4. Spawn consumer task
     let cfg_consumer = config.consumer.clone();
+    let lc_config = config.lc_pipeline.clone();
     let consumer_task = tokio::spawn(async move {
-        if let Err(e) = consumer::run(jetstream, storage, &cfg_consumer, cancel_consumer).await {
+        if let Err(e) = consumer::run(jetstream, storage, &cfg_consumer, lc_config, cancel_consumer).await {
             tracing::error!(error = %e, "Consumer task exited with error");
         }
     });
