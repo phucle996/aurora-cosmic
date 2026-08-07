@@ -12,6 +12,6 @@ NATS     -> Event & Control Plane
 
 ## Documentation
 
-* [ARCH.md](ARCH.md) — System Architecture Specification
-* [STRUCTURE.md](STRUCTURE.md) — Monorepo Layout & Data Flow Isolation Rules
+* [ARCH.MD](ARCH.MD) — System Architecture Specification
+* [STRUCTURE.MD](STRUCTURE.MD) — Monorepo Layout & Data Flow Isolation Rules
 * [STAGE.MD](STAGE.MD) — 8-Stage Execution Roadmap
