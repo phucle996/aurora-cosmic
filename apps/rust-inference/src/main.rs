@@ -17,4 +17,6 @@ async fn main() {
         eprintln!("[aurora-inference] Runtime error: {}", e);
         std::process::exit(1);
     }
+
+    println!("[aurora-inference] Shutdown completed gracefully.");
 }
