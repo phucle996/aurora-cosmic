@@ -1,15 +1,14 @@
-import sys
 from aurora_ml.config import Config
 
+
 def main():
+    print("[aurora-ml-worker] Starting Python PyTorch ML worker service...")
     try:
         cfg = Config()
         cfg.log_summary()
-    except ValueError as err:
-        print(f"[aurora-ml-worker] Startup configuration error: {err}", file=sys.stderr)
-        sys.exit(1)
+    except Exception as e:
+        print(f"[aurora-ml-worker] Failed to start: {e}")
 
-    print("[aurora-ml-worker] Listening for Gold dataset training events...")
 
 if __name__ == "__main__":
     main()

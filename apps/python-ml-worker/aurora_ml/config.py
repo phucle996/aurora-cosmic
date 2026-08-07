@@ -1,5 +1,6 @@
 import os
 
+
 class Config:
     def __init__(self):
         self.env = self._require_env("AURORA_ENV")
@@ -10,7 +11,9 @@ class Config:
 
         self.device = self._require_env("AURORA_ML_DEVICE").lower()
         if self.device not in ("auto", "cpu", "cuda"):
-            raise ValueError(f"Invalid AURORA_ML_DEVICE: '{self.device}'. Must be 'auto', 'cpu', or 'cuda'")
+            raise ValueError(
+                f"Invalid AURORA_ML_DEVICE: '{self.device}'. Must be 'auto', 'cpu', or 'cuda'"
+            )
 
         try:
             self.batch_size = int(self._require_env("AURORA_ML_BATCH_SIZE"))
@@ -33,4 +36,6 @@ class Config:
         return val
 
     def log_summary(self):
-        print(f"[aurora-ml-worker] Config: env={self.env}, log_level={self.log_level}, device={self.device}, batch_size={self.batch_size}, vram={self.max_vram_mb}MB")
+        print(
+            f"[aurora-ml-worker] Config: env={self.env}, log_level={self.log_level}, device={self.device}, batch_size={self.batch_size}, vram={self.max_vram_mb}MB"
+        )
