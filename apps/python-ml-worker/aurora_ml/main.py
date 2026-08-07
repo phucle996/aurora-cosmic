@@ -15,8 +15,8 @@ def main():
         cfg = Config()
         logger.setLevel(cfg.log_level.upper())
         cfg.log_summary()
-    except Exception as e:
-        logger.exception(f"Failed to start: {e}")
+    except Exception:
+        logger.exception("Failed to start service")
 
 
 if __name__ == "__main__":
