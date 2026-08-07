@@ -1,4 +1,4 @@
-package ingest
+package model
 
 import (
 	"crypto/sha256"
@@ -8,15 +8,15 @@ import (
 	"time"
 )
 
-// Status represents the ingestion and event publishing outcome for a single product.
-type Status string
+// IngestStatus represents the ingestion and event publishing outcome for a single product.
+type IngestStatus string
 
 const (
-	StatusStored            Status = "STORED"
-	StatusSkipped           Status = "SKIPPED"
-	StatusFailed            Status = "FAILED"
-	StatusStoredEventFailed Status = "STORED_EVENT_FAILED"
-	StatusPublished         Status = "PUBLISHED"
+	StatusStored            IngestStatus = "STORED"
+	StatusSkipped           IngestStatus = "SKIPPED"
+	StatusFailed            IngestStatus = "FAILED"
+	StatusStoredEventFailed IngestStatus = "STORED_EVENT_FAILED"
+	StatusPublished         IngestStatus = "PUBLISHED"
 )
 
 // ProductResult captures the detailed result of ingesting one product.
@@ -25,7 +25,7 @@ type ProductResult struct {
 	ObjectKey       string
 	SizeBytes       int64
 	SHA256          string
-	Status          Status
+	Status          IngestStatus
 	Error           error
 }
 
@@ -42,21 +42,21 @@ type Summary struct {
 	ThroughputBps          float64
 }
 
-// hashedReader wraps an io.Reader, computing SHA256 and tracking byte count on the fly.
-type hashedReader struct {
+// HashedReader wraps an io.Reader, computing SHA256 and tracking byte count on the fly.
+type HashedReader struct {
 	r         io.Reader
 	h         hash.Hash
 	bytesRead int64
 }
 
-func newHashedReader(r io.Reader) *hashedReader {
-	return &hashedReader{
+func NewHashedReader(r io.Reader) *HashedReader {
+	return &HashedReader{
 		r: r,
 		h: sha256.New(),
 	}
 }
 
-func (hr *hashedReader) Read(p []byte) (int, error) {
+func (hr *HashedReader) Read(p []byte) (int, error) {
 	n, err := hr.r.Read(p)
 	if n > 0 {
 		hr.h.Write(p[:n])
@@ -65,10 +65,10 @@ func (hr *hashedReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func (hr *hashedReader) BytesRead() int64 {
+func (hr *HashedReader) BytesRead() int64 {
 	return hr.bytesRead
 }
 
-func (hr *hashedReader) SumHex() string {
+func (hr *HashedReader) SumHex() string {
 	return hex.EncodeToString(hr.h.Sum(nil))
 }

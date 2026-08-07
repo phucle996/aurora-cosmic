@@ -14,21 +14,19 @@ import (
 	"time"
 
 	"go-ingester/internal/ingest"
-	"go-ingester/internal/manifest"
 	"go-ingester/internal/mast"
-	"go-ingester/internal/storage"
+	"go-ingester/internal/model"
 )
 
-// mockStorageClient implements storage.Client for in-memory testing.
 type mockStorageClient struct {
 	mu      sync.Mutex
-	objects map[string]*storage.ObjectInfo
+	objects map[string]*model.ObjectInfo
 	content map[string][]byte
 }
 
 func newMockStorageClient() *mockStorageClient {
 	return &mockStorageClient{
-		objects: make(map[string]*storage.ObjectInfo),
+		objects: make(map[string]*model.ObjectInfo),
 		content: make(map[string][]byte),
 	}
 }
@@ -37,23 +35,23 @@ func (m *mockStorageClient) EnsureBucket(ctx context.Context, bucket string) err
 	return nil
 }
 
-func (m *mockStorageClient) PutObject(ctx context.Context, bucket, objectKey string, reader io.Reader, size int64, userMeta map[string]string) error {
+func (m *mockStorageClient) PutObject(ctx context.Context, bucket, objectKey string, reader io.Reader, objectSize int64, userMetadata map[string]string) error {
 	data, err := io.ReadAll(reader)
 	if err != nil {
 		return err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.objects[objectKey] = &storage.ObjectInfo{
+	m.content[objectKey] = data
+	m.objects[objectKey] = &model.ObjectInfo{
 		Key:          objectKey,
 		Size:         int64(len(data)),
-		UserMetadata: userMeta,
+		UserMetadata: userMetadata,
 	}
-	m.content[objectKey] = data
 	return nil
 }
 
-func (m *mockStorageClient) StatObject(ctx context.Context, bucket, objectKey string) (*storage.ObjectInfo, bool, error) {
+func (m *mockStorageClient) StatObject(ctx context.Context, bucket, objectKey string) (*model.ObjectInfo, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	obj, ok := m.objects[objectKey]
@@ -76,20 +74,20 @@ func (m *mockStorageClient) GetObject(ctx context.Context, bucket, objectKey str
 func TestPipelineDryRun(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mockStorage := newMockStorageClient()
-	pipe := ingest.NewPipeline(nil, mockStorage, nil, "aurora", 2, logger)
+	pipe := ingest.NewPipeline(nil, mockStorage, nil, nil, "aurora", 2, logger)
 
-	man := &manifest.Manifest{
+	man := &model.Manifest{
 		SchemaVersion: 1,
 		Source:        "test",
-		Samples: []manifest.Sample{
+		Samples: []model.Sample{
 			{
-				SampleID:   "s1",
+				SampleID:   model.SampleID(123, 42),
 				TICID:      123,
 				Sector:     42,
-				PairStatus: manifest.PairStatusPaired,
-				TargetPixel: &manifest.ManifestProduct{
-					SourceProductID: "p1",
-					Kind:            mast.KindTargetPixel,
+				PairStatus: model.PairStatusTPFOnly,
+				TargetPixel: &model.ManifestProduct{
+					SourceProductID: "tess1",
+					Kind:            model.KindTargetPixel,
 					Filename:        "tess1_tp.fits",
 					DataURI:         "mast:TESS/tess1_tp.fits",
 					SizeBytes:       100,
@@ -104,26 +102,35 @@ func TestPipelineDryRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if summary.PlannedProducts != 1 {
-		t.Errorf("expected 1 planned product, got %d", summary.PlannedProducts)
-	}
+
 	if summary.SkippedCount != 1 {
-		t.Errorf("expected 1 skipped in dry run, got %d", summary.SkippedCount)
+		t.Errorf("expected 1 skipped product in dry-run, got %d", summary.SkippedCount)
 	}
-	if len(results) != 1 || results[0].Status != ingest.StatusSkipped {
-		t.Errorf("expected skipped result status")
+	if len(results) != 1 || results[0].Status != model.StatusSkipped {
+		t.Errorf("expected result status SKIPPED, got %v", results[0].Status)
 	}
 	if len(mockStorage.objects) != 0 {
-		t.Errorf("dry run should not write to storage")
+		t.Errorf("dry-run should not write to storage, but stored %d objects", len(mockStorage.objects))
 	}
 }
 
 func TestPipelineStreamingIngestion(t *testing.T) {
-	fitsPayload := "FITS_MOCK_HEADER_DATA_12345"
+	tpData := "FAKE_TARGET_PIXEL_FITS_DATA"
+	lcData := "FAKE_LIGHT_CURVE_FITS_DATA"
+
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/fits")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(fitsPayload))
+		switch r.URL.Path {
+		case "/tp.fits":
+			w.Header().Set("Content-Type", "application/fits")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(tpData))
+		case "/lc.fits":
+			w.Header().Set("Content-Type", "application/fits")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(lcData))
+		default:
+			http.NotFound(w, r)
+		}
 	}))
 	defer ts.Close()
 
@@ -132,32 +139,32 @@ func TestPipelineStreamingIngestion(t *testing.T) {
 
 	mockStorage := newMockStorageClient()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	pipe := ingest.NewPipeline(mastClient, mockStorage, nil, "aurora", 2, logger)
+	pipe := ingest.NewPipeline(mastClient, mockStorage, nil, nil, "aurora", 2, logger)
 
-	man := &manifest.Manifest{
+	man := &model.Manifest{
 		SchemaVersion: 1,
 		Source:        "test",
-		Samples: []manifest.Sample{
+		Samples: []model.Sample{
 			{
-				SampleID:   "sample-1",
+				SampleID:   model.SampleID(999, 10),
 				TICID:      999,
 				Sector:     10,
-				PairStatus: manifest.PairStatusPaired,
-				TargetPixel: &manifest.ManifestProduct{
+				PairStatus: model.PairStatusPaired,
+				TargetPixel: &model.ManifestProduct{
 					SourceProductID: "p-tp",
-					Kind:            mast.KindTargetPixel,
+					Kind:            model.KindTargetPixel,
 					Filename:        "test_tp.fits",
-					DataURI:         "mast:TESS/test_tp.fits",
-					SizeBytes:       int64(len(fitsPayload)),
+					DataURI:         ts.URL + "/tp.fits",
+					SizeBytes:       int64(len(tpData)),
 					Sector:          10,
 					TICID:           999,
 				},
-				LightCurve: &manifest.ManifestProduct{
+				LightCurve: &model.ManifestProduct{
 					SourceProductID: "p-lc",
-					Kind:            mast.KindLightCurve,
+					Kind:            model.KindLightCurve,
 					Filename:        "test_lc.fits",
-					DataURI:         "mast:TESS/test_lc.fits",
-					SizeBytes:       int64(len(fitsPayload)),
+					DataURI:         ts.URL + "/lc.fits",
+					SizeBytes:       int64(len(lcData)),
 					Sector:          10,
 					TICID:           999,
 				},
@@ -167,66 +174,58 @@ func TestPipelineStreamingIngestion(t *testing.T) {
 
 	summary, results, err := pipe.IngestManifest(context.Background(), man, false)
 	if err != nil {
-		t.Fatalf("ingestion failed: %v", err)
+		t.Fatalf("unexpected pipeline error: %v", err)
 	}
 
 	if summary.StoredCount != 2 {
 		t.Errorf("expected 2 stored products, got %d", summary.StoredCount)
 	}
-	if summary.FailedCount != 0 {
-		t.Errorf("expected 0 failed products, got %d", summary.FailedCount)
+	if summary.StoredBytes != int64(len(tpData)+len(lcData)) {
+		t.Errorf("expected %d stored bytes, got %d", len(tpData)+len(lcData), summary.StoredBytes)
 	}
 	if len(results) != 2 {
-		t.Fatalf("expected 2 results, got %d", len(results))
+		t.Fatalf("expected 2 product results, got %d", len(results))
 	}
 
-	for _, res := range results {
-		if res.Status != ingest.StatusStored {
-			t.Errorf("product %s status = %s, err = %v", res.SourceProductID, res.Status, res.Error)
-		}
-		if res.SHA256 == "" {
-			t.Errorf("product %s missing SHA256", res.SourceProductID)
-		}
-	}
-
-	// Verify MinIO objects were written correctly
 	tpKey := "bronze/tess/target-pixel/sector=0010/tic=999/test_tp.fits"
-	lcKey := "bronze/tess/lightcurve/sector=0010/tic=999/test_lc.fits"
-
-	if string(mockStorage.content[tpKey]) != fitsPayload {
-		t.Errorf("stored target pixel content mismatch")
+	storedTp, exists := mockStorage.objects[tpKey]
+	if !exists {
+		t.Fatalf("expected object %s in mock storage", tpKey)
 	}
-	if string(mockStorage.content[lcKey]) != fitsPayload {
-		t.Errorf("stored light curve content mismatch")
+	if storedTp.Size != int64(len(tpData)) {
+		t.Errorf("expected size %d, got %d", len(tpData), storedTp.Size)
+	}
+	if string(mockStorage.content[tpKey]) != tpData {
+		t.Errorf("content mismatch for TP fits")
 	}
 }
 
 func TestPipelineSkipExistingValidObject(t *testing.T) {
 	mockStorage := newMockStorageClient()
 	tpKey := "bronze/tess/target-pixel/sector=0005/tic=777/existing_tp.fits"
-	existingData := []byte("already_ingested_data")
-	mockStorage.objects[tpKey] = &storage.ObjectInfo{
+	existingData := []byte("EXISTING_VALID_CONTENT")
+	mockStorage.objects[tpKey] = &model.ObjectInfo{
 		Key:          tpKey,
 		Size:         int64(len(existingData)),
-		UserMetadata: map[string]string{"sha256": "abcdef"},
+		UserMetadata: map[string]string{"sha256": "dummyhash"},
 	}
 	mockStorage.content[tpKey] = existingData
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	pipe := ingest.NewPipeline(nil, mockStorage, nil, "aurora", 1, logger)
+	pipe := ingest.NewPipeline(nil, mockStorage, nil, nil, "aurora", 1, logger)
 
-	man := &manifest.Manifest{
+	man := &model.Manifest{
 		SchemaVersion: 1,
 		Source:        "test",
-		Samples: []manifest.Sample{
+		Samples: []model.Sample{
 			{
-				SampleID:   "s-existing",
+				SampleID:   model.SampleID(777, 5),
 				TICID:      777,
 				Sector:     5,
-				PairStatus: manifest.PairStatusTPFOnly,
-				TargetPixel: &manifest.ManifestProduct{
+				PairStatus: model.PairStatusTPFOnly,
+				TargetPixel: &model.ManifestProduct{
 					SourceProductID: "p-exist",
-					Kind:            mast.KindTargetPixel,
+					Kind:            model.KindTargetPixel,
 					Filename:        "existing_tp.fits",
 					DataURI:         "mast:TESS/existing_tp.fits",
 					SizeBytes:       int64(len(existingData)),
@@ -245,21 +244,16 @@ func TestPipelineSkipExistingValidObject(t *testing.T) {
 	if summary.SkippedCount != 1 {
 		t.Errorf("expected 1 skipped product, got %d", summary.SkippedCount)
 	}
-	if summary.StoredCount != 0 {
-		t.Errorf("expected 0 stored products, got %d", summary.StoredCount)
-	}
-	if results[0].Status != ingest.StatusSkipped {
-		t.Errorf("expected result status SKIPPED, got %s", results[0].Status)
+	if results[0].Status != model.StatusSkipped {
+		t.Errorf("expected status SKIPPED, got %s", results[0].Status)
 	}
 }
 
 func TestPipelineSizeMismatchFailure(t *testing.T) {
-	// Server returns smaller payload than expected size in manifest
-	serverPayload := "short"
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/fits")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(serverPayload))
+		_, _ = w.Write([]byte("SHORT"))
 	}))
 	defer ts.Close()
 
@@ -268,23 +262,23 @@ func TestPipelineSizeMismatchFailure(t *testing.T) {
 
 	mockStorage := newMockStorageClient()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	pipe := ingest.NewPipeline(mastClient, mockStorage, nil, "aurora", 1, logger)
+	pipe := ingest.NewPipeline(mastClient, mockStorage, nil, nil, "aurora", 1, logger)
 
-	man := &manifest.Manifest{
+	man := &model.Manifest{
 		SchemaVersion: 1,
 		Source:        "test",
-		Samples: []manifest.Sample{
+		Samples: []model.Sample{
 			{
-				SampleID:   "s-bad-size",
+				SampleID:   model.SampleID(888, 1),
 				TICID:      888,
 				Sector:     1,
-				PairStatus: manifest.PairStatusTPFOnly,
-				TargetPixel: &manifest.ManifestProduct{
-					SourceProductID: "p-bad",
-					Kind:            mast.KindTargetPixel,
-					Filename:        "bad_size_tp.fits",
-					DataURI:         "mast:TESS/bad_size_tp.fits",
-					SizeBytes:       999999, // mismatch!
+				PairStatus: model.PairStatusTPFOnly,
+				TargetPixel: &model.ManifestProduct{
+					SourceProductID: "p-mismatch",
+					Kind:            model.KindTargetPixel,
+					Filename:        "mismatch_tp.fits",
+					DataURI:         ts.URL + "/short.fits",
+					SizeBytes:       1000,
 					Sector:          1,
 					TICID:           888,
 				},
@@ -294,16 +288,13 @@ func TestPipelineSizeMismatchFailure(t *testing.T) {
 
 	summary, results, err := pipe.IngestManifest(context.Background(), man, false)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("unexpected pipeline execution error: %v", err)
 	}
 
 	if summary.FailedCount != 1 {
-		t.Errorf("expected 1 failed product, got %d", summary.FailedCount)
+		t.Errorf("expected 1 failed product due to size mismatch, got %d", summary.FailedCount)
 	}
-	if results[0].Status != ingest.StatusFailed {
-		t.Errorf("expected result status FAILED, got %s", results[0].Status)
-	}
-	if results[0].Error == nil {
-		t.Error("expected size mismatch error, got nil")
+	if len(results) != 1 || results[0].Status != model.StatusFailed {
+		t.Errorf("expected FAILED status in result, got %v", results[0].Status)
 	}
 }

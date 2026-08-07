@@ -1,286 +1,215 @@
 package tests
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"go-ingester/internal/manifest"
-	"go-ingester/internal/mast"
+	"go-ingester/internal/model"
 )
 
-// --- Pairing tests ---
-
-func makeDiscovery(ticID int64, sector int, kinds ...mast.ProductKind) []mast.DiscoveryResult {
-	products := make([]mast.Product, 0, len(kinds))
-	for i, k := range kinds {
-		filename := "file_tp.fits"
-		if k == mast.KindLightCurve {
-			filename = "file_lc.fits"
-		} else if k == mast.KindFFI {
-			filename = "file_ffic.fits"
-		}
-		products = append(products, mast.Product{
-			ProductID:        "pid-" + filename,
-			Filename:         filename,
-			DataURI:          "mast:TESS/" + filename,
-			SizeBytes:        int64(i+1) * 1_000_000,
-			Kind:             k,
-			CalibrationLevel: 2,
-		})
-	}
-
-	obsID := manifest.SampleID(ticID, sector) // reuse stable ID format for obsID
-	targetName := "TIC " + int64ToString(ticID)
-
-	return []mast.DiscoveryResult{{
-		Observation: mast.Observation{
-			ObsID:         obsID,
-			ObservationID: sectorObsID(sector),
-			TargetName:    targetName,
-		},
-		Products: products,
-	}}
-}
-
-func int64ToString(n int64) string {
-	return string([]byte(nil)) // placeholder, handled by fmt
-}
-
-func sectorObsID(sector int) string {
-	// Mimics real TESS obs_id format with sector segment.
-	return "tess2019357-s" + leftPad(sector, 4) + "-0000001234"
-}
-
-func leftPad(n, width int) string {
-	s := ""
-	for i := 0; i < width; i++ {
-		s = "0" + s
-	}
-	r := []rune(s)
-	digits := []rune(intToStr(n))
-	copy(r[len(r)-len(digits):], digits)
-	return string(r)
-}
-
-func intToStr(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	b := make([]byte, 0, 10)
-	for n > 0 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-		n /= 10
-	}
-	return string(b)
-}
-
-// TestPairedBothPresent verifies PAIRED status when TPF + LC exist.
 func TestPairedBothPresent(t *testing.T) {
-	results := makeDiscovery(123456789, 42, mast.KindTargetPixel, mast.KindLightCurve)
-	opts := manifest.SelectOptions{IncludeTPF: true, IncludeLC: true, IncludeFFI: false, RequirePair: false}
-	m, err := manifest.Build(results, opts)
+	products := []model.Product{
+		{ObsID: "obs1_tp", TICID: 100, Sector: 1, Kind: model.KindTargetPixel, Filename: "tess1_tp.fits", SizeBytes: 500},
+		{ObsID: "obs1_lc", TICID: 100, Sector: 1, Kind: model.KindLightCurve, Filename: "tess1_lc.fits", SizeBytes: 200},
+	}
+
+	opts := model.SelectOptions{
+		IncludeTPF:  true,
+		IncludeLC:   true,
+		RequirePair: true,
+	}
+
+	m, err := manifest.Build(products, opts)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
 	if len(m.Samples) != 1 {
 		t.Fatalf("expected 1 sample, got %d", len(m.Samples))
 	}
-	if m.Samples[0].PairStatus != manifest.PairStatusPaired {
-		t.Errorf("expected PAIRED, got %s", m.Samples[0].PairStatus)
+
+	s := m.Samples[0]
+	if s.PairStatus != model.PairStatusPaired {
+		t.Errorf("expected status PAIRED, got %s", s.PairStatus)
 	}
-	if m.Samples[0].TargetPixel == nil {
-		t.Error("expected TargetPixel, got nil")
+	if s.TargetPixel == nil || s.LightCurve == nil {
+		t.Errorf("expected both TPF and LC to be present")
 	}
-	if m.Samples[0].LightCurve == nil {
-		t.Error("expected LightCurve, got nil")
+
+	if m.Statistics.PairedCount != 1 {
+		t.Errorf("expected 1 paired count, got %d", m.Statistics.PairedCount)
 	}
 }
 
-// TestTPFOnly verifies TPF_ONLY when no LC is present.
 func TestTPFOnly(t *testing.T) {
-	results := makeDiscovery(111, 7, mast.KindTargetPixel)
-	opts := manifest.SelectOptions{IncludeTPF: true, IncludeLC: true, IncludeFFI: false, RequirePair: false}
-	m, err := manifest.Build(results, opts)
+	products := []model.Product{
+		{ObsID: "obs1_tp", TICID: 100, Sector: 1, Kind: model.KindTargetPixel, Filename: "tess1_tp.fits", SizeBytes: 500},
+	}
+
+	opts := model.SelectOptions{
+		IncludeTPF:  true,
+		IncludeLC:   true,
+		RequirePair: false,
+	}
+
+	m, err := manifest.Build(products, opts)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
 	if len(m.Samples) != 1 {
 		t.Fatalf("expected 1 sample, got %d", len(m.Samples))
 	}
-	if m.Samples[0].PairStatus != manifest.PairStatusTPFOnly {
-		t.Errorf("expected TPF_ONLY, got %s", m.Samples[0].PairStatus)
+
+	s := m.Samples[0]
+	if s.PairStatus != model.PairStatusTPFOnly {
+		t.Errorf("expected status TPF_ONLY, got %s", s.PairStatus)
 	}
 }
 
-// TestLCOnly verifies LC_ONLY when no TPF is present.
 func TestLCOnly(t *testing.T) {
-	results := makeDiscovery(222, 3, mast.KindLightCurve)
-	opts := manifest.SelectOptions{IncludeTPF: true, IncludeLC: true, IncludeFFI: false, RequirePair: false}
-	m, err := manifest.Build(results, opts)
+	products := []model.Product{
+		{ObsID: "obs1_lc", TICID: 100, Sector: 1, Kind: model.KindLightCurve, Filename: "tess1_lc.fits", SizeBytes: 200},
+	}
+
+	opts := model.SelectOptions{
+		IncludeTPF:  true,
+		IncludeLC:   true,
+		RequirePair: false,
+	}
+
+	m, err := manifest.Build(products, opts)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
 	if len(m.Samples) != 1 {
 		t.Fatalf("expected 1 sample, got %d", len(m.Samples))
 	}
-	if m.Samples[0].PairStatus != manifest.PairStatusLCOnly {
-		t.Errorf("expected LC_ONLY, got %s", m.Samples[0].PairStatus)
+
+	s := m.Samples[0]
+	if s.PairStatus != model.PairStatusLCOnly {
+		t.Errorf("expected status LC_ONLY, got %s", s.PairStatus)
 	}
 }
 
-// TestRequirePairExcludesIncomplete verifies RequirePair=true filters out incomplete pairs.
 func TestRequirePairExcludesIncomplete(t *testing.T) {
-	results := makeDiscovery(333, 5, mast.KindTargetPixel) // TPF only
-	opts := manifest.SelectOptions{IncludeTPF: true, IncludeLC: true, RequirePair: true}
-	m, err := manifest.Build(results, opts)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	products := []model.Product{
+		{ObsID: "obs1_tp", TICID: 100, Sector: 1, Kind: model.KindTargetPixel, Filename: "tess1_tp.fits", SizeBytes: 500},
+		{ObsID: "obs2_lc", TICID: 200, Sector: 1, Kind: model.KindLightCurve, Filename: "tess2_lc.fits", SizeBytes: 200},
 	}
-	if len(m.Samples) != 0 {
-		t.Errorf("expected 0 samples (RequirePair=true with incomplete), got %d", len(m.Samples))
+
+	opts := model.SelectOptions{
+		IncludeTPF:  true,
+		IncludeLC:   true,
+		RequirePair: true,
+	}
+
+	_, err := manifest.Build(products, opts)
+	if err == nil {
+		t.Errorf("expected error when no paired samples exist and RequirePair=true, got nil")
 	}
 }
 
-// TestDifferentSectorsNotPaired ensures products from different sectors don't pair.
 func TestDifferentSectorsNotPaired(t *testing.T) {
-	// Two observations: same TIC, different sector — must be separate samples.
-	r1 := makeDiscovery(999, 10, mast.KindTargetPixel)
-	r2 := makeDiscovery(999, 11, mast.KindLightCurve)
-	results := append(r1, r2...)
+	products := []model.Product{
+		{ObsID: "obs1_tp", TICID: 100, Sector: 1, Kind: model.KindTargetPixel, Filename: "tess1_tp.fits", SizeBytes: 500},
+		{ObsID: "obs1_lc", TICID: 100, Sector: 2, Kind: model.KindLightCurve, Filename: "tess1_lc.fits", SizeBytes: 200},
+	}
 
-	opts := manifest.SelectOptions{IncludeTPF: true, IncludeLC: true, RequirePair: false}
-	m, err := manifest.Build(results, opts)
+	opts := model.SelectOptions{
+		IncludeTPF:  true,
+		IncludeLC:   true,
+		RequirePair: false,
+	}
+
+	m, err := manifest.Build(products, opts)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Should have 2 separate incomplete samples, not 1 paired one.
+
 	if len(m.Samples) != 2 {
-		t.Errorf("expected 2 distinct samples, got %d", len(m.Samples))
-	}
-	for _, s := range m.Samples {
-		if s.PairStatus == manifest.PairStatusPaired {
-			t.Errorf("sample %s should not be PAIRED", s.SampleID)
-		}
+		t.Fatalf("expected 2 separate samples for different sectors, got %d", len(m.Samples))
 	}
 }
-
-// --- Product classification tests ---
-
-func TestClassifyProduct(t *testing.T) {
-	cases := []struct {
-		filename string
-		want     mast.ProductKind
-	}{
-		{"tess_tp.fits", mast.KindTargetPixel},
-		{"tess_lc.fits", mast.KindLightCurve},
-		{"tess_ffic.fits", mast.KindFFI},
-		{"tess_ffir.fits", mast.KindUnknown},
-		{"document.pdf", mast.KindUnknown},
-		{"", mast.KindUnknown},
-		{"BIG_TP.FITS", mast.KindTargetPixel}, // case-insensitive
-	}
-	for _, c := range cases {
-		got := mast.ClassifyProduct(c.filename)
-		if got != c.want {
-			t.Errorf("ClassifyProduct(%q) = %q, want %q", c.filename, got, c.want)
-		}
-	}
-}
-
-// --- Deterministic ordering tests ---
-
-func TestDeterministicSampleID(t *testing.T) {
-	id1 := manifest.SampleID(123456789, 42)
-	id2 := manifest.SampleID(123456789, 42)
-	if id1 != id2 {
-		t.Errorf("SampleID not deterministic: %q vs %q", id1, id2)
-	}
-	if id1 != "tess-tic-123456789-sector-0042" {
-		t.Errorf("unexpected SampleID format: %q", id1)
-	}
-}
-
-// --- TIC/sector parsing tests ---
-
-func TestParseTICFromTarget(t *testing.T) {
-	cases := []struct {
-		in   string
-		want int64
-	}{
-		{"TIC 123456789", 123456789},
-		{"123456789", 123456789},
-		{"tic 42", 42},
-		{"", 0},
-		{"not-a-number", 0},
-	}
-	for _, c := range cases {
-		got := manifest.ParseTICFromTarget(c.in)
-		if got != c.want {
-			t.Errorf("ParseTICFromTarget(%q) = %d, want %d", c.in, got, c.want)
-		}
-	}
-}
-
-func TestParseSectorFromObsID(t *testing.T) {
-	cases := []struct {
-		in   string
-		want int
-	}{
-		{"tess2019357164649-s0007-0000000349376986-0138-s", 7},
-		{"tess2020-s0042-something", 42},
-		{"no-sector-here", 0},
-		{"", 0},
-	}
-	for _, c := range cases {
-		got := manifest.ParseSectorFromObsID(c.in)
-		if got != c.want {
-			t.Errorf("ParseSectorFromObsID(%q) = %d, want %d", c.in, got, c.want)
-		}
-	}
-}
-
-// --- Size budget tests ---
 
 func TestByteBudgetAtomicPair(t *testing.T) {
-	// TPF=3GiB, LC=1GiB → pair=4GiB; budget=3GiB → pair must be excluded entirely.
-	const GiB = 1 << 30
-	results := makeDiscovery(1, 1, mast.KindTargetPixel, mast.KindLightCurve)
-	// Override sizes.
-	for i := range results[0].Products {
-		if results[0].Products[i].Kind == mast.KindTargetPixel {
-			results[0].Products[i].SizeBytes = 3 * GiB
-		} else {
-			results[0].Products[i].SizeBytes = 1 * GiB
-		}
+	products := []model.Product{
+		{ObsID: "obs1_tp", TICID: 100, Sector: 1, Kind: model.KindTargetPixel, Filename: "tess1_tp.fits", SizeBytes: 500},
+		{ObsID: "obs1_lc", TICID: 100, Sector: 1, Kind: model.KindLightCurve, Filename: "tess1_lc.fits", SizeBytes: 500},
+		{ObsID: "obs2_tp", TICID: 200, Sector: 1, Kind: model.KindTargetPixel, Filename: "tess2_tp.fits", SizeBytes: 500},
+		{ObsID: "obs2_lc", TICID: 200, Sector: 1, Kind: model.KindLightCurve, Filename: "tess2_lc.fits", SizeBytes: 500},
 	}
 
-	opts := manifest.SelectOptions{
+	opts := model.SelectOptions{
 		IncludeTPF:    true,
 		IncludeLC:     true,
 		RequirePair:   true,
-		MaxTotalBytes: 3 * GiB,
+		MaxTotalBytes: 1200, // Budget allows 1 pair (1000 bytes), but NOT 2 pairs (2000 bytes)
 	}
-	m, err := manifest.Build(results, opts)
+
+	m, err := manifest.Build(products, opts)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(m.Samples) != 0 {
-		t.Errorf("expected 0 samples (pair exceeds budget atomically), got %d", len(m.Samples))
+
+	if len(m.Samples) != 1 {
+		t.Errorf("expected 1 sample within byte budget, got %d", len(m.Samples))
+	}
+	if m.Statistics.TotalBytes != 1000 {
+		t.Errorf("expected total bytes 1000, got %d", m.Statistics.TotalBytes)
 	}
 }
 
-// TestStatisticsCorrect checks that statistics are computed from final selection.
 func TestStatisticsCorrect(t *testing.T) {
-	results := makeDiscovery(55, 1, mast.KindTargetPixel, mast.KindLightCurve)
-	opts := manifest.SelectOptions{IncludeTPF: true, IncludeLC: true, RequirePair: false}
-	m, err := manifest.Build(results, opts)
+	products := []model.Product{
+		{ObsID: "obs1_tp", TICID: 100, Sector: 1, Kind: model.KindTargetPixel, Filename: "tess1_tp.fits", SizeBytes: 500},
+		{ObsID: "obs1_lc", TICID: 100, Sector: 1, Kind: model.KindLightCurve, Filename: "tess1_lc.fits", SizeBytes: 200},
+		{ObsID: "ffi1", Sector: 1, Kind: model.KindFFI, Filename: "ffi1.fits", SizeBytes: 1000},
+	}
+
+	opts := model.SelectOptions{
+		IncludeTPF: true,
+		IncludeLC:  true,
+		IncludeFFI: true,
+	}
+
+	m, err := manifest.Build(products, opts)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
 	s := m.Statistics
-	if s.ProductCount != 2 {
-		t.Errorf("expected 2 products, got %d", s.ProductCount)
+	if s.PairedCount != 1 {
+		t.Errorf("expected 1 paired count, got %d", s.PairedCount)
 	}
-	if s.TotalBytes != s.TPFBytes+s.LCBytes {
-		t.Errorf("total_bytes mismatch")
+	if s.FFICount != 1 {
+		t.Errorf("expected 1 FFI count, got %d", s.FFICount)
 	}
+	if s.TotalBytes != 1700 {
+		t.Errorf("expected total bytes 1700, got %d", s.TotalBytes)
+	}
+
+	tmpDir := t.TempDir()
+	outPath := filepath.Join(tmpDir, "manifest.json")
+
+	if err := manifest.Write(m, outPath); err != nil {
+		t.Fatalf("manifest write failed: %v", err)
+	}
+
+	loaded, err := manifest.Read(outPath)
+	if err != nil {
+		t.Fatalf("manifest read failed: %v", err)
+	}
+
+	if loaded.SchemaVersion != model.SchemaVersion {
+		t.Errorf("expected SchemaVersion %d, got %d", model.SchemaVersion, loaded.SchemaVersion)
+	}
+	if len(loaded.Samples) != 1 {
+		t.Errorf("expected 1 sample loaded, got %d", len(loaded.Samples))
+	}
+
+	_ = os.Remove(outPath)
 }

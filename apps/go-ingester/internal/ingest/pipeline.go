@@ -9,17 +9,15 @@ import (
 	"time"
 
 	"go-ingester/internal/checkpoint"
-	"go-ingester/internal/events"
-	"go-ingester/internal/manifest"
 	"go-ingester/internal/mast"
-	"go-ingester/internal/storage"
+	"go-ingester/internal/model"
 )
 
 // Pipeline manages the bounded concurrent streaming of FITS files into MinIO and event publishing with Checkpoint persistence.
 type Pipeline struct {
 	mastClient  *mast.Client
-	minioClient storage.Client
-	publisher   events.Publisher
+	minioClient model.Client
+	publisher   model.Publisher
 	cpManager   *checkpoint.Manager
 	bucket      string
 	concurrency int
@@ -27,7 +25,7 @@ type Pipeline struct {
 }
 
 // NewPipeline constructs an ingestion Pipeline.
-func NewPipeline(mastClient *mast.Client, minioClient storage.Client, publisher events.Publisher, cpManager *checkpoint.Manager, bucket string, concurrency int, log *slog.Logger) *Pipeline {
+func NewPipeline(mastClient *mast.Client, minioClient model.Client, publisher model.Publisher, cpManager *checkpoint.Manager, bucket string, concurrency int, log *slog.Logger) *Pipeline {
 	if concurrency <= 0 {
 		concurrency = 4
 	}
@@ -43,7 +41,7 @@ func NewPipeline(mastClient *mast.Client, minioClient storage.Client, publisher 
 }
 
 // IngestManifest processes all products in the manifest using bounded worker goroutines.
-func (p *Pipeline) IngestManifest(ctx context.Context, m *manifest.Manifest, dryRun bool) (*Summary, []ProductResult, error) {
+func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun bool) (*model.Summary, []model.ProductResult, error) {
 	startTime := time.Now()
 
 	// Ensure destination bucket exists if not in dry-run mode.
@@ -54,7 +52,7 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *manifest.Manifest, dry
 	}
 
 	// 1. Collect all products from manifest.
-	var allProducts []manifest.ManifestProduct
+	var allProducts []model.ManifestProduct
 	for _, s := range m.Samples {
 		if s.TargetPixel != nil {
 			allProducts = append(allProducts, *s.TargetPixel)
@@ -66,11 +64,11 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *manifest.Manifest, dry
 	allProducts = append(allProducts, m.FFIs...)
 
 	if len(allProducts) == 0 {
-		return &Summary{Elapsed: time.Since(startTime)}, nil, nil
+		return &model.Summary{Elapsed: time.Since(startTime)}, nil, nil
 	}
 
-	resultsChan := make(chan ProductResult, len(allProducts))
-	var productsToDownload []manifest.ManifestProduct
+	resultsChan := make(chan model.ProductResult, len(allProducts))
+	var productsToDownload []model.ManifestProduct
 	var storedBytesCounter int64
 
 	// 2. Checkpoint recovery & filtering before queueing downloads.
@@ -80,7 +78,7 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *manifest.Manifest, dry
 			if ok {
 				res, handled := p.recoverCheckpointProduct(ctx, prod, pc)
 				if handled {
-					if res.Status == StatusStored || res.Status == StatusPublished || res.Status == StatusStoredEventFailed {
+					if res.Status == model.StatusStored || res.Status == model.StatusPublished || res.Status == model.StatusStoredEventFailed {
 						atomic.AddInt64(&storedBytesCounter, res.SizeBytes)
 					}
 					resultsChan <- res
@@ -93,7 +91,7 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *manifest.Manifest, dry
 	}
 
 	// 3. Set up worker channel for remaining download jobs.
-	jobs := make(chan manifest.ManifestProduct, len(productsToDownload))
+	jobs := make(chan model.ManifestProduct, len(productsToDownload))
 	for _, prod := range productsToDownload {
 		jobs <- prod
 	}
@@ -112,9 +110,9 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *manifest.Manifest, dry
 			for prod := range jobs {
 				select {
 				case <-ctx.Done():
-					resultsChan <- ProductResult{
+					resultsChan <- model.ProductResult{
 						SourceProductID: prod.SourceProductID,
-						Status:          StatusFailed,
+						Status:          model.StatusFailed,
 						Error:           ctx.Err(),
 					}
 					continue
@@ -122,23 +120,23 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *manifest.Manifest, dry
 				}
 
 				if p.cpManager != nil {
-					p.cpManager.UpdateProductState(prod.SourceProductID, checkpoint.StateDownloading, 0, "", nil)
+					p.cpManager.UpdateProductState(prod.SourceProductID, model.StateDownloading, 0, "", nil)
 				}
 
 				res := p.ingestProduct(ctx, prod, dryRun)
-				if res.Status == StatusStored || res.Status == StatusPublished || res.Status == StatusStoredEventFailed {
+				if res.Status == model.StatusStored || res.Status == model.StatusPublished || res.Status == model.StatusStoredEventFailed {
 					atomic.AddInt64(&storedBytesCounter, res.SizeBytes)
 				}
 
 				// Update checkpoint state after download worker completes.
 				if p.cpManager != nil && !dryRun {
 					switch res.Status {
-					case StatusPublished:
-						p.cpManager.UpdateProductState(prod.SourceProductID, checkpoint.StatePublished, res.SizeBytes, res.SHA256, nil)
-					case StatusStored, StatusStoredEventFailed:
-						p.cpManager.UpdateProductState(prod.SourceProductID, checkpoint.StateStored, res.SizeBytes, res.SHA256, res.Error)
-					case StatusFailed:
-						p.cpManager.UpdateProductState(prod.SourceProductID, checkpoint.StateFailed, res.SizeBytes, res.SHA256, res.Error)
+					case model.StatusPublished:
+						p.cpManager.UpdateProductState(prod.SourceProductID, model.StatePublished, res.SizeBytes, res.SHA256, nil)
+					case model.StatusStored, model.StatusStoredEventFailed:
+						p.cpManager.UpdateProductState(prod.SourceProductID, model.StateStored, res.SizeBytes, res.SHA256, res.Error)
+					case model.StatusFailed:
+						p.cpManager.UpdateProductState(prod.SourceProductID, model.StateFailed, res.SizeBytes, res.SHA256, res.Error)
 					}
 					_ = p.cpManager.Flush(ctx)
 				}
@@ -152,8 +150,8 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *manifest.Manifest, dry
 	close(resultsChan)
 
 	// 4. Summarise results and finalize checkpoint run status.
-	results := make([]ProductResult, 0, len(allProducts))
-	summary := &Summary{
+	results := make([]model.ProductResult, 0, len(allProducts))
+	summary := &model.Summary{
 		PlannedProducts: len(allProducts),
 		StoredBytes:     storedBytesCounter,
 	}
@@ -161,16 +159,16 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *manifest.Manifest, dry
 	for res := range resultsChan {
 		results = append(results, res)
 		switch res.Status {
-		case StatusPublished:
+		case model.StatusPublished:
 			summary.PublishedCount++
-		case StatusStored:
+		case model.StatusStored:
 			summary.StoredCount++
-		case StatusSkipped:
+		case model.StatusSkipped:
 			summary.SkippedCount++
-		case StatusStoredEventFailed:
+		case model.StatusStoredEventFailed:
 			summary.StoredEventFailedCount++
 			summary.StoredCount++
-		case StatusFailed:
+		case model.StatusFailed:
 			summary.FailedCount++
 		}
 	}

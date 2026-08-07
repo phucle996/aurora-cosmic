@@ -5,81 +5,38 @@ import (
 	"sync"
 	"time"
 
-	"go-ingester/internal/manifest"
-	"go-ingester/internal/storage"
+	"go-ingester/internal/model"
 )
 
 // Manager provides thread-safe access and persistence for an active ingestion Checkpoint.
 type Manager struct {
-	mu     sync.RWMutex
-	cp     *Checkpoint
-	store  *Store
-	bucket string
+	mu    sync.RWMutex
+	cp    *model.Checkpoint
+	store *Store
 }
 
 // NewManager creates or wraps a Checkpoint Manager.
-func NewManager(store *Store, cp *Checkpoint) *Manager {
+func NewManager(store *Store, cp *model.Checkpoint) *Manager {
 	return &Manager{
 		cp:    cp,
 		store: store,
 	}
 }
 
-// CreateNewInitialCheckpoint initializes a fresh Checkpoint for a manifest.
-func CreateNewInitialCheckpoint(runID string, manifestPath string, manifestHash string, products []manifest.ManifestProduct) *Checkpoint {
-	prodMap := make(map[string]*ProductCheckpoint, len(products))
-	now := time.Now().UTC()
-
-	for _, p := range products {
-		key, _ := storage.BuildObjectKey(p)
-		sampleID := ""
-		if p.TICID > 0 && p.Sector > 0 {
-			sampleID = manifest.SampleID(p.TICID, p.Sector)
-		}
-
-		prodMap[p.SourceProductID] = &ProductCheckpoint{
-			SourceProductID:   p.SourceProductID,
-			SampleID:          sampleID,
-			ProductKind:       p.Kind,
-			SourceURI:         p.DataURI,
-			ObjectKey:         key,
-			ExpectedSizeBytes: p.SizeBytes,
-			State:             StatePlanned,
-			Attempts:          0,
-			Sector:            p.Sector,
-			TICID:             p.TICID,
-			Camera:            p.Camera,
-			CCD:               p.CCD,
-			UpdatedAt:         now,
-		}
-	}
-
-	return &Checkpoint{
-		SchemaVersion: SchemaVersion,
-		RunID:         runID,
-		Status:        RunStatusRunning,
-		ManifestPath:  manifestPath,
-		ManifestHash:  manifestHash,
-		StartedAt:     now,
-		UpdatedAt:     now,
-		Products:      prodMap,
-	}
-}
-
 // GetProductCheckpoint returns a thread-safe copy of a product's checkpoint state.
-func (m *Manager) GetProductCheckpoint(productID string) (ProductCheckpoint, bool) {
+func (m *Manager) GetProductCheckpoint(productID string) (model.ProductCheckpoint, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	pc, ok := m.cp.Products[productID]
 	if !ok {
-		return ProductCheckpoint{}, false
+		return model.ProductCheckpoint{}, false
 	}
 	return *pc, true
 }
 
 // UpdateProductState updates a product's state, attempt count, size, sha256, and last error.
-func (m *Manager) UpdateProductState(productID string, state ProductState, size int64, sha256 string, lastErr error) {
+func (m *Manager) UpdateProductState(productID string, state model.ProductState, size int64, sha256 string, lastErr error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -89,7 +46,7 @@ func (m *Manager) UpdateProductState(productID string, state ProductState, size 
 	}
 
 	pc.State = state
-	if state == StateDownloading {
+	if state == model.StateDownloading {
 		pc.Attempts++
 	}
 	if size > 0 {
@@ -100,7 +57,7 @@ func (m *Manager) UpdateProductState(productID string, state ProductState, size 
 	}
 	if lastErr != nil {
 		pc.LastError = lastErr.Error()
-	} else if state == StateStored || state == StatePublished {
+	} else if state == model.StateStored || state == model.StatePublished {
 		pc.LastError = ""
 	}
 	pc.UpdatedAt = time.Now().UTC()
@@ -108,7 +65,7 @@ func (m *Manager) UpdateProductState(productID string, state ProductState, size 
 }
 
 // FinalizeRun updates overall run status based on product final states.
-func (m *Manager) FinalizeRun() RunStatus {
+func (m *Manager) FinalizeRun() model.RunStatus {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -116,19 +73,19 @@ func (m *Manager) FinalizeRun() RunStatus {
 	allDone := true
 
 	for _, pc := range m.cp.Products {
-		if pc.State == StateFailed {
+		if pc.State == model.StateFailed {
 			hasFailures = true
-		} else if pc.State != StatePublished && pc.State != StateStored {
+		} else if pc.State != model.StatePublished && pc.State != model.StateStored {
 			allDone = false
 		}
 	}
 
 	if allDone && !hasFailures {
-		m.cp.Status = RunStatusCompleted
+		m.cp.Status = model.RunStatusCompleted
 	} else if hasFailures {
-		m.cp.Status = RunStatusCompletedWithFailures
+		m.cp.Status = model.RunStatusCompletedWithFailures
 	} else {
-		m.cp.Status = RunStatusRunning
+		m.cp.Status = model.RunStatusRunning
 	}
 
 	return m.cp.Status
@@ -146,7 +103,7 @@ func (m *Manager) Flush(ctx context.Context) error {
 }
 
 // GetCheckpoint returns the underlying Checkpoint pointer.
-func (m *Manager) GetCheckpoint() *Checkpoint {
+func (m *Manager) GetCheckpoint() *model.Checkpoint {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.cp

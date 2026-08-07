@@ -10,6 +10,7 @@ import (
 	"go-ingester/internal/config"
 	"go-ingester/internal/manifest"
 	"go-ingester/internal/mast"
+	"go-ingester/internal/model"
 )
 
 // runPlan executes the `aurora-ingester plan` subcommand.
@@ -45,7 +46,7 @@ func runPlan(ctx context.Context, cfg *config.Config, log *slog.Logger, args []s
 		return fmt.Errorf("discovery: %w", err)
 	}
 
-	opts := manifest.SelectOptions{
+	opts := model.SelectOptions{
 		IncludeTPF:    cfg.Manifest.IncludeTPF,
 		IncludeLC:     cfg.Manifest.IncludeLC,
 		IncludeFFI:    cfg.Manifest.IncludeFFI,

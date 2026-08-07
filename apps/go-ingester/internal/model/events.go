@@ -1,11 +1,9 @@
-package events
+package model
 
 import (
+	"context"
 	"fmt"
 	"time"
-
-	"go-ingester/internal/manifest"
-	"go-ingester/internal/mast"
 )
 
 const (
@@ -36,35 +34,44 @@ type BronzeObjectReady struct {
 	SHA256          string    `json:"sha256"`
 }
 
+// Publisher defines the interface for publishing Bronze object readiness events to NATS JetStream.
+type Publisher interface {
+	PublishBronzeReady(ctx context.Context, evt *BronzeObjectReady) error
+	Close() error
+}
+
 // SubjectForKind maps ProductKind to its designated NATS subject.
-func SubjectForKind(kind mast.ProductKind) (string, error) {
+func SubjectForKind(kind ProductKind) (string, error) {
 	switch kind {
-	case mast.KindTargetPixel:
+	case KindTargetPixel:
 		return SubjectBronzeTargetPixel, nil
-	case mast.KindLightCurve:
+	case KindLightCurve:
 		return SubjectBronzeLightCurve, nil
-	case mast.KindFFI:
+	case KindFFI:
 		return SubjectBronzeFFI, nil
 	default:
 		return "", fmt.Errorf("events: unknown product kind %q", kind)
 	}
 }
 
-// BuildBronzeEvent constructs a BronzeObjectReady event struct.
-func BuildBronzeEvent(eventID string, bucket string, prod manifest.ManifestProduct, objectKey string, sha256Hex string) (*BronzeObjectReady, error) {
+// BuildBronzeEvent constructs a validated BronzeObjectReady event struct.
+func BuildBronzeEvent(eventID, bucket string, prod ManifestProduct, objectKey, sha256 string) (*BronzeObjectReady, error) {
 	if eventID == "" {
-		return nil, fmt.Errorf("events: missing event_id")
+		return nil, fmt.Errorf("events: eventID cannot be empty")
+	}
+	if bucket == "" {
+		return nil, fmt.Errorf("events: bucket cannot be empty")
 	}
 	if objectKey == "" {
-		return nil, fmt.Errorf("events: missing object_key")
+		return nil, fmt.Errorf("events: objectKey cannot be empty")
 	}
-	if sha256Hex == "" {
-		return nil, fmt.Errorf("events: missing sha256")
+	if sha256 == "" {
+		return nil, fmt.Errorf("events: sha256 checksum cannot be empty")
 	}
 
 	sampleID := ""
 	if prod.TICID > 0 && prod.Sector > 0 {
-		sampleID = manifest.SampleID(prod.TICID, prod.Sector)
+		sampleID = SampleID(prod.TICID, prod.Sector)
 	}
 
 	return &BronzeObjectReady{
@@ -81,6 +88,6 @@ func BuildBronzeEvent(eventID string, bucket string, prod manifest.ManifestProdu
 		Camera:          prod.Camera,
 		CCD:             prod.CCD,
 		SizeBytes:       prod.SizeBytes,
-		SHA256:          sha256Hex,
+		SHA256:          sha256,
 	}, nil
 }

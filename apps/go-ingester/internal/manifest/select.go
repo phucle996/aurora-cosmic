@@ -3,291 +3,177 @@ package manifest
 import (
 	"fmt"
 	"sort"
-	"strings"
-	"time"
 
-	"go-ingester/internal/mast"
+	"go-ingester/internal/model"
 )
 
-// SelectOptions controls the selection / pairing policy.
-type SelectOptions struct {
-	IncludeTPF       bool
-	IncludeLC        bool
-	IncludeFFI       bool
-	RequirePair      bool  // when true, only PAIRED samples are eligible
-	MaxSamples       int   // 0 = unlimited
-	MaxFFI           int   // 0 = unlimited
-	MaxTotalBytes    int64 // 0 = unlimited
-}
+// Build constructs a deterministic Manifest from MAST discovery products and SelectOptions.
+func Build(discovered []model.Product, opts model.SelectOptions) (*model.Manifest, error) {
+	bySample := make(map[string][]model.Product)
+	var ffis []model.Product
 
-// DefaultSelectOptions returns the recommended production defaults.
-func DefaultSelectOptions() SelectOptions {
-	return SelectOptions{
-		IncludeTPF:  true,
-		IncludeLC:   true,
-		IncludeFFI:  true,
-		RequirePair: true,
+	for _, p := range discovered {
+		switch p.Kind {
+		case model.KindTargetPixel, model.KindLightCurve:
+			if p.TICID > 0 && p.Sector > 0 {
+				sid := model.SampleID(p.TICID, p.Sector)
+				bySample[sid] = append(bySample[sid], p)
+			}
+		case model.KindFFI:
+			ffis = append(ffis, p)
+		}
 	}
-}
 
-// rawEntry is an intermediate product with its resolved identity fields.
-type rawEntry struct {
-	obsID   string
-	ticID   int64
-	sector  int
-	product mast.Product
-}
+	sampleKeys := make([]string, 0, len(bySample))
+	for k := range bySample {
+		sampleKeys = append(sampleKeys, k)
+	}
+	sort.Strings(sampleKeys)
 
-// Build converts raw MAST discovery results into a fully-validated Manifest.
-func Build(results []mast.DiscoveryResult, opts SelectOptions) (*Manifest, error) {
-	// 1. Collect and classify all products.
+	var samples []model.Sample
+	var tpfCount, lcCount, pairedCount int
+	var tpfBytes, lcBytes int64
 
-	var tpfLC []rawEntry
-	var ffis  []rawEntry
+	for _, k := range sampleKeys {
+		prods := bySample[k]
+		var tpf, lc *model.ManifestProduct
 
-	for _, r := range results {
-		ticID := ParseTICFromTarget(r.Observation.TargetName)
-		sector := ParseSectorFromObsID(r.Observation.ObservationID)
-
-		for _, p := range r.Products {
-			e := rawEntry{obsID: r.Observation.ObsID, ticID: ticID, sector: sector, product: p}
-			switch p.Kind {
-			case mast.KindTargetPixel, mast.KindLightCurve:
-				tpfLC = append(tpfLC, e)
-			case mast.KindFFI:
-				ffis = append(ffis, e)
+		for _, p := range prods {
+			mp := model.ManifestProduct{
+				SourceProductID: p.ObsID,
+				Kind:            p.Kind,
+				Filename:        p.Filename,
+				DataURI:         p.DataURI,
+				SizeBytes:       p.SizeBytes,
+				Sector:          p.Sector,
+				TICID:           p.TICID,
+			}
+			if p.Kind == model.KindTargetPixel && opts.IncludeTPF && tpf == nil {
+				tpf = &mp
+			} else if p.Kind == model.KindLightCurve && opts.IncludeLC && lc == nil {
+				lc = &mp
 			}
 		}
-	}
 
-	// 2. Sort deterministically before any limit/selection.
-	sort.Slice(tpfLC, func(i, j int) bool {
-		a, b := tpfLC[i], tpfLC[j]
-		if a.sector != b.sector {
-			return a.sector < b.sector
-		}
-		if a.ticID != b.ticID {
-			return a.ticID < b.ticID
-		}
-		if a.product.Kind != b.product.Kind {
-			return a.product.Kind < b.product.Kind
-		}
-		return a.product.Filename < b.product.Filename
-	})
-	sort.Slice(ffis, func(i, j int) bool {
-		a, b := ffis[i], ffis[j]
-		if a.sector != b.sector {
-			return a.sector < b.sector
-		}
-		if a.product.Filename != b.product.Filename {
-			return a.product.Filename < b.product.Filename
-		}
-		return a.product.DataURI < b.product.DataURI
-	})
-
-	// 3. Group TPF/LC by SampleKey and select preferred product per slot.
-	type bucket struct {
-		tpfCandidates []rawEntry
-		lcCandidates  []rawEntry
-	}
-	grouped := make(map[SampleKey]*bucket)
-	keyOrder := make([]SampleKey, 0)
-
-	for _, e := range tpfLC {
-		k := SampleKey{TICID: e.ticID, Sector: e.sector}
-		b, ok := grouped[k]
-		if !ok {
-			b = &bucket{}
-			grouped[k] = b
-			keyOrder = append(keyOrder, k)
-		}
-		switch e.product.Kind {
-		case mast.KindTargetPixel:
-			b.tpfCandidates = append(b.tpfCandidates, e)
-		case mast.KindLightCurve:
-			b.lcCandidates = append(b.lcCandidates, e)
-		}
-	}
-
-	// 4. Build samples, applying pair policy and byte budget.
-	var samples []Sample
-	var totalBytes int64
-
-	for _, k := range keyOrder {
-		if opts.MaxSamples > 0 && len(samples) >= opts.MaxSamples {
-			break
+		status := model.PairStatusPaired
+		if tpf != nil && lc == nil {
+			status = model.PairStatusTPFOnly
+		} else if tpf == nil && lc != nil {
+			status = model.PairStatusLCOnly
 		}
 
-		b := grouped[k]
-		var tpf, lc *ManifestProduct
-
-		if opts.IncludeTPF && len(b.tpfCandidates) > 0 {
-			selected := selectPreferred(b.tpfCandidates)
-			mp := toManifestProduct(selected, k)
-			tpf = &mp
-		}
-		if opts.IncludeLC && len(b.lcCandidates) > 0 {
-			selected := selectPreferred(b.lcCandidates)
-			mp := toManifestProduct(selected, k)
-			lc = &mp
-		}
-
-		status := pairStatus(tpf, lc)
-		if opts.RequirePair && status != PairStatusPaired {
+		if opts.RequirePair && status != model.PairStatusPaired {
 			continue
 		}
 
-		// Byte budget — treat pair atomically.
-		sampleBytes := productBytes(tpf) + productBytes(lc)
-		if opts.MaxTotalBytes > 0 && totalBytes+sampleBytes > opts.MaxTotalBytes {
-			break
+		if tpf == nil && lc == nil {
+			continue
 		}
 
-		samples = append(samples, Sample{
-			SampleID:    SampleID(k.TICID, k.Sector),
-			TICID:       k.TICID,
-			Sector:      k.Sector,
+		sample := model.Sample{
+			SampleID:    k,
 			PairStatus:  status,
 			TargetPixel: tpf,
 			LightCurve:  lc,
-		})
-		totalBytes += sampleBytes
-	}
+		}
 
-	// 5. FFI selection — independent from TPF/LC budget.
-	var manifestFFIs []ManifestProduct
-	var ffiBytesUsed int64
+		if tpf != nil {
+			sample.TICID = tpf.TICID
+			sample.Sector = tpf.Sector
+		} else if lc != nil {
+			sample.TICID = lc.TICID
+			sample.Sector = lc.Sector
+		}
 
-	for _, e := range ffis {
-		if opts.MaxFFI > 0 && len(manifestFFIs) >= opts.MaxFFI {
+		samples = append(samples, sample)
+
+		if status == model.PairStatusPaired {
+			pairedCount++
+		}
+		if tpf != nil {
+			tpfCount++
+			tpfBytes += tpf.SizeBytes
+		}
+		if lc != nil {
+			lcCount++
+			lcBytes += lc.SizeBytes
+		}
+
+		if opts.MaxSamples > 0 && len(samples) >= opts.MaxSamples {
 			break
 		}
-		mp := toManifestProduct(e, SampleKey{})
-		manifestFFIs = append(manifestFFIs, mp)
-		ffiBytesUsed += mp.SizeBytes
 	}
 
-	// 6. Validate selected entries.
-	for _, s := range samples {
-		if err := validateSample(s); err != nil {
-			return nil, fmt.Errorf("manifest: invalid sample %s: %w", s.SampleID, err)
+	var selectedFFIs []model.ManifestProduct
+	var ffiBytes int64
+
+	if opts.IncludeFFI {
+		sort.Slice(ffis, func(i, j int) bool {
+			return ffis[i].Filename < ffis[j].Filename
+		})
+
+		for _, f := range ffis {
+			if opts.MaxFFI > 0 && len(selectedFFIs) >= opts.MaxFFI {
+				break
+			}
+			mp := model.ManifestProduct{
+				SourceProductID: f.ObsID,
+				Kind:            f.Kind,
+				Filename:        f.Filename,
+				DataURI:         f.DataURI,
+				SizeBytes:       f.SizeBytes,
+				Sector:          f.Sector,
+			}
+			selectedFFIs = append(selectedFFIs, mp)
+			ffiBytes += f.SizeBytes
 		}
 	}
-	for _, f := range manifestFFIs {
-		if err := validateProduct(f); err != nil {
-			return nil, fmt.Errorf("manifest: invalid ffi %s: %w", f.Filename, err)
+
+	totalBytes := tpfBytes + lcBytes + ffiBytes
+
+	if opts.MaxTotalBytes > 0 && totalBytes > opts.MaxTotalBytes {
+		var prunedSamples []model.Sample
+		var currentBytes int64
+		for _, s := range samples {
+			sampleBytes := int64(0)
+			if s.TargetPixel != nil {
+				sampleBytes += s.TargetPixel.SizeBytes
+			}
+			if s.LightCurve != nil {
+				sampleBytes += s.LightCurve.SizeBytes
+			}
+			if currentBytes+sampleBytes > opts.MaxTotalBytes {
+				break
+			}
+			prunedSamples = append(prunedSamples, s)
+			currentBytes += sampleBytes
 		}
+		samples = prunedSamples
+		totalBytes = currentBytes
 	}
 
-	stats := ComputeStatistics(samples, manifestFFIs)
-	_ = ffiBytesUsed // already in stats
+	stats := model.Statistics{
+		PairedCount:  pairedCount,
+		TPFOnlyCount: tpfCount - pairedCount,
+		LCOnlyCount:  lcCount - pairedCount,
+		FFICount:     len(selectedFFIs),
+		TPFBytes:     tpfBytes,
+		LCBytes:      lcBytes,
+		FFIBytes:     ffiBytes,
+		TotalBytes:   totalBytes,
+	}
 
-	return &Manifest{
-		SchemaVersion: SchemaVersion,
-		CreatedAt:     time.Now().UTC(),
-		Source:        "NASA-MAST-TESS",
-		Statistics:    stats,
+	manifest := &model.Manifest{
+		SchemaVersion: model.SchemaVersion,
+		Source:        "NASA MAST API",
 		Samples:       samples,
-		FFIs:          manifestFFIs,
-	}, nil
-}
+		FFIs:          selectedFFIs,
+		Statistics:    stats,
+	}
 
-// selectPreferred picks the best product from a set of candidates for the same
-// slot. Priority: highest calibration level, then newer source version, then
-// stable filename as tie-breaker.
-func selectPreferred(candidates []rawEntry) rawEntry {
-	best := candidates[0]
-	for _, c := range candidates[1:] {
-		if c.product.CalibrationLevel > best.product.CalibrationLevel {
-			best = c
-			continue
-		}
-		if c.product.CalibrationLevel == best.product.CalibrationLevel {
-			if compareVersion(c.product.SourceVersion, best.product.SourceVersion) > 0 {
-				best = c
-				continue
-			}
-			// Tie-break: lexicographically stable filename.
-			if c.product.CalibrationLevel == best.product.CalibrationLevel &&
-				c.product.SourceVersion == best.product.SourceVersion &&
-				c.product.Filename < best.product.Filename {
-				best = c
-			}
-		}
+	if len(samples) == 0 && len(selectedFFIs) == 0 {
+		return manifest, fmt.Errorf("manifest: selection produced 0 products")
 	}
-	return best
-}
 
-// compareVersion does a simple lexicographic comparison for source version strings.
-func compareVersion(a, b string) int {
-	return strings.Compare(a, b)
-}
-
-// toManifestProduct converts a raw discovery entry into a ManifestProduct.
-func toManifestProduct(e rawEntry, k SampleKey) ManifestProduct {
-	return ManifestProduct{
-		SourceProductID:  e.product.ProductID,
-		ObsID:            e.obsID,
-		Kind:             e.product.Kind,
-		Filename:         e.product.Filename,
-		DataURI:          e.product.DataURI,
-		SizeBytes:        e.product.SizeBytes,
-		Sector:           k.Sector,
-		TICID:            k.TICID,
-		CalibrationLevel: e.product.CalibrationLevel,
-		SourceVersion:    e.product.SourceVersion,
-	}
-}
-
-func pairStatus(tpf, lc *ManifestProduct) PairStatus {
-	switch {
-	case tpf != nil && lc != nil:
-		return PairStatusPaired
-	case tpf != nil:
-		return PairStatusTPFOnly
-	default:
-		return PairStatusLCOnly
-	}
-}
-
-func productBytes(p *ManifestProduct) int64 {
-	if p == nil {
-		return 0
-	}
-	return p.SizeBytes
-}
-
-// validateSample checks required identity fields on a Sample.
-func validateSample(s Sample) error {
-	if s.SampleID == "" {
-		return fmt.Errorf("missing sample_id")
-	}
-	if s.Sector <= 0 {
-		return fmt.Errorf("missing or invalid sector")
-	}
-	if s.TargetPixel != nil {
-		if err := validateProduct(*s.TargetPixel); err != nil {
-			return fmt.Errorf("target_pixel: %w", err)
-		}
-	}
-	if s.LightCurve != nil {
-		if err := validateProduct(*s.LightCurve); err != nil {
-			return fmt.Errorf("light_curve: %w", err)
-		}
-	}
-	return nil
-}
-
-// validateProduct checks required fields on a ManifestProduct.
-func validateProduct(p ManifestProduct) error {
-	if p.DataURI == "" {
-		return fmt.Errorf("missing data_uri for %s", p.Filename)
-	}
-	if p.SizeBytes < 0 {
-		return fmt.Errorf("negative size_bytes for %s", p.Filename)
-	}
-	if p.Kind == mast.KindUnknown {
-		return fmt.Errorf("unsupported product kind for %s", p.Filename)
-	}
-	return nil
+	return manifest, nil
 }

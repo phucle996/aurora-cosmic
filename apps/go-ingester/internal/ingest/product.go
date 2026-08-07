@@ -5,23 +5,21 @@ import (
 	"fmt"
 	"log/slog"
 
-	"go-ingester/internal/events"
-	"go-ingester/internal/manifest"
-	"go-ingester/internal/storage"
+	"go-ingester/internal/model"
 )
 
 // ingestProduct processes a single ManifestProduct: key building -> MAST streaming -> MinIO PutObject -> verification -> NATS event publish.
-func (p *Pipeline) ingestProduct(ctx context.Context, prod manifest.ManifestProduct, dryRun bool) ProductResult {
-	objectKey, err := storage.BuildObjectKey(prod)
+func (p *Pipeline) ingestProduct(ctx context.Context, prod model.ManifestProduct, dryRun bool) model.ProductResult {
+	objectKey, err := model.BuildObjectKey(prod)
 	if err != nil {
-		return ProductResult{
+		return model.ProductResult{
 			SourceProductID: prod.SourceProductID,
-			Status:          StatusFailed,
+			Status:          model.StatusFailed,
 			Error:           fmt.Errorf("build key: %w", err),
 		}
 	}
 
-	subject, _ := events.SubjectForKind(prod.Kind)
+	subject, _ := model.SubjectForKind(prod.Kind)
 
 	if dryRun {
 		p.log.Info("[DRY-RUN] plan object key and event",
@@ -30,11 +28,11 @@ func (p *Pipeline) ingestProduct(ctx context.Context, prod manifest.ManifestProd
 			slog.String("object_key", objectKey),
 			slog.String("event_subject", subject),
 		)
-		return ProductResult{
+		return model.ProductResult{
 			SourceProductID: prod.SourceProductID,
 			ObjectKey:       objectKey,
 			SizeBytes:       prod.SizeBytes,
-			Status:          StatusSkipped,
+			Status:          model.StatusSkipped,
 		}
 	}
 
@@ -53,8 +51,8 @@ func (p *Pipeline) ingestProduct(ctx context.Context, prod manifest.ManifestProd
 			)
 			sha := info.UserMetadata["sha256"]
 			res := p.publishOnly(ctx, prod, objectKey, info.Size, sha)
-			if res.Status == StatusStored {
-				res.Status = StatusSkipped
+			if res.Status == model.StatusStored {
+				res.Status = model.StatusSkipped
 			}
 			return res
 		}
@@ -63,11 +61,11 @@ func (p *Pipeline) ingestProduct(ctx context.Context, prod manifest.ManifestProd
 			slog.Int64("existing_size", info.Size),
 			slog.Int64("expected_size", prod.SizeBytes),
 		)
-		return ProductResult{
+		return model.ProductResult{
 			SourceProductID: prod.SourceProductID,
 			ObjectKey:       objectKey,
 			SizeBytes:       info.Size,
-			Status:          StatusFailed,
+			Status:          model.StatusFailed,
 			Error:           fmt.Errorf("existing size %d != expected %d", info.Size, prod.SizeBytes),
 		}
 	}
@@ -75,10 +73,10 @@ func (p *Pipeline) ingestProduct(ctx context.Context, prod manifest.ManifestProd
 	// Stream product from MAST API.
 	stream, streamSize, err := p.mastClient.OpenProduct(ctx, prod.DataURI)
 	if err != nil {
-		return ProductResult{
+		return model.ProductResult{
 			SourceProductID: prod.SourceProductID,
 			ObjectKey:       objectKey,
-			Status:          StatusFailed,
+			Status:          model.StatusFailed,
 			Error:           fmt.Errorf("open mast stream: %w", err),
 		}
 	}
@@ -89,7 +87,7 @@ func (p *Pipeline) ingestProduct(ctx context.Context, prod manifest.ManifestProd
 		uploadSize = prod.SizeBytes
 	}
 
-	hr := newHashedReader(stream)
+	hr := model.NewHashedReader(stream)
 
 	userMeta := map[string]string{
 		"source-product-id": prod.SourceProductID,
@@ -103,10 +101,10 @@ func (p *Pipeline) ingestProduct(ctx context.Context, prod manifest.ManifestProd
 
 	// Stream into MinIO.
 	if err := p.minioClient.PutObject(ctx, p.bucket, objectKey, hr, uploadSize, userMeta); err != nil {
-		return ProductResult{
+		return model.ProductResult{
 			SourceProductID: prod.SourceProductID,
 			ObjectKey:       objectKey,
-			Status:          StatusFailed,
+			Status:          model.StatusFailed,
 			Error:           fmt.Errorf("minio put: %w", err),
 		}
 	}
@@ -115,12 +113,12 @@ func (p *Pipeline) ingestProduct(ctx context.Context, prod manifest.ManifestProd
 
 	// Size verification: check uploaded bytes match expected bytes.
 	if prod.SizeBytes > 0 && hr.BytesRead() != prod.SizeBytes {
-		return ProductResult{
+		return model.ProductResult{
 			SourceProductID: prod.SourceProductID,
 			ObjectKey:       objectKey,
 			SizeBytes:       hr.BytesRead(),
 			SHA256:          sha256Hex,
-			Status:          StatusFailed,
+			Status:          model.StatusFailed,
 			Error:           fmt.Errorf("stream size mismatch: read %d != expected %d", hr.BytesRead(), prod.SizeBytes),
 		}
 	}
@@ -128,22 +126,22 @@ func (p *Pipeline) ingestProduct(ctx context.Context, prod manifest.ManifestProd
 	// Post-upload StatObject verification.
 	statInfo, statExists, statErr := p.minioClient.StatObject(ctx, p.bucket, objectKey)
 	if statErr != nil || !statExists {
-		return ProductResult{
+		return model.ProductResult{
 			SourceProductID: prod.SourceProductID,
 			ObjectKey:       objectKey,
 			SizeBytes:       hr.BytesRead(),
 			SHA256:          sha256Hex,
-			Status:          StatusFailed,
+			Status:          model.StatusFailed,
 			Error:           fmt.Errorf("post-upload verify failed for %s: %v", objectKey, statErr),
 		}
 	}
 	if prod.SizeBytes > 0 && statInfo.Size != prod.SizeBytes {
-		return ProductResult{
+		return model.ProductResult{
 			SourceProductID: prod.SourceProductID,
 			ObjectKey:       objectKey,
 			SizeBytes:       statInfo.Size,
 			SHA256:          sha256Hex,
-			Status:          StatusFailed,
+			Status:          model.StatusFailed,
 			Error:           fmt.Errorf("post-upload size mismatch: %d != expected %d", statInfo.Size, prod.SizeBytes),
 		}
 	}

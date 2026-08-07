@@ -11,20 +11,18 @@ import (
 	"testing"
 	"time"
 
-	"go-ingester/internal/events"
 	"go-ingester/internal/ingest"
-	"go-ingester/internal/manifest"
 	"go-ingester/internal/mast"
+	"go-ingester/internal/model"
 )
 
-// mockPublisher records published events for unit testing.
 type mockPublisher struct {
 	mu        sync.Mutex
-	published []*events.BronzeObjectReady
+	published []*model.BronzeObjectReady
 	failNext  bool
 }
 
-func (m *mockPublisher) PublishBronzeReady(ctx context.Context, evt *events.BronzeObjectReady) error {
+func (m *mockPublisher) PublishBronzeReady(ctx context.Context, evt *model.BronzeObjectReady) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.failNext {
@@ -34,66 +32,72 @@ func (m *mockPublisher) PublishBronzeReady(ctx context.Context, evt *events.Bron
 	return nil
 }
 
-func (m *mockPublisher) Close() {}
+func (m *mockPublisher) Close() error {
+	return nil
+}
 
 func TestSubjectMapping(t *testing.T) {
-	cases := []struct {
-		kind mast.ProductKind
-		want string
-	}{
-		{mast.KindTargetPixel, events.SubjectBronzeTargetPixel},
-		{mast.KindLightCurve, events.SubjectBronzeLightCurve},
-		{mast.KindFFI, events.SubjectBronzeFFI},
-	}
-	for _, c := range cases {
-		got, err := events.SubjectForKind(c.kind)
-		if err != nil {
-			t.Fatalf("unexpected error for kind %s: %v", c.kind, err)
-		}
-		if got != c.want {
-			t.Errorf("SubjectForKind(%s) = %q, want %q", c.kind, got, c.want)
-		}
+	tpfSub, err := model.SubjectForKind(model.KindTargetPixel)
+	if err != nil || tpfSub != model.SubjectBronzeTargetPixel {
+		t.Errorf("expected %s, got %s (err: %v)", model.SubjectBronzeTargetPixel, tpfSub, err)
 	}
 
-	if _, err := events.SubjectForKind(mast.KindUnknown); err == nil {
-		t.Errorf("expected error for UNKNOWN product kind")
+	lcSub, err := model.SubjectForKind(model.KindLightCurve)
+	if err != nil || lcSub != model.SubjectBronzeLightCurve {
+		t.Errorf("expected %s, got %s (err: %v)", model.SubjectBronzeLightCurve, lcSub, err)
+	}
+
+	ffiSub, err := model.SubjectForKind(model.KindFFI)
+	if err != nil || ffiSub != model.SubjectBronzeFFI {
+		t.Errorf("expected %s, got %s (err: %v)", model.SubjectBronzeFFI, ffiSub, err)
+	}
+
+	_, err = model.SubjectForKind(model.KindUnknown)
+	if err == nil {
+		t.Errorf("expected error for KindUnknown, got nil")
 	}
 }
 
 func TestBuildBronzeEvent(t *testing.T) {
-	prod := manifest.ManifestProduct{
+	prod := model.ManifestProduct{
 		SourceProductID: "p123",
-		Kind:            mast.KindTargetPixel,
+		Kind:            model.KindTargetPixel,
+		Filename:        "tess_tp.fits",
+		DataURI:         "mast:TESS/tess_tp.fits",
+		SizeBytes:       1024,
 		Sector:          42,
 		TICID:           123456789,
-		SizeBytes:       1000,
 	}
 
-	evt, err := events.BuildBronzeEvent("evt-1", "aurora", prod, "bronze/key.fits", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	evt, err := model.BuildBronzeEvent("evt-1", "aurora", prod, "bronze/tess/target-pixel/sector=0042/tic=123456789/tess_tp.fits", "hash123")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	if evt.EventID != "evt-1" {
-		t.Errorf("got event_id %q, want evt-1", evt.EventID)
+		t.Errorf("expected EventID evt-1, got %s", evt.EventID)
 	}
-	if evt.EventType != events.EventTypeBronzeObjectReady {
-		t.Errorf("got event_type %q, want %q", evt.EventType, events.EventTypeBronzeObjectReady)
+	if evt.EventType != model.EventTypeBronzeObjectReady {
+		t.Errorf("expected EventType %s, got %s", model.EventTypeBronzeObjectReady, evt.EventType)
 	}
-	if evt.SampleID != "tess-tic-123456789-sector-0042" {
-		t.Errorf("got sample_id %q, want tess-tic-123456789-sector-0042", evt.SampleID)
+	if evt.Bucket != "aurora" {
+		t.Errorf("expected Bucket aurora, got %s", evt.Bucket)
 	}
-	if evt.ObjectKey != "bronze/key.fits" {
-		t.Errorf("got object_key %q", evt.ObjectKey)
+	if evt.TICID != 123456789 || evt.Sector != 42 {
+		t.Errorf("expected TIC 123456789 / Sector 42, got TIC %d / Sector %d", evt.TICID, evt.Sector)
+	}
+	if evt.SampleID != "sample:tic=123456789:sector=0042" {
+		t.Errorf("expected SampleID sample:tic=123456789:sector=0042, got %s", evt.SampleID)
 	}
 }
 
 func TestPipelinePublishOrdering(t *testing.T) {
-	fitsPayload := "FITS_ORDERING_TEST"
+	fitsData := "VALID_FITS_DATA_PAYLOAD"
+
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/fits")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(fitsPayload))
+		_, _ = w.Write([]byte(fitsData))
 	}))
 	defer ts.Close()
 
@@ -103,23 +107,23 @@ func TestPipelinePublishOrdering(t *testing.T) {
 	mockStorage := newMockStorageClient()
 	mockPub := &mockPublisher{}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	pipe := ingest.NewPipeline(mastClient, mockStorage, mockPub, "aurora", 1, logger)
+	pipe := ingest.NewPipeline(mastClient, mockStorage, mockPub, nil, "aurora", 1, logger)
 
-	man := &manifest.Manifest{
+	man := &model.Manifest{
 		SchemaVersion: 1,
 		Source:        "test",
-		Samples: []manifest.Sample{
+		Samples: []model.Sample{
 			{
-				SampleID:   "s-order",
+				SampleID:   model.SampleID(100, 1),
 				TICID:      100,
 				Sector:     1,
-				PairStatus: manifest.PairStatusTPFOnly,
-				TargetPixel: &manifest.ManifestProduct{
+				PairStatus: model.PairStatusTPFOnly,
+				TargetPixel: &model.ManifestProduct{
 					SourceProductID: "p-order",
-					Kind:            mast.KindTargetPixel,
+					Kind:            model.KindTargetPixel,
 					Filename:        "order_tp.fits",
-					DataURI:         "mast:TESS/order_tp.fits",
-					SizeBytes:       int64(len(fitsPayload)),
+					DataURI:         ts.URL + "/order_tp.fits",
+					SizeBytes:       int64(len(fitsData)),
 					Sector:          1,
 					TICID:           100,
 				},
@@ -129,36 +133,38 @@ func TestPipelinePublishOrdering(t *testing.T) {
 
 	summary, results, err := pipe.IngestManifest(context.Background(), man, false)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("unexpected pipeline error: %v", err)
 	}
 
 	if summary.PublishedCount != 1 {
-		t.Errorf("expected 1 published event, got %d", summary.PublishedCount)
+		t.Errorf("expected 1 published count, got %d", summary.PublishedCount)
 	}
-	if len(results) != 1 || results[0].Status != ingest.StatusPublished {
-		t.Errorf("expected StatusPublished, got %s", results[0].Status)
+	if len(results) != 1 || results[0].Status != model.StatusPublished {
+		t.Errorf("expected result status PUBLISHED, got %v", results[0].Status)
 	}
 
-	// Verify MinIO object was written BEFORE publisher was called
-	tpKey := "bronze/tess/target-pixel/sector=0001/tic=100/order_tp.fits"
-	if _, ok := mockStorage.objects[tpKey]; !ok {
-		t.Errorf("expected storage object to exist")
+	// Verify MinIO storage verification happened BEFORE event publish
+	key := "bronze/tess/target-pixel/sector=0001/tic=100/order_tp.fits"
+	if _, exists := mockStorage.objects[key]; !exists {
+		t.Fatalf("MinIO object key %s missing", key)
 	}
 
 	if len(mockPub.published) != 1 {
-		t.Fatalf("expected 1 event published, got %d", len(mockPub.published))
+		t.Fatalf("expected 1 NATS published event, got %d", len(mockPub.published))
 	}
-	if mockPub.published[0].ObjectKey != tpKey {
-		t.Errorf("event object_key %q != storage key %q", mockPub.published[0].ObjectKey, tpKey)
+	evt := mockPub.published[0]
+	if evt.ObjectKey != key {
+		t.Errorf("published event key %s != expected %s", evt.ObjectKey, key)
 	}
 }
 
 func TestPipelinePublishFailurePreservesStorage(t *testing.T) {
-	fitsPayload := "FITS_PUBLISH_FAIL_TEST"
+	fitsData := "FAIL_PUB_FITS_DATA_PAYLOAD"
+
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/fits")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(fitsPayload))
+		_, _ = w.Write([]byte(fitsData))
 	}))
 	defer ts.Close()
 
@@ -168,23 +174,23 @@ func TestPipelinePublishFailurePreservesStorage(t *testing.T) {
 	mockStorage := newMockStorageClient()
 	mockPub := &mockPublisher{failNext: true} // simulate NATS publish error
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	pipe := ingest.NewPipeline(mastClient, mockStorage, mockPub, "aurora", 1, logger)
+	pipe := ingest.NewPipeline(mastClient, mockStorage, mockPub, nil, "aurora", 1, logger)
 
-	man := &manifest.Manifest{
+	man := &model.Manifest{
 		SchemaVersion: 1,
 		Source:        "test",
-		Samples: []manifest.Sample{
+		Samples: []model.Sample{
 			{
-				SampleID:   "s-fail-pub",
+				SampleID:   model.SampleID(200, 2),
 				TICID:      200,
 				Sector:     2,
-				PairStatus: manifest.PairStatusTPFOnly,
-				TargetPixel: &manifest.ManifestProduct{
+				PairStatus: model.PairStatusTPFOnly,
+				TargetPixel: &model.ManifestProduct{
 					SourceProductID: "p-fail-pub",
-					Kind:            mast.KindTargetPixel,
+					Kind:            model.KindTargetPixel,
 					Filename:        "fail_pub_tp.fits",
-					DataURI:         "mast:TESS/fail_pub_tp.fits",
-					SizeBytes:       int64(len(fitsPayload)),
+					DataURI:         ts.URL + "/fail_pub_tp.fits",
+					SizeBytes:       int64(len(fitsData)),
 					Sector:          2,
 					TICID:           200,
 				},
@@ -194,19 +200,19 @@ func TestPipelinePublishFailurePreservesStorage(t *testing.T) {
 
 	summary, results, err := pipe.IngestManifest(context.Background(), man, false)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("unexpected pipeline execution error: %v", err)
 	}
 
 	if summary.StoredEventFailedCount != 1 {
-		t.Errorf("expected 1 StoredEventFailed, got %d", summary.StoredEventFailedCount)
+		t.Errorf("expected 1 StoredEventFailedCount, got %d", summary.StoredEventFailedCount)
 	}
-	if results[0].Status != ingest.StatusStoredEventFailed {
-		t.Errorf("expected StatusStoredEventFailed, got %s", results[0].Status)
+	if results[0].Status != model.StatusStoredEventFailed {
+		t.Errorf("expected result status STORED_EVENT_FAILED, got %v", results[0].Status)
 	}
 
-	// Verify Bronze object STILL EXISTS despite NATS publish failure!
-	tpKey := "bronze/tess/target-pixel/sector=0002/tic=200/fail_pub_tp.fits"
-	if _, ok := mockStorage.objects[tpKey]; !ok {
-		t.Errorf("Bronze object must be preserved when NATS publish fails")
+	// Verify Bronze object in MinIO remains INTACT even though NATS publish failed!
+	key := "bronze/tess/target-pixel/sector=0002/tic=200/fail_pub_tp.fits"
+	if _, exists := mockStorage.objects[key]; !exists {
+		t.Fatalf("MinIO object key %s missing despite NATS publish failure!", key)
 	}
 }

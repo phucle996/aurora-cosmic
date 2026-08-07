@@ -2,136 +2,127 @@ package mast
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"strconv"
+	"strings"
+
+	"go-ingester/internal/model"
 )
 
-// DiscoveryResult pairs one TESS observation with its filtered products.
-type DiscoveryResult struct {
-	Observation Observation
-	Products    []Product
-}
-
-// DiscoverOptions controls discovery behaviour.
+// DiscoverOptions holds query parameters for MAST TESS product discovery.
 type DiscoverOptions struct {
-	Sector   int // 0 = all sectors
-	Limit    int // 0 = no limit on observations
-	PageSize int // rows per MAST page
+	Sector   int
+	Limit    int
+	PageSize int
 }
 
-// DiscoverTESS queries Mast.Caom.Filtered for TESS observations, then fetches
-// products for each via Mast.Caom.Products, returning only classified products.
-func DiscoverTESS(ctx context.Context, c *Client, opts DiscoverOptions, log *slog.Logger) ([]DiscoveryResult, error) {
-	observations, err := fetchObservations(ctx, c, opts, log)
-	if err != nil {
-		return nil, err
+// DiscoverTESS performs product discovery against MAST API for TESS observations.
+func DiscoverTESS(ctx context.Context, client *Client, opts DiscoverOptions, log *slog.Logger) ([]model.Product, error) {
+	if opts.PageSize <= 0 {
+		opts.PageSize = 100
 	}
 
-	results := make([]DiscoveryResult, 0, len(observations))
-	for _, obs := range observations {
-		products, err := fetchProducts(ctx, c, obs.ObsID, log)
-		if err != nil {
-			// Log and continue — a single observation failure must not abort the run.
-			log.Warn("mast: product fetch failed, skipping observation",
+	rawObs, err := queryMASTObservations(ctx, client, opts, log)
+	if err != nil {
+		return nil, fmt.Errorf("discover TESS: %w", err)
+	}
+
+	products := make([]model.Product, 0, len(rawObs))
+	for _, obs := range rawObs {
+		kind := ClassifyProduct(obs)
+		if kind == model.KindUnknown {
+			log.Debug("mast: skipping unknown product kind",
 				slog.String("obs_id", obs.ObsID),
-				slog.Any("error", err),
+				slog.String("subgroup", obs.ProductSubGroup),
 			)
 			continue
 		}
 
-		var classified []Product
-		for _, p := range products {
-			if p.Kind != KindUnknown {
-				classified = append(classified, p)
-			}
+		ticID := parseTICFromTarget(obs.TargetName)
+		sector := opts.Sector
+		if sector <= 0 {
+			sector = parseSectorFromObsID(obs.ObsID)
 		}
 
-		results = append(results, DiscoveryResult{
-			Observation: obs,
-			Products:    classified,
+		products = append(products, model.Product{
+			ObsID:           obs.ObsID,
+			TICID:           ticID,
+			Sector:          sector,
+			Kind:            kind,
+			Filename:        obs.ProductFilename,
+			DataURI:         obs.DataURL,
+			SizeBytes:       obs.SizeBytes,
+			ProductSubGroup: obs.ProductSubGroup,
 		})
 	}
 
 	log.Info("mast: discovery complete",
-		slog.Int("observations", len(observations)),
-		slog.Int("results_with_products", len(results)),
+		slog.Int("total_discovered", len(products)),
 	)
-	return results, nil
-}
 
-// fetchObservations pages through Mast.Caom.Filtered for TESS observations.
-func fetchObservations(ctx context.Context, c *Client, opts DiscoverOptions, log *slog.Logger) ([]Observation, error) {
-	filters := []map[string]any{
-		{"paramName": "obs_collection", "values": []string{"TESS"}},
-	}
-	if opts.Sector > 0 {
-		filters = append(filters, map[string]any{
-			"paramName": "sequence_number",
-			"values":    []string{fmt.Sprintf("%d", opts.Sector)},
-		})
-	}
-
-	pageSize := opts.PageSize
-	if pageSize <= 0 {
-		pageSize = 1000
-	}
-
-	var all []Observation
-	for page := 1; ; page++ {
-		req := mastRequest{
-			Service: "Mast.Caom.Filtered",
-			Params:  map[string]any{"filters": filters},
-			Format:  "json",
-			Page:    page,
-			PageSize: pageSize,
-		}
-
-		resp, err := invoke[rawObservation](ctx, c, req)
-		if err != nil {
-			return nil, fmt.Errorf("mast observations page %d: %w", page, err)
-		}
-
-		log.Debug("mast: fetched observation page",
-			slog.Int("page", page),
-			slog.Int("count", len(resp.Data)),
-		)
-
-		for _, r := range resp.Data {
-			all = append(all, r.toObservation())
-			if opts.Limit > 0 && len(all) >= opts.Limit {
-				return all, nil
-			}
-		}
-
-		// Stop when we have all pages.
-		if resp.Paging == nil || page >= resp.Paging.PagesFiltered || len(resp.Data) == 0 {
-			break
-		}
-	}
-	return all, nil
-}
-
-// fetchProducts queries Mast.Caom.Products for a single observation ID.
-func fetchProducts(ctx context.Context, c *Client, obsID string, log *slog.Logger) ([]Product, error) {
-	req := mastRequest{
-		Service: "Mast.Caom.Products",
-		Params:  map[string]any{"obsid": obsID},
-		Format:  "json",
-	}
-
-	resp, err := invoke[rawProduct](ctx, c, req)
-	if err != nil {
-		return nil, fmt.Errorf("mast products obsid=%s: %w", obsID, err)
-	}
-
-	products := make([]Product, 0, len(resp.Data))
-	for _, r := range resp.Data {
-		products = append(products, r.toProduct())
-	}
-
-	log.Debug("mast: fetched products",
-		slog.String("obs_id", obsID),
-		slog.Int("count", len(products)),
-	)
 	return products, nil
+}
+
+func queryMASTObservations(ctx context.Context, client *Client, opts DiscoverOptions, log *slog.Logger) ([]model.Observation, error) {
+	requestMap := map[string]any{
+		"service": "Mashup.Table.Query",
+		"format":  "json",
+		"params": map[string]any{
+			"columns": "*",
+			"filters": []map[string]any{
+				{"paramName": "obs_collection", "values": []string{"TESS"}},
+				{"paramName": "dataproduct_type", "values": []string{"timeseries", "image"}},
+			},
+		},
+	}
+
+	jsonBytes, err := json.Marshal(requestMap)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	values := url.Values{}
+	values.Set("request", string(jsonBytes))
+
+	data, err := client.Query(ctx, values)
+	if err != nil {
+		return nil, err
+	}
+
+	var rawResp struct {
+		Data []model.Observation `json:"data"`
+	}
+
+	if err := json.Unmarshal(data, &rawResp); err != nil {
+		return nil, fmt.Errorf("unmarshal observations response: %w", err)
+	}
+
+	return rawResp.Data, nil
+}
+
+func parseTICFromTarget(target string) int64 {
+	target = strings.TrimSpace(target)
+	target = strings.TrimPrefix(target, "TIC ")
+	target = strings.TrimPrefix(target, "TIC")
+	id, err := strconv.ParseInt(target, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return id
+}
+
+func parseSectorFromObsID(obsID string) int {
+	idx := strings.Index(obsID, "-s")
+	if idx == -1 || idx+6 > len(obsID) {
+		return 0
+	}
+	sectorStr := obsID[idx+2 : idx+6]
+	sector, err := strconv.Atoi(sectorStr)
+	if err != nil {
+		return 0
+	}
+	return sector
 }

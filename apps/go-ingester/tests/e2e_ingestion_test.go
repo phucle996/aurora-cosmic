@@ -12,8 +12,8 @@ import (
 
 	"go-ingester/internal/checkpoint"
 	"go-ingester/internal/ingest"
-	"go-ingester/internal/manifest"
 	"go-ingester/internal/mast"
+	"go-ingester/internal/model"
 )
 
 func TestE2EIngestionOfflinePipeline(t *testing.T) {
@@ -49,9 +49,9 @@ func TestE2EIngestionOfflinePipeline(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	// 2. Build Test Manifest with 1 paired sample (TPF + LC)
-	tpfProd := manifest.ManifestProduct{
+	tpfProd := model.ManifestProduct{
 		SourceProductID: "p-tpf-e2e",
-		Kind:            mast.KindTargetPixel,
+		Kind:            model.KindTargetPixel,
 		Filename:        "tess_tpf_e2e_tp.fits",
 		DataURI:         mastServer.URL + "/tpf.fits",
 		SizeBytes:       int64(len(tpfData)),
@@ -59,9 +59,9 @@ func TestE2EIngestionOfflinePipeline(t *testing.T) {
 		TICID:           123456789,
 	}
 
-	lcProd := manifest.ManifestProduct{
+	lcProd := model.ManifestProduct{
 		SourceProductID: "p-lc-e2e",
-		Kind:            mast.KindLightCurve,
+		Kind:            model.KindLightCurve,
 		Filename:        "tess_lc_e2e_lc.fits",
 		DataURI:         mastServer.URL + "/lc.fits",
 		SizeBytes:       int64(len(lcData)),
@@ -69,20 +69,20 @@ func TestE2EIngestionOfflinePipeline(t *testing.T) {
 		TICID:           123456789,
 	}
 
-	man := &manifest.Manifest{
+	man := &model.Manifest{
 		SchemaVersion: 1,
 		Source:        "test-e2e",
-		Samples: []manifest.Sample{
+		Samples: []model.Sample{
 			{
-				SampleID:    manifest.SampleID(123456789, 42),
+				SampleID:    model.SampleID(123456789, 42),
 				TICID:       123456789,
 				Sector:      42,
-				PairStatus:  manifest.PairStatusPaired,
+				PairStatus:  model.PairStatusPaired,
 				TargetPixel: &tpfProd,
 				LightCurve:  &lcProd,
 			},
 		},
-		Statistics: manifest.Statistics{
+		Statistics: model.Statistics{
 			PairedCount: 1,
 			TotalBytes:  int64(len(tpfData) + len(lcData)),
 		},
@@ -107,7 +107,7 @@ func TestE2EIngestionOfflinePipeline(t *testing.T) {
 
 	// 4. Test Phase B: Real Ingestion Run with Checkpoint Manager
 	cpStore := checkpoint.NewStore(mockStorage, "aurora")
-	initCp := checkpoint.CreateNewInitialCheckpoint("run-e2e-1", "manifest.json", "hash-e2e", []manifest.ManifestProduct{tpfProd, lcProd})
+	initCp := model.CreateNewInitialCheckpoint("run-e2e-1", "manifest.json", "hash-e2e", []model.ManifestProduct{tpfProd, lcProd})
 	mgr := checkpoint.NewManager(cpStore, initCp)
 
 	realPipe := ingest.NewPipeline(mastClient, mockStorage, mockPub, mgr, "aurora", 2, logger)
@@ -148,7 +148,7 @@ func TestE2EIngestionOfflinePipeline(t *testing.T) {
 	}
 
 	// Checkpoint state must be PUBLISHED
-	if mgr.GetCheckpoint().Status != checkpoint.RunStatusCompleted {
+	if mgr.GetCheckpoint().Status != model.RunStatusCompleted {
 		t.Errorf("expected Checkpoint RunStatusCompleted, got %s", mgr.GetCheckpoint().Status)
 	}
 

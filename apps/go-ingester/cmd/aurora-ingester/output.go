@@ -4,13 +4,11 @@ import (
 	"fmt"
 	"time"
 
-	"go-ingester/internal/checkpoint"
-	"go-ingester/internal/ingest"
-	"go-ingester/internal/manifest"
+	"go-ingester/internal/model"
 )
 
 // printPlanSummary prints a human-readable ingestion plan summary to stdout.
-func printPlanSummary(m *manifest.Manifest, path string) {
+func printPlanSummary(m *model.Manifest, path string) {
 	s := m.Statistics
 	fmt.Println()
 	fmt.Println("AURORA ingestion plan")
@@ -31,7 +29,7 @@ func printPlanSummary(m *manifest.Manifest, path string) {
 }
 
 // printResumeSummary prints recovery details when resuming an existing ingestion run.
-func printResumeSummary(cp *checkpoint.Checkpoint) {
+func printResumeSummary(cp *model.Checkpoint) {
 	published := 0
 	stored := 0
 	failed := 0
@@ -39,11 +37,11 @@ func printResumeSummary(cp *checkpoint.Checkpoint) {
 
 	for _, pc := range cp.Products {
 		switch pc.State {
-		case checkpoint.StatePublished:
+		case model.StatePublished:
 			published++
-		case checkpoint.StateStored:
+		case model.StateStored:
 			stored++
-		case checkpoint.StateFailed:
+		case model.StateFailed:
 			failed++
 		default:
 			remaining++
@@ -63,7 +61,7 @@ func printResumeSummary(cp *checkpoint.Checkpoint) {
 }
 
 // printIngestSummary prints overall operational metrics after ingestion run completes.
-func printIngestSummary(s *ingest.Summary) {
+func printIngestSummary(s *model.Summary) {
 	fmt.Println()
 	fmt.Println("AURORA ingestion summary")
 	fmt.Println()

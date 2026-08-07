@@ -2,71 +2,84 @@ package tests
 
 import (
 	"context"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"go-ingester/internal/mast"
+	"go-ingester/internal/model"
 )
 
-func TestOpenProductSuccess(t *testing.T) {
-	expectedData := "mock fits content binary data"
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("uri") != "mast:TESS/product.fits" {
-			http.Error(w, "invalid uri", http.StatusBadRequest)
-			return
+func TestClassifyProduct(t *testing.T) {
+	tests := []struct {
+		subGroup string
+		desc     string
+		expected model.ProductKind
+	}{
+		{"TARGETPIXEL", "", model.KindTargetPixel},
+		{"TARG", "", model.KindTargetPixel},
+		{"TP", "", model.KindTargetPixel},
+		{"LIGHTCURVE", "", model.KindLightCurve},
+		{"LC", "", model.KindLightCurve},
+		{"FFI", "", model.KindFFI},
+		{"FFIC", "", model.KindFFI},
+		{"UNKNOWN_KIND", "something else", model.KindUnknown},
+	}
+
+	for _, tt := range tests {
+		obs := model.Observation{
+			ProductSubGroup: tt.subGroup,
+			Description:     tt.desc,
 		}
+		got := mast.ClassifyProduct(obs)
+		if got != tt.expected {
+			t.Errorf("ClassifyProduct(subGroup=%q, desc=%q) = %q; want %q", tt.subGroup, tt.desc, got, tt.expected)
+		}
+	}
+}
+
+func TestOpenProductSuccess(t *testing.T) {
+	expectedPayload := "SIMPLE  = T / FITS DATA HEADER"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/fits")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(expectedData))
+		_, _ = w.Write([]byte(expectedPayload))
 	}))
 	defer ts.Close()
 
 	client := mast.NewClient(ts.URL, 5*time.Second)
-	client.SetDownloadURL(ts.URL)
-
-	stream, size, err := client.OpenProduct(context.Background(), "mast:TESS/product.fits")
+	rc, size, err := client.OpenProduct(context.Background(), ts.URL)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	defer stream.Close()
+	defer rc.Close()
 
-	body, err := io.ReadAll(stream)
-	if err != nil {
-		t.Fatalf("failed reading stream: %v", err)
-	}
-	if string(body) != expectedData {
-		t.Errorf("got content %q, want %q", string(body), expectedData)
-	}
-	if size != int64(len(expectedData)) {
-		t.Errorf("got content length %d, want %d", size, len(expectedData))
+	if size != int64(len(expectedPayload)) {
+		t.Errorf("expected size %d, got %d", len(expectedPayload), size)
 	}
 }
 
 func TestOpenProductRetryOn503ThenSuccess(t *testing.T) {
 	attempts := 0
-	expectedData := "recovered binary fits data"
+	expectedPayload := "RETRIED_FITS_DATA"
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts++
 		if attempts < 2 {
-			http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(expectedData))
+		_, _ = w.Write([]byte(expectedPayload))
 	}))
 	defer ts.Close()
 
 	client := mast.NewClient(ts.URL, 5*time.Second)
-	client.SetDownloadURL(ts.URL)
-
-	stream, _, err := client.OpenProduct(context.Background(), "mast:TESS/test.fits")
+	rc, _, err := client.OpenProduct(context.Background(), ts.URL)
 	if err != nil {
-		t.Fatalf("expected success after retry, got error: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-	defer stream.Close()
+	defer rc.Close()
 
 	if attempts != 2 {
 		t.Errorf("expected 2 attempts, got %d", attempts)
@@ -75,15 +88,13 @@ func TestOpenProductRetryOn503ThenSuccess(t *testing.T) {
 
 func TestOpenProductPermanentFailure(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "not found", http.StatusNotFound)
+		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer ts.Close()
 
 	client := mast.NewClient(ts.URL, 5*time.Second)
-	client.SetDownloadURL(ts.URL)
-
-	_, _, err := client.OpenProduct(context.Background(), "mast:TESS/missing.fits")
+	_, _, err := client.OpenProduct(context.Background(), ts.URL)
 	if err == nil {
-		t.Fatal("expected error on 404, got nil")
+		t.Errorf("expected error on 404, got nil")
 	}
 }

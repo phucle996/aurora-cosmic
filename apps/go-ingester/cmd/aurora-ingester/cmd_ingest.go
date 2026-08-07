@@ -10,11 +10,12 @@ import (
 
 	"go-ingester/internal/checkpoint"
 	"go-ingester/internal/config"
-	"go-ingester/internal/events"
 	"go-ingester/internal/ingest"
 	"go-ingester/internal/manifest"
 	"go-ingester/internal/mast"
-	"go-ingester/internal/storage"
+	"go-ingester/internal/model"
+	eventsinfra "go-ingester/pkg/infra/events"
+	storageinfra "go-ingester/pkg/infra/storage"
 
 	"github.com/google/uuid"
 )
@@ -41,8 +42,8 @@ func runIngest(ctx context.Context, cfg *config.Config, log *slog.Logger, args [
 		return fmt.Errorf("read manifest: %w", err)
 	}
 
-	var minioClient storage.Client
-	var publisher events.Publisher
+	var minioClient model.Client
+	var publisher model.Publisher
 	var cpStore *checkpoint.Store
 	var cpManager *checkpoint.Manager
 
@@ -50,7 +51,7 @@ func runIngest(ctx context.Context, cfg *config.Config, log *slog.Logger, args [
 		accessKey := optionalEnv("MINIO_ACCESS_KEY", "minioadmin")
 		secretKey := optionalEnv("MINIO_SECRET_KEY", "minioadmin")
 
-		mc, err := storage.NewMinIOClient(cfg.MinIO.Endpoint, accessKey, secretKey)
+		mc, err := storageinfra.NewMinIOClient(cfg.MinIO.Endpoint, accessKey, secretKey)
 		if err != nil {
 			return fmt.Errorf("minio client: %w", err)
 		}
@@ -60,7 +61,7 @@ func runIngest(ctx context.Context, cfg *config.Config, log *slog.Logger, args [
 		cpStore = checkpoint.NewStore(minioClient, cfg.MinIO.Bucket)
 
 		// Connect to NATS JetStream publisher
-		pub, err := events.NewNATSPublisher(cfg.NATS.URL, 5*time.Second)
+		pub, err := eventsinfra.NewNATSPublisher(cfg.NATS.URL, 5*time.Second)
 		if err != nil {
 			log.Warn("nats: publisher init warning, continuing without events", slog.Any("error", err))
 		} else {
@@ -68,7 +69,7 @@ func runIngest(ctx context.Context, cfg *config.Config, log *slog.Logger, args [
 			defer publisher.Close()
 		}
 
-		manifestHash := checkpoint.ComputeManifestHash(m)
+		manifestHash := model.ComputeManifestHash(m)
 
 		// Checkpoint initialization & resume decision
 		if !*fresh {
@@ -87,7 +88,7 @@ func runIngest(ctx context.Context, cfg *config.Config, log *slog.Logger, args [
 
 		if cpManager == nil {
 			runID := fmt.Sprintf("ingest-%s", uuid.NewString()[:8])
-			var allProducts []manifest.ManifestProduct
+			var allProducts []model.ManifestProduct
 			for _, s := range m.Samples {
 				if s.TargetPixel != nil {
 					allProducts = append(allProducts, *s.TargetPixel)
@@ -98,7 +99,7 @@ func runIngest(ctx context.Context, cfg *config.Config, log *slog.Logger, args [
 			}
 			allProducts = append(allProducts, m.FFIs...)
 
-			initCp := checkpoint.CreateNewInitialCheckpoint(runID, *manifestPath, manifestHash, allProducts)
+			initCp := model.CreateNewInitialCheckpoint(runID, *manifestPath, manifestHash, allProducts)
 			cpManager = checkpoint.NewManager(cpStore, initCp)
 			log.Info("checkpoint: created fresh ingestion run", slog.String("run_id", runID))
 		}

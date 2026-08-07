@@ -8,7 +8,8 @@ import (
 
 	"go-ingester/internal/checkpoint"
 	"go-ingester/internal/config"
-	"go-ingester/internal/storage"
+	"go-ingester/internal/model"
+	storageinfra "go-ingester/pkg/infra/storage"
 )
 
 // runStatus executes the `aurora-ingester status` subcommand.
@@ -16,7 +17,7 @@ func runStatus(ctx context.Context, cfg *config.Config, log *slog.Logger, args [
 	accessKey := optionalEnv("MINIO_ACCESS_KEY", "minioadmin")
 	secretKey := optionalEnv("MINIO_SECRET_KEY", "minioadmin")
 
-	mc, err := storage.NewMinIOClient(cfg.MinIO.Endpoint, accessKey, secretKey)
+	mc, err := storageinfra.NewMinIOClient(cfg.MinIO.Endpoint, accessKey, secretKey)
 	if err != nil {
 		return fmt.Errorf("minio client: %w", err)
 	}
@@ -38,11 +39,11 @@ func runStatus(ctx context.Context, cfg *config.Config, log *slog.Logger, args [
 
 	for _, pc := range cp.Products {
 		switch pc.State {
-		case checkpoint.StatePublished:
+		case model.StatePublished:
 			published++
-		case checkpoint.StateStored:
+		case model.StateStored:
 			stored++
-		case checkpoint.StateFailed:
+		case model.StateFailed:
 			failed++
 		default:
 			planned++
