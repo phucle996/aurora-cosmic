@@ -1,4 +1,6 @@
-pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    println!("[aurora-inference] App runner initialized. Ready for ONNX model serving & inference...");
+use crate::config::Config;
+
+pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
+    println!("[aurora-inference] Service runner started with device '{}'.", config.device);
     Ok(())
 }

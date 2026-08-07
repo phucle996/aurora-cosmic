@@ -3,7 +3,7 @@ name = "aurora-dashboard"
 version = "0.1.0"
 description = "AURORA Scientific Dashboard for Light Curve, TPF & Anomaly Visualization"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = []
 
 [build-system]

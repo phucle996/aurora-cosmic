@@ -1,4 +1,6 @@
-pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    println!("[aurora-preprocessor] App runner initialized. Listening for NATS ingestion jobs...");
+use crate::config::Config;
+
+pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
+    println!("[aurora-preprocessor] Worker runtime started with {} Tokio workers.", config.workers);
     Ok(())
 }

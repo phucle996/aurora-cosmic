@@ -1,8 +1,12 @@
 package app
 
-import "fmt"
+import (
+	"fmt"
 
-func Run() error {
-	fmt.Println("[aurora-ingester] App runner initialized. Listening for MAST data discovery events...")
+	"github.com/aurora-cosmic/go-ingester/internal/config"
+)
+
+func Run(cfg *config.Config) error {
+	fmt.Printf("[aurora-ingester] Service runner started in '%s' environment.\n", cfg.Env)
 	return nil
 }

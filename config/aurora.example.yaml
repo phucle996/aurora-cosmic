@@ -1,0 +1,15 @@
+storage:
+  bronze:
+    max_bytes: 53687091200
+    high_watermark: 0.90
+    low_watermark: 0.60
+
+ingestion:
+  concurrency: 4
+
+preprocessing:
+  workers: 4
+
+ml:
+  device: auto
+  max_vram_mb: 3500

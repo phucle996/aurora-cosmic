@@ -5,12 +5,20 @@ import (
 	"os"
 
 	"github.com/aurora-cosmic/go-api/internal/app"
+	"github.com/aurora-cosmic/go-api/internal/config"
 )
 
 func main() {
-	fmt.Println("[aurora-api] Service skeleton initialized.")
-	if err := app.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[aurora-api] Startup configuration error: %v\n", err)
+		os.Exit(1)
+	}
+
+	cfg.LogSummary()
+
+	if err := app.Run(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "[aurora-api] Runtime error: %v\n", err)
 		os.Exit(1)
 	}
 }

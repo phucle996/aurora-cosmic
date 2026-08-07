@@ -1,10 +1,20 @@
 mod app;
+mod config;
 
 #[tokio::main]
 async fn main() {
-    println!("[aurora-preprocessor] Service skeleton initialized.");
-    if let Err(e) = app::run().await {
-        eprintln!("[aurora-preprocessor] Error: {}", e);
+    let cfg = match config::Config::from_env() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[aurora-preprocessor] Startup configuration error: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    cfg.log_summary();
+
+    if let Err(e) = app::run(cfg).await {
+        eprintln!("[aurora-preprocessor] Runtime error: {}", e);
         std::process::exit(1);
     }
 }

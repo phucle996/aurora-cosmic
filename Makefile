@@ -1,8 +1,9 @@
-.PHONY: help build up down test fmt lint clean infra-up infra-down infra-restart infra-logs infra-ps infra-reset smoke
+.PHONY: help build up down test fmt lint clean infra-up infra-down infra-restart infra-logs infra-ps infra-reset smoke config-check
 
 help:
 	@echo "AURORA Cosmic Data Platform - Makefile Targets:"
 	@echo "  help           - Show this help message"
+	@echo "  config-check   - Validate local environment & configuration files"
 	@echo "  infra-up       - Start local MinIO and NATS infrastructure"
 	@echo "  infra-down     - Stop local infrastructure (preserves volumes)"
 	@echo "  infra-restart  - Restart MinIO and NATS services"
@@ -17,6 +18,14 @@ help:
 	@echo "  fmt            - Format code across all languages (Go, Rust, Python)"
 	@echo "  lint           - Lint code across all languages"
 	@echo "  clean          - Clean local build artifacts and temporary files"
+
+config-check:
+	@echo "Checking configuration files..."
+	@test -f .env.example || (echo "Error: .env.example missing" && exit 1)
+	@test -f config/aurora.example.yaml || (echo "Error: config/aurora.example.yaml missing" && exit 1)
+	@test -f docs/CONFIGURATION.md || (echo "Error: docs/CONFIGURATION.md missing" && exit 1)
+	@if [ ! -f .env ]; then echo "Notice: .env file not found. Run 'cp .env.example .env' for local overrides."; fi
+	@echo "Configuration baseline check completed successfully."
 
 infra-up:
 	docker compose up -d minio nats minio-init
@@ -41,13 +50,13 @@ smoke:
 	./scripts/smoke-test.sh
 
 build:
-	@echo "Not implemented yet."
+	docker compose build
 
 up:
-	@echo "Not implemented yet."
+	docker compose up -d
 
 down:
-	@echo "Not implemented yet."
+	docker compose down
 
 test:
 	@echo "Not implemented yet."
