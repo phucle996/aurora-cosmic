@@ -31,12 +31,27 @@ type BronzeConfig struct {
 	LowWatermark  float64
 }
 
+type MASTConfig struct {
+	APIURL   string
+	Timeout  string
+	PageSize int
+}
+
+type ManifestConfig struct {
+	IncludeTPF  bool
+	IncludeLC   bool
+	IncludeFFI  bool
+	RequirePair bool
+}
+
 type Config struct {
-	Core   CoreConfig
-	MinIO  MinIOConfig
-	NATS   NATSConfig
-	Ingest IngestConfig
-	Bronze BronzeConfig
+	Core     CoreConfig
+	MinIO    MinIOConfig
+	NATS     NATSConfig
+	Ingest   IngestConfig
+	Bronze   BronzeConfig
+	MAST     MASTConfig
+	Manifest ManifestConfig
 }
 
 func Load() (*Config, error) {
@@ -85,6 +100,11 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	// MAST configuration — optional, fallback to defaults if not set.
+	mastURL := optionalEnv("MAST_API_URL", "https://mast.stsci.edu/api/v0/invoke")
+	mastTimeout := optionalEnv("MAST_TIMEOUT", "30s")
+	mastPageSize, _ := optionalEnvInt("MAST_PAGE_SIZE", 1000)
+
 	cfg := &Config{
 		Core: CoreConfig{
 			Env:      envName,
@@ -104,6 +124,17 @@ func Load() (*Config, error) {
 			MaxBytes:      maxBytes,
 			HighWatermark: highWM,
 			LowWatermark:  lowWM,
+		},
+		MAST: MASTConfig{
+			APIURL:   mastURL,
+			Timeout:  mastTimeout,
+			PageSize: mastPageSize,
+		},
+		Manifest: ManifestConfig{
+			IncludeTPF:  optionalEnvBool("AURORA_INCLUDE_TPF", true),
+			IncludeLC:   optionalEnvBool("AURORA_INCLUDE_LIGHTCURVE", true),
+			IncludeFFI:  optionalEnvBool("AURORA_INCLUDE_FFI", true),
+			RequirePair: optionalEnvBool("AURORA_REQUIRE_TPF_LC_PAIR", true),
 		},
 	}
 
@@ -173,4 +204,41 @@ func requireEnvFloat(key string) (float64, error) {
 		return 0, fmt.Errorf("invalid float value for '%s'", key)
 	}
 	return f, nil
+}
+
+// optionalEnv returns the env var value or the given default when unset.
+func optionalEnv(key, defaultVal string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return defaultVal
+}
+
+// optionalEnvInt returns the env var parsed as int or the given default.
+func optionalEnvInt(key string, defaultVal int) (int, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultVal, nil
+	}
+	i, err := strconv.Atoi(v)
+	if err != nil {
+		return defaultVal, fmt.Errorf("invalid integer value for '%s'", key)
+	}
+	return i, nil
+}
+
+// optionalEnvBool returns the env var parsed as bool or the given default.
+// Accepted true values: "true", "1", "yes".
+func optionalEnvBool(key string, defaultVal bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultVal
+	}
+	switch v {
+	case "true", "1", "yes":
+		return true
+	case "false", "0", "no":
+		return false
+	}
+	return defaultVal
 }
