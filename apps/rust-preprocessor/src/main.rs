@@ -4,6 +4,9 @@ mod consumer;
 mod event;
 mod logger;
 
+#[cfg(test)]
+mod tests;
+
 // Unused until Phase 3.2 — kept as stubs.
 #[allow(dead_code)]
 mod storage;
