@@ -1,4 +1,4 @@
-.PHONY: help config-check repo-check infra-up infra-down infra-restart infra-logs infra-ps infra-reset build build-go build-rust build-python up down restart ps logs test test-go test-rust test-python fmt fmt-go fmt-rust fmt-python lint lint-go lint-rust lint-python smoke clean
+.PHONY: help config-check repo-check infra-up infra-down infra-restart infra-logs infra-ps infra-reset build build-go build-rust build-python up down restart ps logs test test-go e2e-ingestion e2e-ingestion-live test-rust test-python fmt fmt-go fmt-rust fmt-python lint lint-go lint-rust lint-python smoke clean
 
 help:
 	@echo "AURORA Cosmic Data Platform - Makefile Targets:"
@@ -168,6 +168,15 @@ test-go:
 	@echo "Running Go tests..."
 	@cd apps/go-ingester && go test -v ./...
 	@cd apps/go-api && go test -v ./...
+
+e2e-ingestion:
+	@echo "Running offline Stage 2 Go Ingestion E2E test suite..."
+	@cd apps/go-ingester && go test -v -run TestE2EIngestionOfflinePipeline ./tests
+
+e2e-ingestion-live:
+	@echo "Running live MAST Stage 2 Go Ingestion E2E validation..."
+	@go run ./apps/go-ingester/cmd/aurora-ingester plan --sector 42 --limit 5 --output /tmp/stage2-live-manifest.json
+	@go run ./apps/go-ingester/cmd/aurora-ingester ingest --manifest /tmp/stage2-live-manifest.json
 
 test-rust:
 	@echo "Running Rust tests..."
