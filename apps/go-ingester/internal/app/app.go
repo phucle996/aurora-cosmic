@@ -7,6 +7,6 @@ import (
 )
 
 func Run(cfg *config.Config) error {
-	fmt.Printf("[aurora-ingester] Service runner started in '%s' environment.\n", cfg.Env)
+	fmt.Printf("[aurora-ingester] Service runner started in '%s' environment.\n", cfg.Core.Env)
 	return nil
 }

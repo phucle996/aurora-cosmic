@@ -6,29 +6,59 @@ import (
 	"strconv"
 )
 
+type CoreConfig struct {
+	Env      string
+	LogLevel string
+}
+
+type MinIOConfig struct {
+	Endpoint string
+	Bucket   string
+}
+
+type NATSConfig struct {
+	URL string
+}
+
+type IngestConfig struct {
+	Concurrency int
+}
+
+type BronzeConfig struct {
+	MaxBytes      int64
+	HighWatermark float64
+	LowWatermark  float64
+}
+
 type Config struct {
-	Env                   string
-	LogLevel              string
-	MinIOEndpoint         string
-	MinIOBucket           string
-	NATSUrl               string
-	IngestConcurrency     int
-	BronzeMaxBytes        int64
-	BronzeHighWatermark   float64
-	BronzeLowWatermark    float64
+	Core   CoreConfig
+	MinIO  MinIOConfig
+	NATS   NATSConfig
+	Ingest IngestConfig
+	Bronze BronzeConfig
 }
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		Env:                 getEnv("AURORA_ENV", "development"),
-		LogLevel:            getEnv("AURORA_LOG_LEVEL", "info"),
-		MinIOEndpoint:       getEnv("MINIO_ENDPOINT", "http://minio:9000"),
-		MinIOBucket:         getEnv("MINIO_BUCKET", "aurora"),
-		NATSUrl:             getEnv("NATS_URL", "nats://nats:4222"),
-		IngestConcurrency:   getEnvInt("AURORA_INGEST_CONCURRENCY", 4),
-		BronzeMaxBytes:      getEnvInt64("AURORA_BRONZE_MAX_BYTES", 53687091200),
-		BronzeHighWatermark: getEnvFloat("AURORA_BRONZE_HIGH_WATERMARK", 0.90),
-		BronzeLowWatermark:  getEnvFloat("AURORA_BRONZE_LOW_WATERMARK", 0.60),
+		Core: CoreConfig{
+			Env:      getEnv("AURORA_ENV", "development"),
+			LogLevel: getEnv("AURORA_LOG_LEVEL", "info"),
+		},
+		MinIO: MinIOConfig{
+			Endpoint: getEnv("MINIO_ENDPOINT", "http://minio:9000"),
+			Bucket:   getEnv("MINIO_BUCKET", "aurora"),
+		},
+		NATS: NATSConfig{
+			URL: getEnv("NATS_URL", "nats://nats:4222"),
+		},
+		Ingest: IngestConfig{
+			Concurrency: getEnvInt("AURORA_INGEST_CONCURRENCY", 4),
+		},
+		Bronze: BronzeConfig{
+			MaxBytes:      getEnvInt64("AURORA_BRONZE_MAX_BYTES", 53687091200),
+			HighWatermark: getEnvFloat("AURORA_BRONZE_HIGH_WATERMARK", 0.90),
+			LowWatermark:  getEnvFloat("AURORA_BRONZE_LOW_WATERMARK", 0.60),
+		},
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -39,18 +69,18 @@ func Load() (*Config, error) {
 }
 
 func (c *Config) Validate() error {
-	if c.IngestConcurrency < 1 {
-		return fmt.Errorf("AURORA_INGEST_CONCURRENCY must be >= 1, got %d", c.IngestConcurrency)
+	if c.Ingest.Concurrency < 1 {
+		return fmt.Errorf("AURORA_INGEST_CONCURRENCY must be >= 1, got %d", c.Ingest.Concurrency)
 	}
-	if c.BronzeLowWatermark <= 0 || c.BronzeLowWatermark >= c.BronzeHighWatermark || c.BronzeHighWatermark > 1.0 {
-		return fmt.Errorf("invalid watermarks: low (%f) must be > 0 and < high (%f) <= 1.0", c.BronzeLowWatermark, c.BronzeHighWatermark)
+	if c.Bronze.LowWatermark <= 0 || c.Bronze.LowWatermark >= c.Bronze.HighWatermark || c.Bronze.HighWatermark > 1.0 {
+		return fmt.Errorf("invalid watermarks: low (%f) must be > 0 and < high (%f) <= 1.0", c.Bronze.LowWatermark, c.Bronze.HighWatermark)
 	}
 	return nil
 }
 
 func (c *Config) LogSummary() {
 	fmt.Printf("[aurora-ingester] Config: env=%s, log_level=%s, concurrency=%d, minio=%s, bucket=%s, nats=%s, high_wm=%.2f, low_wm=%.2f\n",
-		c.Env, c.LogLevel, c.IngestConcurrency, c.MinIOEndpoint, c.MinIOBucket, c.NATSUrl, c.BronzeHighWatermark, c.BronzeLowWatermark)
+		c.Core.Env, c.Core.LogLevel, c.Ingest.Concurrency, c.MinIO.Endpoint, c.MinIO.Bucket, c.NATS.URL, c.Bronze.HighWatermark, c.Bronze.LowWatermark)
 }
 
 func getEnv(key, fallback string) string {
