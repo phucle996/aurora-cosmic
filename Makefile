@@ -20,8 +20,7 @@ help:
 	@echo "  clean          - Clean local build artifacts and temporary files"
 
 config-check:
-	@echo "Checking configuration files..."
-	@test -f config/aurora.example.yaml || (echo "Error: config/aurora.example.yaml missing" && exit 1)
+	@echo "Checking sub-project configuration files..."
 	@test -f docs/CONFIGURATION.md || (echo "Error: docs/CONFIGURATION.md missing" && exit 1)
 	@test -f apps/go-ingester/.env.example || (echo "Error: apps/go-ingester/.env.example missing" && exit 1)
 	@test -f apps/rust-preprocessor/.env.example || (echo "Error: apps/rust-preprocessor/.env.example missing" && exit 1)

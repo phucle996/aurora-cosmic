@@ -1,18 +1,10 @@
 # AURORA Platform Configuration Specification
 
-This document details the configuration model, priority hierarchy, environment variables, internal vs host addressing, secret policies, and device selection.
+This document details the environment configuration model, per-subproject environment files, internal vs host endpoints, secret policies, and device selection.
 
-## 1. Configuration Priority Hierarchy
+## 1. Environment-Driven Configuration Model
 
-```text
-Environment Variables
-        │
-        ▼
-Service-local Configuration / Defaults
-        │
-        ▼
-Platform Policy (config/aurora.example.yaml)
-```
+All platform and service configurations are strictly managed via environment variables defined per sub-project (`apps/<sub-project>/.env.example`). There are no shared YAML or centralized configuration files.
 
 ## 2. Docker Internal vs. Host Endpoints
 
@@ -27,16 +19,16 @@ Platform Policy (config/aurora.example.yaml)
 
 > ⚠️ **Rule:** Containers communicate using Docker service names (`minio`, `nats`, `go-api`), never `localhost`.
 
-## 3. Environment Groups Overview
+## 3. Sub-Project Environment Files
 
-* **Core**: `AURORA_ENV`, `AURORA_LOG_LEVEL`
-* **MinIO**: `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_BUCKET`
-* **NATS**: `NATS_URL`
-* **Ingestion**: `AURORA_INGEST_MODE`, `AURORA_INGEST_CONCURRENCY`
-* **Bronze Storage Budget**: `AURORA_BRONZE_MAX_BYTES`, `AURORA_BRONZE_HIGH_WATERMARK`, `AURORA_BRONZE_LOW_WATERMARK`
-* **Preprocessor**: `AURORA_PREPROCESS_WORKERS`
-* **API & Dashboard**: `AURORA_API_HOST`, `AURORA_API_PORT`, `AURORA_DASHBOARD_PORT`, `AURORA_API_URL`
-* **ML / GPU**: `AURORA_ML_DEVICE`, `AURORA_ML_BATCH_SIZE`, `AURORA_ML_MAX_VRAM_MB`, `CUDA_VISIBLE_DEVICES`
+Each sub-project owns its `.env.example` in its application directory:
+
+* `apps/go-ingester/.env.example`
+* `apps/rust-preprocessor/.env.example`
+* `apps/python-ml-worker/.env.example`
+* `apps/rust-inference/.env.example`
+* `apps/go-api/.env.example`
+* `apps/dashboard/.env.example`
 
 ## 4. Secret & Redaction Policy
 
