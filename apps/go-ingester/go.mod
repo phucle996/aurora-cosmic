@@ -1,6 +1,6 @@
 module go-ingester
 
-go 1.23
+go 1.26
 
 require (
 	github.com/sirupsen/logrus v1.9.3
