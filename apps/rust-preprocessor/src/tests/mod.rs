@@ -1,3 +1,4 @@
+pub mod checkpoint_tests;
 pub mod config_tests;
 pub mod e2e_tests;
 pub mod event_tests;

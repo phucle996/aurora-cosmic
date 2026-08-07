@@ -1,16 +1,16 @@
 mod app;
+mod checkpoint;
 mod config;
 mod event;
 mod fits;
 mod logger;
+mod output;
+mod pipeline;
 mod storage;
 mod worker;
 
 #[cfg(test)]
 mod tests;
-
-mod pipeline;
-mod output;
 
 #[tokio::main]
 async fn main() {

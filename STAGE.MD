@@ -147,7 +147,7 @@ Stage 4
 └── Phase 4.6: End-to-End Recovery & Lifecycle Validation
 ```
 
-* **Phase 4.1 — Preprocessor Checkpoint & Processing State**: Quản lý state xử lý bền vững tại `checkpoints/preprocessing/` (`PROCESSING` -> `SILVER_STORED` -> `COMPLETED` / `FAILED`). Phục hồi mượt mà sau sự cố crash giữa bước Silver write và NATS ACK.
+* **Phase 4.1 — Preprocessor Checkpoint & Processing State [DONE]**: Quản lý state xử lý bền vững tại `checkpoints/preprocessing/` (`PROCESSING` -> `SILVER_STORED` -> `COMPLETED` / `FAILED`). Phục hồi mượt mà sau sự cố crash giữa bước Silver write và NATS ACK.
 * **Phase 4.2 — Cross-Service Idempotency & Reconciliation**: Xây dựng các quy tắc đối soát dữ liệu (reconciliation rules) giữa Go Ingestion state, MinIO Bronze, NATS JetStream và Rust Processing state mà không cần giao dịch phân tán (distributed transactions).
 * **Phase 4.3 — Redelivery, Retry & Poison-Message Policy**: Đóng băng chính sách xử lý lỗi: retry tự động với lỗi hạ tầng tạm thời, gửi `TERM` cho poison message, và ghi nhận trạng thái `REJECTED` cho dữ liệu lỗi khoa học vĩnh viễn.
 * **Phase 4.4 — Lineage Commit & Eviction Eligibility**: Đảm bảo hợp đồng vết dữ liệu (`source_product_id` -> Bronze -> Processor Version -> Silver). Một file Bronze thô chỉ được đánh dấu `EVICTABLE` sau khi Lineage đã được commit đầy đủ.

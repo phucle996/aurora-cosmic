@@ -8,6 +8,7 @@ use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 use tokio::io::AsyncWriteExt;
 
+use crate::checkpoint::PreprocessingCheckpoint;
 use crate::config::MinioConfig;
 
 /// Opaque handle to a verified temporary FITS file on local disk.
@@ -17,6 +18,14 @@ pub struct TempFitsFile {
     pub path: PathBuf,
     // Keeps the NamedTempFile alive so it is deleted on drop.
     _handle: NamedTempFile,
+}
+
+/// Simple struct containing object metadata after stat.
+#[derive(Debug, Clone)]
+pub struct StoredObjectStat {
+    pub size_bytes: u64,
+    #[allow(dead_code)]
+    pub sha256: Option<String>,
 }
 
 /// MinIO / S3-compatible storage client.
@@ -49,15 +58,8 @@ impl StorageClient {
         })
     }
 
-    /// Verify that the object exists and its size matches the event claim.
-    ///
-    /// Returns an error if the object is missing or the size does not match.
-    pub async fn stat_and_verify_size(
-        &self,
-        bucket: &str,
-        key: &str,
-        expected_size: u64,
-    ) -> Result<()> {
+    /// Stat an object and return its content length and optional user metadata SHA-256.
+    pub async fn stat_object(&self, bucket: &str, key: &str) -> Result<StoredObjectStat> {
         let resp = self
             .client
             .head_object()
@@ -67,11 +69,28 @@ impl StorageClient {
             .await
             .with_context(|| format!("MinIO stat failed — object may not exist: {bucket}/{key}"))?;
 
-        let actual_size = resp.content_length().unwrap_or(0).unsigned_abs();
-        if actual_size != expected_size {
+        let size_bytes = resp.content_length().unwrap_or(0).unsigned_abs();
+        let sha256 = resp
+            .metadata()
+            .and_then(|m| m.get("sha256").cloned());
+
+        Ok(StoredObjectStat { size_bytes, sha256 })
+    }
+
+    /// Verify that the object exists and its size matches the event claim.
+    ///
+    /// Returns an error if the object is missing or the size does not match.
+    pub async fn stat_and_verify_size(
+        &self,
+        bucket: &str,
+        key: &str,
+        expected_size: u64,
+    ) -> Result<()> {
+        let stat = self.stat_object(bucket, key).await?;
+        if stat.size_bytes != expected_size {
             bail!(
-                "Size mismatch for {bucket}/{key}: \
-                 expected={expected_size} actual={actual_size}"
+                "Size mismatch for {bucket}/{key}: expected={expected_size} actual={}",
+                stat.size_bytes
             );
         }
 
@@ -86,15 +105,6 @@ impl StorageClient {
 
     /// Stream the Bronze object to a temporary local file, computing SHA-256 and
     /// byte count on the fly.
-    ///
-    /// Order of operations (matches checklist §14):
-    /// 1. GET object stream from MinIO.
-    /// 2. Stream bytes → temp file + SHA-256 accumulator.
-    /// 3. Verify byte count == `expected_size`.
-    /// 4. Verify SHA-256 == `expected_sha256`.
-    /// 5. Return the path to the verified temp file.
-    ///
-    /// The returned [`TempFitsFile`] deletes the file when dropped.
     pub async fn fetch_to_temp(
         &self,
         bucket: &str,
@@ -103,90 +113,79 @@ impl StorageClient {
         expected_sha256: &str,
         tmp_dir: &Path,
     ) -> Result<TempFitsFile> {
-        // Ensure tmp directory exists.
-        tokio::fs::create_dir_all(tmp_dir)
-            .await
-            .with_context(|| format!("Cannot create tmp dir: {}", tmp_dir.display()))?;
-
-        // Create a unique temp file — deleted on drop.
-        let temp = NamedTempFile::new_in(tmp_dir).context("Failed to create temp FITS file")?;
-        let temp_path = temp.path().to_path_buf();
-
-        // GET object.
-        let resp = self
+        let mut response = self
             .client
             .get_object()
             .bucket(bucket)
             .key(key)
             .send()
             .await
-            .with_context(|| format!("MinIO GET failed for {bucket}/{key}"))?;
+            .with_context(|| format!("MinIO GetObject failed for {bucket}/{key}"))?;
 
-        // Stream bytes → temp file + SHA-256.
-        let mut body = resp.body.into_async_read();
-        let mut file = tokio::fs::OpenOptions::new()
-            .write(true)
-            .open(&temp_path)
+        let named_temp = NamedTempFile::new_in(tmp_dir).with_context(|| {
+            format!(
+                "Failed to create temp file in directory {}",
+                tmp_dir.display()
+            )
+        })?;
+        let temp_path = named_temp.path().to_path_buf();
+
+        let mut file = tokio::fs::File::create(&temp_path)
             .await
-            .context("Failed to open temp file for writing")?;
+            .with_context(|| format!("Failed to open temp file {}", temp_path.display()))?;
 
         let mut hasher = Sha256::new();
-        let mut bytes_written: u64 = 0;
-        let mut buf = vec![0u8; 64 * 1024]; // 64 KiB chunks
+        let mut total_bytes: u64 = 0;
 
-        loop {
-            use tokio::io::AsyncReadExt;
-            let n = body
-                .read(&mut buf)
+        while let Some(chunk_res) = response.body.next().await {
+            let chunk = chunk_res
+                .with_context(|| format!("Stream read error for {bucket}/{key}"))?;
+
+            hasher.update(&chunk);
+            total_bytes += chunk.len() as u64;
+
+            file.write_all(&chunk)
                 .await
-                .context("Error reading MinIO response body")?;
-            if n == 0 {
-                break;
-            }
-            hasher.update(&buf[..n]);
-            bytes_written += n as u64;
-            file.write_all(&buf[..n])
-                .await
-                .context("Error writing to temp file")?;
+                .with_context(|| format!("Failed writing chunk to temp file {}", temp_path.display()))?;
         }
-        file.flush().await.context("Failed to flush temp file")?;
-        drop(file);
 
-        // Verify byte count.
-        if bytes_written != expected_size {
-            // temp file deleted on drop of `temp`
+        file.flush()
+            .await
+            .with_context(|| format!("Failed flushing temp file {}", temp_path.display()))?;
+
+        if total_bytes != expected_size {
             bail!(
-                "Byte count mismatch for {bucket}/{key}: \
-                 expected={expected_size} actual={bytes_written}"
+                "Downloaded byte count mismatch for {bucket}/{key}: \
+                 expected={expected_size} downloaded={total_bytes}"
             );
         }
 
-        // Verify SHA-256.
-        let actual_hash = hex::encode(hasher.finalize());
-        let expected_lower = expected_sha256.to_lowercase();
-        if actual_hash != expected_lower {
+        let computed_sha256 = hex::encode(hasher.finalize());
+        if !computed_sha256.eq_ignore_ascii_case(expected_sha256) {
             bail!(
-                "SHA-256 mismatch for {key}: \
-                 expected={expected_lower} actual={actual_hash}"
+                "SHA-256 checksum mismatch for {bucket}/{key}: \
+                 expected={expected_sha256} computed={computed_sha256}"
             );
         }
 
         tracing::info!(
             bucket = bucket,
             object_key = key,
-            size_bytes = bytes_written,
-            operation = "bronze_fetch",
+            size_bytes = total_bytes,
+            sha256 = %computed_sha256,
+            temp_path = %temp_path.display(),
+            operation = "bronze_download",
             status = "verified",
-            "Bronze object fetched and verified"
+            "Bronze FITS object downloaded and SHA-256 checksum verified"
         );
 
         Ok(TempFitsFile {
             path: temp_path,
-            _handle: temp,
+            _handle: named_temp,
         })
     }
 
-    /// Upload a local file to MinIO Silver and perform head_object size verification.
+    /// Upload a local file to MinIO Silver with user metadata and verify durability.
     pub async fn put_file_and_verify(
         &self,
         bucket: &str,
@@ -225,6 +224,69 @@ impl StorageClient {
             operation = "silver_put",
             status = "durable_verified",
             "Silver artifact uploaded and verified in MinIO"
+        );
+
+        Ok(())
+    }
+
+    /// Load a PreprocessingCheckpoint from MinIO. Returns `Ok(None)` if the checkpoint does not exist.
+    pub async fn load_checkpoint(
+        &self,
+        bucket: &str,
+        key: &str,
+    ) -> Result<Option<PreprocessingCheckpoint>> {
+        let response = match self
+            .client
+            .get_object()
+            .bucket(bucket)
+            .key(key)
+            .send()
+            .await
+        {
+            Ok(resp) => resp,
+            Err(_) => return Ok(None),
+        };
+
+        let bytes = response
+            .body
+            .collect()
+            .await
+            .with_context(|| format!("Failed reading body for checkpoint {bucket}/{key}"))?
+            .into_bytes();
+
+        let checkpoint: PreprocessingCheckpoint = serde_json::from_slice(&bytes)
+            .with_context(|| format!("Failed to parse JSON checkpoint from {bucket}/{key}"))?;
+
+        checkpoint.validate_schema_version()?;
+        Ok(Some(checkpoint))
+    }
+
+    /// Save a PreprocessingCheckpoint atomically to MinIO.
+    pub async fn save_checkpoint(
+        &self,
+        bucket: &str,
+        key: &str,
+        checkpoint: &PreprocessingCheckpoint,
+    ) -> Result<()> {
+        let json_bytes = serde_json::to_vec_pretty(checkpoint)
+            .with_context(|| format!("Failed serializing checkpoint {key}"))?;
+
+        self.client
+            .put_object()
+            .bucket(bucket)
+            .key(key)
+            .body(json_bytes.into())
+            .content_type("application/json")
+            .send()
+            .await
+            .with_context(|| format!("Failed uploading checkpoint {bucket}/{key}"))?;
+
+        tracing::debug!(
+            bucket = bucket,
+            object_key = key,
+            state = ?checkpoint.state,
+            operation = "checkpoint_save",
+            "Checkpoint saved to MinIO"
         );
 
         Ok(())

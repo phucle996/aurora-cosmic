@@ -10,6 +10,10 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use crate::checkpoint::{
+    build_checkpoint_object_key, derive_checkpoint_id, PreprocessingCheckpoint, ProcessingState,
+    RecoveryAction,
+};
 use crate::config::{ConsumerConfig, ImageConfig, LightCurveConfig};
 use crate::event::{BronzeObjectReady, ProductKind, SilverObjectReady};
 use crate::fits::{self, DecodedProduct};
@@ -168,12 +172,99 @@ pub async fn run_pool(
     Ok(())
 }
 
-/// Process a single Data Object through the end-to-end 5-step flow:
-/// 1. Ingest: Verify MinIO Bronze stat & stream download with SHA-256 check
-/// 2. Decode: Parse FITS binary (CFITSIO)
-/// 3. Preprocess: Scientific quality filter & median normalization
-/// 4. Serialize: Arrow RecordBatch & Parquet ZSTD writer
-/// 5. Sink: MinIO Silver upload, verify size, publish NATS Silver event, & ACK Bronze message
+/// Evaluate recovery action for a Bronze message against durable MinIO checkpoints.
+pub async fn evaluate_recovery(
+    storage: &StorageClient,
+    event: &BronzeObjectReady,
+    processor_version: &str,
+) -> Result<(RecoveryAction, Option<PreprocessingCheckpoint>)> {
+    let checkpoint_id = derive_checkpoint_id(&event.source_product_id, processor_version);
+    let checkpoint_key = build_checkpoint_object_key(&checkpoint_id);
+
+    let checkpoint = match storage.load_checkpoint(&event.bucket, &checkpoint_key).await? {
+        Some(cp) => cp,
+        None => return Ok((RecoveryAction::Process, None)),
+    };
+
+    // Bronze checksum mismatch check
+    if checkpoint.bronze_sha256 != event.sha256 {
+        tracing::warn!(
+            checkpoint_id = %checkpoint_id,
+            checkpoint_sha = %checkpoint.bronze_sha256,
+            event_sha = %event.sha256,
+            "Bronze SHA-256 mismatch in checkpoint — forcing reprocessing"
+        );
+        return Ok((RecoveryAction::Reprocess, Some(checkpoint)));
+    }
+
+    match checkpoint.state {
+        ProcessingState::Completed => {
+            if let (Some(ref silver_bucket), Some(ref silver_key)) =
+                (&checkpoint.silver_bucket, &checkpoint.silver_object_key)
+            {
+                if let Ok(stat) = storage.stat_object(silver_bucket, silver_key).await {
+                    if Some(stat.size_bytes) == checkpoint.silver_size_bytes {
+                        tracing::info!(
+                            checkpoint_id = %checkpoint_id,
+                            silver_key = %silver_key,
+                            operation = "checkpoint_recovery",
+                            action = "reuse_silver",
+                            "Completed checkpoint verified with durable Silver artifact — fast-reusing"
+                        );
+                        return Ok((RecoveryAction::ReuseAndAck, Some(checkpoint)));
+                    }
+                }
+            }
+            tracing::warn!(
+                checkpoint_id = %checkpoint_id,
+                "Checkpoint completed but Silver object missing/invalid — reprocessing"
+            );
+            Ok((RecoveryAction::Reprocess, Some(checkpoint)))
+        }
+
+        ProcessingState::SilverStored | ProcessingState::Processing => {
+            if let (Some(ref silver_bucket), Some(ref silver_key)) =
+                (&checkpoint.silver_bucket, &checkpoint.silver_object_key)
+            {
+                if let Ok(stat) = storage.stat_object(silver_bucket, silver_key).await {
+                    if Some(stat.size_bytes) == checkpoint.silver_size_bytes {
+                        tracing::info!(
+                            checkpoint_id = %checkpoint_id,
+                            silver_key = %silver_key,
+                            operation = "checkpoint_recovery",
+                            action = "verify_silver",
+                            "Durable Silver artifact found for unfinished checkpoint — promoting to COMPLETED"
+                        );
+                        return Ok((RecoveryAction::VerifySilver, Some(checkpoint)));
+                    }
+                }
+            }
+            tracing::info!(
+                checkpoint_id = %checkpoint_id,
+                state = ?checkpoint.state,
+                "Unfinished checkpoint without verified Silver artifact — reprocessing"
+            );
+            Ok((RecoveryAction::Reprocess, Some(checkpoint)))
+        }
+
+        ProcessingState::Failed => {
+            tracing::info!(
+                checkpoint_id = %checkpoint_id,
+                attempts = checkpoint.attempts,
+                "Prior checkpoint failed — reprocessing"
+            );
+            Ok((RecoveryAction::Reprocess, Some(checkpoint)))
+        }
+    }
+}
+
+/// Process a single Data Object through the end-to-end 5-step flow with durable checkpointing:
+/// 1. Recovery Check: Load MinIO checkpoint & decide recovery action
+/// 2. Ingest: Verify MinIO Bronze stat & stream download with SHA-256 check
+/// 3. Decode: Parse FITS binary (CFITSIO)
+/// 4. Preprocess: Scientific quality filter & median normalization
+/// 5. Serialize: Arrow RecordBatch & Parquet ZSTD writer
+/// 6. Sink: Upload Silver, save COMPLETED checkpoint, publish NATS Silver event, & ACK message
 pub(crate) async fn process_message(
     msg: jetstream::Message,
     storage: Arc<StorageClient>,
@@ -202,9 +293,97 @@ pub(crate) async fn process_message(
     };
 
     let event_id = event.event_id.clone();
+    let processor_version = match event.product_kind {
+        ProductKind::LightCurve => "lc-preprocess-v1",
+        ProductKind::TargetPixel => "tpf-preprocess-v1",
+        ProductKind::Ffi => "ffi-preprocess-v1",
+    };
+
+    // 1. Recovery Check via Durable Checkpoint
+    let (recovery_action, mut checkpoint_opt) =
+        match evaluate_recovery(&storage, &event, processor_version).await {
+            Ok(res) => res,
+            Err(e) => {
+                tracing::warn!(
+                    event_id = %event_id,
+                    error = %e,
+                    "Failed to evaluate checkpoint recovery — falling back to standard processing"
+                );
+                (RecoveryAction::Process, None)
+            }
+        };
+
+    // Fast-path 1: Reuse existing verified Silver object & ACK immediately
+    if recovery_action == RecoveryAction::ReuseAndAck {
+        if let Some(ref cp) = checkpoint_opt {
+            if let (Some(ref s_bucket), Some(ref s_key), Some(ref s_sha), Some(s_size)) = (
+                &cp.silver_bucket,
+                &cp.silver_object_key,
+                &cp.silver_sha256,
+                cp.silver_size_bytes,
+            ) {
+                let silver_event = build_silver_event(&event, s_bucket, s_key, s_sha, s_size, cp.silver_schema_version.as_deref().unwrap_or("v1"), processor_version);
+                if let Err(e) = publish_silver_event(&jetstream, &silver_event).await {
+                    tracing::warn!(event_id = %event_id, error = %e, "Failed to publish Silver event during fast-recovery");
+                }
+                if let Err(e) = msg.ack().await {
+                    tracing::error!(event_id = %event_id, error = %e, "Failed to ACK message during fast-recovery");
+                } else {
+                    tracing::info!(
+                        event_id = %event_id,
+                        silver_key = %s_key,
+                        operation = "fast_recovery",
+                        "Data Object recovery succeeded — Silver reused and message ACKed"
+                    );
+                }
+                return;
+            }
+        }
+    }
+
+    // Fast-path 2: Silver artifact found, promote checkpoint to COMPLETED & ACK
+    if recovery_action == RecoveryAction::VerifySilver {
+        if let Some(ref mut cp) = checkpoint_opt {
+            cp.mark_completed();
+            let checkpoint_key = build_checkpoint_object_key(&cp.checkpoint_id);
+            if let Err(e) = storage.save_checkpoint(&cp.bronze_bucket, &checkpoint_key, cp).await {
+                tracing::warn!(event_id = %event_id, error = %e, "Failed saving promoted COMPLETED checkpoint");
+            }
+            if let (Some(ref s_bucket), Some(ref s_key), Some(ref s_sha), Some(s_size)) = (
+                &cp.silver_bucket,
+                &cp.silver_object_key,
+                &cp.silver_sha256,
+                cp.silver_size_bytes,
+            ) {
+                let silver_event = build_silver_event(&event, s_bucket, s_key, s_sha, s_size, cp.silver_schema_version.as_deref().unwrap_or("v1"), processor_version);
+                let _ = publish_silver_event(&jetstream, &silver_event).await;
+                if let Err(e) = msg.ack().await {
+                    tracing::error!(event_id = %event_id, error = %e, "Failed to ACK message during promoted recovery");
+                }
+                return;
+            }
+        }
+    }
+
+    // Standard Processing Path: Initialize/Update PROCESSING Checkpoint
+    let mut checkpoint = match checkpoint_opt {
+        Some(mut cp) => {
+            cp.attempts += 1;
+            cp.state = ProcessingState::Processing;
+            cp.updated_at = Utc::now().to_rfc3339();
+            cp
+        }
+        None => PreprocessingCheckpoint::new(&event, processor_version),
+    };
+
+    let checkpoint_key = build_checkpoint_object_key(&checkpoint.checkpoint_id);
+    if let Err(e) = storage.save_checkpoint(&event.bucket, &checkpoint_key, &checkpoint).await {
+        tracing::warn!(event_id = %event_id, error = %e, "Failed to save initial PROCESSING checkpoint");
+    }
 
     tracing::info!(
         event_id = %event_id,
+        checkpoint_id = %checkpoint.checkpoint_id,
         product_kind = ?event.product_kind,
         bucket = %event.bucket,
         object_key = %event.object_key,
@@ -225,30 +404,29 @@ pub(crate) async fn process_message(
                 .await
             {
                 tracing::warn!(event_id = %event_id, error = %e, "Silver MinIO upload failed — NAKing");
+                checkpoint.mark_failed(&format!("Silver upload failed: {e}"));
+                let _ = storage.save_checkpoint(&event.bucket, &checkpoint_key, &checkpoint).await;
                 let _ = msg.ack_with(AckKind::Nak(None)).await;
                 return;
             }
 
+            // Update Checkpoint: SILVER_STORED -> COMPLETED
+            checkpoint.mark_silver_stored(&artifact);
+            checkpoint.mark_completed();
+            if let Err(e) = storage.save_checkpoint(&event.bucket, &checkpoint_key, &checkpoint).await {
+                tracing::warn!(event_id = %event_id, error = %e, "Failed to save COMPLETED checkpoint");
+            }
+
             // Publish Silver ready event to NATS
-            let silver_event = SilverObjectReady {
-                event_id: Uuid::new_v4().to_string(),
-                event_type: "silver.object.ready".to_string(),
-                source_event_id: event.event_id.clone(),
-                source_product_id: event.source_product_id.clone(),
-                sample_id: event.sample_id.clone(),
-                bucket: artifact.bucket.clone(),
-                object_key: artifact.object_key.clone(),
-                product_kind: event.product_kind.clone(),
-                schema_version: artifact.schema_version.clone(),
-                processor_version: artifact.processor_version.clone(),
-                sector: event.sector,
-                tic_id: event.tic_id,
-                camera: event.camera,
-                ccd: event.ccd,
-                size_bytes: artifact.size_bytes,
-                sha256: artifact.sha256.clone(),
-                occurred_at: Utc::now().to_rfc3339(),
-            };
+            let silver_event = build_silver_event(
+                &event,
+                &artifact.bucket,
+                &artifact.object_key,
+                &artifact.sha256,
+                artifact.size_bytes,
+                &artifact.schema_version,
+                processor_version,
+            );
 
             if let Err(e) = publish_silver_event(&jetstream, &silver_event).await {
                 tracing::warn!(event_id = %event_id, error = %e, "Failed to publish Silver event");
@@ -261,7 +439,8 @@ pub(crate) async fn process_message(
                 tracing::info!(
                     event_id = %event_id,
                     silver_key = %artifact.object_key,
-                    "Data Object processed and durably stored in Silver"
+                    checkpoint_id = %checkpoint.checkpoint_id,
+                    "Data Object processed and durably stored in Silver with checkpoint COMPLETED"
                 );
             }
         }
@@ -269,10 +448,43 @@ pub(crate) async fn process_message(
             tracing::warn!(
                 event_id = %event_id,
                 error = %err,
-                "Processing failed — NAKing message for redelivery"
+                "Processing failed — recording FAILED checkpoint and NAKing message"
             );
+            checkpoint.mark_failed(&err.to_string());
+            let _ = storage.save_checkpoint(&event.bucket, &checkpoint_key, &checkpoint).await;
             let _ = msg.ack_with(AckKind::Nak(None)).await;
         }
+    }
+}
+
+/// Helper to build a SilverObjectReady event.
+fn build_silver_event(
+    event: &BronzeObjectReady,
+    bucket: &str,
+    object_key: &str,
+    sha256: &str,
+    size_bytes: u64,
+    schema_version: &str,
+    processor_version: &str,
+) -> SilverObjectReady {
+    SilverObjectReady {
+        event_id: Uuid::new_v4().to_string(),
+        event_type: "silver.object.ready".to_string(),
+        source_event_id: event.event_id.clone(),
+        source_product_id: event.source_product_id.clone(),
+        sample_id: event.sample_id.clone(),
+        bucket: bucket.to_string(),
+        object_key: object_key.to_string(),
+        product_kind: event.product_kind.clone(),
+        schema_version: schema_version.to_string(),
+        processor_version: processor_version.to_string(),
+        sector: event.sector,
+        tic_id: event.tic_id,
+        camera: event.camera,
+        ccd: event.ccd,
+        size_bytes,
+        sha256: sha256.to_string(),
+        occurred_at: Utc::now().to_rfc3339(),
     }
 }
 

@@ -3,7 +3,7 @@
 # Stage 4 — Recovery, Idempotency & Rolling Lifecycle
 ## Phase 4.1 — Preprocessor Checkpoint & Processing State
 
-Status: TODO
+Status: DONE
 
 Goal:
 
