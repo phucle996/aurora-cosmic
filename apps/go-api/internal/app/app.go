@@ -2,15 +2,18 @@ package app
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 
 	"go-api/internal/config"
 )
 
-func Run(ctx context.Context, cfg *config.Config) error {
-	fmt.Printf("[aurora-api] API Server listening on %s:%d...\n", cfg.Server.Host, cfg.Server.Port)
+func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
+	log.Info("API server started",
+		slog.String("host", cfg.Server.Host),
+		slog.Int("port", cfg.Server.Port),
+	)
 
 	<-ctx.Done()
-	fmt.Println("[aurora-api] Shutdown signal received, stopping HTTP server...")
+	log.Info("Shutdown signal received, stopping HTTP server...")
 	return nil
 }

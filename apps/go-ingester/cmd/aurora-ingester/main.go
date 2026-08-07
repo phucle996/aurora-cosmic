@@ -3,13 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"go-ingester/internal/app"
 	"go-ingester/internal/config"
-	"go-ingester/pkg/logger"
+	"go-ingester/internal/logger"
 )
 
 func main() {
@@ -20,13 +21,13 @@ func main() {
 	}
 
 	log := logger.Init(cfg)
-	cfg.LogSummary()
+	cfg.LogSummary(log)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
 	if err := app.Run(ctx, cfg, log); err != nil {
-		log.WithError(err).Error("Runtime error encountered")
+		log.Error("Runtime error encountered", slog.Any("error", err))
 		os.Exit(1)
 	}
 

@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"go-api/internal/app"
 	"go-api/internal/config"
+	"go-api/internal/logger"
 )
 
 func main() {
@@ -18,15 +20,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	cfg.LogSummary()
+	log := logger.Init(cfg)
+	cfg.LogSummary(log)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	if err := app.Run(ctx, cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "[aurora-api] Runtime error: %v\n", err)
+	if err := app.Run(ctx, cfg, log); err != nil {
+		log.Error("Runtime error encountered", slog.Any("error", err))
 		os.Exit(1)
 	}
 
-	fmt.Println("[aurora-api] Shutdown completed gracefully.")
+	log.Info("Shutdown completed gracefully.")
 }

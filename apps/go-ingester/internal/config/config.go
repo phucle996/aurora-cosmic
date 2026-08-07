@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 )
@@ -123,9 +124,11 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-func (c *Config) LogSummary() {
-	fmt.Printf("[aurora-ingester] Config: env=%s, log_level=%s, concurrency=%d, minio=%s, bucket=%s, nats=%s, high_wm=%.2f, low_wm=%.2f\n",
-		c.Core.Env, c.Core.LogLevel, c.Ingest.Concurrency, c.MinIO.Endpoint, c.MinIO.Bucket, c.NATS.URL, c.Bronze.HighWatermark, c.Bronze.LowWatermark)
+func (c *Config) LogSummary(log *slog.Logger) {
+	log.Info("Configuration loaded",
+		slog.String("env", c.Core.Env),
+		slog.String("log_level", c.Core.LogLevel),
+	)
 }
 
 func requireEnv(key string) (string, error) {
@@ -143,7 +146,7 @@ func requireEnvInt(key string) (int, error) {
 	}
 	i, err := strconv.Atoi(val)
 	if err != nil {
-		return 0, fmt.Errorf("invalid integer value for '%s': '%s'", key, val)
+		return 0, fmt.Errorf("invalid integer value for '%s'", key)
 	}
 	return i, nil
 }
@@ -155,7 +158,7 @@ func requireEnvInt64(key string) (int64, error) {
 	}
 	i, err := strconv.ParseInt(val, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("invalid int64 value for '%s': '%s'", key, val)
+		return 0, fmt.Errorf("invalid int64 value for '%s'", key)
 	}
 	return i, nil
 }
@@ -167,7 +170,7 @@ func requireEnvFloat(key string) (float64, error) {
 	}
 	f, err := strconv.ParseFloat(val, 64)
 	if err != nil {
-		return 0, fmt.Errorf("invalid float value for '%s': '%s'", key, val)
+		return 0, fmt.Errorf("invalid float value for '%s'", key)
 	}
 	return f, nil
 }

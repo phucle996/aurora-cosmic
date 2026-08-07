@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 )
@@ -87,9 +88,11 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-func (c *Config) LogSummary() {
-	fmt.Printf("[aurora-api] Config: env=%s, log_level=%s, listen=%s:%d, minio=%s, bucket=%s\n",
-		c.Core.Env, c.Core.LogLevel, c.Server.Host, c.Server.Port, c.MinIO.Endpoint, c.MinIO.Bucket)
+func (c *Config) LogSummary(log *slog.Logger) {
+	log.Info("Configuration loaded",
+		slog.String("env", c.Core.Env),
+		slog.String("log_level", c.Core.LogLevel),
+	)
 }
 
 func requireEnv(key string) (string, error) {
@@ -107,7 +110,7 @@ func requireEnvInt(key string) (int, error) {
 	}
 	i, err := strconv.Atoi(val)
 	if err != nil {
-		return 0, fmt.Errorf("invalid integer value for '%s': '%s'", key, val)
+		return 0, fmt.Errorf("invalid integer value for '%s'", key)
 	}
 	return i, nil
 }

@@ -2,18 +2,17 @@ package app
 
 import (
 	"context"
+	"log/slog"
 
 	"go-ingester/internal/config"
-
-	"github.com/sirupsen/logrus"
 )
 
-func Run(ctx context.Context, cfg *config.Config, log *logrus.Logger) error {
-	log.WithFields(logrus.Fields{
-		"concurrency": cfg.Ingest.Concurrency,
-		"minio":       cfg.MinIO.Endpoint,
-		"nats":        cfg.NATS.URL,
-	}).Info("Ingester service runner started")
+func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
+	log.Info("Ingester service runner started",
+		slog.Int("concurrency", cfg.Ingest.Concurrency),
+		slog.String("minio", cfg.MinIO.Endpoint),
+		slog.String("nats", cfg.NATS.URL),
+	)
 
 	<-ctx.Done()
 	log.Info("Shutdown signal received, stopping ingestion tasks...")
