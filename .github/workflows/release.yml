@@ -1,0 +1,234 @@
+name: AURORA Sub-Project GHCR Release
+
+on:
+  push:
+    tags:
+      - 'go-ingester/v*'
+      - 'rust-preprocessor/v*'
+      - 'python-ml-worker/v*'
+      - 'rust-inference/v*'
+      - 'go-api/v*'
+      - 'dashboard/v*'
+
+jobs:
+  release-go-ingester:
+    if: startsWith(github.ref, 'refs/tags/go-ingester/')
+    name: Build & Release go-ingester
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Extract Tag Version
+        id: meta
+        run: |
+          TAG=${GITHUB_REF#refs/tags/go-ingester/}
+          echo "version=${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/go-ingester
+          file: ./apps/go-ingester/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/aurora-go-ingester:${{ steps.meta.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/aurora-go-ingester:latest
+
+  release-rust-preprocessor:
+    if: startsWith(github.ref, 'refs/tags/rust-preprocessor/')
+    name: Build & Release rust-preprocessor
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Extract Tag Version
+        id: meta
+        run: |
+          TAG=${GITHUB_REF#refs/tags/rust-preprocessor/}
+          echo "version=${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/rust-preprocessor
+          file: ./apps/rust-preprocessor/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/aurora-rust-preprocessor:${{ steps.meta.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/aurora-rust-preprocessor:latest
+
+  release-python-ml-worker:
+    if: startsWith(github.ref, 'refs/tags/python-ml-worker/')
+    name: Build & Release python-ml-worker
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Extract Tag Version
+        id: meta
+        run: |
+          TAG=${GITHUB_REF#refs/tags/python-ml-worker/}
+          echo "version=${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/python-ml-worker
+          file: ./apps/python-ml-worker/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/aurora-python-ml-worker:${{ steps.meta.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/aurora-python-ml-worker:latest
+
+  release-rust-inference:
+    if: startsWith(github.ref, 'refs/tags/rust-inference/')
+    name: Build & Release rust-inference
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Extract Tag Version
+        id: meta
+        run: |
+          TAG=${GITHUB_REF#refs/tags/rust-inference/}
+          echo "version=${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/rust-inference
+          file: ./apps/rust-inference/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/aurora-rust-inference:${{ steps.meta.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/aurora-rust-inference:latest
+
+  release-go-api:
+    if: startsWith(github.ref, 'refs/tags/go-api/')
+    name: Build & Release go-api
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Extract Tag Version
+        id: meta
+        run: |
+          TAG=${GITHUB_REF#refs/tags/go-api/}
+          echo "version=${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/go-api
+          file: ./apps/go-api/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/aurora-go-api:${{ steps.meta.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/aurora-go-api:latest
+
+  release-dashboard:
+    if: startsWith(github.ref, 'refs/tags/dashboard/')
+    name: Build & Release dashboard
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Extract Tag Version
+        id: meta
+        run: |
+          TAG=${GITHUB_REF#refs/tags/dashboard/}
+          echo "version=${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/dashboard
+          file: ./apps/dashboard/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/aurora-dashboard:${{ steps.meta.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/aurora-dashboard:latest

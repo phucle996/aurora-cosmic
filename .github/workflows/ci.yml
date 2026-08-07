@@ -1,0 +1,167 @@
+name: AURORA Sub-Project Security Scan
+
+on:
+  push:
+    branches: [ main, "feature/**", "fix/**" ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  changes:
+    name: Detect Changed Sub-Projects
+    runs-on: ubuntu-latest
+    outputs:
+      go-ingester: ${{ steps.filter.outputs.go-ingester }}
+      rust-preprocessor: ${{ steps.filter.outputs.rust-preprocessor }}
+      python-ml-worker: ${{ steps.filter.outputs.python-ml-worker }}
+      rust-inference: ${{ steps.filter.outputs.rust-inference }}
+      go-api: ${{ steps.filter.outputs.go-api }}
+      dashboard: ${{ steps.filter.outputs.dashboard }}
+      root: ${{ steps.filter.outputs.root }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Filter Changed Paths
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            go-ingester:
+              - 'apps/go-ingester/**'
+            rust-preprocessor:
+              - 'apps/rust-preprocessor/**'
+            python-ml-worker:
+              - 'apps/python-ml-worker/**'
+            rust-inference:
+              - 'apps/rust-inference/**'
+            go-api:
+              - 'apps/go-api/**'
+            dashboard:
+              - 'apps/dashboard/**'
+            root:
+              - 'README.md'
+              - 'ARCH.MD'
+              - 'STRUCTURE.MD'
+              - 'STAGE.MD'
+              - 'Makefile'
+              - '.github/**'
+
+  scan-go-ingester:
+    needs: changes
+    if: ${{ needs.changes.outputs.go-ingester == 'true' }}
+    name: Trivy Scan (go-ingester)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: 'fs'
+          scan-ref: 'apps/go-ingester'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+
+  scan-rust-preprocessor:
+    needs: changes
+    if: ${{ needs.changes.outputs.rust-preprocessor == 'true' }}
+    name: Trivy Scan (rust-preprocessor)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: 'fs'
+          scan-ref: 'apps/rust-preprocessor'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+
+  scan-python-ml-worker:
+    needs: changes
+    if: ${{ needs.changes.outputs.python-ml-worker == 'true' }}
+    name: Trivy Scan (python-ml-worker)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: 'fs'
+          scan-ref: 'apps/python-ml-worker'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+
+  scan-rust-inference:
+    needs: changes
+    if: ${{ needs.changes.outputs.rust-inference == 'true' }}
+    name: Trivy Scan (rust-inference)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: 'fs'
+          scan-ref: 'apps/rust-inference'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+
+  scan-go-api:
+    needs: changes
+    if: ${{ needs.changes.outputs.go-api == 'true' }}
+    name: Trivy Scan (go-api)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: 'fs'
+          scan-ref: 'apps/go-api'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+
+  scan-dashboard:
+    needs: changes
+    if: ${{ needs.changes.outputs.dashboard == 'true' }}
+    name: Trivy Scan (dashboard)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: 'fs'
+          scan-ref: 'apps/dashboard'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+
+  scan-root:
+    needs: changes
+    if: ${{ needs.changes.outputs.root == 'true' }}
+    name: Trivy Scan (Repository Root)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
