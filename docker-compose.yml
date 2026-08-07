@@ -59,8 +59,7 @@ services:
       retries: 5
 
   go-ingester:
-    build:
-      context: ./apps/go-ingester
+    image: ghcr.io/phucle996/aurora-go-ingester:latest
     container_name: aurora-go-ingester
     env_file:
       - ./apps/go-ingester/.env.example
@@ -73,8 +72,7 @@ services:
         condition: service_healthy
 
   rust-preprocessor:
-    build:
-      context: ./apps/rust-preprocessor
+    image: ghcr.io/phucle996/aurora-rust-preprocessor:latest
     container_name: aurora-rust-preprocessor
     env_file:
       - ./apps/rust-preprocessor/.env.example
@@ -87,8 +85,7 @@ services:
         condition: service_healthy
 
   python-ml-worker:
-    build:
-      context: ./apps/python-ml-worker
+    image: ghcr.io/phucle996/aurora-python-ml-worker:latest
     container_name: aurora-python-ml-worker
     env_file:
       - ./apps/python-ml-worker/.env.example
@@ -101,8 +98,7 @@ services:
         condition: service_healthy
 
   rust-inference:
-    build:
-      context: ./apps/rust-inference
+    image: ghcr.io/phucle996/aurora-rust-inference:latest
     container_name: aurora-rust-inference
     env_file:
       - ./apps/rust-inference/.env.example
@@ -115,8 +111,7 @@ services:
         condition: service_healthy
 
   go-api:
-    build:
-      context: ./apps/go-api
+    image: ghcr.io/phucle996/aurora-go-api:latest
     container_name: aurora-go-api
     ports:
       - "${AURORA_API_PORT:-8080}:8080"
@@ -129,8 +124,7 @@ services:
         condition: service_healthy
 
   dashboard:
-    build:
-      context: ./apps/dashboard
+    image: ghcr.io/phucle996/aurora-dashboard:latest
     container_name: aurora-dashboard
     ports:
       - "${AURORA_DASHBOARD_PORT:-8501}:8501"
