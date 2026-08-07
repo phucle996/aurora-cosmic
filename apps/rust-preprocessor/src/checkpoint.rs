@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::event::{BronzeObjectReady, ProductKind};
+use crate::infra::MinioClient;
 use crate::output::silver::SilverArtifact;
 
 /// Schema version for preprocessing checkpoint format.
@@ -90,6 +91,28 @@ impl PreprocessingCheckpoint {
             created_at: now.clone(),
             updated_at: now,
         }
+    }
+
+    /// Load a checkpoint from MinIO infrastructure. Returns `Ok(None)` if not found.
+    pub async fn load(minio: &MinioClient, bucket: &str, key: &str) -> Result<Option<Self>> {
+        let checkpoint: Option<Self> = minio.get_json_object(bucket, key).await?;
+        if let Some(ref cp) = checkpoint {
+            cp.validate_schema_version()?;
+        }
+        Ok(checkpoint)
+    }
+
+    /// Save checkpoint atomically to MinIO infrastructure.
+    pub async fn save(&self, minio: &MinioClient, bucket: &str, key: &str) -> Result<()> {
+        minio.put_json_object(bucket, key, self).await?;
+        tracing::debug!(
+            bucket = bucket,
+            object_key = key,
+            state = ?self.state,
+            operation = "checkpoint_save",
+            "Checkpoint saved to MinIO"
+        );
+        Ok(())
     }
 
     /// Update checkpoint to `SILVER_STORED` after successful Silver artifact upload.

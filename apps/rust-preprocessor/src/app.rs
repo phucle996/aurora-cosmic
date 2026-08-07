@@ -5,7 +5,7 @@ use tokio::signal;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::Config;
-use crate::storage::StorageClient;
+use crate::infra::MinioClient;
 use crate::worker;
 
 /// Application entry point.
@@ -29,15 +29,15 @@ pub async fn run(config: Config) -> Result<()> {
 
     let jetstream = async_nats::jetstream::new(nats_client.clone());
 
-    // 2. Initialize MinIO StorageClient
+    // 2. Initialize MinIO Infrastructure Client
     tracing::info!(
         minio_endpoint = %config.minio.endpoint,
         minio_bucket = %config.minio.bucket,
-        "Initializing StorageClient"
+        "Initializing MinioClient"
     );
 
-    let storage = Arc::new(
-        StorageClient::new(&config.minio).context("Failed to initialize MinIO StorageClient")?,
+    let minio = Arc::new(
+        MinioClient::new(&config.minio).context("Failed to initialize MinIO infrastructure client")?,
     );
 
     // 3. Shared cancellation token for graceful shutdown
@@ -51,7 +51,7 @@ pub async fn run(config: Config) -> Result<()> {
     let worker_task = tokio::spawn(async move {
         if let Err(e) = worker::run_pool(
             jetstream,
-            storage,
+            minio,
             &cfg_consumer,
             lc_config,
             img_config,

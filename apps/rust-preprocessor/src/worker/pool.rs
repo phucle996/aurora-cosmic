@@ -8,7 +8,7 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::{ConsumerConfig, ImageConfig, LightCurveConfig};
-use crate::storage::StorageClient;
+use crate::infra::MinioClient;
 use crate::worker::process_message;
 
 /// Subjects to subscribe from AURORA_BRONZE stream.
@@ -17,7 +17,7 @@ const BRONZE_FILTER_SUBJECT: &str = "aurora.v1.bronze.*.ready";
 /// Run the Tokio Parallel Worker Pool.
 pub async fn run_pool(
     jetstream: jetstream::Context,
-    storage: Arc<StorageClient>,
+    minio: Arc<MinioClient>,
     cfg: &ConsumerConfig,
     lc_cfg: LightCurveConfig,
     img_cfg: ImageConfig,
@@ -111,7 +111,7 @@ pub async fn run_pool(
                         }
                     };
 
-                    let storage_ref = storage.clone();
+                    let minio_ref = minio.clone();
                     let js_ref = jetstream.clone();
                     let tmp_dir = cfg.tmp_dir.clone();
                     let lc_config = lc_cfg.clone();
@@ -126,7 +126,7 @@ pub async fn run_pool(
                     tasks.spawn(async move {
                         process_message(
                             msg,
-                            storage_ref,
+                            minio_ref,
                             js_ref,
                             tmp_dir,
                             lc_config,

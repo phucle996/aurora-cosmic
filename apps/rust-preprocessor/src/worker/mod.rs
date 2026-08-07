@@ -17,7 +17,7 @@ pub use recovery::evaluate_recovery;
 use crate::checkpoint::{build_checkpoint_object_key, PreprocessingCheckpoint, ProcessingState, RecoveryAction};
 use crate::config::{ImageConfig, LightCurveConfig};
 use crate::event::{BronzeObjectReady, ProductKind};
-use crate::storage::StorageClient;
+use crate::infra::MinioClient;
 
 /// Process a single Data Object through the end-to-end 5-step flow with durable checkpointing:
 /// 1. Recovery Check: Load MinIO checkpoint & decide recovery action
@@ -28,7 +28,7 @@ use crate::storage::StorageClient;
 /// 6. Sink: Upload Silver, save COMPLETED checkpoint, publish NATS Silver event, & ACK message
 pub async fn process_message(
     msg: jetstream::Message,
-    storage: Arc<StorageClient>,
+    minio: Arc<MinioClient>,
     jetstream: jetstream::Context,
     tmp_dir: PathBuf,
     lc_cfg: LightCurveConfig,
@@ -62,7 +62,7 @@ pub async fn process_message(
 
     // 1. Recovery Check via Durable Checkpoint
     let (recovery_action, mut checkpoint_opt) =
-        match evaluate_recovery(&storage, &event, processor_version).await {
+        match evaluate_recovery(&minio, &event, processor_version).await {
             Ok(res) => res,
             Err(e) => {
                 tracing::warn!(
@@ -115,7 +115,7 @@ pub async fn process_message(
         if let Some(ref mut cp) = checkpoint_opt {
             cp.mark_completed();
             let checkpoint_key = build_checkpoint_object_key(&cp.checkpoint_id);
-            if let Err(e) = storage.save_checkpoint(&cp.bronze_bucket, &checkpoint_key, cp).await {
+            if let Err(e) = cp.save(&minio, &cp.bronze_bucket, &checkpoint_key).await {
                 tracing::warn!(event_id = %event_id, error = %e, "Failed saving promoted COMPLETED checkpoint");
             }
             if let (Some(ref s_bucket), Some(ref s_key), Some(ref s_sha), Some(s_size)) = (
@@ -154,7 +154,7 @@ pub async fn process_message(
     };
 
     let checkpoint_key = build_checkpoint_object_key(&checkpoint.checkpoint_id);
-    if let Err(e) = storage.save_checkpoint(&event.bucket, &checkpoint_key, &checkpoint).await {
+    if let Err(e) = checkpoint.save(&minio, &event.bucket, &checkpoint_key).await {
         tracing::warn!(event_id = %event_id, error = %e, "Failed to save initial PROCESSING checkpoint");
     }
 
@@ -167,10 +167,10 @@ pub async fn process_message(
         "Worker processing Data Object"
     );
 
-    match execute_item_pipeline(&storage, &event, &tmp_dir, &lc_cfg, &img_cfg).await {
+    match execute_item_pipeline(&minio, &event, &tmp_dir, &lc_cfg, &img_cfg).await {
         Ok(artifact) => {
             // Upload to MinIO Silver
-            if let Err(e) = storage
+            if let Err(e) = minio
                 .put_file_and_verify(
                     &artifact.bucket,
                     &artifact.object_key,
@@ -182,7 +182,7 @@ pub async fn process_message(
             {
                 tracing::warn!(event_id = %event_id, error = %e, "Silver MinIO upload failed — NAKing");
                 checkpoint.mark_failed(&format!("Silver upload failed: {e}"));
-                let _ = storage.save_checkpoint(&event.bucket, &checkpoint_key, &checkpoint).await;
+                let _ = checkpoint.save(&minio, &event.bucket, &checkpoint_key).await;
                 let _ = msg.ack_with(AckKind::Nak(None)).await;
                 return;
             }
@@ -190,7 +190,7 @@ pub async fn process_message(
             // Update Checkpoint: SILVER_STORED -> COMPLETED
             checkpoint.mark_silver_stored(&artifact);
             checkpoint.mark_completed();
-            if let Err(e) = storage.save_checkpoint(&event.bucket, &checkpoint_key, &checkpoint).await {
+            if let Err(e) = checkpoint.save(&minio, &event.bucket, &checkpoint_key).await {
                 tracing::warn!(event_id = %event_id, error = %e, "Failed to save COMPLETED checkpoint");
             }
 
@@ -228,7 +228,7 @@ pub async fn process_message(
                 "Processing failed — recording FAILED checkpoint and NAKing message"
             );
             checkpoint.mark_failed(&err.to_string());
-            let _ = storage.save_checkpoint(&event.bucket, &checkpoint_key, &checkpoint).await;
+            let _ = checkpoint.save(&minio, &event.bucket, &checkpoint_key).await;
             let _ = msg.ack_with(AckKind::Nak(None)).await;
         }
     }

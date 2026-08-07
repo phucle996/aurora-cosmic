@@ -191,6 +191,9 @@
 │           │   ├── image.rs
 │           │   ├── lightcurve.rs
 │           │   └── mod.rs
+│           ├── infra
+│           │   ├── minio.rs
+│           │   └── mod.rs
 │           ├── logger.rs
 │           ├── main.rs
 │           ├── output
@@ -200,7 +203,6 @@
 │           │   ├── image.rs
 │           │   ├── lightcurve.rs
 │           │   └── mod.rs
-│           ├── storage.rs
 │           ├── tests
 │           │   ├── checkpoint_tests.rs
 │           │   ├── config_tests.rs
@@ -253,4 +255,4 @@
 │   └── fixtures
 └── tree.txt
 
-77 directories, 177 files
+78 directories, 178 files

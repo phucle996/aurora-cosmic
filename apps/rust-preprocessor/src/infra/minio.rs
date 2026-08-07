@@ -8,7 +8,6 @@ use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 use tokio::io::AsyncWriteExt;
 
-use crate::checkpoint::PreprocessingCheckpoint;
 use crate::config::MinioConfig;
 
 /// Opaque handle to a verified temporary FITS file on local disk.
@@ -28,15 +27,13 @@ pub struct StoredObjectStat {
     pub sha256: Option<String>,
 }
 
-/// MinIO / S3-compatible storage client.
-///
-/// Created once at startup — not per-event.
-pub struct StorageClient {
+/// MinIO / S3-compatible infrastructure storage client.
+pub struct MinioClient {
     client: aws_sdk_s3::Client,
 }
 
-impl StorageClient {
-    /// Build a storage client from the MinIO configuration.
+impl MinioClient {
+    /// Build a storage client from MinIO configuration.
     pub fn new(cfg: &MinioConfig) -> Result<Self> {
         let credentials = Credentials::new(
             &cfg.access_key,
@@ -78,8 +75,6 @@ impl StorageClient {
     }
 
     /// Verify that the object exists and its size matches the event claim.
-    ///
-    /// Returns an error if the object is missing or the size does not match.
     pub async fn stat_and_verify_size(
         &self,
         bucket: &str,
@@ -229,12 +224,12 @@ impl StorageClient {
         Ok(())
     }
 
-    /// Load a PreprocessingCheckpoint from MinIO. Returns `Ok(None)` if the checkpoint does not exist.
-    pub async fn load_checkpoint(
+    /// Load JSON bytes from an object in MinIO. Returns `Ok(None)` if object does not exist.
+    pub async fn get_json_object<T: serde::de::DeserializeOwned>(
         &self,
         bucket: &str,
         key: &str,
-    ) -> Result<Option<PreprocessingCheckpoint>> {
+    ) -> Result<Option<T>> {
         let response = match self
             .client
             .get_object()
@@ -251,25 +246,24 @@ impl StorageClient {
             .body
             .collect()
             .await
-            .with_context(|| format!("Failed reading body for checkpoint {bucket}/{key}"))?
+            .with_context(|| format!("Failed reading body for {bucket}/{key}"))?
             .into_bytes();
 
-        let checkpoint: PreprocessingCheckpoint = serde_json::from_slice(&bytes)
-            .with_context(|| format!("Failed to parse JSON checkpoint from {bucket}/{key}"))?;
+        let obj: T = serde_json::from_slice(&bytes)
+            .with_context(|| format!("Failed parsing JSON object from {bucket}/{key}"))?;
 
-        checkpoint.validate_schema_version()?;
-        Ok(Some(checkpoint))
+        Ok(Some(obj))
     }
 
-    /// Save a PreprocessingCheckpoint atomically to MinIO.
-    pub async fn save_checkpoint(
+    /// Save a JSON object to MinIO atomically.
+    pub async fn put_json_object<T: serde::Serialize>(
         &self,
         bucket: &str,
         key: &str,
-        checkpoint: &PreprocessingCheckpoint,
+        data: &T,
     ) -> Result<()> {
-        let json_bytes = serde_json::to_vec_pretty(checkpoint)
-            .with_context(|| format!("Failed serializing checkpoint {key}"))?;
+        let json_bytes = serde_json::to_vec_pretty(data)
+            .with_context(|| format!("Failed serializing JSON for {key}"))?;
 
         self.client
             .put_object()
@@ -279,15 +273,7 @@ impl StorageClient {
             .content_type("application/json")
             .send()
             .await
-            .with_context(|| format!("Failed uploading checkpoint {bucket}/{key}"))?;
-
-        tracing::debug!(
-            bucket = bucket,
-            object_key = key,
-            state = ?checkpoint.state,
-            operation = "checkpoint_save",
-            "Checkpoint saved to MinIO"
-        );
+            .with_context(|| format!("Failed uploading JSON object to {bucket}/{key}"))?;
 
         Ok(())
     }

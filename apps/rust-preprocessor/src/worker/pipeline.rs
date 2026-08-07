@@ -5,24 +5,24 @@ use anyhow::{Context, Result};
 use crate::config::{ImageConfig, LightCurveConfig};
 use crate::event::BronzeObjectReady;
 use crate::fits::{self, DecodedProduct};
+use crate::infra::MinioClient;
 use crate::output::silver::{self, SilverArtifact};
 use crate::pipeline;
-use crate::storage::StorageClient;
 
 /// Helper function to perform Steps 1..4 (Ingest, Decode, Preprocess, Serialize).
 pub async fn execute_item_pipeline(
-    storage: &StorageClient,
+    minio: &MinioClient,
     event: &BronzeObjectReady,
     tmp_dir: &PathBuf,
     lc_cfg: &LightCurveConfig,
     img_cfg: &ImageConfig,
 ) -> Result<SilverArtifact> {
     // Step 1: Ingest (Stat & Fetch)
-    storage
+    minio
         .stat_and_verify_size(&event.bucket, &event.object_key, event.size_bytes)
         .await?;
 
-    let temp_fits_file = storage
+    let temp_fits_file = minio
         .fetch_to_temp(
             &event.bucket,
             &event.object_key,

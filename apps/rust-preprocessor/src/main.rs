@@ -3,10 +3,10 @@ mod checkpoint;
 mod config;
 mod event;
 mod fits;
+mod infra;
 mod logger;
 mod output;
 mod pipeline;
-mod storage;
 mod worker;
 
 #[cfg(test)]

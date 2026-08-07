@@ -6,18 +6,18 @@ use crate::checkpoint::{
     RecoveryAction,
 };
 use crate::event::BronzeObjectReady;
-use crate::storage::StorageClient;
+use crate::infra::MinioClient;
 
 /// Evaluate recovery action for a Bronze message against durable MinIO checkpoints.
 pub async fn evaluate_recovery(
-    storage: &StorageClient,
+    minio: &MinioClient,
     event: &BronzeObjectReady,
     processor_version: &str,
 ) -> Result<(RecoveryAction, Option<PreprocessingCheckpoint>)> {
     let checkpoint_id = derive_checkpoint_id(&event.source_product_id, processor_version);
     let checkpoint_key = build_checkpoint_object_key(&checkpoint_id);
 
-    let checkpoint = match storage.load_checkpoint(&event.bucket, &checkpoint_key).await? {
+    let checkpoint = match PreprocessingCheckpoint::load(minio, &event.bucket, &checkpoint_key).await? {
         Some(cp) => cp,
         None => return Ok((RecoveryAction::Process, None)),
     };
@@ -38,7 +38,7 @@ pub async fn evaluate_recovery(
             if let (Some(ref silver_bucket), Some(ref silver_key)) =
                 (&checkpoint.silver_bucket, &checkpoint.silver_object_key)
             {
-                if let Ok(stat) = storage.stat_object(silver_bucket, silver_key).await {
+                if let Ok(stat) = minio.stat_object(silver_bucket, silver_key).await {
                     if Some(stat.size_bytes) == checkpoint.silver_size_bytes {
                         tracing::info!(
                             checkpoint_id = %checkpoint_id,
@@ -62,7 +62,7 @@ pub async fn evaluate_recovery(
             if let (Some(ref silver_bucket), Some(ref silver_key)) =
                 (&checkpoint.silver_bucket, &checkpoint.silver_object_key)
             {
-                if let Ok(stat) = storage.stat_object(silver_bucket, silver_key).await {
+                if let Ok(stat) = minio.stat_object(silver_bucket, silver_key).await {
                     if Some(stat.size_bytes) == checkpoint.silver_size_bytes {
                         tracing::info!(
                             checkpoint_id = %checkpoint_id,
