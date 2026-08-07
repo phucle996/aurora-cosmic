@@ -121,7 +121,9 @@ pub fn preprocess_lc(
 
     let mut filtered_time = Vec::with_capacity(input_points);
     let mut filtered_flux = Vec::with_capacity(input_points);
-    let mut filtered_err = raw_flux_err.as_ref().map(|_| Vec::with_capacity(input_points));
+    let mut filtered_err = raw_flux_err
+        .as_ref()
+        .map(|_| Vec::with_capacity(input_points));
     let mut filtered_qual = Vec::with_capacity(input_points);
 
     for i in 0..input_points {
@@ -172,7 +174,9 @@ pub fn preprocess_lc(
 
     let mut sorted_time = Vec::with_capacity(post_filter_points);
     let mut sorted_flux = Vec::with_capacity(post_filter_points);
-    let mut sorted_err = filtered_err.as_ref().map(|_| Vec::with_capacity(post_filter_points));
+    let mut sorted_err = filtered_err
+        .as_ref()
+        .map(|_| Vec::with_capacity(post_filter_points));
     let mut sorted_qual = Vec::with_capacity(post_filter_points);
 
     let mut last_t: Option<f64> = None;
@@ -217,9 +221,8 @@ pub fn preprocess_lc(
         .map(|&f| (f / flux_median) - 1.0)
         .collect();
 
-    let mut norm_err: Option<Vec<f32>> = sorted_err.map(|errs| {
-        errs.iter().map(|&e| e / flux_median).collect()
-    });
+    let mut norm_err: Option<Vec<f32>> =
+        sorted_err.map(|errs| errs.iter().map(|&e| e / flux_median).collect());
 
     // 6. Optional conservative sigma clipping
     let mut outlier_removed = 0usize;
@@ -239,12 +242,33 @@ pub fn preprocess_lc(
                     .map(|i| !clip_indices.contains(&i))
                     .collect();
 
-                sorted_time = sorted_time.into_iter().enumerate().filter(|(i, _)| keep_mask[*i]).map(|(_, v)| v).collect();
-                norm_flux = norm_flux.into_iter().enumerate().filter(|(i, _)| keep_mask[*i]).map(|(_, v)| v).collect();
+                sorted_time = sorted_time
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(i, _)| keep_mask[*i])
+                    .map(|(_, v)| v)
+                    .collect();
+                norm_flux = norm_flux
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(i, _)| keep_mask[*i])
+                    .map(|(_, v)| v)
+                    .collect();
                 if let Some(errs) = norm_err {
-                    norm_err = Some(errs.into_iter().enumerate().filter(|(i, _)| keep_mask[*i]).map(|(_, v)| v).collect());
+                    norm_err = Some(
+                        errs.into_iter()
+                            .enumerate()
+                            .filter(|(i, _)| keep_mask[*i])
+                            .map(|(_, v)| v)
+                            .collect(),
+                    );
                 }
-                sorted_qual = sorted_qual.into_iter().enumerate().filter(|(i, _)| keep_mask[*i]).map(|(_, v)| v).collect();
+                sorted_qual = sorted_qual
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(i, _)| keep_mask[*i])
+                    .map(|(_, v)| v)
+                    .collect();
             }
         }
     }
@@ -289,6 +313,7 @@ pub fn preprocess_lc(
 }
 
 /// Helper: compute median of f32 slice.
+#[allow(clippy::manual_is_multiple_of)]
 fn calculate_median(values: &[f32]) -> f32 {
     if values.is_empty() {
         return 0.0;

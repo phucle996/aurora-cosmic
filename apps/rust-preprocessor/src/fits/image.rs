@@ -65,17 +65,18 @@ pub fn decode_tpf(path: &Path, event: &BronzeObjectReady) -> Result<RawTargetPix
         .context("Missing required column 'QUALITY' in TPF table")?;
 
     if time.is_empty() {
-        bail!("Decoded TPF TIME column is empty for object {}", event.object_key);
+        bail!(
+            "Decoded TPF TIME column is empty for object {}",
+            event.object_key
+        );
     }
 
     // Flux array in TPF binary table: 3D pixel cube per cadence or 2D image column
-    let flux_data: Vec<f32> = table_hdu
-        .read_col(&mut fits, "FLUX")
-        .unwrap_or_default();
+    let flux_data: Vec<f32> = table_hdu.read_col(&mut fits, "FLUX").unwrap_or_default();
 
     let cadences = time.len();
     let total_pixels = flux_data.len();
-    let pixels_per_cadence = if cadences > 0 { total_pixels / cadences } else { 0 };
+    let pixels_per_cadence = total_pixels.checked_div(cadences).unwrap_or(0);
 
     let side = (pixels_per_cadence as f64).sqrt() as usize;
     let (rows, cols) = if side * side == pixels_per_cadence && side > 0 {

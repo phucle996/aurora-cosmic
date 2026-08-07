@@ -109,8 +109,7 @@ impl StorageClient {
             .with_context(|| format!("Cannot create tmp dir: {}", tmp_dir.display()))?;
 
         // Create a unique temp file — deleted on drop.
-        let temp = NamedTempFile::new_in(tmp_dir)
-            .context("Failed to create temp FITS file")?;
+        let temp = NamedTempFile::new_in(tmp_dir).context("Failed to create temp FITS file")?;
         let temp_path = temp.path().to_path_buf();
 
         // GET object.
@@ -198,7 +197,12 @@ impl StorageClient {
     ) -> Result<()> {
         let body = aws_sdk_s3::primitives::ByteStream::from_path(file_path)
             .await
-            .with_context(|| format!("Failed to read local file for upload: {}", file_path.display()))?;
+            .with_context(|| {
+                format!(
+                    "Failed to read local file for upload: {}",
+                    file_path.display()
+                )
+            })?;
 
         let mut builder = self.client.put_object().bucket(bucket).key(key).body(body);
         for (k, v) in metadata {
@@ -211,7 +215,8 @@ impl StorageClient {
             .with_context(|| format!("MinIO PutObject failed for {bucket}/{key}"))?;
 
         // Stat verification
-        self.stat_and_verify_size(bucket, key, expected_size).await?;
+        self.stat_and_verify_size(bucket, key, expected_size)
+            .await?;
 
         tracing::info!(
             bucket = bucket,

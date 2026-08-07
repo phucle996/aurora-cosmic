@@ -173,7 +173,10 @@ fn test_tpf_temporal_variation_preserved() {
 
     let res = preprocess_target_pixel(raw, &event, &cfg).unwrap();
     assert_eq!(res.time.len(), 3);
-    assert!(res.flux[1][0][0] < res.flux[0][0][0], "Middle dip cadence must be lower than baseline");
+    assert!(
+        res.flux[1][0][0] < res.flux[0][0][0],
+        "Middle dip cadence must be lower than baseline"
+    );
 }
 
 #[test]
@@ -204,10 +207,22 @@ fn test_tpf_determinism() {
 #[test]
 fn test_ffi_statistics_and_non_finite_handling() {
     let pixels = vec![
-        10.0, 20.0, f32::NAN, 40.0,
-        50.0, 60.0, 70.0, f32::INFINITY,
-        90.0, 100.0, 110.0, 120.0,
-        130.0, 140.0, 150.0, 160.0,
+        10.0,
+        20.0,
+        f32::NAN,
+        40.0,
+        50.0,
+        60.0,
+        70.0,
+        f32::INFINITY,
+        90.0,
+        100.0,
+        110.0,
+        120.0,
+        130.0,
+        140.0,
+        150.0,
+        160.0,
     ];
     let raw = RawFfi {
         width: 4,
@@ -232,10 +247,7 @@ fn test_ffi_statistics_and_non_finite_handling() {
 #[test]
 fn test_ffi_cutout_extraction() {
     let pixels = vec![
-        1.0, 2.0, 3.0, 4.0,
-        5.0, 6.0, 7.0, 8.0,
-        9.0, 10.0, 11.0, 12.0,
-        13.0, 14.0, 15.0, 16.0,
+        1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0,
     ];
     let raw = RawFfi {
         width: 4,

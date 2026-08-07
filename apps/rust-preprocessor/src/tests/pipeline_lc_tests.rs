@@ -108,7 +108,15 @@ fn test_quality_none_filtering() {
 #[test]
 fn test_non_finite_filtering() {
     let raw = make_raw_lc(
-        vec![1000.0, f32::NAN, 1000.0, f32::INFINITY, 1000.0, 1000.0, 1000.0],
+        vec![
+            1000.0,
+            f32::NAN,
+            1000.0,
+            f32::INFINITY,
+            1000.0,
+            1000.0,
+            1000.0,
+        ],
         vec![0, 0, 0, 0, 0, 0, 0],
     );
     let event = make_event();
@@ -183,7 +191,10 @@ fn test_transit_preservation() {
 
     // Baseline points should be near 0.0 (or slightly positive due to transit median shift)
     // Dip points should remain negative and present in the output
-    assert!(res.flux[9] < res.flux[0], "Transit dip point must remain lower than baseline");
+    assert!(
+        res.flux[9] < res.flux[0],
+        "Transit dip point must remain lower than baseline"
+    );
 }
 
 #[test]

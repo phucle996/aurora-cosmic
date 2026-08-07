@@ -71,6 +71,7 @@ pub struct ProcessedFfi {
 }
 
 /// Preprocess a raw Target Pixel File into a ProcessedTargetPixel.
+#[allow(clippy::needless_range_loop)]
 pub fn preprocess_target_pixel(
     raw: RawTargetPixel,
     event: &BronzeObjectReady,
@@ -263,7 +264,10 @@ pub fn preprocess_ffi(
 
     let statistics = if !finite_pixels.is_empty() {
         let min = finite_pixels.iter().copied().fold(f32::INFINITY, f32::min);
-        let max = finite_pixels.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let max = finite_pixels
+            .iter()
+            .copied()
+            .fold(f32::NEG_INFINITY, f32::max);
         let sum: f64 = finite_pixels.iter().map(|&p| p as f64).sum();
         let mean = (sum / finite_pixel_count as f64) as f32;
 
@@ -368,6 +372,7 @@ pub fn preprocess_ffi(
 }
 
 /// Helper to calculate median of f32 slice.
+#[allow(clippy::manual_is_multiple_of)]
 fn calculate_f32_median(values: &[f32]) -> f32 {
     if values.is_empty() {
         return 0.0;

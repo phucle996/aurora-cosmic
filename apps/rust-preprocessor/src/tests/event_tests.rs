@@ -166,5 +166,8 @@ fn test_product_kind_ffi() {
 #[test]
 fn test_product_kind_unknown_rejected() {
     let unknown = serde_json::from_str::<ProductKind>("\"UNKNOWN\"");
-    assert!(unknown.is_err(), "UNKNOWN must not deserialize into ProductKind");
+    assert!(
+        unknown.is_err(),
+        "UNKNOWN must not deserialize into ProductKind"
+    );
 }

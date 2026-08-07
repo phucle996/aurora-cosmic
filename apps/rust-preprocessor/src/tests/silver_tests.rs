@@ -10,7 +10,9 @@ use crate::output::silver::{
     build_ffi_key, build_lc_key, build_tpf_key, serialize_ffi, serialize_lightcurve,
     serialize_target_pixel,
 };
-use crate::pipeline::image::{ImageProcessingMetadata, ImageStatistics, ProcessedFfi, ProcessedTargetPixel};
+use crate::pipeline::image::{
+    ImageProcessingMetadata, ImageStatistics, ProcessedFfi, ProcessedTargetPixel,
+};
 use crate::pipeline::lightcurve::{
     FluxSource, LightCurveProcessingMetadata, ProcessedLightCurve, QualityMode,
 };
@@ -103,10 +105,18 @@ fn test_serialize_lightcurve_parquet_roundtrip() {
     assert_eq!(batch.num_rows(), 3);
     assert_eq!(batch.num_columns(), 4);
 
-    let times = batch.column(0).as_primitive::<arrow::datatypes::Float64Type>();
-    let fluxes = batch.column(1).as_primitive::<arrow::datatypes::Float32Type>();
-    let errs = batch.column(2).as_primitive::<arrow::datatypes::Float32Type>();
-    let quals = batch.column(3).as_primitive::<arrow::datatypes::Int32Type>();
+    let times = batch
+        .column(0)
+        .as_primitive::<arrow::datatypes::Float64Type>();
+    let fluxes = batch
+        .column(1)
+        .as_primitive::<arrow::datatypes::Float32Type>();
+    let errs = batch
+        .column(2)
+        .as_primitive::<arrow::datatypes::Float32Type>();
+    let quals = batch
+        .column(3)
+        .as_primitive::<arrow::datatypes::Int32Type>();
 
     assert_eq!(times.value(0), 100.0);
     assert!((fluxes.value(1) - (-0.01)).abs() < 1e-5);
@@ -156,8 +166,12 @@ fn test_serialize_target_pixel_parquet_roundtrip() {
     assert_eq!(batch.num_rows(), 2);
     assert_eq!(batch.num_columns(), 5);
 
-    let rows_col = batch.column(3).as_primitive::<arrow::datatypes::Int32Type>();
-    let cols_col = batch.column(4).as_primitive::<arrow::datatypes::Int32Type>();
+    let rows_col = batch
+        .column(3)
+        .as_primitive::<arrow::datatypes::Int32Type>();
+    let cols_col = batch
+        .column(4)
+        .as_primitive::<arrow::datatypes::Int32Type>();
     assert_eq!(rows_col.value(0), 2);
     assert_eq!(cols_col.value(0), 2);
 }
@@ -209,8 +223,12 @@ fn test_serialize_ffi_parquet_roundtrip() {
     let batch = reader.next().unwrap().unwrap();
     assert_eq!(batch.num_rows(), 1);
 
-    let width_col = batch.column(0).as_primitive::<arrow::datatypes::Int32Type>();
-    let median_col = batch.column(4).as_primitive::<arrow::datatypes::Float32Type>();
+    let width_col = batch
+        .column(0)
+        .as_primitive::<arrow::datatypes::Int32Type>();
+    let median_col = batch
+        .column(4)
+        .as_primitive::<arrow::datatypes::Float32Type>();
     assert_eq!(width_col.value(0), 10);
     assert_eq!(median_col.value(0), 50.0);
 }

@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use arrow::array::{
-    ArrayRef, Float32Array, Float32Builder, Float64Array, Int32Array, Int64Array,
-    ListBuilder, RecordBatch,
+    ArrayRef, Float32Array, Float32Builder, Float64Array, Int32Array, Int64Array, ListBuilder,
+    RecordBatch,
 };
 use arrow::datatypes::{DataType, Field, Schema};
 
@@ -43,7 +43,9 @@ pub fn build_lc_key(
     source_product_id: &str,
     processor_version: &str,
 ) -> String {
-    let tic_str = tic_id.map(|t| t.to_string()).unwrap_or_else(|| "none".to_string());
+    let tic_str = tic_id
+        .map(|t| t.to_string())
+        .unwrap_or_else(|| "none".to_string());
     format!(
         "silver/tess/lightcurve/processor={processor_version}/sector={sector:04}/tic={tic_str}/{source_product_id}.parquet"
     )
@@ -56,7 +58,9 @@ pub fn build_tpf_key(
     source_product_id: &str,
     processor_version: &str,
 ) -> String {
-    let tic_str = tic_id.map(|t| t.to_string()).unwrap_or_else(|| "none".to_string());
+    let tic_str = tic_id
+        .map(|t| t.to_string())
+        .unwrap_or_else(|| "none".to_string());
     format!(
         "silver/tess/target-pixel/processor={processor_version}/sector={sector:04}/tic={tic_str}/{source_product_id}.parquet"
     )
@@ -70,8 +74,12 @@ pub fn build_ffi_key(
     source_product_id: &str,
     processor_version: &str,
 ) -> String {
-    let cam_str = camera.map(|c| c.to_string()).unwrap_or_else(|| "none".to_string());
-    let ccd_str = ccd.map(|c| c.to_string()).unwrap_or_else(|| "none".to_string());
+    let cam_str = camera
+        .map(|c| c.to_string())
+        .unwrap_or_else(|| "none".to_string());
+    let ccd_str = ccd
+        .map(|c| c.to_string())
+        .unwrap_or_else(|| "none".to_string());
     format!(
         "silver/tess/ffi/processor={processor_version}/sector={sector:04}/camera={cam_str}/ccd={ccd_str}/{source_product_id}.parquet"
     )
@@ -85,7 +93,12 @@ pub fn serialize_lightcurve(
 ) -> Result<SilverArtifact> {
     let schema_version = "silver-lightcurve-v1".to_string();
     let processor_version = lc.processing.processor_version.clone();
-    let object_key = build_lc_key(event.sector, lc.tic_id, &event.source_product_id, &processor_version);
+    let object_key = build_lc_key(
+        event.sector,
+        lc.tic_id,
+        &event.source_product_id,
+        &processor_version,
+    );
 
     let schema = Arc::new(Schema::new(vec![
         Field::new("time", DataType::Float64, false),
@@ -115,7 +128,10 @@ pub fn serialize_lightcurve(
     let mut metadata = HashMap::new();
     metadata.insert("schema-version".to_string(), schema_version.clone());
     metadata.insert("processor-version".to_string(), processor_version.clone());
-    metadata.insert("source-product-id".to_string(), event.source_product_id.clone());
+    metadata.insert(
+        "source-product-id".to_string(),
+        event.source_product_id.clone(),
+    );
     metadata.insert("bronze-object-key".to_string(), event.object_key.clone());
     metadata.insert("bronze-sha256".to_string(), event.sha256.clone());
     metadata.insert("silver-sha256".to_string(), sha256.clone());
@@ -146,7 +162,12 @@ pub fn serialize_target_pixel(
 ) -> Result<SilverArtifact> {
     let schema_version = "silver-target-pixel-v1".to_string();
     let processor_version = tpf.processing.processor_version.clone();
-    let object_key = build_tpf_key(event.sector, tpf.tic_id, &event.source_product_id, &processor_version);
+    let object_key = build_tpf_key(
+        event.sector,
+        tpf.tic_id,
+        &event.source_product_id,
+        &processor_version,
+    );
 
     let schema = Arc::new(Schema::new(vec![
         Field::new("time", DataType::Float64, false),
@@ -184,7 +205,13 @@ pub fn serialize_target_pixel(
 
     let batch = RecordBatch::try_new(
         schema.clone(),
-        vec![time_array, quality_array, flux_list_array, rows_array, cols_array],
+        vec![
+            time_array,
+            quality_array,
+            flux_list_array,
+            rows_array,
+            cols_array,
+        ],
     )
     .context("Failed to create TPF Arrow RecordBatch")?;
 
@@ -193,7 +220,10 @@ pub fn serialize_target_pixel(
     let mut metadata = HashMap::new();
     metadata.insert("schema-version".to_string(), schema_version.clone());
     metadata.insert("processor-version".to_string(), processor_version.clone());
-    metadata.insert("source-product-id".to_string(), event.source_product_id.clone());
+    metadata.insert(
+        "source-product-id".to_string(),
+        event.source_product_id.clone(),
+    );
     metadata.insert("bronze-object-key".to_string(), event.object_key.clone());
     metadata.insert("bronze-sha256".to_string(), event.sha256.clone());
     metadata.insert("silver-sha256".to_string(), sha256.clone());
@@ -262,7 +292,10 @@ pub fn serialize_ffi(
     let mut metadata = HashMap::new();
     metadata.insert("schema-version".to_string(), schema_version.clone());
     metadata.insert("processor-version".to_string(), processor_version.clone());
-    metadata.insert("source-product-id".to_string(), event.source_product_id.clone());
+    metadata.insert(
+        "source-product-id".to_string(),
+        event.source_product_id.clone(),
+    );
     metadata.insert("bronze-object-key".to_string(), event.object_key.clone());
     metadata.insert("bronze-sha256".to_string(), event.sha256.clone());
     metadata.insert("silver-sha256".to_string(), sha256.clone());
@@ -287,8 +320,8 @@ fn write_parquet_batch(
     batch: RecordBatch,
     tmp_dir: &Path,
 ) -> Result<(PathBuf, u64, String, NamedTempFile)> {
-    let temp_file = NamedTempFile::new_in(tmp_dir)
-        .context("Failed to create temporary Parquet file")?;
+    let temp_file =
+        NamedTempFile::new_in(tmp_dir).context("Failed to create temporary Parquet file")?;
     let path = temp_file.path().to_path_buf();
 
     let file = File::create(&path).context("Failed to open temp Parquet file for writing")?;
@@ -300,8 +333,12 @@ fn write_parquet_batch(
     let mut writer = ArrowWriter::try_new(file, schema, Some(props))
         .context("Failed to create Parquet ArrowWriter")?;
 
-    writer.write(&batch).context("Failed to write RecordBatch to Parquet writer")?;
-    writer.close().context("Failed to finalize Parquet file writer")?;
+    writer
+        .write(&batch)
+        .context("Failed to write RecordBatch to Parquet writer")?;
+    writer
+        .close()
+        .context("Failed to finalize Parquet file writer")?;
 
     // Read back file to get size and calculate SHA-256
     let bytes = std::fs::read(&path).context("Failed to read back Parquet file for hashing")?;

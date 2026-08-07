@@ -178,6 +178,10 @@ e2e-ingestion-live:
 	@go run ./apps/go-ingester/cmd/aurora-ingester plan --sector 42 --limit 5 --output /tmp/stage2-live-manifest.json
 	@go run ./apps/go-ingester/cmd/aurora-ingester ingest --manifest /tmp/stage2-live-manifest.json
 
+e2e-preprocessing:
+	@echo "Running offline Stage 3 Rust Preprocessing E2E validation script..."
+	@./tests/e2e/stage3-preprocessing.sh
+
 test-rust:
 	@echo "Running Rust tests..."
 	@cd apps/rust-preprocessor && cargo test

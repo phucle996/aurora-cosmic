@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -27,10 +27,12 @@ pub async fn run(
     img_cfg: ImageConfig,
     cancel: CancellationToken,
 ) -> Result<()> {
-    let stream = jetstream
-        .get_stream(&cfg.stream)
-        .await
-        .with_context(|| format!("Stream '{}' not found — ensure Stage 2 infrastructure is running", cfg.stream))?;
+    let stream = jetstream.get_stream(&cfg.stream).await.with_context(|| {
+        format!(
+            "Stream '{}' not found — ensure Stage 2 infrastructure is running",
+            cfg.stream
+        )
+    })?;
 
     tracing::info!(
         stream = %cfg.stream,
@@ -118,7 +120,7 @@ pub async fn run(
                     let lc_config = lc_cfg.clone();
                     let img_config = img_cfg.clone();
 
-                    let batch_permit = if tasks.len() == 0 {
+                    let batch_permit = if tasks.is_empty() {
                         Some(permit)
                     } else {
                         None
@@ -140,7 +142,10 @@ pub async fn run(
         }
     }
 
-    tracing::info!(active_tasks = tasks.len(), "Draining active processing tasks");
+    tracing::info!(
+        active_tasks = tasks.len(),
+        "Draining active processing tasks"
+    );
     while let Some(result) = tasks.join_next().await {
         if let Err(e) = result {
             tracing::error!(error = %e, "Processing task panicked during shutdown drain");
@@ -240,7 +245,7 @@ async fn process_message(
 /// and MinIO Silver upload with size verification.
 pub(crate) async fn process_bronze_event_to_silver(
     storage: Arc<StorageClient>,
-    tmp_dir: &PathBuf,
+    tmp_dir: &Path,
     lc_cfg: &LightCurveConfig,
     img_cfg: &ImageConfig,
     event: BronzeObjectReady,
@@ -264,7 +269,7 @@ pub(crate) async fn process_bronze_event_to_silver(
     // 3. spawn_blocking for CPU FITS decode + preprocessing + Parquet serialization
     let event_clone = event.clone();
     let temp_fits_path = temp_fits_file.path.clone();
-    let tmp_dir_clone = tmp_dir.clone();
+    let tmp_dir_clone = tmp_dir.to_path_buf();
     let lc_config = lc_cfg.clone();
     let img_config = img_cfg.clone();
 
@@ -272,15 +277,18 @@ pub(crate) async fn process_bronze_event_to_silver(
         let decoded = fits::decode(&temp_fits_path, &event_clone)?;
         match decoded {
             DecodedProduct::LightCurve(raw_lc) => {
-                let processed = pipeline::lightcurve::preprocess_lc(raw_lc, &event_clone, &lc_config)?;
+                let processed =
+                    pipeline::lightcurve::preprocess_lc(raw_lc, &event_clone, &lc_config)?;
                 silver::serialize_lightcurve(&processed, &event_clone, &tmp_dir_clone)
             }
             DecodedProduct::TargetPixel(raw_tpf) => {
-                let processed = pipeline::image::preprocess_target_pixel(raw_tpf, &event_clone, &img_config)?;
+                let processed =
+                    pipeline::image::preprocess_target_pixel(raw_tpf, &event_clone, &img_config)?;
                 silver::serialize_target_pixel(&processed, &event_clone, &tmp_dir_clone)
             }
             DecodedProduct::Ffi(raw_ffi) => {
-                let processed = pipeline::image::preprocess_ffi(raw_ffi, &event_clone, &img_config, None)?;
+                let processed =
+                    pipeline::image::preprocess_ffi(raw_ffi, &event_clone, &img_config, None)?;
                 silver::serialize_ffi(&processed, &event_clone, &tmp_dir_clone)
             }
         }
@@ -317,6 +325,9 @@ pub(crate) fn parse_duration(s: &str) -> Duration {
             return Duration::from_secs(n * 60);
         }
     }
-    tracing::warn!(value = s, "Could not parse ack_wait duration — defaulting to 30s");
+    tracing::warn!(
+        value = s,
+        "Could not parse ack_wait duration — defaulting to 30s"
+    );
     Duration::from_secs(30)
 }

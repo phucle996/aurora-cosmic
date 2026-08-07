@@ -16,6 +16,7 @@ pub enum ProductKind {
 /// Rust does NOT depend on MAST URL, discovery params, manifest path, or Go
 /// checkpoint internals — only the frozen downstream fields.
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct BronzeObjectReady {
     /// Unique event emission identifier (UUID/ULID).
     pub event_id: String,

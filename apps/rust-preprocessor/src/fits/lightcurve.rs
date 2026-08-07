@@ -95,7 +95,10 @@ pub fn decode_lc(path: &Path, event: &BronzeObjectReady) -> Result<RawLightCurve
         .context("Missing required column 'QUALITY' in Light Curve table")?;
 
     if time.is_empty() {
-        bail!("Decoded Light Curve TIME column is empty for object {}", event.object_key);
+        bail!(
+            "Decoded Light Curve TIME column is empty for object {}",
+            event.object_key
+        );
     }
 
     if quality.len() != time.len() {

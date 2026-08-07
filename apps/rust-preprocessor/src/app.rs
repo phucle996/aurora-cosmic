@@ -42,8 +42,7 @@ pub async fn run(config: Config) -> Result<()> {
     );
 
     let storage = Arc::new(
-        StorageClient::new(&config.minio)
-            .context("Failed to initialize MinIO StorageClient")?,
+        StorageClient::new(&config.minio).context("Failed to initialize MinIO StorageClient")?,
     );
 
     // 3. Shared cancellation token for graceful shutdown

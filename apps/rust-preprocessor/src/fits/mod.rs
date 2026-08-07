@@ -25,6 +25,7 @@ pub enum DecodedProduct {
 /// Preserves all event metadata (object_key, sha256, sample_id, etc.) so
 /// downstream pipeline phases never lose source traceability.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct DecodedSource {
     pub event: BronzeObjectReady,
     pub product: DecodedProduct,
