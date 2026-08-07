@@ -1,0 +1,29 @@
+.git/
+.github/
+.env
+.env.*
+!.env.example
+
+# IDE files
+.idea/
+.vscode/
+
+# Build artifacts & caches
+target/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Data & Models
+*.fits
+*.fits.gz
+*.parquet
+*.onnx
+data/
+infra/*/data/
+
+# Logs
+*.log
+logs/
+tmp/

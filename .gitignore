@@ -1,0 +1,57 @@
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+
+# IDE & Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Language Build & Cache Artifacts
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+.uv/
+
+# Rust
+target/
+**/*.rs.bk
+
+# Go
+bin/
+*.exe
+*.exe?
+*.dll
+*.so
+*.dylib
+
+# Data & Models (Do NOT commit raw data or model weights)
+*.fits
+*.fits.gz
+*.parquet
+*.onnx
+
+# Runtime storage & database data volumes
+infra/minio/data/
+infra/nats/data/
+infra/clickhouse/data/
+data/
+
+# Logs & Temporary Files
+*.log
+logs/
+tmp/
+scratch/
