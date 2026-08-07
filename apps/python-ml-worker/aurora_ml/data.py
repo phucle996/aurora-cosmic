@@ -1,0 +1,2 @@
+class GoldDatasetLoader:
+    pass

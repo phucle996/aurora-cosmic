@@ -1,0 +1,2 @@
+class TransitModel:
+    pass

@@ -1,0 +1,11 @@
+[project]
+name = "aurora-ml-worker"
+version = "0.1.0"
+description = "AURORA Python ML Worker for Exoplanet Candidate & Anomaly Detection Training"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -1,0 +1,2 @@
+class ModelRegistry:
+    pass
