@@ -34,7 +34,10 @@ impl Config {
     pub fn from_env() -> Result<Self, String> {
         let device = get_env("AURORA_ML_DEVICE", "auto").to_lowercase();
         if !["auto", "cpu", "cuda"].contains(&device.as_str()) {
-            return Err(format!("Invalid AURORA_ML_DEVICE: '{}'. Must be 'auto', 'cpu', or 'cuda'", device));
+            return Err(format!(
+                "Invalid AURORA_ML_DEVICE: '{}'. Must be 'auto', 'cpu', or 'cuda'",
+                device
+            ));
         }
 
         Ok(Self {
@@ -54,9 +57,14 @@ impl Config {
     }
 
     pub fn log_summary(&self) {
-        println!(
-            "[aurora-inference] Config: env={}, log_level={}, device={}, minio={}, bucket={}, nats={}",
-            self.core.env, self.core.log_level, self.ml.device, self.minio.endpoint, self.minio.bucket, self.nats.url
+        tracing::info!(
+            env = %self.core.env,
+            log_level = %self.core.log_level,
+            device = %self.ml.device,
+            minio_endpoint = %self.minio.endpoint,
+            minio_bucket = %self.minio.bucket,
+            nats_url = %self.nats.url,
+            "Configuration summary loaded"
         );
     }
 }

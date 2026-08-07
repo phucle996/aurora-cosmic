@@ -54,9 +54,14 @@ impl Config {
     }
 
     pub fn log_summary(&self) {
-        println!(
-            "[aurora-preprocessor] Config: env={}, log_level={}, workers={}, minio={}, bucket={}, nats={}",
-            self.core.env, self.core.log_level, self.preprocess.workers, self.minio.endpoint, self.minio.bucket, self.nats.url
+        tracing::info!(
+            env = %self.core.env,
+            log_level = %self.core.log_level,
+            workers = self.preprocess.workers,
+            minio_endpoint = %self.minio.endpoint,
+            minio_bucket = %self.minio.bucket,
+            nats_url = %self.nats.url,
+            "Configuration summary loaded"
         );
     }
 }
