@@ -5,15 +5,10 @@ use tokio::signal;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::Config;
-use crate::consumer;
 use crate::storage::StorageClient;
+use crate::worker;
 
 /// Application entry point.
-///
-/// Flow:
-/// ```text
-/// main.rs -> config -> app::run() -> NATS + MinIO -> consumer::run() -> shutdown
-/// ```
 pub async fn run(config: Config) -> Result<()> {
     // 1. Connect to NATS
     tracing::info!(
@@ -34,7 +29,7 @@ pub async fn run(config: Config) -> Result<()> {
 
     let jetstream = async_nats::jetstream::new(nats_client.clone());
 
-    // 2. Initialize MinIO / S3 StorageClient once at startup
+    // 2. Initialize MinIO StorageClient
     tracing::info!(
         minio_endpoint = %config.minio.endpoint,
         minio_bucket = %config.minio.bucket,
@@ -47,24 +42,24 @@ pub async fn run(config: Config) -> Result<()> {
 
     // 3. Shared cancellation token for graceful shutdown
     let cancel = CancellationToken::new();
-    let cancel_consumer = cancel.clone();
+    let cancel_worker = cancel.clone();
 
-    // 4. Spawn consumer task
+    // 4. Spawn Tokio Worker Pool
     let cfg_consumer = config.consumer.clone();
     let lc_config = config.lc_pipeline.clone();
     let img_config = config.image_pipeline.clone();
-    let consumer_task = tokio::spawn(async move {
-        if let Err(e) = consumer::run(
+    let worker_task = tokio::spawn(async move {
+        if let Err(e) = worker::run_pool(
             jetstream,
             storage,
             &cfg_consumer,
             lc_config,
             img_config,
-            cancel_consumer,
+            cancel_worker,
         )
         .await
         {
-            tracing::error!(error = %e, "Consumer task exited with error");
+            tracing::error!(error = %e, "Worker pool exited with error");
         }
     });
 
@@ -79,18 +74,18 @@ pub async fn run(config: Config) -> Result<()> {
         }
     }
 
-    // 6. Signal consumer to stop accepting new work
+    // 6. Signal worker pool to stop accepting new work
     cancel.cancel();
 
     let drain_result = tokio::time::timeout(
         std::time::Duration::from_secs(shutdown_timeout),
-        consumer_task,
+        worker_task,
     )
     .await;
 
     match drain_result {
-        Ok(Ok(())) => tracing::info!("Consumer drained cleanly"),
-        Ok(Err(e)) => tracing::error!(error = %e, "Consumer task panicked during drain"),
+        Ok(Ok(())) => tracing::info!("Worker pool drained cleanly"),
+        Ok(Err(e)) => tracing::error!(error = %e, "Worker pool task panicked during drain"),
         Err(_) => tracing::warn!(
             timeout_secs = shutdown_timeout,
             "Shutdown drain timeout exceeded — forcing exit"

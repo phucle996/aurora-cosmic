@@ -1,6 +1,9 @@
 use std::env;
+use std::sync::Mutex;
 
 use crate::config::Config;
+
+static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
 fn set_required_vars(workers: &str) {
     env::set_var("AURORA_ENV", "test");
@@ -15,6 +18,7 @@ fn set_required_vars(workers: &str) {
 
 #[test]
 fn test_zero_workers_rejected() {
+    let _guard = ENV_MUTEX.lock().unwrap();
     set_required_vars("0");
     let result = Config::from_env();
     assert!(result.is_err());
@@ -24,6 +28,7 @@ fn test_zero_workers_rejected() {
 
 #[test]
 fn test_valid_workers_accepted() {
+    let _guard = ENV_MUTEX.lock().unwrap();
     set_required_vars("4");
     let result = Config::from_env();
     assert!(result.is_ok());
@@ -32,6 +37,7 @@ fn test_valid_workers_accepted() {
 
 #[test]
 fn test_defaults_applied() {
+    let _guard = ENV_MUTEX.lock().unwrap();
     set_required_vars("2");
     env::remove_var("AURORA_PREPROCESS_DURABLE");
     env::remove_var("AURORA_PREPROCESS_STREAM");
@@ -42,6 +48,7 @@ fn test_defaults_applied() {
 
 #[test]
 fn test_custom_durable_and_stream() {
+    let _guard = ENV_MUTEX.lock().unwrap();
     set_required_vars("2");
     env::remove_var("AURORA_PREPROCESS_DURABLE");
     env::remove_var("AURORA_PREPROCESS_STREAM");

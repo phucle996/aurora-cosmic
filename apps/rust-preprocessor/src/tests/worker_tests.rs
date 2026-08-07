@@ -5,7 +5,7 @@ use std::time::Duration;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
-use crate::consumer::parse_duration;
+use crate::worker::parse_duration;
 
 /// Mandatory bounded concurrency test.
 /// Proves that at most N handlers run simultaneously even with more jobs queued.

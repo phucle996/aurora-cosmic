@@ -44,113 +44,81 @@ pub struct ProcessedLightCurve {
     pub quality: Vec<i32>,
 
     pub tic_id: Option<u64>,
-    pub sector: Option<u32>,
-    pub camera: Option<u8>,
-    pub ccd: Option<u8>,
-
     pub processing: LightCurveProcessingMetadata,
 }
 
 /// Preprocess a raw decoded Light Curve into a normalized, cleaned ProcessedLightCurve.
-///
-/// Pure CPU transformation function: no network/disk I/O.
 pub fn preprocess_lc(
     raw: RawLightCurve,
     event: &BronzeObjectReady,
     cfg: &LightCurveConfig,
 ) -> Result<ProcessedLightCurve> {
     let input_points = raw.time.len();
+    if input_points == 0 {
+        bail!(
+            "Raw Light Curve contains zero points for object {}",
+            event.object_key
+        );
+    }
 
-    // 1. Select flux source (PDCSAP default, fallback to SAP if enabled)
-    let (raw_flux, raw_flux_err, flux_source) = if let Some(pdc) = raw.pdcsap_flux {
-        (pdc, raw.pdcsap_flux_err, FluxSource::Pdcsap)
+    // 1. Determine Flux Source (PDCSAP vs SAP Fallback)
+    let (flux_source, raw_flux, raw_err) = if let Some(pdcsap) = raw.pdcsap_flux {
+        (FluxSource::Pdcsap, pdcsap, raw.pdcsap_flux_err)
     } else if cfg.allow_sap_fallback {
         if let Some(sap) = raw.sap_flux {
-            (sap, raw.sap_flux_err, FluxSource::Sap)
+            (FluxSource::Sap, sap, raw.sap_flux_err)
         } else {
             bail!(
-                "Missing required flux columns (both PDCSAP_FLUX and SAP_FLUX absent) for object {}",
+                "Both PDCSAP_FLUX and SAP_FLUX are missing for object {}",
                 event.object_key
             );
         }
     } else {
         bail!(
-            "PDCSAP_FLUX absent and SAP fallback disabled for object {}",
+            "PDCSAP_FLUX is missing and allow_sap_fallback=false for object {}",
             event.object_key
         );
     };
 
-    // Validate array length alignment
-    if raw.time.len() != raw_flux.len() || raw.time.len() != raw.quality.len() {
-        bail!(
-            "Input array length mismatch for object {}: time={}, flux={}, quality={}",
-            event.object_key,
-            raw.time.len(),
-            raw_flux.len(),
-            raw.quality.len()
-        );
-    }
-    if let Some(ref errs) = raw_flux_err {
-        if errs.len() != raw.time.len() {
-            bail!(
-                "Flux error length mismatch for object {}: time={}, flux_err={}",
-                event.object_key,
-                raw.time.len(),
-                errs.len()
-            );
-        }
-    }
-
-    if input_points < cfg.min_points {
-        bail!(
-            "Input points ({input_points}) below required minimum ({}) for object {}",
-            cfg.min_points,
-            event.object_key
-        );
-    }
-
+    // 2. Select Quality Filter Mode
     let quality_mode = if cfg.quality_mode == "strict" {
         QualityMode::Strict
     } else {
         QualityMode::None
     };
 
-    // 2 & 3. Align and filter non-finite and quality values
-    let mut invalid_removed = 0usize;
-    let mut quality_removed = 0usize;
-
+    // 3. Filter points by Quality Flag & Non-finite values
     let mut filtered_time = Vec::with_capacity(input_points);
     let mut filtered_flux = Vec::with_capacity(input_points);
-    let mut filtered_err = raw_flux_err
+    let mut filtered_err = raw_err
         .as_ref()
         .map(|_| Vec::with_capacity(input_points));
     let mut filtered_qual = Vec::with_capacity(input_points);
 
+    let mut quality_removed = 0usize;
+    let mut invalid_removed = 0usize;
+
     for i in 0..input_points {
         let t = raw.time[i];
         let f = raw_flux[i];
-        let q = raw.quality[i];
-        let err_valid = match raw_flux_err {
-            Some(ref errs) => errs[i].is_finite(),
-            None => true,
-        };
+        let q = raw.quality.get(i).copied().unwrap_or(0);
 
-        // Non-finite filter
-        if !t.is_finite() || !f.is_finite() || !err_valid {
-            invalid_removed += 1;
-            continue;
-        }
-
-        // Quality filter (strict mode requires quality == 0)
+        // Quality check
         if quality_mode == QualityMode::Strict && q != 0 {
             quality_removed += 1;
             continue;
         }
 
+        // Finite / non-zero time & flux check
+        if !t.is_finite() || t <= 0.0 || !f.is_finite() {
+            invalid_removed += 1;
+            continue;
+        }
+
         filtered_time.push(t);
         filtered_flux.push(f);
-        if let (Some(ref mut err_vec), Some(ref errs)) = (&mut filtered_err, &raw_flux_err) {
-            err_vec.push(errs[i]);
+        if let (Some(ref mut f_err_vec), Some(ref r_err_vec)) = (&mut filtered_err, &raw_err) {
+            f_err_vec.push(r_err_vec.get(i).copied().unwrap_or(0.0));
         }
         filtered_qual.push(q);
     }
@@ -158,13 +126,13 @@ pub fn preprocess_lc(
     let post_filter_points = filtered_time.len();
     if post_filter_points < cfg.min_points {
         bail!(
-            "Post-filter points ({post_filter_points}) below required minimum ({}) for object {}",
+            "Points after quality/invalid filtering ({post_filter_points}) below required minimum ({}) for object {}",
             cfg.min_points,
             event.object_key
         );
     }
 
-    // 4. Ensure TIME is ascending & remove duplicate timestamps deterministically
+    // 4. Time-ordering check & deduplication
     let mut indices: Vec<usize> = (0..post_filter_points).collect();
     indices.sort_by(|&a, &b| {
         filtered_time[a]
@@ -295,9 +263,6 @@ pub fn preprocess_lc(
         flux_err: norm_err,
         quality: sorted_qual,
         tic_id: raw.tic_id.or(event.tic_id),
-        sector: raw.sector.or(Some(event.sector)),
-        camera: raw.camera.or(event.camera),
-        ccd: raw.ccd.or(event.ccd),
         processing: LightCurveProcessingMetadata {
             processor_version: "lc-preprocess-v1".to_string(),
             flux_source,
@@ -312,8 +277,7 @@ pub fn preprocess_lc(
     })
 }
 
-/// Helper: compute median of f32 slice.
-#[allow(clippy::manual_is_multiple_of)]
+/// Calculate the median of a slice of f32 values.
 fn calculate_median(values: &[f32]) -> f32 {
     if values.is_empty() {
         return 0.0;
@@ -328,19 +292,13 @@ fn calculate_median(values: &[f32]) -> f32 {
     }
 }
 
-/// Helper: compute sample standard deviation of f32 slice.
+/// Calculate standard deviation of a slice of f32 values.
 fn calculate_std_dev(values: &[f32]) -> f32 {
-    if values.len() < 2 {
+    if values.is_empty() {
         return 0.0;
     }
-    let mean = values.iter().sum::<f32>() / (values.len() as f32);
-    let variance = values
-        .iter()
-        .map(|v| {
-            let diff = v - mean;
-            diff * diff
-        })
-        .sum::<f32>()
-        / ((values.len() - 1) as f32);
+    let sum: f32 = values.iter().sum();
+    let mean = sum / values.len() as f32;
+    let variance: f32 = values.iter().map(|&x| (x - mean).powi(2)).sum::<f32>() / values.len() as f32;
     variance.sqrt()
 }

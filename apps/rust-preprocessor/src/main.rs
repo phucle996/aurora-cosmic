@@ -1,10 +1,10 @@
 mod app;
 mod config;
-mod consumer;
 mod event;
 mod fits;
 mod logger;
 mod storage;
+mod worker;
 
 #[cfg(test)]
 mod tests;
@@ -13,17 +13,8 @@ mod tests;
 #[allow(dead_code)]
 mod checkpoint;
 
-// Unused until Phase 3.3+ — kept as stubs.
-#[allow(dead_code)]
-mod pipeline {
-    pub mod image;
-    pub mod lightcurve;
-}
-// Unused until Phase 3.5 — kept as stub.
-#[allow(dead_code)]
-mod output {
-    pub mod silver;
-}
+mod pipeline;
+mod output;
 
 #[tokio::main]
 async fn main() {
