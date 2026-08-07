@@ -19,7 +19,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	log := logger.Init(cfg.Core.LogLevel, cfg.Core.Env)
+	log := logger.Init(cfg)
 	cfg.LogSummary()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
