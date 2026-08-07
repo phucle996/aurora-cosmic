@@ -17,4 +17,6 @@ async fn main() {
         eprintln!("[aurora-preprocessor] Runtime error: {}", e);
         std::process::exit(1);
     }
+
+    println!("[aurora-preprocessor] Shutdown completed gracefully.");
 }
