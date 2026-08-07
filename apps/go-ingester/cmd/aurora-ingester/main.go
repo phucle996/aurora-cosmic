@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"go-ingester/internal/app"
+	"go-ingester/internal/checkpoint"
 	"go-ingester/internal/config"
 	"go-ingester/internal/events"
 	"go-ingester/internal/ingest"
@@ -18,6 +19,8 @@ import (
 	"go-ingester/internal/manifest"
 	"go-ingester/internal/mast"
 	"go-ingester/internal/storage"
+
+	"github.com/google/uuid"
 )
 
 func main() {
@@ -37,6 +40,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "usage: aurora-ingester <command> [options]")
 		fmt.Fprintln(os.Stderr, "  plan     -- discover and create ingestion manifest")
 		fmt.Fprintln(os.Stderr, "  ingest   -- stream products from manifest into MinIO Bronze")
+		fmt.Fprintln(os.Stderr, "  status   -- display progress status of the current ingestion run")
 		os.Exit(1)
 	}
 
@@ -50,6 +54,12 @@ func main() {
 	case "ingest":
 		if err := runIngest(ctx, cfg, log, os.Args[2:]); err != nil {
 			log.Error("ingest command failed", slog.Any("error", err))
+			os.Exit(1)
+		}
+
+	case "status":
+		if err := runStatus(ctx, cfg, log, os.Args[2:]); err != nil {
+			log.Error("status command failed", slog.Any("error", err))
 			os.Exit(1)
 		}
 
@@ -126,6 +136,8 @@ func runIngest(ctx context.Context, cfg *config.Config, log *slog.Logger, args [
 	manifestPath := fs.String("manifest", "", "path to manifest JSON file")
 	concurrency := fs.Int("concurrency", cfg.Ingest.Concurrency, "bounded download concurrency")
 	dryRun := fs.Bool("dry-run", false, "print object paths without downloading")
+	resume := fs.Bool("resume", false, "resume from existing matching checkpoint")
+	fresh := fs.Bool("fresh", false, "force creation of a new checkpoint run")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -142,9 +154,10 @@ func runIngest(ctx context.Context, cfg *config.Config, log *slog.Logger, args [
 
 	var minioClient storage.Client
 	var publisher events.Publisher
+	var cpStore *checkpoint.Store
+	var cpManager *checkpoint.Manager
 
 	if !*dryRun {
-		// Environment credentials default: minioadmin/minioadmin for dev
 		accessKey := optionalEnv("MINIO_ACCESS_KEY", "minioadmin")
 		secretKey := optionalEnv("MINIO_SECRET_KEY", "minioadmin")
 
@@ -154,6 +167,9 @@ func runIngest(ctx context.Context, cfg *config.Config, log *slog.Logger, args [
 		}
 		minioClient = mc
 
+		// Initialize Checkpoint Store
+		cpStore = checkpoint.NewStore(minioClient, cfg.MinIO.Bucket)
+
 		// Connect to NATS JetStream publisher. If connection fails, fail fast.
 		pub, err := events.NewNATSPublisher(cfg.NATS.URL, 5*time.Second)
 		if err != nil {
@@ -161,6 +177,41 @@ func runIngest(ctx context.Context, cfg *config.Config, log *slog.Logger, args [
 		} else {
 			publisher = pub
 			defer publisher.Close()
+		}
+
+		manifestHash := checkpoint.ComputeManifestHash(m)
+
+		// Checkpoint initialization & resume decision
+		if !*fresh {
+			existingCp, exists, loadErr := cpStore.LoadCurrent(ctx)
+			if loadErr == nil && exists && existingCp != nil {
+				if existingCp.ManifestHash == manifestHash || *resume {
+					log.Info("checkpoint: resuming existing run",
+						slog.String("run_id", existingCp.RunID),
+						slog.String("status", string(existingCp.Status)),
+					)
+					cpManager = checkpoint.NewManager(cpStore, existingCp)
+					printResumeSummary(existingCp)
+				}
+			}
+		}
+
+		if cpManager == nil {
+			runID := fmt.Sprintf("ingest-%s", uuid.NewString()[:8])
+			var allProducts []manifest.ManifestProduct
+			for _, s := range m.Samples {
+				if s.TargetPixel != nil {
+					allProducts = append(allProducts, *s.TargetPixel)
+				}
+				if s.LightCurve != nil {
+					allProducts = append(allProducts, *s.LightCurve)
+				}
+			}
+			allProducts = append(allProducts, m.FFIs...)
+
+			initCp := checkpoint.CreateNewInitialCheckpoint(runID, *manifestPath, manifestHash, allProducts)
+			cpManager = checkpoint.NewManager(cpStore, initCp)
+			log.Info("checkpoint: created fresh ingestion run", slog.String("run_id", runID))
 		}
 	}
 
@@ -170,7 +221,7 @@ func runIngest(ctx context.Context, cfg *config.Config, log *slog.Logger, args [
 	}
 
 	mastClient := mast.NewClient(cfg.MAST.APIURL, timeout)
-	pipeline := ingest.NewPipeline(mastClient, minioClient, publisher, cfg.MinIO.Bucket, *concurrency, log)
+	pipeline := ingest.NewPipeline(mastClient, minioClient, publisher, cpManager, cfg.MinIO.Bucket, *concurrency, log)
 
 	log.Info("ingest: starting pipeline run",
 		slog.Int("concurrency", *concurrency),
@@ -188,7 +239,65 @@ func runIngest(ctx context.Context, cfg *config.Config, log *slog.Logger, args [
 		return fmt.Errorf("ingestion completed with %d failures", summary.FailedCount)
 	}
 
-	_ = results // retain for future logging/events
+	_ = results
+	return nil
+}
+
+// runStatus executes the `aurora-ingester status` subcommand.
+func runStatus(ctx context.Context, cfg *config.Config, log *slog.Logger, args []string) error {
+	accessKey := optionalEnv("MINIO_ACCESS_KEY", "minioadmin")
+	secretKey := optionalEnv("MINIO_SECRET_KEY", "minioadmin")
+
+	mc, err := storage.NewMinIOClient(cfg.MinIO.Endpoint, accessKey, secretKey)
+	if err != nil {
+		return fmt.Errorf("minio client: %w", err)
+	}
+
+	cpStore := checkpoint.NewStore(mc, cfg.MinIO.Bucket)
+	cp, exists, err := cpStore.LoadCurrent(ctx)
+	if err != nil {
+		return fmt.Errorf("load current checkpoint: %w", err)
+	}
+	if !exists || cp == nil {
+		fmt.Println("No active or past ingestion runs found.")
+		return nil
+	}
+
+	published := 0
+	stored := 0
+	failed := 0
+	planned := 0
+
+	for _, pc := range cp.Products {
+		switch pc.State {
+		case checkpoint.StatePublished:
+			published++
+		case checkpoint.StateStored:
+			stored++
+		case checkpoint.StateFailed:
+			failed++
+		default:
+			planned++
+		}
+	}
+
+	fmt.Println()
+	fmt.Println("AURORA ingestion status")
+	fmt.Println()
+	fmt.Printf("  run_id:            %s\n", cp.RunID)
+	fmt.Printf("  status:            %s\n", cp.Status)
+	fmt.Printf("  manifest_path:     %s\n", cp.ManifestPath)
+	fmt.Printf("  manifest_hash:     %s\n", cp.ManifestHash[:12])
+	fmt.Printf("  started_at:        %s\n", cp.StartedAt.Format(time.RFC3339))
+	fmt.Printf("  updated_at:        %s\n", cp.UpdatedAt.Format(time.RFC3339))
+	fmt.Println()
+	fmt.Printf("  products planned:  %d\n", len(cp.Products))
+	fmt.Printf("  published:         %d\n", published)
+	fmt.Printf("  stored:            %d\n", stored)
+	fmt.Printf("  failed:            %d\n", failed)
+	fmt.Printf("  remaining:         %d\n", planned)
+	fmt.Println()
+
 	return nil
 }
 
@@ -209,6 +318,37 @@ func printPlanSummary(m *manifest.Manifest, path string) {
 	fmt.Printf("  selected total:    %s\n", humanBytes(s.TotalBytes))
 	fmt.Println()
 	fmt.Printf("  manifest:          %s\n", path)
+	fmt.Println()
+}
+
+func printResumeSummary(cp *checkpoint.Checkpoint) {
+	published := 0
+	stored := 0
+	failed := 0
+	remaining := 0
+
+	for _, pc := range cp.Products {
+		switch pc.State {
+		case checkpoint.StatePublished:
+			published++
+		case checkpoint.StateStored:
+			stored++
+		case checkpoint.StateFailed:
+			failed++
+		default:
+			remaining++
+		}
+	}
+
+	fmt.Println()
+	fmt.Println("AURORA ingestion resume")
+	fmt.Println()
+	fmt.Printf("  run_id:            %s\n", cp.RunID)
+	fmt.Printf("  manifest products: %d\n", len(cp.Products))
+	fmt.Printf("  already published: %d\n", published)
+	fmt.Printf("  stored (pending):  %d\n", stored)
+	fmt.Printf("  failed:            %d\n", failed)
+	fmt.Printf("  remaining:         %d\n", remaining)
 	fmt.Println()
 }
 
