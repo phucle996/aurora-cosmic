@@ -1,0 +1,70 @@
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: aurora-minio
+    restart: unless-stopped
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ACCESS_KEY:-minioadmin}"
+      MINIO_ROOT_PASSWORD: "${MINIO_SECRET_KEY:-minioadmin}"
+    command: server /data --console-address ":9001"
+    volumes:
+      - aurora-minio-data:/data
+    networks:
+      - aurora-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: aurora-minio-init
+    entrypoint: /bin/sh
+    command: -c "/infra/minio/init.sh"
+    environment:
+      MINIO_HOST: minio
+      MINIO_PORT: 9000
+      MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY:-minioadmin}"
+      MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:-minioadmin}"
+      MINIO_BUCKET: "${MINIO_BUCKET:-aurora}"
+    volumes:
+      - ./infra/minio/init.sh:/infra/minio/init.sh:ro
+    networks:
+      - aurora-net
+    depends_on:
+      minio:
+        condition: service_healthy
+
+  nats:
+    image: nats:2.10-alpine
+    container_name: aurora-nats
+    restart: unless-stopped
+    ports:
+      - "${NATS_CLIENT_PORT:-4222}:4222"
+      - "${NATS_MONITOR_PORT:-8222}:8222"
+    command: -c /etc/nats/nats.conf
+    volumes:
+      - aurora-nats-data:/data/jetstream
+      - ./infra/nats/nats.conf:/etc/nats/nats.conf:ro
+    networks:
+      - aurora-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:8222/varz || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+networks:
+  aurora-net:
+    name: aurora-net
+    driver: bridge
+
+volumes:
+  aurora-minio-data:
+    name: aurora-minio-data
+  aurora-nats-data:
+    name: aurora-nats-data
