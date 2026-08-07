@@ -12,6 +12,7 @@ import (
 
 	"go-ingester/internal/app"
 	"go-ingester/internal/config"
+	"go-ingester/internal/events"
 	"go-ingester/internal/ingest"
 	"go-ingester/internal/logger"
 	"go-ingester/internal/manifest"
@@ -140,6 +141,8 @@ func runIngest(ctx context.Context, cfg *config.Config, log *slog.Logger, args [
 	}
 
 	var minioClient storage.Client
+	var publisher events.Publisher
+
 	if !*dryRun {
 		// Environment credentials default: minioadmin/minioadmin for dev
 		accessKey := optionalEnv("MINIO_ACCESS_KEY", "minioadmin")
@@ -150,6 +153,15 @@ func runIngest(ctx context.Context, cfg *config.Config, log *slog.Logger, args [
 			return fmt.Errorf("minio client: %w", err)
 		}
 		minioClient = mc
+
+		// Connect to NATS JetStream publisher. If connection fails, fail fast.
+		pub, err := events.NewNATSPublisher(cfg.NATS.URL, 5*time.Second)
+		if err != nil {
+			log.Warn("nats: publisher init warning, continuing without events", slog.Any("error", err))
+		} else {
+			publisher = pub
+			defer publisher.Close()
+		}
 	}
 
 	timeout, err := time.ParseDuration(cfg.MAST.Timeout)
@@ -158,7 +170,7 @@ func runIngest(ctx context.Context, cfg *config.Config, log *slog.Logger, args [
 	}
 
 	mastClient := mast.NewClient(cfg.MAST.APIURL, timeout)
-	pipeline := ingest.NewPipeline(mastClient, minioClient, cfg.MinIO.Bucket, *concurrency, log)
+	pipeline := ingest.NewPipeline(mastClient, minioClient, publisher, cfg.MinIO.Bucket, *concurrency, log)
 
 	log.Info("ingest: starting pipeline run",
 		slog.Int("concurrency", *concurrency),
@@ -206,8 +218,12 @@ func printIngestSummary(s *ingest.Summary) {
 	fmt.Println()
 	fmt.Printf("  products planned:  %d\n", s.PlannedProducts)
 	fmt.Printf("  stored:            %d\n", s.StoredCount)
+	fmt.Printf("  events published:  %d\n", s.PublishedCount)
 	fmt.Printf("  skipped:           %d\n", s.SkippedCount)
 	fmt.Printf("  failed:            %d\n", s.FailedCount)
+	if s.StoredEventFailedCount > 0 {
+		fmt.Printf("  event failed:      %d\n", s.StoredEventFailedCount)
+	}
 	fmt.Println()
 	fmt.Printf("  bytes stored:      %s\n", humanBytes(s.StoredBytes))
 	fmt.Printf("  elapsed:           %s\n", s.Elapsed.Round(time.Millisecond))

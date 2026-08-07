@@ -64,7 +64,7 @@ func (m *mockStorageClient) StatObject(ctx context.Context, bucket, objectKey st
 func TestPipelineDryRun(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mockStorage := newMockStorageClient()
-	pipe := ingest.NewPipeline(nil, mockStorage, "aurora", 2, logger)
+	pipe := ingest.NewPipeline(nil, mockStorage, nil, "aurora", 2, logger)
 
 	man := &manifest.Manifest{
 		SchemaVersion: 1,
@@ -120,7 +120,7 @@ func TestPipelineStreamingIngestion(t *testing.T) {
 
 	mockStorage := newMockStorageClient()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	pipe := ingest.NewPipeline(mastClient, mockStorage, "aurora", 2, logger)
+	pipe := ingest.NewPipeline(mastClient, mockStorage, nil, "aurora", 2, logger)
 
 	man := &manifest.Manifest{
 		SchemaVersion: 1,
@@ -201,7 +201,7 @@ func TestPipelineSkipExistingValidObject(t *testing.T) {
 	mockStorage.content[tpKey] = existingData
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	pipe := ingest.NewPipeline(nil, mockStorage, "aurora", 1, logger)
+	pipe := ingest.NewPipeline(nil, mockStorage, nil, "aurora", 1, logger)
 
 	man := &manifest.Manifest{
 		SchemaVersion: 1,
@@ -256,7 +256,7 @@ func TestPipelineSizeMismatchFailure(t *testing.T) {
 
 	mockStorage := newMockStorageClient()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	pipe := ingest.NewPipeline(mastClient, mockStorage, "aurora", 1, logger)
+	pipe := ingest.NewPipeline(mastClient, mockStorage, nil, "aurora", 1, logger)
 
 	man := &manifest.Manifest{
 		SchemaVersion: 1,

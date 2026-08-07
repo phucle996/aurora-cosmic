@@ -12,18 +12,23 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go-ingester/internal/events"
 	"go-ingester/internal/manifest"
 	"go-ingester/internal/mast"
 	"go-ingester/internal/storage"
+
+	"github.com/google/uuid"
 )
 
-// Status represents the ingestion outcome for a single product.
+// Status represents the ingestion and event publishing outcome for a single product.
 type Status string
 
 const (
-	StatusStored  Status = "STORED"
-	StatusSkipped Status = "SKIPPED"
-	StatusFailed  Status = "FAILED"
+	StatusStored            Status = "STORED"
+	StatusSkipped           Status = "SKIPPED"
+	StatusFailed            Status = "FAILED"
+	StatusStoredEventFailed Status = "STORED_EVENT_FAILED"
+	StatusPublished         Status = "PUBLISHED"
 )
 
 // ProductResult captures the detailed result of ingesting one product.
@@ -38,32 +43,36 @@ type ProductResult struct {
 
 // Summary collects overall metrics for a completed manifest ingestion run.
 type Summary struct {
-	PlannedProducts int
-	StoredCount     int
-	SkippedCount    int
-	FailedCount     int
-	StoredBytes     int64
-	Elapsed         time.Duration
-	ThroughputBps   float64
+	PlannedProducts        int
+	PublishedCount         int
+	StoredCount            int
+	SkippedCount           int
+	FailedCount            int
+	StoredEventFailedCount int
+	StoredBytes            int64
+	Elapsed                time.Duration
+	ThroughputBps          float64
 }
 
-// Pipeline manages the bounded concurrent streaming of FITS files into MinIO.
+// Pipeline manages the bounded concurrent streaming of FITS files into MinIO and event publishing.
 type Pipeline struct {
 	mastClient  *mast.Client
 	minioClient storage.Client
+	publisher   events.Publisher
 	bucket      string
 	concurrency int
 	log         *slog.Logger
 }
 
 // NewPipeline constructs an ingestion Pipeline.
-func NewPipeline(mastClient *mast.Client, minioClient storage.Client, bucket string, concurrency int, log *slog.Logger) *Pipeline {
+func NewPipeline(mastClient *mast.Client, minioClient storage.Client, publisher events.Publisher, bucket string, concurrency int, log *slog.Logger) *Pipeline {
 	if concurrency <= 0 {
 		concurrency = 4
 	}
 	return &Pipeline{
 		mastClient:  mastClient,
 		minioClient: minioClient,
+		publisher:   publisher,
 		bucket:      bucket,
 		concurrency: concurrency,
 		log:         log,
@@ -131,7 +140,7 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *manifest.Manifest, dry
 				}
 
 				res := p.ingestProduct(ctx, prod, dryRun)
-				if res.Status == StatusStored {
+				if res.Status == StatusStored || res.Status == StatusPublished || res.Status == StatusStoredEventFailed {
 					atomic.AddInt64(&storedBytesCounter, res.SizeBytes)
 				}
 				resultsChan <- res
@@ -152,10 +161,15 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *manifest.Manifest, dry
 	for res := range resultsChan {
 		results = append(results, res)
 		switch res.Status {
+		case StatusPublished:
+			summary.PublishedCount++
 		case StatusStored:
 			summary.StoredCount++
 		case StatusSkipped:
 			summary.SkippedCount++
+		case StatusStoredEventFailed:
+			summary.StoredEventFailedCount++
+			summary.StoredCount++
 		case StatusFailed:
 			summary.FailedCount++
 		}
@@ -180,11 +194,14 @@ func (p *Pipeline) ingestProduct(ctx context.Context, prod manifest.ManifestProd
 		}
 	}
 
+	subject, _ := events.SubjectForKind(prod.Kind)
+
 	if dryRun {
-		p.log.Info("[DRY-RUN] plan object key",
+		p.log.Info("[DRY-RUN] plan object key and event",
 			slog.String("kind", string(prod.Kind)),
 			slog.String("uri", prod.DataURI),
 			slog.String("object_key", objectKey),
+			slog.String("event_subject", subject),
 		)
 		return ProductResult{
 			SourceProductID: prod.SourceProductID,
@@ -241,13 +258,11 @@ func (p *Pipeline) ingestProduct(ctx context.Context, prod manifest.ManifestProd
 	}
 	defer stream.Close()
 
-	// Use expected size from manifest if HTTP content-length is missing (-1).
 	uploadSize := streamSize
 	if uploadSize <= 0 {
 		uploadSize = prod.SizeBytes
 	}
 
-	// Hashing reader computes SHA256 on-the-fly while streaming.
 	hr := newHashedReader(stream)
 
 	userMeta := map[string]string{
@@ -307,12 +322,58 @@ func (p *Pipeline) ingestProduct(ctx context.Context, prod manifest.ManifestProd
 		}
 	}
 
-	p.log.Info("ingest: product stored successfully",
+	p.log.Info("ingest: product stored and verified in MinIO",
 		slog.String("kind", string(prod.Kind)),
 		slog.String("object_key", objectKey),
 		slog.Int64("size_bytes", hr.BytesRead()),
 		slog.String("sha256", sha256Hex),
 	)
+
+	// Publish NATS JetStream event ONLY AFTER storage verification succeeds.
+	if p.publisher != nil {
+		eventID := uuid.NewString()
+		evt, err := events.BuildBronzeEvent(eventID, p.bucket, prod, objectKey, sha256Hex)
+		if err != nil {
+			p.log.Error("ingest: build event failed", slog.Any("error", err))
+			return ProductResult{
+				SourceProductID: prod.SourceProductID,
+				ObjectKey:       objectKey,
+				SizeBytes:       hr.BytesRead(),
+				SHA256:          sha256Hex,
+				Status:          StatusStoredEventFailed,
+				Error:           fmt.Errorf("build event: %w", err),
+			}
+		}
+
+		if err := p.publisher.PublishBronzeReady(ctx, evt); err != nil {
+			p.log.Warn("ingest: nats event publish failed after durable storage",
+				slog.String("object_key", objectKey),
+				slog.Any("error", err),
+			)
+			return ProductResult{
+				SourceProductID: prod.SourceProductID,
+				ObjectKey:       objectKey,
+				SizeBytes:       hr.BytesRead(),
+				SHA256:          sha256Hex,
+				Status:          StatusStoredEventFailed,
+				Error:           fmt.Errorf("nats publish: %w", err),
+			}
+		}
+
+		p.log.Info("ingest: nats event published",
+			slog.String("subject", subject),
+			slog.String("event_id", eventID),
+			slog.String("object_key", objectKey),
+		)
+
+		return ProductResult{
+			SourceProductID: prod.SourceProductID,
+			ObjectKey:       objectKey,
+			SizeBytes:       hr.BytesRead(),
+			SHA256:          sha256Hex,
+			Status:          StatusPublished,
+		}
+	}
 
 	return ProductResult{
 		SourceProductID: prod.SourceProductID,
