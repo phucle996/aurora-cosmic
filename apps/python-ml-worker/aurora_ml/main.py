@@ -16,7 +16,7 @@ def main():
         logger.setLevel(cfg.log_level.upper())
         cfg.log_summary()
     except Exception as e:
-        logger.error(f"Failed to start: {e}", exc_info=True)
+        logger.exception(f"Failed to start: {e}")
 
 
 if __name__ == "__main__":
