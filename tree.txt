@@ -1,0 +1,211 @@
+.
+├── apps
+│   ├── dashboard
+│   │   ├── Dockerfile
+│   │   ├── index.html
+│   │   ├── nginx.conf
+│   │   ├── package.json
+│   │   ├── package-lock.json
+│   │   ├── public
+│   │   │   ├── favicon.svg
+│   │   │   └── icons.svg
+│   │   ├── README.md
+│   │   ├── src
+│   │   │   ├── App.css
+│   │   │   ├── App.tsx
+│   │   │   ├── assets
+│   │   │   │   ├── hero.png
+│   │   │   │   ├── react.svg
+│   │   │   │   └── vite.svg
+│   │   │   ├── components
+│   │   │   │   ├── Header.tsx
+│   │   │   │   └── Sidebar.tsx
+│   │   │   ├── index.css
+│   │   │   ├── main.tsx
+│   │   │   └── pages
+│   │   │       ├── anomalies
+│   │   │       │   ├── page.tsx
+│   │   │       │   └── sections
+│   │   │       │       └── AnomaliesSection.tsx
+│   │   │       ├── candidates
+│   │   │       │   ├── page.tsx
+│   │   │       │   └── sections
+│   │   │       │       └── CandidatesSection.tsx
+│   │   │       ├── overview
+│   │   │       │   ├── page.tsx
+│   │   │       │   └── sections
+│   │   │       │       ├── MetricsSection.tsx
+│   │   │       │       └── TopologySection.tsx
+│   │   │       ├── system
+│   │   │       │   ├── page.tsx
+│   │   │       │   └── sections
+│   │   │       │       └── HealthSection.tsx
+│   │   │       └── targets
+│   │   │           ├── page.tsx
+│   │   │           └── sections
+│   │   │               └── TargetsTableSection.tsx
+│   │   ├── tsconfig.json
+│   │   └── vite.config.js
+│   ├── go-api
+│   │   ├── cmd
+│   │   │   └── aurora-api
+│   │   │       └── main.go
+│   │   ├── Dockerfile
+│   │   ├── go.mod
+│   │   ├── internal
+│   │   │   ├── app
+│   │   │   │   └── app.go
+│   │   │   ├── config
+│   │   │   │   ├── config.go
+│   │   │   │   └── helper.go
+│   │   │   ├── http
+│   │   │   │   ├── anomalies.go
+│   │   │   │   ├── candidates.go
+│   │   │   │   ├── router.go
+│   │   │   │   ├── system.go
+│   │   │   │   └── targets.go
+│   │   │   └── store
+│   │   │       ├── clickhouse.go
+│   │   │       └── minio.go
+│   │   ├── README.md
+│   │   └── tests
+│   │       └── config_test.go
+│   ├── go-ingester
+│   │   ├── cmd
+│   │   │   └── aurora-ingester
+│   │   │       └── main.go
+│   │   ├── Dockerfile
+│   │   ├── go.mod
+│   │   ├── go.sum
+│   │   ├── internal
+│   │   │   ├── app
+│   │   │   │   └── app.go
+│   │   │   ├── checkpoint
+│   │   │   │   └── store.go
+│   │   │   ├── config
+│   │   │   │   ├── config.go
+│   │   │   │   └── helper.go
+│   │   │   ├── events
+│   │   │   │   └── nats.go
+│   │   │   ├── ingest
+│   │   │   │   └── pipeline.go
+│   │   │   ├── mast
+│   │   │   │   └── client.go
+│   │   │   └── storage
+│   │   │       └── minio.go
+│   │   ├── pkg
+│   │   │   └── logger
+│   │   │       └── logger.go
+│   │   ├── README.md
+│   │   └── tests
+│   │       └── config_test.go
+│   ├── python-ml-worker
+│   │   ├── aurora_ml
+│   │   │   ├── anomaly
+│   │   │   │   ├── model.py
+│   │   │   │   └── train.py
+│   │   │   ├── checkpoint.py
+│   │   │   ├── config.py
+│   │   │   ├── data.py
+│   │   │   ├── evaluate.py
+│   │   │   ├── export_onnx.py
+│   │   │   ├── features.py
+│   │   │   ├── __init__.py
+│   │   │   ├── main.py
+│   │   │   ├── registry.py
+│   │   │   └── transit
+│   │   │       ├── model.py
+│   │   │       └── train.py
+│   │   ├── Dockerfile
+│   │   ├── pkg
+│   │   │   └── logger
+│   │   │       ├── __init__.py
+│   │   │       └── logger.py
+│   │   ├── pyproject.toml
+│   │   ├── README.md
+│   │   └── tests
+│   │       ├── test_config.py
+│   │       └── test_training.py
+│   ├── rust-inference
+│   │   ├── Cargo.toml
+│   │   ├── Dockerfile
+│   │   ├── pkg
+│   │   │   ├── logger.rs
+│   │   │   └── mod.rs
+│   │   ├── README.md
+│   │   ├── src
+│   │   │   ├── app.rs
+│   │   │   ├── config
+│   │   │   │   ├── config.rs
+│   │   │   │   ├── helper.rs
+│   │   │   │   └── mod.rs
+│   │   │   ├── evidence.rs
+│   │   │   ├── main.rs
+│   │   │   ├── model.rs
+│   │   │   ├── nats.rs
+│   │   │   ├── prediction.rs
+│   │   │   └── runtime.rs
+│   │   └── tests
+│   │       └── config_test.rs
+│   └── rust-preprocessor
+│       ├── benches
+│       │   └── preprocessing.rs
+│       ├── Cargo.lock
+│       ├── Cargo.toml
+│       ├── Dockerfile
+│       ├── pkg
+│       │   ├── logger.rs
+│       │   └── mod.rs
+│       ├── README.md
+│       ├── src
+│       │   ├── app.rs
+│       │   ├── checkpoint.rs
+│       │   ├── config
+│       │   │   ├── config.rs
+│       │   │   ├── helper.rs
+│       │   │   └── mod.rs
+│       │   ├── consumer.rs
+│       │   ├── fits
+│       │   │   ├── image.rs
+│       │   │   ├── lightcurve.rs
+│       │   │   └── mod.rs
+│       │   ├── main.rs
+│       │   ├── output
+│       │   │   ├── gold.rs
+│       │   │   ├── mod.rs
+│       │   │   └── silver.rs
+│       │   ├── pipeline
+│       │   │   ├── image.rs
+│       │   │   ├── lightcurve.rs
+│       │   │   └── mod.rs
+│       │   └── storage.rs
+│       └── tests
+│           └── config_test.rs
+├── ARCH.MD
+├── contracts
+│   ├── data
+│   ├── events
+│   └── README.md
+├── datasets
+│   └── examples
+├── docker-compose.yml
+├── docs
+│   └── CONFIGURATION.md
+├── infra
+│   ├── minio
+│   │   └── init.sh
+│   └── nats
+│       └── nats.conf
+├── Makefile
+├── README.md
+├── scripts
+│   ├── repo-check.sh
+│   └── smoke-test.sh
+├── STAGE.MD
+├── STRUCTURE.MD
+├── tests
+│   ├── e2e
+│   └── fixtures
+└── tree.txt
+
+75 directories, 134 files

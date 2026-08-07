@@ -1,6 +1,6 @@
 # STAGE.MD — Project Execution Roadmap
 
-Tài liệu quy định lộ trình phát triển của **AURORA Cosmic Data Platform**, được chia thành **8 Stage** và **42 Phase** tuân thủ chặt chẽ theo **Data Flow Isolation** và **Dependency Matrix**.
+Tài liệu quy định lộ trình phát triển của **AURORA Cosmic Data Platform**, được chia thành **8 Stage** và **43 Phase** tuân thủ chặt chẽ theo **Data Flow Isolation** và **Dependency Matrix**.
 
 ---
 
@@ -42,14 +42,14 @@ STAGE 8: Observability, Benchmark & System Hardening (Prometheus/Grafana -> Stre
 | Stage | Tên Stage | Số Phase | Output Chính |
 | :--- | :--- | :---: | :--- |
 | **Stage 1** | Foundation & Infrastructure [DONE] | 5 | Monorepo skeleton, Docker Compose runtime, Makefile, Service stubs |
-| **Stage 2** | Data Source & Go Ingestion | 5 | Ingestion FITS stream sang MinIO Bronze, NATS ingestion events |
+| **Stage 2** | Data Source & Go Ingestion | 6 | Ingestion FITS stream sang MinIO Bronze, NATS ingestion events |
 | **Stage 3** | Rust Preprocessing Pipeline | 5 | Rust FITS parser, Tokio workers, MinIO Silver Parquet datasets |
 | **Stage 4** | Checkpoint, Recovery & Rolling Lifecycle | 5 | State checkpoints, idempotency, rolling Bronze window ~50 GiB |
 | **Stage 5** | Gold Dataset & Scientific Analytics | 5 | Feature engineering, catalog/labels integration, Gold snapshots |
 | **Stage 6** | ML Platform & Model Evolution | 6 | Candidate & anomaly models, ONNX export, Champion/Challenger |
 | **Stage 7** | Rust Inference, Go API & Dashboard | 5 | Rust ONNX serving, Go Query API, Interactive Scientific Dashboard |
 | **Stage 8** | Observability, Benchmark & Hardening | 6 | Prometheus/Grafana metrics, system benchmarks, end-to-end resilience |
-| **Tổng** | **8 Stages** | **42 Phases** | **Full Production-Grade Data & ML Pipeline** |
+| **Tổng** | **8 Stages** | **43 Phases** | **Full Production-Grade Data & ML Pipeline** |
 
 ---
 
@@ -82,18 +82,20 @@ Mục tiêu: Kết nối NASA MAST, discover TESS products, stream FITS trực t
 
 ```text
 Stage 2
-├── Phase 2.1: TESS / MAST Source Discovery
-├── Phase 2.2: Product Selection & Manifest
-├── Phase 2.3: FITS Streaming Ingestion
-├── Phase 2.4: Bronze Object Layout
-└── Phase 2.5: Ingestion Event Publishing
+├── Phase 2.1: MAST Discovery & Source Model
+├── Phase 2.2: Product Selection, Pairing & Manifest
+├── Phase 2.3: Bronze Layout & Streaming Ingestion
+├── Phase 2.4: NATS Event Contract & Publishing
+├── Phase 2.5: Ingestion Checkpoint & Resume
+└── Phase 2.6: End-to-End Ingestion Validation
 ```
 
-* **Phase 2.1 — TESS / MAST Source Discovery**: Kết nối MAST API, query TPF (Target Pixel File), Light Curve và FFI products.
-* **Phase 2.2 — Product Selection & Manifest**: Định nghĩa manifest cho data download (TIC ID, Sector, Camera, CCD, File size, Hash checksum).
-* **Phase 2.3 — FITS Streaming Ingestion**: Go Ingester stream HTTP FITS file trực tiếp vào MinIO Bronze qua `io.Reader`, kiểm soát memory footprint.
-* **Phase 2.4 — Bronze Object Layout**: Chuẩn hóa đường dẫn object trong MinIO Bronze: `bronze/tess/year/sector/tic_id/filename.fits`.
-* **Phase 2.5 — Ingestion Event Publishing**: Go Ingester publish lightweight JSON event `bronze-object-ready` sang NATS JetStream khi upload xong.
+* **Phase 2.1 — MAST Discovery & Source Model**: Kết nối NASA MAST API, query observations (`Mast.Caom.Filtered`) và products (`Mast.Caom.Products`), phân loại TPF, Light Curve, FFI và mô hình hóa Go objects.
+* **Phase 2.2 — Product Selection, Pairing & Manifest**: Tự động ghép cặp TPF/LC theo cùng TIC ID & Sector, áp dụng bộ lọc dung lượng dữ liệu và tạo manifest cho quá trình ingestion.
+* **Phase 2.3 — Bronze Layout & Streaming Ingestion**: Go Ingester stream FITS trực tiếp vào MinIO Bronze qua HTTP `io.Reader` theo chuẩn layout `bronze/tess/year/sector/tic_id/filename.fits` mà không phình RAM.
+* **Phase 2.4 — NATS Event Contract & Publishing**: Định nghĩa event schema và publish `bronze-object-ready` event lên NATS JetStream sau khi upload xong object.
+* **Phase 2.5 — Ingestion Checkpoint & Resume**: Lưu checkpoint trạng thái ingestion vào SQLite/Local state để đảm bảo khả năng resume và idempotency khi bị gián đoạn.
+* **Phase 2.6 — End-to-End Ingestion Validation**: Kiểm thử toàn bộ quy trình ingestion từ MAST -> MinIO Bronze -> NATS Event mà không tải file FITS dư thừa hay làm phình RAM.
 
 ---
 
@@ -118,24 +120,24 @@ Stage 3
 
 ---
 
-### Stage 4 — Checkpoint, Recovery & Rolling Lifecycle
+### Stage 4 — Recovery, Idempotency & Rolling Lifecycle
 
-Mục tiêu: Đảm bảo khả năng phục hồi lỗi (idempotency, checkpoint), quản lý giới hạn dữ liệu Bronze (~50 GiB).
+Mục tiêu: Đảm bảo khả năng phục hồi lỗi liên service (cross-service idempotency, preprocessor checkpoint, NATS redelivery), quản lý vòng đời và bộ nhớ đệm Bronze (~50 GiB).
 
 ```text
 Stage 4
-├── Phase 4.1: Ingestion Checkpoints & State
-├── Phase 4.2: Preprocessing Checkpoints & State
-├── Phase 4.3: Retry Policy & Dead Letter Queue
-├── Phase 4.4: Bronze Rolling Retention (~50 GiB)
-└── Phase 4.5: Crash Recovery & Resumption Validation
+├── Phase 4.1: Preprocessor Checkpoint
+├── Phase 4.2: Cross-Service Idempotency
+├── Phase 4.3: NATS Redelivery & Failure Recovery
+├── Phase 4.4: Raw Object Lifecycle
+└── Phase 4.5: Rolling ~50 GiB Storage Window
 ```
 
-* **Phase 4.1 — Ingestion Checkpoints & State**: Lưu vị trí stream và offset file đã tải vào SQLite/Local state.
-* **Phase 4.2 — Preprocessing Checkpoints & State**: Theo dõi message deduplication ID và ack status trên NATS JetStream.
-* **Phase 4.3 — Retry Policy & Dead Letter Queue**: Tự động thử lại với Exponential Backoff khi MinIO/NATS đứt kết nối, đẩy event hỏng vào DLQ.
-* **Phase 4.4 — Bronze Rolling Retention (~50 GiB)**: Tự động xóa bớt các file FITS cũ nhất khi bộ nhớ Bronze vượt qua High Watermark (90%) về mức Low Watermark (60%).
-* **Phase 4.5 — Crash Recovery & Resumption Validation**: Giả lập kill `-9` service và khôi phục trạng thái làm việc mà không làm mất hoặc lặp dữ liệu.
+* **Phase 4.1 — Preprocessor Checkpoint**: Lưu trạng thái xử lý NATS JetStream ack/deduplication offset cho Rust Preprocessor.
+* **Phase 4.2 — Cross-Service Idempotency**: Đảm bảo toàn hệ thống không bao giờ xử lý lặp dữ liệu giữa Ingester, Preprocessor và Storage layers.
+* **Phase 4.3 — NATS Redelivery & Failure Recovery**: Xử lý redelivery, exponential backoff và Dead Letter Queue (DLQ) khi có sự cố hạ tầng.
+* **Phase 4.4 — Raw Object Lifecycle**: Quản lý chính sách lưu trữ object thô, phân tầng dữ liệu thô giữa Bronze và Silver.
+* **Phase 4.5 — Rolling ~50 GiB Storage Window**: Tự động dọn dẹp file FITS thô cũ nhất khi bộ nhớ Bronze chạm High Watermark (90%) về mức Low Watermark (60%).
 
 ---
 

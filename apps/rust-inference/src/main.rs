@@ -1,8 +1,6 @@
 mod app;
 mod config;
-
-#[path = "../pkg/mod.rs"]
-mod pkg;
+mod logger;
 
 #[tokio::main]
 async fn main() {
@@ -14,7 +12,7 @@ async fn main() {
         }
     };
 
-    pkg::logger::init(&cfg.core.log_level, &cfg.core.env);
+    logger::init(&cfg.core.log_level, &cfg.core.env);
     cfg.log_summary();
 
     if let Err(e) = app::run(cfg).await {

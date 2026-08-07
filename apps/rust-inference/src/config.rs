@@ -1,4 +1,4 @@
-use super::helper::require_env;
+use std::env;
 
 #[derive(Debug, Clone)]
 pub struct CoreConfig {
@@ -67,4 +67,8 @@ impl Config {
             "Configuration summary loaded"
         );
     }
+}
+
+fn require_env(key: &str) -> Result<String, String> {
+    env::var(key).map_err(|_| format!("Missing required environment variable '{key}'"))
 }

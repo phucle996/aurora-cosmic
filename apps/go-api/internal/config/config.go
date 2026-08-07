@@ -1,6 +1,10 @@
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+	"strconv"
+)
 
 type CoreConfig struct {
 	Env      string
@@ -86,4 +90,24 @@ func (c *Config) Validate() error {
 func (c *Config) LogSummary() {
 	fmt.Printf("[aurora-api] Config: env=%s, log_level=%s, listen=%s:%d, minio=%s, bucket=%s\n",
 		c.Core.Env, c.Core.LogLevel, c.Server.Host, c.Server.Port, c.MinIO.Endpoint, c.MinIO.Bucket)
+}
+
+func requireEnv(key string) (string, error) {
+	val := os.Getenv(key)
+	if val == "" {
+		return "", fmt.Errorf("missing required environment variable '%s'", key)
+	}
+	return val, nil
+}
+
+func requireEnvInt(key string) (int, error) {
+	val, err := requireEnv(key)
+	if err != nil {
+		return 0, err
+	}
+	i, err := strconv.Atoi(val)
+	if err != nil {
+		return 0, fmt.Errorf("invalid integer value for '%s': '%s'", key, val)
+	}
+	return i, nil
 }

@@ -1,4 +1,5 @@
-use super::helper::{require_env, require_env_parse};
+use std::env;
+use std::str::FromStr;
 
 #[derive(Debug, Clone)]
 pub struct CoreConfig {
@@ -64,4 +65,14 @@ impl Config {
             "Configuration summary loaded"
         );
     }
+}
+
+fn require_env(key: &str) -> Result<String, String> {
+    env::var(key).map_err(|_| format!("Missing required environment variable '{key}'"))
+}
+
+fn require_env_parse<T: FromStr>(key: &str) -> Result<T, String> {
+    let val = require_env(key)?;
+    val.parse::<T>()
+        .map_err(|_| format!("Invalid value for environment variable '{key}': '{val}'"))
 }
