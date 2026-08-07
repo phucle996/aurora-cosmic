@@ -2,9 +2,8 @@
 FROM rust:alpine AS builder
 WORKDIR /app
 RUN apk add --no-cache musl-dev
-COPY Cargo.toml ./
+COPY Cargo.toml Cargo.lock* ./
 COPY src ./src
-COPY pkg ./pkg
 RUN cargo build --release
 
 # Runtime Stage
