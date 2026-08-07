@@ -23,6 +23,7 @@ type Client interface {
 	EnsureBucket(ctx context.Context, bucket string) error
 	PutObject(ctx context.Context, bucket, objectKey string, reader io.Reader, size int64, userMeta map[string]string) error
 	StatObject(ctx context.Context, bucket, objectKey string) (*ObjectInfo, bool, error)
+	GetObject(ctx context.Context, bucket, objectKey string) (io.ReadCloser, error)
 }
 
 // MinIOClient wraps minio.Client.
@@ -108,4 +109,13 @@ func (m *MinIOClient) StatObject(ctx context.Context, bucket, objectKey string) 
 		Size:         objInfo.Size,
 		UserMetadata: meta,
 	}, true, nil
+}
+
+// GetObject opens a stream to read an object from MinIO.
+func (m *MinIOClient) GetObject(ctx context.Context, bucket, objectKey string) (io.ReadCloser, error) {
+	obj, err := m.client.GetObject(ctx, bucket, objectKey, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("minio: get object %s/%s: %w", bucket, objectKey, err)
+	}
+	return obj, nil
 }

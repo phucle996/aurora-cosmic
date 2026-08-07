@@ -1,7 +1,9 @@
 package tests
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -59,6 +61,16 @@ func (m *mockStorageClient) StatObject(ctx context.Context, bucket, objectKey st
 		return nil, false, nil
 	}
 	return obj, true, nil
+}
+
+func (m *mockStorageClient) GetObject(ctx context.Context, bucket, objectKey string) (io.ReadCloser, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	data, ok := m.content[objectKey]
+	if !ok {
+		return nil, fmt.Errorf("mock: object %s not found", objectKey)
+	}
+	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
 func TestPipelineDryRun(t *testing.T) {
