@@ -30,9 +30,6 @@ fn test_raw_light_curve_struct() {
         pdcsap_flux_err: Some(vec![0.5, 0.5, 0.5]),
         quality: vec![0, 0, 0],
         tic_id: Some(123456789),
-        sector: Some(42),
-        camera: Some(1),
-        ccd: Some(2),
     };
 
     assert_eq!(lc.time.len(), 3);
@@ -52,7 +49,6 @@ fn test_raw_tpf_struct() {
         rows: 2,
         cols: 2,
         tic_id: Some(123456789),
-        sector: Some(42),
     };
 
     assert_eq!(tpf.time.len(), 2);
@@ -67,9 +63,6 @@ fn test_raw_ffi_struct() {
         width: 10,
         height: 10,
         pixels: vec![0.0; 100],
-        sector: Some(42),
-        camera: Some(1),
-        ccd: Some(2),
     };
 
     assert_eq!(ffi.width, 10);
@@ -88,9 +81,6 @@ fn test_decoded_product_enum() {
         pdcsap_flux_err: Some(vec![0.5]),
         quality: vec![0],
         tic_id: event.tic_id,
-        sector: Some(event.sector),
-        camera: event.camera,
-        ccd: event.ccd,
     };
 
     let product = DecodedProduct::LightCurve(lc);

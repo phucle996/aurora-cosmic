@@ -252,8 +252,8 @@ pub fn serialize_ffi(
     let processor_version = ffi.processing.processor_version.clone();
     let object_key = build_ffi_key(
         event.sector,
-        ffi.camera,
-        ffi.ccd,
+        event.camera,
+        event.ccd,
         &event.source_product_id,
         &processor_version,
     );

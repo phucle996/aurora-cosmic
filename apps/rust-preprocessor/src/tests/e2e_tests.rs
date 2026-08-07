@@ -60,9 +60,6 @@ fn test_e2e_light_curve_pipeline_flow() {
         pdcsap_flux_err: Some(vec![1.0, 1.0, 1.0, 1.0, 1.0]),
         quality: vec![0, 0, 0, 0, 0],
         tic_id: Some(123456789),
-        sector: Some(42),
-        camera: Some(1),
-        ccd: Some(2),
     };
 
     // 1. Scientific Preprocessing
@@ -103,7 +100,6 @@ fn test_e2e_tpf_pipeline_flow() {
         rows: 2,
         cols: 2,
         tic_id: Some(123456789),
-        sector: Some(42),
     };
 
     let processed = preprocess_target_pixel(raw_tpf, &event, &img_cfg).unwrap();
@@ -134,9 +130,6 @@ fn test_e2e_ffi_pipeline_flow() {
             10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0, 110.0, 120.0, 130.0,
             140.0, 150.0, 160.0,
         ],
-        sector: Some(42),
-        camera: Some(1),
-        ccd: Some(2),
     };
 
     let processed = preprocess_ffi(raw_ffi, &event, &img_cfg, Some(&[(1, 1, 2, 2)])).unwrap();

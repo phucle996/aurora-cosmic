@@ -14,7 +14,6 @@ pub struct RawTargetPixel {
     pub rows: usize,
     pub cols: usize,
     pub tic_id: Option<u64>,
-    pub sector: Option<u32>,
 }
 
 /// Raw Full Frame Image (FFI) data structure.
@@ -23,9 +22,6 @@ pub struct RawFfi {
     pub width: usize,
     pub height: usize,
     pub pixels: Vec<f32>,
-    pub sector: Option<u32>,
-    pub camera: Option<u8>,
-    pub ccd: Option<u8>,
 }
 
 /// Decode TPF FITS file (Target Pixel File).
@@ -38,10 +34,6 @@ pub fn decode_tpf(path: &Path, event: &BronzeObjectReady) -> Result<RawTargetPix
         .read_key::<i64>(&mut fits, "TICID")
         .ok()
         .map(|v| v as u64);
-    let header_sector: Option<u32> = primary_hdu
-        .read_key::<i32>(&mut fits, "SECTOR")
-        .ok()
-        .map(|v| v as u32);
 
     if let (Some(ev_tic), Some(hdr_tic)) = (event.tic_id, header_tic) {
         if ev_tic != hdr_tic {
@@ -115,7 +107,6 @@ pub fn decode_tpf(path: &Path, event: &BronzeObjectReady) -> Result<RawTargetPix
         rows,
         cols,
         tic_id: event.tic_id.or(header_tic),
-        sector: Some(event.sector).or(header_sector),
     })
 }
 
@@ -123,20 +114,6 @@ pub fn decode_tpf(path: &Path, event: &BronzeObjectReady) -> Result<RawTargetPix
 pub fn decode_ffi(path: &Path, event: &BronzeObjectReady) -> Result<RawFfi> {
     let mut fits = FitsFile::open(path)
         .with_context(|| format!("Failed to open FFI FITS file at {}", path.display()))?;
-
-    let primary_hdu = fits.hdu(0).context("Failed to open Primary HDU (0)")?;
-    let header_sector: Option<u32> = primary_hdu
-        .read_key::<i32>(&mut fits, "SECTOR")
-        .ok()
-        .map(|v| v as u32);
-    let header_camera: Option<u8> = primary_hdu
-        .read_key::<i32>(&mut fits, "CAMERA")
-        .ok()
-        .map(|v| v as u8);
-    let header_ccd: Option<u8> = primary_hdu
-        .read_key::<i32>(&mut fits, "CCD")
-        .ok()
-        .map(|v| v as u8);
 
     // Image HDU (HDU 1 for FFI)
     let image_hdu = fits.hdu(1).context("Failed to open FFI Image HDU (1)")?;
@@ -167,8 +144,5 @@ pub fn decode_ffi(path: &Path, event: &BronzeObjectReady) -> Result<RawFfi> {
         width,
         height,
         pixels,
-        sector: Some(event.sector).or(header_sector),
-        camera: event.camera.or(header_camera),
-        ccd: event.ccd.or(header_ccd),
     })
 }

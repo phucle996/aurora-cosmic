@@ -5,38 +5,38 @@ use crate::pipeline::image::{preprocess_ffi, preprocess_target_pixel};
 
 fn make_tpf_event() -> BronzeObjectReady {
     BronzeObjectReady {
-        event_id: "tpf-evt-001".to_string(),
+        event_id: "evt-tpf-001".to_string(),
         event_type: "bronze.object.ready".to_string(),
-        source_product_id: "mast-tpf-001".to_string(),
+        source_product_id: "tess-tpf-001".to_string(),
         sample_id: None,
         bucket: "aurora".to_string(),
-        object_key: "bronze/tess/sector-0042/123/tp.fits".to_string(),
+        object_key: "bronze/tess/target-pixel/sector=0042/tic=123456789/tpf.fits".to_string(),
         product_kind: ProductKind::TargetPixel,
         sector: 42,
         tic_id: Some(123456789),
         camera: Some(1),
         ccd: Some(2),
-        size_bytes: 2048,
-        sha256: "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899".to_string(),
+        size_bytes: 4096,
+        sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
         occurred_at: "2026-08-07T00:00:00Z".to_string(),
     }
 }
 
 fn make_ffi_event() -> BronzeObjectReady {
     BronzeObjectReady {
-        event_id: "ffi-evt-001".to_string(),
+        event_id: "evt-ffi-001".to_string(),
         event_type: "bronze.object.ready".to_string(),
-        source_product_id: "mast-ffi-001".to_string(),
+        source_product_id: "tess-ffi-001".to_string(),
         sample_id: None,
         bucket: "aurora".to_string(),
-        object_key: "bronze/tess/sector-0042/ffi/ffi.fits".to_string(),
+        object_key: "bronze/tess/ffi/sector=0042/camera=1/ccd=2/ffi.fits".to_string(),
         product_kind: ProductKind::Ffi,
         sector: 42,
         tic_id: None,
         camera: Some(1),
         ccd: Some(2),
-        size_bytes: 4096,
-        sha256: "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899".to_string(),
+        size_bytes: 8192,
+        sha256: "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210".to_string(),
         occurred_at: "2026-08-07T00:00:00Z".to_string(),
     }
 }
@@ -63,7 +63,6 @@ fn test_tpf_preprocessing_valid() {
         rows: 2,
         cols: 2,
         tic_id: Some(123456789),
-        sector: Some(42),
     };
     let event = make_tpf_event();
     let cfg = default_image_config();
@@ -95,7 +94,6 @@ fn test_tpf_quality_strict_filtering() {
         rows: 2,
         cols: 2,
         tic_id: Some(123456789),
-        sector: Some(42),
     };
     let event = make_tpf_event();
     let cfg = default_image_config();
@@ -119,7 +117,6 @@ fn test_tpf_invalid_time_filtering() {
         rows: 2,
         cols: 2,
         tic_id: Some(123456789),
-        sector: Some(42),
     };
     let event = make_tpf_event();
     let cfg = default_image_config();
@@ -141,7 +138,6 @@ fn test_tpf_zero_reference_pixel_handling() {
         rows: 2,
         cols: 2,
         tic_id: Some(123456789),
-        sector: Some(42),
     };
     let event = make_tpf_event();
     let cfg = default_image_config();
@@ -166,7 +162,6 @@ fn test_tpf_temporal_variation_preserved() {
         rows: 1,
         cols: 1,
         tic_id: Some(123456789),
-        sector: Some(42),
     };
     let event = make_tpf_event();
     let cfg = default_image_config();
@@ -191,7 +186,6 @@ fn test_tpf_determinism() {
         rows: 2,
         cols: 2,
         tic_id: Some(123456789),
-        sector: Some(42),
     };
     let raw2 = raw1.clone();
     let event = make_tpf_event();
@@ -228,9 +222,6 @@ fn test_ffi_statistics_and_non_finite_handling() {
         width: 4,
         height: 4,
         pixels,
-        sector: Some(42),
-        camera: Some(1),
-        ccd: Some(2),
     };
     let event = make_ffi_event();
     let cfg = default_image_config();
@@ -253,9 +244,6 @@ fn test_ffi_cutout_extraction() {
         width: 4,
         height: 4,
         pixels,
-        sector: Some(42),
-        camera: Some(1),
-        ccd: Some(2),
     };
     let event = make_ffi_event();
     let cfg = default_image_config();
@@ -280,9 +268,6 @@ fn test_ffi_invalid_cutout_bounds_error() {
         width: 4,
         height: 4,
         pixels: vec![1.0; 16],
-        sector: Some(42),
-        camera: Some(1),
-        ccd: Some(2),
     };
     let event = make_ffi_event();
     let cfg = default_image_config();

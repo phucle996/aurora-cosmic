@@ -1,6 +1,13 @@
 .
 ├── apps
 │   ├── dashboard
+│   │   ├── dist
+│   │   │   ├── assets
+│   │   │   │   ├── index-CyP5ZcXQ.css
+│   │   │   │   └── index-Rb345Ec2.js
+│   │   │   ├── favicon.svg
+│   │   │   ├── icons.svg
+│   │   │   └── index.html
 │   │   ├── Dockerfile
 │   │   ├── index.html
 │   │   ├── nginx.conf
@@ -171,46 +178,54 @@
 │   │   └── tests
 │   │       └── config_test.rs
 │   └── rust-preprocessor
-│       ├── benches
-│       │   └── preprocessing.rs
 │       ├── Cargo.lock
 │       ├── Cargo.toml
 │       ├── Dockerfile
 │       ├── README.md
-│       ├── src
-│       │   ├── app.rs
-│       │   ├── checkpoint.rs
-│       │   ├── config.rs
-│       │   ├── consumer.rs
-│       │   ├── fits
-│       │   │   ├── image.rs
-│       │   │   ├── lightcurve.rs
-│       │   │   └── mod.rs
-│       │   ├── logger.rs
-│       │   ├── main.rs
-│       │   ├── output
-│       │   │   ├── gold.rs
-│       │   │   ├── mod.rs
-│       │   │   └── silver.rs
-│       │   ├── pipeline
-│       │   │   ├── image.rs
-│       │   │   ├── lightcurve.rs
-│       │   │   └── mod.rs
-│       │   └── storage.rs
-│       └── tests
-│           └── config_test.rs
+│       └── src
+│           ├── app.rs
+│           ├── config.rs
+│           ├── event.rs
+│           ├── fits
+│           │   ├── image.rs
+│           │   ├── lightcurve.rs
+│           │   └── mod.rs
+│           ├── logger.rs
+│           ├── main.rs
+│           ├── output
+│           │   ├── mod.rs
+│           │   └── silver.rs
+│           ├── pipeline
+│           │   ├── image.rs
+│           │   ├── lightcurve.rs
+│           │   └── mod.rs
+│           ├── storage.rs
+│           ├── tests
+│           │   ├── config_tests.rs
+│           │   ├── e2e_tests.rs
+│           │   ├── event_tests.rs
+│           │   ├── fits_tests.rs
+│           │   ├── flow_tests.rs
+│           │   ├── mod.rs
+│           │   ├── pipeline_image_tests.rs
+│           │   ├── pipeline_lc_tests.rs
+│           │   ├── silver_tests.rs
+│           │   └── worker_tests.rs
+│           └── worker.rs
 ├── ARCH.MD
 ├── contracts
 │   ├── data
+│   │   ├── silver-ffi-v1.md
+│   │   ├── silver-lightcurve-v1.md
+│   │   └── silver-target-pixel-v1.md
 │   ├── events
 │   │   └── bronze-object-ready.schema.json
 │   └── README.md
-├── datasets
-│   └── examples
 ├── docker-compose.yml
 ├── docs
 │   ├── CONFIGURATION.md
-│   └── STAGE2_VALIDATION.md
+│   ├── STAGE2_VALIDATION.md
+│   └── STAGE3_VALIDATION.md
 ├── infra
 │   ├── minio
 │   │   └── init.sh
@@ -225,7 +240,8 @@
 ├── STRUCTURE.MD
 ├── tests
 │   ├── e2e
+│   │   └── stage3-preprocessing.sh
 │   └── fixtures
 └── tree.txt
 
-77 directories, 152 files
+76 directories, 169 files

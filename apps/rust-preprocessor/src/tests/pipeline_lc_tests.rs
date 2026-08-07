@@ -43,9 +43,6 @@ fn make_raw_lc(fluxes: Vec<f32>, qualities: Vec<i32>) -> RawLightCurve {
         pdcsap_flux_err: Some(errs),
         quality: qualities,
         tic_id: Some(123456789),
-        sector: Some(42),
-        camera: Some(1),
-        ccd: Some(2),
     }
 }
 

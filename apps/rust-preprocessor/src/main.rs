@@ -9,10 +9,6 @@ mod worker;
 #[cfg(test)]
 mod tests;
 
-// Unused until Stage 4 — kept as stub.
-#[allow(dead_code)]
-mod checkpoint;
-
 mod pipeline;
 mod output;
 
