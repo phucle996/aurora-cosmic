@@ -28,6 +28,10 @@ tempfile = "3"
 # FITS decode — wraps CFITSIO (requires cfitsio system library)
 fitsio = "0.21"
 
+# Arrow & Parquet for Silver materialization (v54 handles chrono 0.4.45)
+arrow = { version = "54.0", features = ["ffi"] }
+parquet = { version = "54.0", features = ["zstd"] }
+
 [dev-dependencies]
 criterion = "0.5"
 tokio = { version = "1.38", features = ["full", "test-util"] }

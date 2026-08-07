@@ -10,7 +10,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::config::{ConsumerConfig, ImageConfig, LightCurveConfig};
 use crate::event::BronzeObjectReady;
-use crate::fits::{self, DecodedProduct, DecodedSource};
+use crate::fits::{self, DecodedProduct};
+use crate::output::silver::{self, SilverArtifact};
 use crate::pipeline;
 use crate::storage::StorageClient;
 
@@ -154,8 +155,9 @@ pub async fn run(
 /// 1. Decode event JSON
 /// 2. Stat & verify object size in MinIO Bronze
 /// 3. Stream object to temp file & verify SHA-256 checksum on the fly
-/// 4. spawn_blocking FITS decode + Phase 3.3/3.4 scientific preprocessing (LC, TPF, FFI)
-/// 5. ACK on success, NAK on error
+/// 4. spawn_blocking FITS decode + scientific preprocessing + Parquet serialization
+/// 5. Upload Parquet to MinIO Silver & verify stored size
+/// 6. JetStream ACK ONLY AFTER durable Silver verification succeeds (Phase 3.5 ACK boundary)
 async fn process_message(
     msg: async_nats::jetstream::Message,
     storage: Arc<StorageClient>,
@@ -198,20 +200,26 @@ async fn process_message(
         "Processing event"
     );
 
-    match process_bronze_event(storage, &tmp_dir, &lc_cfg, &img_cfg, event).await {
-        Ok(decoded) => {
+    match process_bronze_event_to_silver(storage, &tmp_dir, &lc_cfg, &img_cfg, event).await {
+        Ok(artifact) => {
             tracing::info!(
                 event_id = %event_id,
-                product = ?decoded.product,
-                lifecycle = "processed",
-                "FITS decoded and preprocessed successfully (Phase 3.4)"
+                silver_key = %artifact.object_key,
+                silver_bytes = artifact.size_bytes,
+                lifecycle = "silver_durable",
+                "Silver artifact durably verified in MinIO"
             );
 
-            // TODO Phase 3.5: change ACK boundary to "Silver durable write → ACK"
+            // Phase 3.5 Final ACK Boundary: ACK ONLY AFTER Silver durable verification succeeds
             if let Err(e) = msg.ack().await {
-                tracing::error!(event_id = %event_id, error = %e, "Failed to ACK message");
+                tracing::error!(event_id = %event_id, error = %e, "Failed to ACK message after Silver write");
             } else {
-                tracing::info!(event_id = %event_id, lifecycle = "acked", "Event processed and ACKed");
+                tracing::info!(
+                    event_id = %event_id,
+                    silver_key = %artifact.object_key,
+                    lifecycle = "acked",
+                    "Event processed, Silver durably stored, and ACKed"
+                );
             }
         }
         Err(err) => {
@@ -219,7 +227,7 @@ async fn process_message(
                 event_id = %event_id,
                 error = %err,
                 lifecycle = "nak",
-                "Processing failed — NAKing for redelivery"
+                "Processing or Silver write failed — NAKing for redelivery"
             );
             if let Err(e) = msg.ack_with(AckKind::Nak(None)).await {
                 tracing::error!(event_id = %event_id, error = %e, "Failed to NAK message");
@@ -228,22 +236,22 @@ async fn process_message(
     }
 }
 
-/// Helper function to perform storage fetch, verification, blocking FITS decode,
-/// and Phase 3.3 / Phase 3.4 scientific preprocessing.
-pub(crate) async fn process_bronze_event(
+/// Helper function to perform Bronze stat & fetch, FITS decode, preprocessing, Parquet serialization,
+/// and MinIO Silver upload with size verification.
+pub(crate) async fn process_bronze_event_to_silver(
     storage: Arc<StorageClient>,
     tmp_dir: &PathBuf,
     lc_cfg: &LightCurveConfig,
     img_cfg: &ImageConfig,
     event: BronzeObjectReady,
-) -> Result<DecodedSource> {
-    // 1. Stat & verify object size
+) -> Result<SilverArtifact> {
+    // 1. Stat & verify Bronze object size
     storage
         .stat_and_verify_size(&event.bucket, &event.object_key, event.size_bytes)
         .await?;
 
-    // 2. Fetch to temp file & verify SHA-256 checksum on the fly
-    let temp_file = storage
+    // 2. Fetch Bronze object to temp file & verify SHA-256 checksum on the fly
+    let temp_fits_file = storage
         .fetch_to_temp(
             &event.bucket,
             &event.object_key,
@@ -253,92 +261,49 @@ pub(crate) async fn process_bronze_event(
         )
         .await?;
 
-    // 3. spawn_blocking for CPU FITS decode + Phase 3.3/3.4 preprocessing
+    // 3. spawn_blocking for CPU FITS decode + preprocessing + Parquet serialization
     let event_clone = event.clone();
-    let temp_path = temp_file.path.clone();
+    let temp_fits_path = temp_fits_file.path.clone();
+    let tmp_dir_clone = tmp_dir.clone();
     let lc_config = lc_cfg.clone();
     let img_config = img_cfg.clone();
 
-    let product = tokio::task::spawn_blocking(move || -> Result<DecodedProduct> {
-        let decoded = fits::decode(&temp_path, &event_clone)?;
+    let artifact = tokio::task::spawn_blocking(move || -> Result<SilverArtifact> {
+        let decoded = fits::decode(&temp_fits_path, &event_clone)?;
         match decoded {
             DecodedProduct::LightCurve(raw_lc) => {
-                let processed_lc = pipeline::lightcurve::preprocess_lc(raw_lc, &event_clone, &lc_config)?;
-                tracing::info!(
-                    object_key = %event_clone.object_key,
-                    points = processed_lc.time.len(),
-                    "Light Curve pipeline preprocessing finished"
-                );
-                Ok(DecodedProduct::LightCurve(raw_light_curve_from_processed(processed_lc)))
+                let processed = pipeline::lightcurve::preprocess_lc(raw_lc, &event_clone, &lc_config)?;
+                silver::serialize_lightcurve(&processed, &event_clone, &tmp_dir_clone)
             }
             DecodedProduct::TargetPixel(raw_tpf) => {
-                let processed_tpf = pipeline::image::preprocess_target_pixel(raw_tpf, &event_clone, &img_config)?;
-                tracing::info!(
-                    object_key = %event_clone.object_key,
-                    cadences = processed_tpf.time.len(),
-                    rows = processed_tpf.rows,
-                    cols = processed_tpf.cols,
-                    "TPF image pipeline preprocessing finished"
-                );
-                Ok(DecodedProduct::TargetPixel(raw_tpf_from_processed(processed_tpf)))
+                let processed = pipeline::image::preprocess_target_pixel(raw_tpf, &event_clone, &img_config)?;
+                silver::serialize_target_pixel(&processed, &event_clone, &tmp_dir_clone)
             }
             DecodedProduct::Ffi(raw_ffi) => {
-                let processed_ffi = pipeline::image::preprocess_ffi(raw_ffi, &event_clone, &img_config, None)?;
-                tracing::info!(
-                    object_key = %event_clone.object_key,
-                    width = processed_ffi.width,
-                    height = processed_ffi.height,
-                    cutouts = processed_ffi.cutouts.len(),
-                    "FFI image pipeline preprocessing finished"
-                );
-                // Return FFI decoded product
-                Ok(DecodedProduct::Ffi(fits::RawFfi {
-                    width: processed_ffi.width,
-                    height: processed_ffi.height,
-                    pixels: Vec::new(), // full FFI pixel buffer not cloned into RAM
-                    sector: processed_ffi.sector,
-                    camera: processed_ffi.camera,
-                    ccd: processed_ffi.ccd,
-                }))
+                let processed = pipeline::image::preprocess_ffi(raw_ffi, &event_clone, &img_config, None)?;
+                silver::serialize_ffi(&processed, &event_clone, &tmp_dir_clone)
             }
         }
     })
     .await
-    .context("FITS decode/preprocess task panicked")??;
+    .context("FITS decode/preprocess/serialize task panicked")??;
 
-    // `temp_file` goes out of scope here and automatically deletes the temporary FITS file.
+    // `temp_fits_file` is automatically deleted here when dropped.
 
-    Ok(DecodedSource {
-        event,
-        product,
-    })
-}
+    // 4. Upload Parquet file to MinIO Silver and verify stored object size
+    storage
+        .put_file_and_verify(
+            &artifact.bucket,
+            &artifact.object_key,
+            &artifact.local_path,
+            artifact.size_bytes,
+            artifact.metadata.clone(),
+        )
+        .await?;
 
-fn raw_light_curve_from_processed(lc: pipeline::lightcurve::ProcessedLightCurve) -> fits::RawLightCurve {
-    fits::RawLightCurve {
-        time: lc.time,
-        sap_flux: None,
-        sap_flux_err: None,
-        pdcsap_flux: Some(lc.flux),
-        pdcsap_flux_err: lc.flux_err,
-        quality: lc.quality,
-        tic_id: lc.tic_id,
-        sector: lc.sector,
-        camera: lc.camera,
-        ccd: lc.ccd,
-    }
-}
+    // `artifact._handle` will delete local `.parquet` temp file when `artifact` is dropped.
 
-fn raw_tpf_from_processed(tpf: pipeline::image::ProcessedTargetPixel) -> fits::RawTargetPixel {
-    fits::RawTargetPixel {
-        time: tpf.time,
-        quality: tpf.quality,
-        flux: tpf.flux,
-        rows: tpf.rows,
-        cols: tpf.cols,
-        tic_id: tpf.tic_id,
-        sector: tpf.sector,
-    }
+    Ok(artifact)
 }
 
 pub(crate) fn parse_duration(s: &str) -> Duration {

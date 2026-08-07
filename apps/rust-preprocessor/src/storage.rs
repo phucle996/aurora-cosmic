@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
@@ -184,5 +185,43 @@ impl StorageClient {
             path: temp_path,
             _handle: temp,
         })
+    }
+
+    /// Upload a local file to MinIO Silver and perform head_object size verification.
+    pub async fn put_file_and_verify(
+        &self,
+        bucket: &str,
+        key: &str,
+        file_path: &Path,
+        expected_size: u64,
+        metadata: HashMap<String, String>,
+    ) -> Result<()> {
+        let body = aws_sdk_s3::primitives::ByteStream::from_path(file_path)
+            .await
+            .with_context(|| format!("Failed to read local file for upload: {}", file_path.display()))?;
+
+        let mut builder = self.client.put_object().bucket(bucket).key(key).body(body);
+        for (k, v) in metadata {
+            builder = builder.metadata(k, v);
+        }
+
+        builder
+            .send()
+            .await
+            .with_context(|| format!("MinIO PutObject failed for {bucket}/{key}"))?;
+
+        // Stat verification
+        self.stat_and_verify_size(bucket, key, expected_size).await?;
+
+        tracing::info!(
+            bucket = bucket,
+            object_key = key,
+            size_bytes = expected_size,
+            operation = "silver_put",
+            status = "durable_verified",
+            "Silver artifact uploaded and verified in MinIO"
+        );
+
+        Ok(())
     }
 }
