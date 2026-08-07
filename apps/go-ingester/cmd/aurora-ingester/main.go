@@ -9,6 +9,7 @@ import (
 
 	"go-ingester/internal/app"
 	"go-ingester/internal/config"
+	"go-ingester/pkg/logger"
 )
 
 func main() {
@@ -18,15 +19,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	log := logger.Init(cfg.Core.LogLevel, cfg.Core.Env)
 	cfg.LogSummary()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	if err := app.Run(ctx, cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "[aurora-ingester] Runtime error: %v\n", err)
+	if err := app.Run(ctx, cfg, log); err != nil {
+		log.WithError(err).Error("Runtime error encountered")
 		os.Exit(1)
 	}
 
-	fmt.Println("[aurora-ingester] Shutdown completed gracefully.")
+	log.Info("Shutdown completed gracefully.")
 }
