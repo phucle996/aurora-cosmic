@@ -13,7 +13,7 @@ STAGE 1: Foundation & Infrastructure [DONE]
 STAGE 2: Data Source & Go Ingestion (NASA MAST -> Go -> MinIO Bronze + NATS)
    │
    ▼
-STAGE 3: Rust Preprocessing Pipeline (NATS -> Rust -> MinIO Silver)
+STAGE 3: Rust Preprocessing Pipeline (NATS -> Rust -> MinIO Silver) [DONE]
    │
    ▼
 STAGE 4: Checkpoint, Recovery & Rolling Lifecycle (Idempotency + Rolling ~50 GiB)
@@ -43,7 +43,7 @@ STAGE 8: Observability, Benchmark & System Hardening (Prometheus/Grafana -> Stre
 | :--- | :--- | :---: | :--- |
 | **Stage 1** | Foundation & Infrastructure [DONE] | 5 | Monorepo skeleton, Docker Compose runtime, Makefile, Service stubs |
 | **Stage 2** | Data Source & Go Ingestion | 6 | Ingestion FITS stream sang MinIO Bronze, NATS ingestion events |
-| **Stage 3** | Rust Preprocessing Pipeline | 6 | Bounded Tokio consumer, FITS decode, LC/TPF/FFI preprocessing, MinIO Silver Parquet |
+| **Stage 3** | Rust Preprocessing Pipeline [DONE] | 6 | Bounded Tokio consumer, FITS decode, LC/TPF/FFI preprocessing, MinIO Silver Parquet |
 | **Stage 4** | Checkpoint, Recovery & Rolling Lifecycle | 5 | State checkpoints, idempotency, rolling Bronze window ~50 GiB |
 | **Stage 5** | Gold Dataset & Scientific Analytics | 5 | Feature engineering, catalog/labels integration, Gold snapshots |
 | **Stage 6** | ML Platform & Model Evolution | 6 | Candidate & anomaly models, ONNX export, Champion/Challenger |
@@ -99,7 +99,7 @@ Stage 2
 
 ---
 
-### Stage 3 — Rust Preprocessing Pipeline
+### Stage 3 — Rust Preprocessing Pipeline [DONE]
 
 Mục tiêu: Rust Preprocessor nhận NATS `bronze-object-ready` event, tải FITS từ MinIO Bronze, parse & clean signal theo từng product kind (LC / TPF / FFI), ghi Arrow/Parquet sang MinIO Silver, ACK JetStream chỉ sau khi Silver write durable.
 
@@ -110,26 +110,26 @@ Mục tiêu: Rust Preprocessor nhận NATS `bronze-object-ready` event, tải FI
 > - ACK JetStream **chỉ sau khi Silver write verify durable**, không ACK sớm.
 
 ```text
-Stage 3
-├── Phase 3.1: JetStream Consumer & Bounded Runtime
-├── Phase 3.2: Bronze Fetch & FITS Decode
-├── Phase 3.3: Light Curve Preprocessing
-├── Phase 3.4: TPF / FFI Image Preprocessing
-├── Phase 3.5: Silver Schema & Materialization
-└── Phase 3.6: End-to-End Preprocessing Validation
+Stage 3 [DONE]
+├── Phase 3.1: JetStream Consumer & Bounded Runtime       [DONE]
+├── Phase 3.2: Bronze Fetch & FITS Decode                 [DONE]
+├── Phase 3.3: Light Curve Preprocessing                  [DONE]
+├── Phase 3.4: TPF / FFI Image Preprocessing              [DONE]
+├── Phase 3.5: Silver Schema & Materialization            [DONE]
+└── Phase 3.6: End-to-End Preprocessing Validation        [DONE]
 ```
 
-* **Phase 3.1 — JetStream Consumer & Bounded Runtime**: Rust Preprocessor subscribe JetStream consumer `bronze-object-ready`. Bounded concurrency bắt buộc qua `Semaphore(N)` (config: `AURORA_PREPROCESS_WORKERS`). Không dùng `tokio::spawn` vô hạn. ACK strategy: chỉ ACK sau khi downstream output durable.
+* **Phase 3.1 — JetStream Consumer & Bounded Runtime [DONE]**: Rust Preprocessor subscribe JetStream consumer `bronze-object-ready`. Bounded concurrency bắt buộc qua `Semaphore(N)` (config: `AURORA_PREPROCESS_WORKERS`). Không dùng `tokio::spawn` vô hạn. ACK strategy: chỉ ACK sau khi downstream output durable.
 
-* **Phase 3.2 — Bronze Fetch & FITS Decode**: Nhận `bucket` + `object_key` + `product_kind` từ NATS event, GET object từ MinIO Bronze, verify `size` & `sha256`, decode FITS qua `spawn_blocking`. Hỗ trợ: `TARGET_PIXEL`, `LIGHT_CURVE`, `FFI`.
+* **Phase 3.2 — Bronze Fetch & FITS Decode [DONE]**: Nhận `bucket` + `object_key` + `product_kind` từ NATS event, GET object từ MinIO Bronze, verify `size` & `sha256`, decode FITS qua `spawn_blocking`. Hỗ trợ: `TARGET_PIXEL`, `LIGHT_CURVE`, `FFI`.
 
-* **Phase 3.3 — Light Curve Preprocessing**: Đọc `TIME`, `PDCSAP_FLUX`, `PDCSAP_FLUX_ERR`, `QUALITY` từ `*_lc.fits`. Pipeline: remove invalid rows → quality mask → normalize flux → basic outlier handling → Silver Light Curve. Không nhét transit feature engineering (Period, BLS score, Transit depth) — đó là Stage 5 Gold.
+* **Phase 3.3 — Light Curve Preprocessing [DONE]**: Đọc `TIME`, `PDCSAP_FLUX`, `PDCSAP_FLUX_ERR`, `QUALITY` từ `*_lc.fits`. Pipeline: remove invalid rows → quality mask → normalize flux → basic outlier handling → Silver Light Curve. Không nhét transit feature engineering (Period, BLS score, Transit depth) — đó là Stage 5 Gold.
 
-* **Phase 3.4 — TPF / FFI Image Preprocessing**: TPF: quality filtering → background normalization → cutout statistics → Silver. FFI: metadata extraction → optional bounded cutout → Silver image metadata. Không convert toàn bộ FFI thành giant tensor cho ML.
+* **Phase 3.4 — TPF / FFI Image Preprocessing [DONE]**: TPF: quality filtering → background normalization → cutout statistics → Silver. FFI: metadata extraction → optional bounded cutout → Silver image metadata. Không convert toàn bộ FFI thành giant tensor cho ML.
 
-* **Phase 3.5 — Silver Schema & Materialization**: Freeze Arrow/Parquet schema cho Silver Light Curve và Silver Image trước Stage 5. Output layout `silver/tess/lightcurve/sector=NNNN/tic=NNNNNNNNN/` và `silver/tess/target-pixel/...`. Schema contract có thể document tại `contracts/data/`.
+* **Phase 3.5 — Silver Schema & Materialization [DONE]**: Freeze Arrow/Parquet schema cho Silver Light Curve và Silver Image trước Stage 5. Output layout `silver/tess/lightcurve/sector=NNNN/tic=NNNNNNNNN/` và `silver/tess/target-pixel/...`. Schema contract có thể document tại `contracts/data/`.
 
-* **Phase 3.6 — End-to-End Preprocessing Validation**: Test flow thật: `NATS bronze-object-ready` → MinIO Bronze → Rust Preprocessor → MinIO Silver cho cả 3 loại (LC event, TPF event, FFI event). Validate ACK ordering: Silver write → verify durable → ACK (không ACK trước khi process).
+* **Phase 3.6 — End-to-End Preprocessing Validation [DONE]**: Test flow thật: `NATS bronze-object-ready` → MinIO Bronze → Rust Preprocessor → MinIO Silver cho cả 3 loại (LC event, TPF event, FFI event). Validate ACK ordering: Silver write → verify durable → ACK (không ACK trước khi process).
 
 ---
 
