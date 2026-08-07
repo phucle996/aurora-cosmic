@@ -1,4 +1,4 @@
-use super::helper::{get_env, get_env_parse};
+use super::helper::{require_env, require_env_parse};
 
 #[derive(Debug, Clone)]
 pub struct CoreConfig {
@@ -32,22 +32,22 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> Result<Self, String> {
-        let workers = get_env_parse("AURORA_PREPROCESS_WORKERS", 4)?;
+        let workers: usize = require_env_parse("AURORA_PREPROCESS_WORKERS")?;
         if workers < 1 {
             return Err("AURORA_PREPROCESS_WORKERS must be >= 1".to_string());
         }
 
         Ok(Self {
             core: CoreConfig {
-                env: get_env("AURORA_ENV", "development"),
-                log_level: get_env("AURORA_LOG_LEVEL", "info"),
+                env: require_env("AURORA_ENV")?,
+                log_level: require_env("AURORA_LOG_LEVEL")?,
             },
             minio: MinioConfig {
-                endpoint: get_env("MINIO_ENDPOINT", "http://minio:9000"),
-                bucket: get_env("MINIO_BUCKET", "aurora"),
+                endpoint: require_env("MINIO_ENDPOINT")?,
+                bucket: require_env("MINIO_BUCKET")?,
             },
             nats: NatsConfig {
-                url: get_env("NATS_URL", "nats://nats:4222"),
+                url: require_env("NATS_URL")?,
             },
             preprocess: PreprocessConfig { workers },
         })

@@ -1,22 +1,27 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 )
 
-func getEnv(key, fallback string) string {
-	if val := os.Getenv(key); val != "" {
-		return val
+func requireEnv(key string) (string, error) {
+	val := os.Getenv(key)
+	if val == "" {
+		return "", fmt.Errorf("missing required environment variable '%s'", key)
 	}
-	return fallback
+	return val, nil
 }
 
-func getEnvInt(key string, fallback int) int {
-	if val := os.Getenv(key); val != "" {
-		if i, err := strconv.Atoi(val); err == nil {
-			return i
-		}
+func requireEnvInt(key string) (int, error) {
+	val, err := requireEnv(key)
+	if err != nil {
+		return 0, err
 	}
-	return fallback
+	i, err := strconv.Atoi(val)
+	if err != nil {
+		return 0, fmt.Errorf("invalid integer value for '%s': '%s'", key, val)
+	}
+	return i, nil
 }

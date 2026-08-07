@@ -24,18 +24,48 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
+	envName, err := requireEnv("AURORA_ENV")
+	if err != nil {
+		return nil, err
+	}
+
+	logLevel, err := requireEnv("AURORA_LOG_LEVEL")
+	if err != nil {
+		return nil, err
+	}
+
+	host, err := requireEnv("AURORA_API_HOST")
+	if err != nil {
+		return nil, err
+	}
+
+	port, err := requireEnvInt("AURORA_API_PORT")
+	if err != nil {
+		return nil, err
+	}
+
+	minioEndpoint, err := requireEnv("MINIO_ENDPOINT")
+	if err != nil {
+		return nil, err
+	}
+
+	minioBucket, err := requireEnv("MINIO_BUCKET")
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
 		Core: CoreConfig{
-			Env:      getEnv("AURORA_ENV", "development"),
-			LogLevel: getEnv("AURORA_LOG_LEVEL", "info"),
+			Env:      envName,
+			LogLevel: logLevel,
 		},
 		Server: ServerConfig{
-			Host: getEnv("AURORA_API_HOST", "0.0.0.0"),
-			Port: getEnvInt("AURORA_API_PORT", 8080),
+			Host: host,
+			Port: port,
 		},
 		MinIO: MinIOConfig{
-			Endpoint: getEnv("MINIO_ENDPOINT", "http://minio:9000"),
-			Bucket:   getEnv("MINIO_BUCKET", "aurora"),
+			Endpoint: minioEndpoint,
+			Bucket:   minioBucket,
 		},
 	}
 

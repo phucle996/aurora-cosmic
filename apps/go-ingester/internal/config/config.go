@@ -35,25 +35,70 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
+	envName, err := requireEnv("AURORA_ENV")
+	if err != nil {
+		return nil, err
+	}
+
+	logLevel, err := requireEnv("AURORA_LOG_LEVEL")
+	if err != nil {
+		return nil, err
+	}
+
+	minioEndpoint, err := requireEnv("MINIO_ENDPOINT")
+	if err != nil {
+		return nil, err
+	}
+
+	minioBucket, err := requireEnv("MINIO_BUCKET")
+	if err != nil {
+		return nil, err
+	}
+
+	natsURL, err := requireEnv("NATS_URL")
+	if err != nil {
+		return nil, err
+	}
+
+	concurrency, err := requireEnvInt("AURORA_INGEST_CONCURRENCY")
+	if err != nil {
+		return nil, err
+	}
+
+	maxBytes, err := requireEnvInt64("AURORA_BRONZE_MAX_BYTES")
+	if err != nil {
+		return nil, err
+	}
+
+	highWM, err := requireEnvFloat("AURORA_BRONZE_HIGH_WATERMARK")
+	if err != nil {
+		return nil, err
+	}
+
+	lowWM, err := requireEnvFloat("AURORA_BRONZE_LOW_WATERMARK")
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
 		Core: CoreConfig{
-			Env:      getEnv("AURORA_ENV", "development"),
-			LogLevel: getEnv("AURORA_LOG_LEVEL", "info"),
+			Env:      envName,
+			LogLevel: logLevel,
 		},
 		MinIO: MinIOConfig{
-			Endpoint: getEnv("MINIO_ENDPOINT", "http://minio:9000"),
-			Bucket:   getEnv("MINIO_BUCKET", "aurora"),
+			Endpoint: minioEndpoint,
+			Bucket:   minioBucket,
 		},
 		NATS: NATSConfig{
-			URL: getEnv("NATS_URL", "nats://nats:4222"),
+			URL: natsURL,
 		},
 		Ingest: IngestConfig{
-			Concurrency: getEnvInt("AURORA_INGEST_CONCURRENCY", 4),
+			Concurrency: concurrency,
 		},
 		Bronze: BronzeConfig{
-			MaxBytes:      getEnvInt64("AURORA_BRONZE_MAX_BYTES", 53687091200),
-			HighWatermark: getEnvFloat("AURORA_BRONZE_HIGH_WATERMARK", 0.90),
-			LowWatermark:  getEnvFloat("AURORA_BRONZE_LOW_WATERMARK", 0.60),
+			MaxBytes:      maxBytes,
+			HighWatermark: highWM,
+			LowWatermark:  lowWM,
 		},
 	}
 

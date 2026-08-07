@@ -1,4 +1,4 @@
-use super::helper::get_env;
+use super::helper::require_env;
 
 #[derive(Debug, Clone)]
 pub struct CoreConfig {
@@ -32,25 +32,22 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> Result<Self, String> {
-        let device = get_env("AURORA_ML_DEVICE", "auto").to_lowercase();
+        let device = require_env("AURORA_ML_DEVICE")?.to_lowercase();
         if !["auto", "cpu", "cuda"].contains(&device.as_str()) {
-            return Err(format!(
-                "Invalid AURORA_ML_DEVICE: '{}'. Must be 'auto', 'cpu', or 'cuda'",
-                device
-            ));
+            return Err(format!("Invalid AURORA_ML_DEVICE: '{}'. Must be 'auto', 'cpu', or 'cuda'", device));
         }
 
         Ok(Self {
             core: CoreConfig {
-                env: get_env("AURORA_ENV", "development"),
-                log_level: get_env("AURORA_LOG_LEVEL", "info"),
+                env: require_env("AURORA_ENV")?,
+                log_level: require_env("AURORA_LOG_LEVEL")?,
             },
             minio: MinioConfig {
-                endpoint: get_env("MINIO_ENDPOINT", "http://minio:9000"),
-                bucket: get_env("MINIO_BUCKET", "aurora"),
+                endpoint: require_env("MINIO_ENDPOINT")?,
+                bucket: require_env("MINIO_BUCKET")?,
             },
             nats: NatsConfig {
-                url: get_env("NATS_URL", "nats://nats:4222"),
+                url: require_env("NATS_URL")?,
             },
             ml: MlConfig { device },
         })
