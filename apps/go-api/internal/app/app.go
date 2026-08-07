@@ -3,7 +3,7 @@ package app
 import (
 	"fmt"
 
-	"github.com/aurora-cosmic/go-api/internal/config"
+	"go-api/internal/config"
 )
 
 func Run(cfg *config.Config) error {

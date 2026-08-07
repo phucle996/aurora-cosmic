@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/aurora-cosmic/go-ingester/internal/app"
-	"github.com/aurora-cosmic/go-ingester/internal/config"
+	"go-ingester/internal/app"
+	"go-ingester/internal/config"
 )
 
 func main() {

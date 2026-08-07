@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/aurora-cosmic/go-ingester/internal/config"
+	"go-ingester/internal/config"
 )
 
 func TestConfigValidation(t *testing.T) {

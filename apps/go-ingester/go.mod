@@ -1,3 +1,3 @@
-module github.com/aurora-cosmic/go-ingester
+module go-ingester
 
 go 1.26

@@ -3,7 +3,7 @@ package tests
 import (
 	"testing"
 
-	"github.com/aurora-cosmic/go-api/internal/config"
+	"go-api/internal/config"
 )
 
 func TestConfigValidation(t *testing.T) {

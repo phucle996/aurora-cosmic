@@ -3,7 +3,7 @@ package app
 import (
 	"fmt"
 
-	"github.com/aurora-cosmic/go-ingester/internal/config"
+	"go-ingester/internal/config"
 )
 
 func Run(cfg *config.Config) error {

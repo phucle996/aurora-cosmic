@@ -1,3 +1,3 @@
-module github.com/aurora-cosmic/go-api
+module go-api
 
 go 1.26
