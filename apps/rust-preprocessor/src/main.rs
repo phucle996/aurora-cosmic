@@ -1,6 +1,9 @@
 mod app;
 mod config;
 
+#[path = "../pkg/mod.rs"]
+mod pkg;
+
 #[tokio::main]
 async fn main() {
     let cfg = match config::Config::from_env() {
@@ -11,12 +14,13 @@ async fn main() {
         }
     };
 
+    pkg::logger::init(&cfg.core.log_level, &cfg.core.env);
     cfg.log_summary();
 
     if let Err(e) = app::run(cfg).await {
-        eprintln!("[aurora-preprocessor] Runtime error: {}", e);
+        tracing::error!(error = %e, "Runtime error encountered");
         std::process::exit(1);
     }
 
-    println!("[aurora-preprocessor] Shutdown completed gracefully.");
+    tracing::info!("Shutdown completed gracefully.");
 }

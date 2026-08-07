@@ -5,6 +5,8 @@ edition = "2021"
 
 [dependencies]
 tokio = { version = "1.38", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 
 [dev-dependencies]
 criterion = "0.5"

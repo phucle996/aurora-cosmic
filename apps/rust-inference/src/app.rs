@@ -1,10 +1,10 @@
 use crate::config::Config;
 
 pub async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
-    println!("[aurora-inference] Service runner started with device '{}'.", config.ml.device);
+    tracing::info!(device = %config.ml.device, "Service runner started");
 
     tokio::signal::ctrl_c().await?;
-    println!("[aurora-inference] Shutdown signal received, stopping inference runtime...");
+    tracing::info!("Shutdown signal received, stopping inference runtime...");
 
     Ok(())
 }
