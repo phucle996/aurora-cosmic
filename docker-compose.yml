@@ -62,16 +62,8 @@ services:
     build:
       context: ./apps/go-ingester
     container_name: aurora-go-ingester
-    environment:
-      AURORA_ENV: "${AURORA_ENV:-development}"
-      AURORA_LOG_LEVEL: "${AURORA_LOG_LEVEL:-info}"
-      MINIO_ENDPOINT: "${MINIO_ENDPOINT:-http://minio:9000}"
-      MINIO_BUCKET: "${MINIO_BUCKET:-aurora}"
-      NATS_URL: "${NATS_URL:-nats://nats:4222}"
-      AURORA_INGEST_CONCURRENCY: "${AURORA_INGEST_CONCURRENCY:-4}"
-      AURORA_BRONZE_MAX_BYTES: "${AURORA_BRONZE_MAX_BYTES:-53687091200}"
-      AURORA_BRONZE_HIGH_WATERMARK: "${AURORA_BRONZE_HIGH_WATERMARK:-0.90}"
-      AURORA_BRONZE_LOW_WATERMARK: "${AURORA_BRONZE_LOW_WATERMARK:-0.60}"
+    env_file:
+      - ./apps/go-ingester/.env.example
     networks:
       - aurora-net
     depends_on:
@@ -84,13 +76,8 @@ services:
     build:
       context: ./apps/rust-preprocessor
     container_name: aurora-rust-preprocessor
-    environment:
-      AURORA_ENV: "${AURORA_ENV:-development}"
-      AURORA_LOG_LEVEL: "${AURORA_LOG_LEVEL:-info}"
-      MINIO_ENDPOINT: "${MINIO_ENDPOINT:-http://minio:9000}"
-      MINIO_BUCKET: "${MINIO_BUCKET:-aurora}"
-      NATS_URL: "${NATS_URL:-nats://nats:4222}"
-      AURORA_PREPROCESS_WORKERS: "${AURORA_PREPROCESS_WORKERS:-4}"
+    env_file:
+      - ./apps/rust-preprocessor/.env.example
     networks:
       - aurora-net
     depends_on:
@@ -103,16 +90,8 @@ services:
     build:
       context: ./apps/python-ml-worker
     container_name: aurora-python-ml-worker
-    environment:
-      AURORA_ENV: "${AURORA_ENV:-development}"
-      AURORA_LOG_LEVEL: "${AURORA_LOG_LEVEL:-info}"
-      MINIO_ENDPOINT: "${MINIO_ENDPOINT:-http://minio:9000}"
-      MINIO_BUCKET: "${MINIO_BUCKET:-aurora}"
-      NATS_URL: "${NATS_URL:-nats://nats:4222}"
-      AURORA_ML_DEVICE: "${AURORA_ML_DEVICE:-auto}"
-      AURORA_ML_BATCH_SIZE: "${AURORA_ML_BATCH_SIZE:-32}"
-      AURORA_ML_MAX_VRAM_MB: "${AURORA_ML_MAX_VRAM_MB:-3500}"
-      CUDA_VISIBLE_DEVICES: "${CUDA_VISIBLE_DEVICES:-0}"
+    env_file:
+      - ./apps/python-ml-worker/.env.example
     networks:
       - aurora-net
     depends_on:
@@ -125,13 +104,8 @@ services:
     build:
       context: ./apps/rust-inference
     container_name: aurora-rust-inference
-    environment:
-      AURORA_ENV: "${AURORA_ENV:-development}"
-      AURORA_LOG_LEVEL: "${AURORA_LOG_LEVEL:-info}"
-      MINIO_ENDPOINT: "${MINIO_ENDPOINT:-http://minio:9000}"
-      MINIO_BUCKET: "${MINIO_BUCKET:-aurora}"
-      NATS_URL: "${NATS_URL:-nats://nats:4222}"
-      AURORA_ML_DEVICE: "${AURORA_ML_DEVICE:-auto}"
+    env_file:
+      - ./apps/rust-inference/.env.example
     networks:
       - aurora-net
     depends_on:
@@ -146,13 +120,8 @@ services:
     container_name: aurora-go-api
     ports:
       - "${AURORA_API_PORT:-8080}:8080"
-    environment:
-      AURORA_ENV: "${AURORA_ENV:-development}"
-      AURORA_LOG_LEVEL: "${AURORA_LOG_LEVEL:-info}"
-      AURORA_API_HOST: "${AURORA_API_HOST:-0.0.0.0}"
-      AURORA_API_PORT: "${AURORA_API_PORT:-8080}"
-      MINIO_ENDPOINT: "${MINIO_ENDPOINT:-http://minio:9000}"
-      MINIO_BUCKET: "${MINIO_BUCKET:-aurora}"
+    env_file:
+      - ./apps/go-api/.env.example
     networks:
       - aurora-net
     depends_on:
@@ -165,12 +134,8 @@ services:
     container_name: aurora-dashboard
     ports:
       - "${AURORA_DASHBOARD_PORT:-8501}:8501"
-    environment:
-      AURORA_ENV: "${AURORA_ENV:-development}"
-      AURORA_LOG_LEVEL: "${AURORA_LOG_LEVEL:-info}"
-      AURORA_DASHBOARD_HOST: "${AURORA_DASHBOARD_HOST:-0.0.0.0}"
-      AURORA_DASHBOARD_PORT: "${AURORA_DASHBOARD_PORT:-8501}"
-      AURORA_API_URL: "${AURORA_API_URL:-http://go-api:8080}"
+    env_file:
+      - ./apps/dashboard/.env.example
     networks:
       - aurora-net
     depends_on:

@@ -21,11 +21,15 @@ help:
 
 config-check:
 	@echo "Checking configuration files..."
-	@test -f .env.example || (echo "Error: .env.example missing" && exit 1)
 	@test -f config/aurora.example.yaml || (echo "Error: config/aurora.example.yaml missing" && exit 1)
 	@test -f docs/CONFIGURATION.md || (echo "Error: docs/CONFIGURATION.md missing" && exit 1)
-	@if [ ! -f .env ]; then echo "Notice: .env file not found. Run 'cp .env.example .env' for local overrides."; fi
-	@echo "Configuration baseline check completed successfully."
+	@test -f apps/go-ingester/.env.example || (echo "Error: apps/go-ingester/.env.example missing" && exit 1)
+	@test -f apps/rust-preprocessor/.env.example || (echo "Error: apps/rust-preprocessor/.env.example missing" && exit 1)
+	@test -f apps/python-ml-worker/.env.example || (echo "Error: apps/python-ml-worker/.env.example missing" && exit 1)
+	@test -f apps/rust-inference/.env.example || (echo "Error: apps/rust-inference/.env.example missing" && exit 1)
+	@test -f apps/go-api/.env.example || (echo "Error: apps/go-api/.env.example missing" && exit 1)
+	@test -f apps/dashboard/.env.example || (echo "Error: apps/dashboard/.env.example missing" && exit 1)
+	@echo "Sub-project environment configuration checks completed successfully."
 
 infra-up:
 	docker compose up -d minio nats minio-init
