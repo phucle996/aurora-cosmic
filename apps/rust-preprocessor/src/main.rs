@@ -2,6 +2,7 @@ mod app;
 mod checkpoint;
 mod config;
 mod event;
+mod failure;
 mod fits;
 mod infra;
 mod logger;

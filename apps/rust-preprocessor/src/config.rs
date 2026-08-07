@@ -39,6 +39,10 @@ pub struct ConsumerConfig {
     pub shutdown_timeout_secs: u64,
     /// Temporary directory for FITS download staging.
     pub tmp_dir: PathBuf,
+    /// Maximum JetStream redelivery attempts before treating as terminal.
+    pub max_deliveries: i64,
+    /// Retry backoff sequence in seconds (used for JetStream BackOff config).
+    pub retry_backoff_secs: Vec<u64>,
 }
 
 /// Light Curve scientific preprocessing configuration.
@@ -162,12 +166,17 @@ impl Config {
                 stream: env::var("AURORA_PREPROCESS_STREAM")
                     .unwrap_or_else(|_| "AURORA_BRONZE".to_string()),
                 ack_wait: env::var("AURORA_PREPROCESS_ACK_WAIT")
-                    .unwrap_or_else(|_| "30s".to_string()),
+                    .unwrap_or_else(|_| "5m".to_string()),
                 shutdown_timeout_secs: env::var("AURORA_PREPROCESS_SHUTDOWN_TIMEOUT")
                     .ok()
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(30),
                 tmp_dir,
+                max_deliveries: env::var("AURORA_PREPROCESS_MAX_DELIVERIES")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(5),
+                retry_backoff_secs: parse_backoff_env(),
             },
             lc_pipeline: LightCurveConfig {
                 min_points,
@@ -194,6 +203,8 @@ impl Config {
             minio_bucket = %self.minio.bucket,
             stream = %self.consumer.stream,
             durable = %self.consumer.durable,
+            ack_wait = %self.consumer.ack_wait,
+            max_deliveries = self.consumer.max_deliveries,
             tmp_dir = %self.consumer.tmp_dir.display(),
             lc_min_points = self.lc_pipeline.min_points,
             lc_quality_mode = %self.lc_pipeline.quality_mode,
@@ -214,4 +225,20 @@ fn require_env_parse<T: FromStr>(key: &str) -> Result<T, String> {
     let val = require_env(key)?;
     val.parse::<T>()
         .map_err(|_| format!("Invalid value for environment variable '{key}': '{val}'"))
+}
+
+/// Parse `AURORA_PREPROCESS_RETRY_BACKOFF` — a comma-separated list of seconds.
+///
+/// Default V1 backoff sequence: 5s, 30s, 120s, 600s
+fn parse_backoff_env() -> Vec<u64> {
+    env::var("AURORA_PREPROCESS_RETRY_BACKOFF")
+        .ok()
+        .and_then(|v| {
+            let parsed: Option<Vec<u64>> = v
+                .split(',')
+                .map(|s| s.trim().parse::<u64>().ok())
+                .collect();
+            parsed
+        })
+        .unwrap_or_else(|| vec![5, 30, 120, 600])
 }

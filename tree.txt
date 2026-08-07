@@ -187,6 +187,7 @@
 │           ├── checkpoint.rs
 │           ├── config.rs
 │           ├── event.rs
+│           ├── failure.rs
 │           ├── fits
 │           │   ├── image.rs
 │           │   ├── lightcurve.rs
@@ -208,6 +209,7 @@
 │           │   ├── config_tests.rs
 │           │   ├── e2e_tests.rs
 │           │   ├── event_tests.rs
+│           │   ├── failure_tests.rs
 │           │   ├── fits_tests.rs
 │           │   ├── flow_tests.rs
 │           │   ├── mod.rs
@@ -222,7 +224,7 @@
 │               ├── publisher.rs
 │               └── recovery.rs
 ├── ARCH.MD
-├── CHECKLIST_PHASE_4_1.md
+├── CHECKLIST_PHASE_4_4.md
 ├── contracts
 │   ├── data
 │   │   ├── silver-ffi-v1.md
@@ -255,4 +257,4 @@
 │   └── fixtures
 └── tree.txt
 
-78 directories, 178 files
+78 directories, 180 files

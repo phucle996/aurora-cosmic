@@ -46,7 +46,12 @@ pub async fn run_pool(
                 filter_subject: BRONZE_FILTER_SUBJECT.to_string(),
                 ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
                 ack_wait: parse_duration(&cfg.ack_wait),
-                max_deliver: 10,
+                max_deliver: cfg.max_deliveries,
+                backoff: cfg
+                    .retry_backoff_secs
+                    .iter()
+                    .map(|&s| std::time::Duration::from_secs(s))
+                    .collect(),
                 ..Default::default()
             },
         )

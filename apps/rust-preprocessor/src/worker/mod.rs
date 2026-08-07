@@ -17,15 +17,16 @@ pub use recovery::evaluate_recovery;
 use crate::checkpoint::{build_checkpoint_object_key, PreprocessingCheckpoint, ProcessingState, RecoveryAction};
 use crate::config::{ImageConfig, LightCurveConfig};
 use crate::event::{BronzeObjectReady, ProductKind};
+use crate::failure::{classify_pipeline_error, ErrorKind, FailureClass, ProcessingFailure};
 use crate::infra::MinioClient;
 
-/// Process a single Data Object through the end-to-end 5-step flow with durable checkpointing:
-/// 1. Recovery Check: Load MinIO checkpoint & decide recovery action
-/// 2. Ingest: Verify MinIO Bronze stat & stream download with SHA-256 check
-/// 3. Decode: Parse FITS binary (CFITSIO)
+/// Process a single Data Object through the end-to-end flow with failure classification:
+/// 1. Recovery Check: Load checkpoint & decide recovery action (terminal check, fast-path reuse)
+/// 2. Ingest: Bronze stat & SHA-256 verified download
+/// 3. Decode: FITS binary parse (CFITSIO)
 /// 4. Preprocess: Scientific quality filter & median normalization
-/// 5. Serialize: Arrow RecordBatch & Parquet ZSTD writer
-/// 6. Sink: Upload Silver, save COMPLETED checkpoint, publish NATS Silver event, & ACK message
+/// 5. Serialize: Arrow RecordBatch & Parquet ZSTD
+/// 6. Sink: Upload Silver, COMPLETED checkpoint, publish Silver event, ACK
 pub async fn process_message(
     msg: jetstream::Message,
     minio: Arc<MinioClient>,
@@ -37,18 +38,26 @@ pub async fn process_message(
 ) {
     let subject = msg.subject.clone();
 
-    // Decode Bronze event payload
+    // Read JetStream delivery metadata
+    let delivery_attempt = msg
+        .info()
+        .map(|info| info.delivered)
+        .unwrap_or(1);
+
+    // Decode Bronze event payload — invalid JSON = TERMINAL
     let event = match serde_json::from_slice::<BronzeObjectReady>(&msg.payload) {
         Ok(e) => e,
         Err(decode_err) => {
             tracing::warn!(
                 subject = %subject,
                 error = %decode_err,
+                operation = "preprocess_terminal",
+                failure_class = "TERMINAL",
+                error_kind = "EVENT_INVALID",
+                action = "term",
                 "Failed to decode bronze event JSON — terminating poison message"
             );
-            if let Err(e) = msg.ack_with(AckKind::Term).await {
-                tracing::error!(error = %e, "Failed to TERM malformed message");
-            }
+            let _ = msg.ack_with(AckKind::Term).await;
             return;
         }
     };
@@ -73,6 +82,23 @@ pub async fn process_message(
                 (RecoveryAction::Process, None)
             }
         };
+
+    // --- Terminal fast-path: prior run declared this product permanently unrecoverable ---
+    if let Some(ref cp) = checkpoint_opt {
+        if cp.terminal {
+            tracing::info!(
+                event_id = %event_id,
+                checkpoint_id = %cp.checkpoint_id,
+                failure_class = ?cp.last_failure_class,
+                error_kind = ?cp.last_error_kind,
+                operation = "preprocess_terminal_redelivery",
+                "Checkpoint marked terminal — resolving without reprocessing"
+            );
+            // Resolve broker message definitively without science work
+            let _ = msg.ack_with(AckKind::Term).await;
+            return;
+        }
+    }
 
     // Fast-path 1: Reuse existing verified Silver object & ACK immediately
     if recovery_action == RecoveryAction::ReuseAndAck {
@@ -115,7 +141,7 @@ pub async fn process_message(
         if let Some(ref mut cp) = checkpoint_opt {
             cp.mark_completed();
             let checkpoint_key = build_checkpoint_object_key(&cp.checkpoint_id);
-            if let Err(e) = cp.save(&minio, &cp.bronze_bucket, &checkpoint_key).await {
+            if let Err(e) = cp.save(&minio, &cp.bronze_bucket.clone(), &checkpoint_key).await {
                 tracing::warn!(event_id = %event_id, error = %e, "Failed saving promoted COMPLETED checkpoint");
             }
             if let (Some(ref s_bucket), Some(ref s_key), Some(ref s_sha), Some(s_size)) = (
@@ -164,6 +190,8 @@ pub async fn process_message(
         product_kind = ?event.product_kind,
         bucket = %event.bucket,
         object_key = %event.object_key,
+        delivery_attempt = delivery_attempt,
+        processing_attempt = checkpoint.attempts,
         "Worker processing Data Object"
     );
 
@@ -180,10 +208,14 @@ pub async fn process_message(
                 )
                 .await
             {
-                tracing::warn!(event_id = %event_id, error = %e, "Silver MinIO upload failed — NAKing");
-                checkpoint.mark_failed(&format!("Silver upload failed: {e}"));
-                let _ = checkpoint.save(&minio, &event.bucket, &checkpoint_key).await;
-                let _ = msg.ack_with(AckKind::Nak(None)).await;
+                let failure = ProcessingFailure::retryable(
+                    ErrorKind::SilverWriteFailed,
+                    e.to_string(),
+                );
+                handle_failure(
+                    &minio, &mut checkpoint, &event.bucket, &checkpoint_key,
+                    &msg, failure, event_id.clone(), delivery_attempt,
+                ).await;
                 return;
             }
 
@@ -191,7 +223,10 @@ pub async fn process_message(
             checkpoint.mark_silver_stored(&artifact);
             checkpoint.mark_completed();
             if let Err(e) = checkpoint.save(&minio, &event.bucket, &checkpoint_key).await {
-                tracing::warn!(event_id = %event_id, error = %e, "Failed to save COMPLETED checkpoint");
+                tracing::warn!(event_id = %event_id, error = %e, "Failed to save COMPLETED checkpoint — not ACKing");
+                // Checkpoint write failure: NAK so redelivery retries from COMPLETED Silver verify path
+                let _ = msg.ack_with(AckKind::Nak(None)).await;
+                return;
             }
 
             // Publish Silver ready event to NATS
@@ -211,7 +246,13 @@ pub async fn process_message(
 
             // Final ACK
             if let Err(e) = msg.ack().await {
-                tracing::error!(event_id = %event_id, error = %e, "Failed to ACK message");
+                // ACK failure must NOT downgrade COMPLETED checkpoint
+                tracing::error!(
+                    event_id = %event_id,
+                    error = %e,
+                    operation = "ack_failure",
+                    "ACK failed — checkpoint remains COMPLETED, NATS will redeliver for re-ACK"
+                );
             } else {
                 tracing::info!(
                     event_id = %event_id,
@@ -221,15 +262,73 @@ pub async fn process_message(
                 );
             }
         }
+
         Err(err) => {
-            tracing::warn!(
-                event_id = %event_id,
-                error = %err,
-                "Processing failed — recording FAILED checkpoint and NAKing message"
-            );
-            checkpoint.mark_failed(&err.to_string());
-            let _ = checkpoint.save(&minio, &event.bucket, &checkpoint_key).await;
-            let _ = msg.ack_with(AckKind::Nak(None)).await;
+            let failure = classify_pipeline_error(&err);
+            handle_failure(
+                &minio, &mut checkpoint, &event.bucket, &checkpoint_key,
+                &msg, failure, event_id.clone(), delivery_attempt,
+            ).await;
         }
+    }
+}
+
+/// Apply the failure policy for a classified failure:
+/// - RETRYABLE  -> persist FAILED checkpoint, NAK (JetStream redelivery)
+/// - TERMINAL   -> persist FAILED + terminal checkpoint, TERM
+/// - CONFLICT   -> persist FAILED + terminal checkpoint, TERM (preserve artifacts)
+/// - REJECTED   -> persist FAILED + terminal checkpoint, TERM (scientific rejection)
+async fn handle_failure(
+    minio: &MinioClient,
+    checkpoint: &mut PreprocessingCheckpoint,
+    bucket: &str,
+    checkpoint_key: &str,
+    msg: &jetstream::Message,
+    failure: ProcessingFailure,
+    event_id: String,
+    delivery_attempt: i64,
+) {
+    let is_terminal = failure.class != FailureClass::Retryable;
+
+    tracing::warn!(
+        event_id = %event_id,
+        failure_class = ?failure.class,
+        error_kind = ?failure.kind,
+        error = %failure.message,
+        delivery_attempt = delivery_attempt,
+        processing_attempt = checkpoint.attempts,
+        operation = if is_terminal { "preprocess_terminal" } else { "preprocess_retry" },
+        "Processing failure classified"
+    );
+
+    checkpoint.mark_classified_failure(&failure.message, failure.class.clone(), failure.kind);
+
+    if is_terminal {
+        checkpoint.mark_terminal();
+        tracing::warn!(
+            event_id = %event_id,
+            checkpoint_id = %checkpoint.checkpoint_id,
+            operation = "preprocess_terminal",
+            action = "term",
+            "Marking checkpoint terminal — no further science reprocessing"
+        );
+    }
+
+    // Persist failure record before any broker action
+    if let Err(e) = checkpoint.save(minio, bucket, checkpoint_key).await {
+        tracing::error!(
+            event_id = %event_id,
+            error = %e,
+            "Failed to persist failure checkpoint — not taking broker action to avoid losing diagnostics"
+        );
+        // Do not TERM if we couldn't durably record the failure
+        let _ = msg.ack_with(AckKind::Nak(None)).await;
+        return;
+    }
+
+    if is_terminal {
+        let _ = msg.ack_with(AckKind::Term).await;
+    } else {
+        let _ = msg.ack_with(AckKind::Nak(None)).await;
     }
 }

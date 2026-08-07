@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::event::{BronzeObjectReady, ProductKind};
+use crate::failure::{ErrorKind, FailureClass};
 use crate::infra::MinioClient;
 use crate::output::silver::SilverArtifact;
 
@@ -59,6 +60,12 @@ pub struct PreprocessingCheckpoint {
 
     pub attempts: u32,
     pub last_error: Option<String>,
+    pub last_error_kind: Option<ErrorKind>,
+    pub last_failure_class: Option<FailureClass>,
+
+    /// Set to `true` once policy declares this product permanently unrecoverable.
+    /// On redelivery, terminal products skip science processing entirely.
+    pub terminal: bool,
 
     pub created_at: String,
     pub updated_at: String,
@@ -88,6 +95,9 @@ impl PreprocessingCheckpoint {
             state: ProcessingState::Processing,
             attempts: 1,
             last_error: None,
+            last_error_kind: None,
+            last_failure_class: None,
+            terminal: false,
             created_at: now.clone(),
             updated_at: now,
         }
@@ -132,10 +142,30 @@ impl PreprocessingCheckpoint {
         self.updated_at = Utc::now().to_rfc3339();
     }
 
-    /// Record processing failure.
+    /// Record processing failure with optional classification.
     pub fn mark_failed(&mut self, error_msg: &str) {
         self.state = ProcessingState::Failed;
         self.last_error = Some(error_msg.to_string());
+        self.updated_at = Utc::now().to_rfc3339();
+    }
+
+    /// Record classified failure with failure class and error kind.
+    pub fn mark_classified_failure(
+        &mut self,
+        error_msg: &str,
+        class: FailureClass,
+        kind: ErrorKind,
+    ) {
+        self.state = ProcessingState::Failed;
+        self.last_error = Some(error_msg.to_string());
+        self.last_error_kind = Some(kind);
+        self.last_failure_class = Some(class);
+        self.updated_at = Utc::now().to_rfc3339();
+    }
+
+    /// Mark this checkpoint as permanently terminal — no further science reprocessing.
+    pub fn mark_terminal(&mut self) {
+        self.terminal = true;
         self.updated_at = Utc::now().to_rfc3339();
     }
 

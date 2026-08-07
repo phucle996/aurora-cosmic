@@ -2,6 +2,7 @@ pub mod checkpoint_tests;
 pub mod config_tests;
 pub mod e2e_tests;
 pub mod event_tests;
+pub mod failure_tests;
 pub mod fits_tests;
 pub mod flow_tests;
 pub mod pipeline_image_tests;
