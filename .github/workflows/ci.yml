@@ -160,6 +160,7 @@ jobs:
           scan-ref: 'apps/go-ingester'
           format: 'table'
           severity: 'CRITICAL,HIGH'
+          trivy-version: 'latest'
 
   scan-rust-preprocessor:
     needs: changes
@@ -177,6 +178,7 @@ jobs:
           scan-ref: 'apps/rust-preprocessor'
           format: 'table'
           severity: 'CRITICAL,HIGH'
+          trivy-version: 'latest'
 
   scan-python-ml-worker:
     needs: changes
@@ -194,6 +196,7 @@ jobs:
           scan-ref: 'apps/python-ml-worker'
           format: 'table'
           severity: 'CRITICAL,HIGH'
+          trivy-version: 'latest'
 
   scan-rust-inference:
     needs: changes
@@ -211,6 +214,7 @@ jobs:
           scan-ref: 'apps/rust-inference'
           format: 'table'
           severity: 'CRITICAL,HIGH'
+          trivy-version: 'latest'
 
   scan-go-api:
     needs: changes
@@ -228,6 +232,7 @@ jobs:
           scan-ref: 'apps/go-api'
           format: 'table'
           severity: 'CRITICAL,HIGH'
+          trivy-version: 'latest'
 
   scan-dashboard:
     needs: changes
@@ -245,3 +250,4 @@ jobs:
           scan-ref: 'apps/dashboard'
           format: 'table'
           severity: 'CRITICAL,HIGH'
+          trivy-version: 'latest'
