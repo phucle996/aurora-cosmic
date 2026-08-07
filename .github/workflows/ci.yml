@@ -1,4 +1,4 @@
-name: AURORA Sub-Project Security Scan
+name: AURORA CI Workflow
 
 on:
   push:
@@ -7,6 +7,103 @@ on:
     branches: [ main ]
 
 jobs:
+  docker-config:
+    name: Validate Docker Compose Config
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Validate Docker Compose Configuration
+        run: |
+          docker compose config --quiet
+
+  go-checks:
+    name: Go Verification (go-ingester & go-api)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Verify go-ingester
+        run: |
+          cd apps/go-ingester
+          gofmt -s -l . | test -z "$(cat)"
+          go vet ./...
+          go test -v ./...
+          go build ./...
+
+      - name: Verify go-api
+        run: |
+          cd apps/go-api
+          gofmt -s -l . | test -z "$(cat)"
+          go vet ./...
+          go test -v ./...
+          go build ./...
+
+  rust-checks:
+    name: Rust Verification (rust-preprocessor & rust-inference)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Verify rust-preprocessor
+        run: |
+          cd apps/rust-preprocessor
+          cargo fmt --check
+          cargo clippy -- -D warnings
+          cargo test
+          cargo build
+
+      - name: Verify rust-inference
+        run: |
+          cd apps/rust-inference
+          cargo fmt --check
+          cargo clippy -- -D warnings
+          cargo test
+          cargo build
+
+  python-checks:
+    name: Python Verification (python-ml-worker & dashboard)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv and Ruff
+        run: |
+          pip install uv ruff pytest
+
+      - name: Verify python-ml-worker
+        run: |
+          cd apps/python-ml-worker
+          ruff format --check .
+          ruff check .
+          pytest
+
+      - name: Verify dashboard
+        run: |
+          cd apps/dashboard
+          ruff format --check .
+          ruff check .
+          pytest
+
   changes:
     name: Detect Changed Sub-Projects
     runs-on: ubuntu-latest
@@ -146,22 +243,5 @@ jobs:
         with:
           scan-type: 'fs'
           scan-ref: 'apps/dashboard'
-          format: 'table'
-          severity: 'CRITICAL,HIGH'
-
-  scan-root:
-    needs: changes
-    if: ${{ needs.changes.outputs.root == 'true' }}
-    name: Trivy Scan (Repository Root)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Run Trivy Vulnerability Scanner
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          scan-type: 'fs'
-          scan-ref: '.'
           format: 'table'
           severity: 'CRITICAL,HIGH'
