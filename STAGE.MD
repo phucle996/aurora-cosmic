@@ -7,7 +7,7 @@ Tài liệu quy định lộ trình phát triển của **AURORA Cosmic Data Pla
 ## 🗺️ Data Flow & Dependency Matrix
 
 ```text
-STAGE 1: Foundation & Infrastructure
+STAGE 1: Foundation & Infrastructure [DONE]
    │
    ▼
 STAGE 2: Data Source & Go Ingestion (NASA MAST -> Go -> MinIO Bronze + NATS)
@@ -41,7 +41,7 @@ STAGE 8: Observability, Benchmark & System Hardening (Prometheus/Grafana -> Stre
 
 | Stage | Tên Stage | Số Phase | Output Chính |
 | :--- | :--- | :---: | :--- |
-| **Stage 1** | Foundation & Infrastructure | 5 | Monorepo skeleton, Docker Compose runtime, Makefile, Service stubs |
+| **Stage 1** | Foundation & Infrastructure [DONE] | 5 | Monorepo skeleton, Docker Compose runtime, Makefile, Service stubs |
 | **Stage 2** | Data Source & Go Ingestion | 5 | Ingestion FITS stream sang MinIO Bronze, NATS ingestion events |
 | **Stage 3** | Rust Preprocessing Pipeline | 5 | Rust FITS parser, Tokio workers, MinIO Silver Parquet datasets |
 | **Stage 4** | Checkpoint, Recovery & Rolling Lifecycle | 5 | State checkpoints, idempotency, rolling Bronze window ~50 GiB |
@@ -55,24 +55,24 @@ STAGE 8: Observability, Benchmark & System Hardening (Prometheus/Grafana -> Stre
 
 ## 🛠️ Chi Tiết Các Stage & Phase
 
-### Stage 1 — Foundation & Infrastructure
+### Stage 1 — Foundation & Infrastructure [DONE]
 
 Mục tiêu: Dựng toàn bộ skeleton monorepo, Docker Compose runtime, `.env`, MinIO, NATS JetStream, ClickHouse và các service placeholder. Infrastructure sẵn sàng `make up` và healthcheck thành công.
 
 ```text
-Stage 1
-├── Phase 1.1: Repository Foundation
-├── Phase 1.2: Local Runtime Infrastructure
-├── Phase 1.3: Service Skeleton
-├── Phase 1.4: Configuration & Environment
-└── Phase 1.5: Development Workflow
+Stage 1 [DONE]
+├── Phase 1.1: Repository Foundation           [DONE]
+├── Phase 1.2: Local Runtime Infrastructure    [DONE]
+├── Phase 1.3: Service Skeleton                [DONE]
+├── Phase 1.4: Configuration & Environment     [DONE]
+└── Phase 1.5: Development Workflow            [DONE]
 ```
 
-* **Phase 1.1 — Repository Foundation**: Khởi tạo monorepo, cấu trúc thư mục tiêu chuẩn, Git configuration, root Makefile và conventions chung.
-* **Phase 1.2 — Local Runtime Infrastructure**: Dựng MinIO, NATS JetStream, ClickHouse bằng Docker Compose với healthchecks.
-* **Phase 1.3 — Service Skeleton**: Tạo skeleton cho Go Ingester, Rust Preprocessor, Python ML Worker, Rust Inference, Go API và Dashboard.
-* **Phase 1.4 — Configuration & Environment**: Chuẩn hóa `.env.example`, central config files, ports, MinIO buckets (`bronze`, `silver`, `gold`, `models`), NATS subjects.
-* **Phase 1.5 — Development Workflow**: Chuẩn hóa lệnh `make build`, `make up`, `make down`, `make lint`, `make test` và smoke test script.
+* **Phase 1.1 — Repository Foundation [DONE]**: Khởi tạo monorepo, cấu trúc thư mục tiêu chuẩn, Git configuration, root Makefile và conventions chung.
+* **Phase 1.2 — Local Runtime Infrastructure [DONE]**: Dựng MinIO, NATS JetStream bằng Docker Compose với healthchecks.
+* **Phase 1.3 — Service Skeleton [DONE]**: Tạo skeleton cho Go Ingester, Rust Preprocessor, Python ML Worker, Rust Inference, Go API và Dashboard.
+* **Phase 1.4 — Configuration & Environment [DONE]**: Chuẩn hóa `.env.example` sub-projects, Domain Structs, Loggers, Ports, MinIO buckets, NATS subjects.
+* **Phase 1.5 — Development Workflow [DONE]**: Chuẩn hóa lệnh `make build`, `make up`, `make down`, `make lint`, `make test`, `make repo-check`, `make config-check` và smoke test script.
 
 ---
 
@@ -99,136 +99,128 @@ Stage 2
 
 ### Stage 3 — Rust Preprocessing Pipeline
 
-Mục tiêu: Rust consume event từ NATS, đọc FITS từ Bronze, xử lý đa luồng qua Tokio tasks và ghi kết quả Silver Parquet vào MinIO.
+Mục tiêu: Rust Preprocessor nhận NATS event, tải FITS từ MinIO Bronze, parse & clean signal, ghi Parquet sang MinIO Silver.
 
 ```text
 Stage 3
-├── Phase 3.1: NATS Consumer Runtime
-├── Phase 3.2: FITS Reading Layer
-├── Phase 3.3: Light Curve Preprocessing
-├── Phase 3.4: Image / TPF Preprocessing
-└── Phase 3.5: Silver Materialization
+├── Phase 3.1: NATS Consumer & Event Handler
+├── Phase 3.2: FITS Reader & HDU Extraction
+├── Phase 3.3: Preprocessing & Data Cleaning
+├── Phase 3.4: Silver Parquet Encoding
+└── Phase 3.5: Preprocessing Event Publishing
 ```
 
-* **Phase 3.1 — NATS Consumer Runtime**: Rust worker subscribe NATS JetStream, quản lý bounded concurrency với Tokio worker pool.
-* **Phase 3.2 — FITS Reading Layer**: Đọc FITS headers, primary HDUs, binary table extensions (Light Curve) và image arrays (TPF/FFI).
-* **Phase 3.3 — Light Curve Preprocessing**: Xử lý quality flags, bỏ giá trị NaN/NULL, detrending, normalization và outlier rejection.
-* **Phase 3.4 — Image / TPF Preprocessing**: Calibrate pixel intensities, background subtraction, aperture mask calculation, centroid tracking.
-* **Phase 3.5 — Silver Materialization**: Ghi output chuẩn hóa dạng Parquet schema sang MinIO Silver và publish event `preprocess-completed`.
+* **Phase 3.1 — NATS Consumer & Event Handler**: Rust Preprocessor subscribe JetStream consumer `bronze-object-ready`.
+* **Phase 3.2 — FITS Reader & HDU Extraction**: Tải FITS byte stream từ MinIO, parse Header & Data Units (Primary HDU, Light Curve Table HDU).
+* **Phase 3.3 — Preprocessing & Data Cleaning**: Lọc mảng chất lượng (`QUALITY == 0`), normalize flux, remove background noise & outliers.
+* **Phase 3.4 — Silver Parquet Encoding**: Encode mảng thời gian & flux thành Apache Parquet format nén Snappy/ZSTD.
+* **Phase 3.5 — Preprocessing Event Publishing**: Ghi Parquet vào MinIO Silver (`silver/tess/...`) và publish `silver-object-ready` sang NATS.
 
 ---
 
 ### Stage 4 — Checkpoint, Recovery & Rolling Lifecycle
 
-Mục tiêu: Đảm bảo khả năng phục hồi lỗi (fault-tolerance), chống trùng lặp dữ liệu (idempotency) và duy trì dung lượng storage Bronze quanh mức budget ~50 GiB.
+Mục tiêu: Đảm bảo khả năng phục hồi lỗi (idempotency, checkpoint), quản lý giới hạn dữ liệu Bronze (~50 GiB).
 
 ```text
 Stage 4
-├── Phase 4.1: Ingestion Checkpoint
-├── Phase 4.2: Preprocessing Checkpoint
-├── Phase 4.3: Idempotency & Redelivery
-├── Phase 4.4: Raw Data Lifecycle
-└── Phase 4.5: Rolling Storage Window
+├── Phase 4.1: Ingestion Checkpoints & State
+├── Phase 4.2: Preprocessing Checkpoints & State
+├── Phase 4.3: Retry Policy & Dead Letter Queue
+├── Phase 4.4: Bronze Rolling Retention (~50 GiB)
+└── Phase 4.5: Crash Recovery & Resumption Validation
 ```
 
-* **Phase 4.1 — Ingestion Checkpoint**: Lưu trạng thái tiến độ ingest của Go (manifest progress, byte offset, downloaded status) vào Key-Value store / DB.
-* **Phase 4.2 — Preprocessing Checkpoint**: Lưu checkpoint trạng thái xử lý của Rust (source object hash, processing state, output parquet status).
-* **Phase 4.3 — Idempotency & Redelivery**: Đảm bảo NATS message redelivery hoặc service restart không gây sinh dữ liệu trùng lặp ở MinIO/DB.
-* **Phase 4.4 — Raw Data Lifecycle**: Tự động gắn tag và chuyển đổi trạng thái FITS thành `EVICTABLE` khi Silver Parquet đã được xác minh.
-* **Phase 4.5 — Rolling Storage Window**: Triển khai cơ chế Watermark (High/Low) tự động thu dọn raw FITS trong Bronze để duy trì tổng dung lượng ~50 GiB.
+* **Phase 4.1 — Ingestion Checkpoints & State**: Lưu vị trí stream và offset file đã tải vào SQLite/Local state.
+* **Phase 4.2 — Preprocessing Checkpoints & State**: Theo dõi message deduplication ID và ack status trên NATS JetStream.
+* **Phase 4.3 — Retry Policy & Dead Letter Queue**: Tự động thử lại với Exponential Backoff khi MinIO/NATS đứt kết nối, đẩy event hỏng vào DLQ.
+* **Phase 4.4 — Bronze Rolling Retention (~50 GiB)**: Tự động xóa bớt các file FITS cũ nhất khi bộ nhớ Bronze vượt qua High Watermark (90%) về mức Low Watermark (60%).
+* **Phase 4.5 — Crash Recovery & Resumption Validation**: Giả lập kill `-9` service và khôi phục trạng thái làm việc mà không làm mất hoặc lặp dữ liệu.
 
 ---
 
 ### Stage 5 — Gold Dataset & Scientific Analytics
 
-Mục tiêu: Từ Silver Parquet, kết hợp thông tin NASA Catalogs (TIC, TOI, TCE labels), tính toán đặc trưng khoa học và đóng gói Gold Dataset.
+Mục tiêu: Tích hợp dữ liệu danh mục khoa học (TIC Catalog, Simbad labels), tổng hợp Silver Parquet thành Gold Dataset sẵn sàng huấn luyện ML.
 
 ```text
 Stage 5
-├── Phase 5.1: Catalog & Label Integration
-├── Phase 5.2: Scientific Feature Engineering
-├── Phase 5.3: Transit Feature Pipeline
-├── Phase 5.4: Anomaly / Variability Features
-└── Phase 5.5: Gold Dataset Snapshots
+├── Phase 5.1: Gold Aggregator Service
+├── Phase 5.2: Catalog & Label Integration
+├── Phase 5.3: Feature Engineering Pipeline
+├── Phase 5.4: Gold Snapshot & Versioning
+└── Phase 5.5: Dataset Validation & Quality Gates
 ```
 
-* **Phase 5.1 — Catalog & Label Integration**: Tích hợp NASA Exoplanet Archive labels (TOI, TCE, Confirmed Planet, False Positive) và TIC stellar metadata.
-* **Phase 5.2 — Scientific Feature Engineering**: Trích xuất đặc trưng thống kê time-series (kurtosis, skewness, variability indices, harmonic power).
-* **Phase 5.3 — Transit Feature Pipeline**: Tính toán đặc trưng chu kỳ quá cảnh (BLS/TLS periodogram features, transit depth, duration, SNR, V-shape metric).
-* **Phase 5.4 — Anomaly / Variability Features**: Tính toán đặc trưng cho việc phát hiện sao biến đổi và hiện tượng quang học bất thường.
-* **Phase 5.5 — Gold Dataset Snapshots**: Đóng gói Gold Data theo version snapshot (`gold/v1/...`) hỗ trợ việc train ML đạt tính tái lập (reproducibility).
+* **Phase 5.1 — Gold Aggregator Service**: Gom nhóm dữ liệu chuỗi thời gian Silver theo TIC ID và Sector.
+* **Phase 5.2 — Catalog & Label Integration**: Gắn nhãn khoa học (Planet candidate, Eclipsing Binary, Stellar flare, Noise/Artifact).
+* **Phase 5.3 — Feature Engineering Pipeline**: Trích xuất đặc trưng chuỗi thời gian (Period, Transit depth, Duration, Standard deviation, Skewness).
+* **Phase 5.4 — Gold Snapshot & Versioning**: Tạo bản đóng đóng băng Gold Dataset phiên bản hóa (`gold/v1.0/...`).
+* **Phase 5.5 — Dataset Validation & Quality Gates**: Kiểm tra tỷ lệ missing values, data drift và tính toàn vẹn nhãn.
 
 ---
 
 ### Stage 6 — ML Platform & Model Evolution
 
-Mục tiêu: Python ML Worker huấn luyện/đánh giá mô hình phát hiện planet candidates và bất thường, xuất ONNX và quản lý phiên bản model.
+Mục tiêu: Xây dựng pipeline huấn luyện ML phát hiện Exoplanet Candidates và Anomaly, export mô hình sang ONNX format.
 
 ```text
 Stage 6
-├── Phase 6.1: ML Dataset Loader
-├── Phase 6.2: Baseline Exoplanet Model
-├── Phase 6.3: Anomaly Detection Model
-├── Phase 6.4: GPU Training Path
-├── Phase 6.5: Evaluation & Model Registry
-└── Phase 6.6: Champion / Challenger
+├── Phase 6.1: ML Training Framework & Data Loader
+├── Phase 6.2: Transit Candidate Classifier Model
+├── Phase 6.3: Unsupervised Anomaly Detection Model
+├── Phase 6.4: Model Evaluation & Metrics Tracking
+├── Phase 6.5: ONNX Export & Optimization
+└── Phase 6.6: Champion / Challenger Registry
 ```
 
-* **Phase 6.1 — ML Dataset Loader**: Python ML Worker đọc Gold Parquet snapshots, thực hiện train/validation/test split chuẩn khoa học.
-* **Phase 6.2 — Baseline Exoplanet Model**: Xây dựng mô hình phân loại Exoplanet Candidate vs. False Positive (XGBoost/LightGBM và 1D-CNN baseline).
-* **Phase 6.3 — Anomaly Detection Model**: Xây dựng mô hình Anomaly Detection (Autoencoder / Isolation Forest / Unsupervised metric learning).
-* **Phase 6.4 — GPU Training Path**: Tối ưu hóa pipeline huấn luyện tận dụng NVIDIA GPU (4 GB VRAM budget).
-* **Phase 6.5 — Evaluation & Model Registry**: Đánh giá chỉ số (ROC-AUC, Precision-Recall), xuất định dạng ONNX và đăng ký version vào MinIO Model Registry.
-* **Phase 6.6 — Champion / Challenger**: Đổi mới model bằng cơ chế Champion/Challenger evaluation policy trước khi promote model mới lên Production.
+* **Phase 6.1 — ML Training Framework & Data Loader**: Xây dựng PyTorch Dataset/DataLoader tối ưu đọc Gold Parquet.
+* **Phase 6.2 — Transit Candidate Classifier Model**: Huấn luyện mô hình 1D-CNN / Transformer phân loại tín hiệu transit.
+* **Phase 6.3 — Unsupervised Anomaly Detection Model**: Huấn luyện Autoencoder / Isolation Forest phát hiện hiện tượng thiên văn dị biệt.
+* **Phase 6.4 — Model Evaluation & Metrics Tracking**: Đánh giá Precision, Recall, ROC-AUC và F1-score.
+* **Phase 6.5 — ONNX Export & Optimization**: Export PyTorch model sang ONNX format và tối ưu hóa graph execution.
+* **Phase 6.6 — Champion / Challenger Registry**: Lưu trữ phiên bản mô hình chiến thắng và quản lý metadata phiên bản.
 
 ---
 
 ### Stage 7 — Rust Inference, Go API & Dashboard
 
-Mục tiêu: Rust nạp ONNX model thực thi inference siêu nhanh; Go API phục vụ dữ liệu query; Dashboard trực quan hóa cho nhà khoa học.
+Mục tiêu: Phục vụ mô hình ONNX siêu tốc bằng Rust, cung cấp REST/gRPC API qua Go API và hiển thị giao diện trực quan trên Dashboard.
 
 ```text
 Stage 7
-├── Phase 7.1: Rust ONNX Runtime
-├── Phase 7.2: Model Loading & Hot Swap
-├── Phase 7.3: Prediction Pipeline
-├── Phase 7.4: Go Query API
-└── Phase 7.5: Scientific Dashboard
+├── Phase 7.1: Rust ONNX Inference Engine
+├── Phase 7.2: Go API Gateway & Query Endpoints
+├── Phase 7.3: Real-Time Anomaly Alerting
+├── Phase 7.4: Interactive Scientific Dashboard
+└── Phase 7.5: End-to-End User Workflows
 ```
 
-* **Phase 7.1 — Rust ONNX Runtime**: Tích hợp ONNX Runtime (`ort` crate) trong Rust để phục vụ dự đoán high-performance.
-* **Phase 7.2 — Model Loading & Hot Swap**: Tự động nhận event promotion, nạp ONNX model mới từ MinIO vào memory mà không gián đoạn dịch vụ.
-* **Phase 7.3 — Prediction Pipeline**: Phục vụ luồng dự đoán (Exoplanet Probability, Anomaly Score, Evidence feature attribution).
-* **Phase 7.4 — Go Query API**: REST/gRPC API cung cấp truy vấn Targets, Light Curves, Candidates, Anomalies, Predictions và System Health.
-* **Phase 7.5 — Scientific Dashboard**: Giao diện trực quan hóa tương tác (Light curve viewer, TPF pixel heatmaps, candidate score ranking, model diagnostics).
+* **Phase 7.1 — Rust ONNX Inference Engine**: Tải ONNX model từ MinIO `models`, thực thi inference chuỗi thời gian với latency cực thấp.
+* **Phase 7.2 — Go API Gateway & Query Endpoints**: Cung cấp API tra cứu ứng viên hành tinh, bất thường thiên văn và dữ liệu quang phổ.
+* **Phase 7.3 — Real-Time Anomaly Alerting**: Phát cảnh báo ngay lập tức khi phát hiện tín hiệu có score bất thường cao.
+* **Phase 7.4 — Interactive Scientific Dashboard**: Giao diện trực quan hóa đường cong ánh sáng (Light Curve), vị trí ngôi sao và kết quả dự đoán ML.
+* **Phase 7.5 — End-to-End User Workflows**: Kết nối hoàn chỉnh luồng làm việc từ nhà khoa học tới hệ thống.
 
 ---
 
 ### Stage 8 — Observability, Benchmark & System Hardening
 
-Mục tiêu: Giám sát toàn diện hệ thống với Prometheus/Grafana, đo đạc hiệu năng (benchmarks), thử nghiệm chịu lỗi và kiểm chứng vận hành liên tục.
+Mục tiêu: Đảm bảo tính ổn định, giám sát toàn diện thông qua Prometheus/Grafana và thực hiện stress test hiệu năng.
 
 ```text
 Stage 8
-├── Phase 8.1: Metrics & Monitoring
-├── Phase 8.2: Ingestion Benchmark
-├── Phase 8.3: Preprocessing Benchmark
-├── Phase 8.4: ML / Inference Benchmark
-├── Phase 8.5: Failure & Recovery Testing
-└── Phase 8.6: Long-Running System Validation
+├── Phase 8.1: Metrics Instrumentation & Exporters
+├── Phase 8.2: Observability Dashboard
+├── Phase 8.3: Throughput & Latency Benchmarks
+├── Phase 8.4: Chaos Engineering & Failure Injection
+├── Phase 8.5: Security & Compliance Audit
+└── Phase 8.6: Final Production Gate
 ```
 
-* **Phase 8.1 — Metrics & Monitoring**: Triển khai Prometheus metrics & Grafana dashboards cho Go, Rust, Python, MinIO, NATS và GPU.
-* **Phase 8.2 — Ingestion Benchmark**: Đo đạc băng thông mạng, tốc độ stream ghi MinIO, CPU/Memory footprint của Go Ingester.
-* **Phase 8.3 — Preprocessing Benchmark**: Đo throughput FITS parsing, mức độ song song Tokio worker pool, hiệu năng ghi Parquet của Rust Preprocessor.
-* **Phase 8.4 — ML / Inference Benchmark**: Đo thời gian huấn luyện, VRAM GPU tiêu thụ, latency và throughput của Rust Inference engine (CPU vs GPU).
-* **Phase 8.5 — Failure & Recovery Testing**: Thực hiện chaos testing (kill container, ngắt NATS connection, MinIO disk full, simulated crashes) để kiểm tra cơ chế recovery & idempotency.
-* **Phase 8.6 — Long-Running System Validation**: Chạy liên tục hệ thống qua nhiều chu kỳ rolling storage (~50 GiB window) chứng minh tổng lượng data xử lý qua thời gian vượt xa giới hạn đĩa cứng.
-
----
-
-## 📌 Nguyên Tắc Tổ Chức & Thực Thi
-
-1. **Phase-by-Phase Execution**: Mỗi Phase chỉ được đánh giá hoàn thành khi đạt đủ điều kiện test case và code được format/lint sạch đẽ (`make fmt lint test`).
-2. **Data Isolation Strictness**: Không dịch chuyển logic xử lý FITS/Preprocessing sang Go Ingester, không đặt logic huấn luyện ML vào Rust Preprocessor, không đặt logic API vào ML worker.
-3. **Reproducibility**: Mọi artifact (FITS ingest manifest, Silver Parquet, Gold Snapshot, ONNX Model) đều phải có versioning rõ ràng trên MinIO.
+* **Phase 8.1 — Metrics Instrumentation & Exporters**: Tích hợp Prometheus client metrics cho toàn bộ 6 microservices.
+* **Phase 8.2 — Observability Dashboard**: Thiết lập Grafana Dashboard theo dõi CPU, Memory, Queue Lag, Storage Budget, Inference Latency.
+* **Phase 8.3 — Throughput & Latency Benchmarks**: Đo đạc khả năng xử lý hàng triệu điểm dữ liệu/giây và thời gian đáp ứng API.
+* **Phase 8.4 — Chaos Engineering & Failure Injection**: Thử nghiệm hạ gục mạng, đứt MinIO, tràn bộ nhớ để kiểm tra độ bền vững.
+* **Phase 8.5 — Security & Compliance Audit**: Quét lỗ hổng bảo mật container, phân quyền IAM MinIO và mã hóa data at rest.
+* **Phase 8.6 — Final Production Gate**: Nghiệm thu toàn bộ nền tảng sẵn sàng vận hành thực tế.
