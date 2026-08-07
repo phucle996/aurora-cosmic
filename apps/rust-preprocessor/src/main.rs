@@ -5,6 +5,7 @@ mod event;
 mod failure;
 mod fits;
 mod infra;
+mod lineage;
 mod logger;
 mod output;
 mod pipeline;

@@ -5,6 +5,7 @@ pub mod event_tests;
 pub mod failure_tests;
 pub mod fits_tests;
 pub mod flow_tests;
+pub mod lineage_tests;
 pub mod pipeline_image_tests;
 pub mod pipeline_lc_tests;
 pub mod silver_tests;

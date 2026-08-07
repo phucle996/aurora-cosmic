@@ -19,14 +19,19 @@ use crate::config::{ImageConfig, LightCurveConfig};
 use crate::event::{BronzeObjectReady, ProductKind};
 use crate::failure::{classify_pipeline_error, ErrorKind, FailureClass, ProcessingFailure};
 use crate::infra::MinioClient;
+use crate::lineage::{
+    build_lineage_object_key, build_lineage_record, LineageOutcome, LineageRecord,
+};
 
-/// Process a single Data Object through the end-to-end flow with failure classification:
-/// 1. Recovery Check: Load checkpoint & decide recovery action (terminal check, fast-path reuse)
+/// Process a single Data Object through the end-to-end flow:
+/// 1. Recovery Check: Load checkpoint — fast-path reuse / terminal guard
 /// 2. Ingest: Bronze stat & SHA-256 verified download
 /// 3. Decode: FITS binary parse (CFITSIO)
 /// 4. Preprocess: Scientific quality filter & median normalization
 /// 5. Serialize: Arrow RecordBatch & Parquet ZSTD
-/// 6. Sink: Upload Silver, COMPLETED checkpoint, publish Silver event, ACK
+/// 6. Silver Sink: Upload Silver to MinIO, update checkpoint to COMPLETED
+/// 7. Lineage Commit: Commit durable lineage record and evaluate Bronze eviction eligibility
+/// 8. ACK JetStream message
 pub async fn process_message(
     msg: jetstream::Message,
     minio: Arc<MinioClient>,
@@ -39,10 +44,7 @@ pub async fn process_message(
     let subject = msg.subject.clone();
 
     // Read JetStream delivery metadata
-    let delivery_attempt = msg
-        .info()
-        .map(|info| info.delivered)
-        .unwrap_or(1);
+    let delivery_attempt = msg.info().map(|info| info.delivered).unwrap_or(1);
 
     // Decode Bronze event payload — invalid JSON = TERMINAL
     let event = match serde_json::from_slice::<BronzeObjectReady>(&msg.payload) {
@@ -83,7 +85,7 @@ pub async fn process_message(
             }
         };
 
-    // --- Terminal fast-path: prior run declared this product permanently unrecoverable ---
+    // Terminal fast-path: prior run declared this product permanently unrecoverable
     if let Some(ref cp) = checkpoint_opt {
         if cp.terminal {
             tracing::info!(
@@ -94,7 +96,6 @@ pub async fn process_message(
                 operation = "preprocess_terminal_redelivery",
                 "Checkpoint marked terminal — resolving without reprocessing"
             );
-            // Resolve broker message definitively without science work
             let _ = msg.ack_with(AckKind::Term).await;
             return;
         }
@@ -195,89 +196,193 @@ pub async fn process_message(
         "Worker processing Data Object"
     );
 
-    match execute_item_pipeline(&minio, &event, &tmp_dir, &lc_cfg, &img_cfg).await {
-        Ok(artifact) => {
-            // Upload to MinIO Silver
-            if let Err(e) = minio
-                .put_file_and_verify(
-                    &artifact.bucket,
-                    &artifact.object_key,
-                    &artifact.local_path,
-                    artifact.size_bytes,
-                    artifact.metadata.clone(),
-                )
-                .await
-            {
-                let failure = ProcessingFailure::retryable(
-                    ErrorKind::SilverWriteFailed,
-                    e.to_string(),
-                );
-                handle_failure(
-                    &minio, &mut checkpoint, &event.bucket, &checkpoint_key,
-                    &msg, failure, event_id.clone(), delivery_attempt,
-                ).await;
-                return;
-            }
-
-            // Update Checkpoint: SILVER_STORED -> COMPLETED
-            checkpoint.mark_silver_stored(&artifact);
-            checkpoint.mark_completed();
-            if let Err(e) = checkpoint.save(&minio, &event.bucket, &checkpoint_key).await {
-                tracing::warn!(event_id = %event_id, error = %e, "Failed to save COMPLETED checkpoint — not ACKing");
-                // Checkpoint write failure: NAK so redelivery retries from COMPLETED Silver verify path
-                let _ = msg.ack_with(AckKind::Nak(None)).await;
-                return;
-            }
-
-            // Publish Silver ready event to NATS
-            let silver_event = build_silver_event(
-                &event,
-                &artifact.bucket,
-                &artifact.object_key,
-                &artifact.sha256,
-                artifact.size_bytes,
-                &artifact.schema_version,
-                processor_version,
-            );
-
-            if let Err(e) = publish_silver_event(&jetstream, &silver_event).await {
-                tracing::warn!(event_id = %event_id, error = %e, "Failed to publish Silver event");
-            }
-
-            // Final ACK
-            if let Err(e) = msg.ack().await {
-                // ACK failure must NOT downgrade COMPLETED checkpoint
-                tracing::error!(
-                    event_id = %event_id,
-                    error = %e,
-                    operation = "ack_failure",
-                    "ACK failed — checkpoint remains COMPLETED, NATS will redeliver for re-ACK"
-                );
-            } else {
-                tracing::info!(
-                    event_id = %event_id,
-                    silver_key = %artifact.object_key,
-                    checkpoint_id = %checkpoint.checkpoint_id,
-                    "Data Object processed and durably stored in Silver with checkpoint COMPLETED"
-                );
-            }
-        }
-
+    // Steps 2-5: Ingest, Decode, Preprocess, Serialize
+    let artifact = match execute_item_pipeline(&minio, &event, &tmp_dir, &lc_cfg, &img_cfg).await {
+        Ok(a) => a,
         Err(err) => {
             let failure = classify_pipeline_error(&err);
             handle_failure(
                 &minio, &mut checkpoint, &event.bucket, &checkpoint_key,
                 &msg, failure, event_id.clone(), delivery_attempt,
             ).await;
+            return;
         }
+    };
+
+    // Step 6: Upload Silver
+    if let Err(e) = minio
+        .put_file_and_verify(
+            &artifact.bucket,
+            &artifact.object_key,
+            &artifact.local_path,
+            artifact.size_bytes,
+            artifact.metadata.clone(),
+        )
+        .await
+    {
+        let failure = ProcessingFailure::retryable(ErrorKind::SilverWriteFailed, e.to_string());
+        handle_failure(
+            &minio, &mut checkpoint, &event.bucket, &checkpoint_key,
+            &msg, failure, event_id.clone(), delivery_attempt,
+        ).await;
+        return;
+    }
+
+    // Update Checkpoint: SILVER_STORED -> COMPLETED
+    checkpoint.mark_silver_stored(&artifact);
+    checkpoint.mark_completed();
+    if let Err(e) = checkpoint.save(&minio, &event.bucket, &checkpoint_key).await {
+        tracing::warn!(
+            event_id = %event_id,
+            error = %e,
+            "Failed to save COMPLETED checkpoint — NAKing for safe retry from VerifySilver path"
+        );
+        let _ = msg.ack_with(AckKind::Nak(None)).await;
+        return;
+    }
+
+    // Step 7: Lineage Commit & Eviction Eligibility
+    let processing_params = build_processing_params(&lc_cfg, &img_cfg, &event.product_kind);
+    match build_lineage_record(&minio, &event, &checkpoint, &artifact, processing_params).await {
+        Err(e) => {
+            // Bronze stat failure while building lineage — treat as retryable
+            tracing::warn!(
+                event_id = %event_id,
+                error = %e,
+                operation = "lineage_build_failed",
+                "Failed to build lineage record — NAKing (checkpoint COMPLETED, Silver safe)"
+            );
+            let _ = msg.ack_with(AckKind::Nak(None)).await;
+            return;
+        }
+        Ok(lineage) => {
+            let lineage_key = build_lineage_object_key(&event.product_kind, &lineage.lineage_id);
+
+            match LineageRecord::commit(&minio, &event.bucket, &lineage_key, &lineage).await {
+                Err(failure) => {
+                    // Lineage commit failure — policy determines broker action
+                    let is_conflict = failure.class == FailureClass::Conflict;
+                    tracing::warn!(
+                        event_id = %event_id,
+                        lineage_id = %lineage.lineage_id,
+                        failure_class = ?failure.class,
+                        error_kind = ?failure.kind,
+                        error = %failure.message,
+                        operation = "lineage_commit_failed",
+                        "Lineage commit failed"
+                    );
+                    if is_conflict {
+                        // Lineage conflict: checkpoint is COMPLETED, Silver is safe.
+                        // TERM to stop redelivery. Operator must reconcile manually.
+                        let _ = msg.ack_with(AckKind::Term).await;
+                    } else {
+                        // Temporary failure: NAK for retry. Lineage will be retried.
+                        // Checkpoint is COMPLETED so recovery picks up from VerifySilver path.
+                        let _ = msg.ack_with(AckKind::Nak(None)).await;
+                    }
+                    return;
+                }
+                Ok(outcome) => {
+                    let (lineage_id, eligible, reason) = match &outcome {
+                        LineageOutcome::Committed => (
+                            lineage.lineage_id.clone(),
+                            lineage.eviction.eligible,
+                            lineage.eviction.reason.clone(),
+                        ),
+                        LineageOutcome::Reused(existing) => (
+                            existing.lineage_id.clone(),
+                            existing.eviction.eligible,
+                            existing.eviction.reason.clone(),
+                        ),
+                    };
+
+                    let outcome_label = match outcome {
+                        LineageOutcome::Committed => "committed",
+                        LineageOutcome::Reused(_) => "reused",
+                    };
+
+                    tracing::info!(
+                        event_id = %event_id,
+                        lineage_id = %lineage_id,
+                        lineage_key = %lineage_key,
+                        outcome = outcome_label,
+                        bronze_eviction_eligible = eligible,
+                        bronze_eviction_reason = %reason,
+                        operation = "lineage_committed",
+                        "Lineage record committed to MinIO"
+                    );
+                }
+            }
+        }
+    }
+
+    // Publish Silver ready event to NATS
+    let silver_event = build_silver_event(
+        &event,
+        &artifact.bucket,
+        &artifact.object_key,
+        &artifact.sha256,
+        artifact.size_bytes,
+        &artifact.schema_version,
+        processor_version,
+    );
+    if let Err(e) = publish_silver_event(&jetstream, &silver_event).await {
+        tracing::warn!(event_id = %event_id, error = %e, "Failed to publish Silver event");
+    }
+
+    // Step 8: Final ACK
+    if let Err(e) = msg.ack().await {
+        tracing::error!(
+            event_id = %event_id,
+            error = %e,
+            operation = "ack_failure",
+            "ACK failed — checkpoint COMPLETED and lineage committed, NATS will redeliver for re-ACK"
+        );
+    } else {
+        tracing::info!(
+            event_id = %event_id,
+            silver_key = %artifact.object_key,
+            checkpoint_id = %checkpoint.checkpoint_id,
+            "Data Object processed — Silver stored, lineage committed, message ACKed"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/// Serialize scientific processing parameters for lineage provenance.
+///
+/// Only includes output-affecting scientific settings, not operational config.
+fn build_processing_params(
+    lc_cfg: &LightCurveConfig,
+    img_cfg: &ImageConfig,
+    product_kind: &ProductKind,
+) -> serde_json::Value {
+    match product_kind {
+        ProductKind::LightCurve => serde_json::json!({
+            "min_points": lc_cfg.min_points,
+            "quality_mode": lc_cfg.quality_mode,
+            "allow_sap_fallback": lc_cfg.allow_sap_fallback,
+            "sigma_clip": lc_cfg.sigma_clip,
+        }),
+        ProductKind::TargetPixel => serde_json::json!({
+            "tpf_quality_mode": img_cfg.tpf_quality_mode,
+            "tpf_normalization": img_cfg.tpf_normalization,
+        }),
+        ProductKind::Ffi => serde_json::json!({
+            "ffi_normalization": img_cfg.ffi_normalization,
+            "ffi_cutout_size": img_cfg.ffi_cutout_size,
+        }),
     }
 }
 
 /// Apply the failure policy for a classified failure:
-/// - RETRYABLE  -> persist FAILED checkpoint, NAK (JetStream redelivery)
-/// - TERMINAL   -> persist FAILED + terminal checkpoint, TERM
-/// - CONFLICT   -> persist FAILED + terminal checkpoint, TERM (preserve artifacts)
-/// - REJECTED   -> persist FAILED + terminal checkpoint, TERM (scientific rejection)
+/// - RETRYABLE  → persist FAILED checkpoint, NAK
+/// - TERMINAL   → persist FAILED + terminal checkpoint, TERM
+/// - CONFLICT   → persist FAILED + terminal checkpoint, TERM (preserve artifacts)
+/// - REJECTED   → persist FAILED + terminal checkpoint, TERM (scientific rejection)
 async fn handle_failure(
     minio: &MinioClient,
     checkpoint: &mut PreprocessingCheckpoint,
@@ -321,7 +426,6 @@ async fn handle_failure(
             error = %e,
             "Failed to persist failure checkpoint — not taking broker action to avoid losing diagnostics"
         );
-        // Do not TERM if we couldn't durably record the failure
         let _ = msg.ack_with(AckKind::Nak(None)).await;
         return;
     }

@@ -25,6 +25,19 @@ pub struct StoredObjectStat {
     pub size_bytes: u64,
     #[allow(dead_code)]
     pub sha256: Option<String>,
+    /// Full user metadata map from MinIO object headers.
+    pub metadata: HashMap<String, String>,
+}
+
+impl StoredObjectStat {
+    /// Retrieve a metadata value by key (case-insensitive, dash-normalised).
+    pub fn metadata_value(&self, key: &str) -> Option<String> {
+        let normalised = key.to_lowercase().replace('_', "-");
+        self.metadata
+            .iter()
+            .find(|(k, _)| k.to_lowercase().replace('_', "-") == normalised)
+            .map(|(_, v)| v.clone())
+    }
 }
 
 /// MinIO / S3-compatible infrastructure storage client.
@@ -67,11 +80,17 @@ impl MinioClient {
             .with_context(|| format!("MinIO stat failed — object may not exist: {bucket}/{key}"))?;
 
         let size_bytes = resp.content_length().unwrap_or(0).unsigned_abs();
-        let sha256 = resp
+        let all_metadata: HashMap<String, String> = resp
             .metadata()
-            .and_then(|m| m.get("sha256").cloned());
+            .map(|m| {
+                m.iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let sha256 = all_metadata.get("sha256").cloned();
 
-        Ok(StoredObjectStat { size_bytes, sha256 })
+        Ok(StoredObjectStat { size_bytes, sha256, metadata: all_metadata })
     }
 
     /// Verify that the object exists and its size matches the event claim.
