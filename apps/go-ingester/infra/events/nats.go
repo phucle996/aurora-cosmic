@@ -35,10 +35,10 @@ func NewNATSPublisher(url string, timeout time.Duration) (*NATSPublisher, error)
 	}
 
 	streamConfig := &nats.StreamConfig{
-		Name:      model.StreamBronze,
-		Subjects:  []string{"aurora.v1.bronze.>"},
-		Storage:   nats.FileStorage,
-		Retention: nats.LimitsPolicy,
+		Name:       model.StreamBronze,
+		Subjects:   []string{"aurora.v1.bronze.>"},
+		Storage:    nats.FileStorage,
+		Retention:  nats.LimitsPolicy,
 		Duplicates: 24 * time.Hour,
 	}
 

@@ -57,13 +57,13 @@ type ProductCheckpoint struct {
 
 // Checkpoint represents a versioned, durable ingestion run state document.
 type Checkpoint struct {
-	SchemaVersion int                            `json:"schema_version"`
-	RunID         string                         `json:"run_id"`
-	Status        RunStatus                      `json:"status"`
-	ManifestPath  string                         `json:"manifest_path"`
-	ManifestHash  string                         `json:"manifest_hash"`
-	StartedAt     time.Time                      `json:"started_at"`
-	UpdatedAt     time.Time                      `json:"updated_at"`
+	SchemaVersion int                           `json:"schema_version"`
+	RunID         string                        `json:"run_id"`
+	Status        RunStatus                     `json:"status"`
+	ManifestPath  string                        `json:"manifest_path"`
+	ManifestHash  string                        `json:"manifest_hash"`
+	StartedAt     time.Time                     `json:"started_at"`
+	UpdatedAt     time.Time                     `json:"updated_at"`
 	Products      map[string]*ProductCheckpoint `json:"products"`
 }
 

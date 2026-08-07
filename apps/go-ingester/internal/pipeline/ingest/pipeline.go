@@ -8,9 +8,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"go-ingester/internal/pipeline/checkpoint"
 	"go-ingester/infra/mast"
 	"go-ingester/internal/model"
+	"go-ingester/internal/pipeline/checkpoint"
 )
 
 // Pipeline manages the bounded concurrent streaming of FITS files into MinIO and event publishing with Checkpoint persistence.

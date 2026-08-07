@@ -48,11 +48,11 @@ type Statistics struct {
 
 // Manifest represents the top-level deterministic AURORA ingestion plan.
 type Manifest struct {
-	SchemaVersion int         `json:"schema_version"`
-	Source        string      `json:"source"`
-	Samples       []Sample    `json:"samples"`
+	SchemaVersion int               `json:"schema_version"`
+	Source        string            `json:"source"`
+	Samples       []Sample          `json:"samples"`
 	FFIs          []ManifestProduct `json:"ffis,omitempty"`
-	Statistics    Statistics  `json:"statistics"`
+	Statistics    Statistics        `json:"statistics"`
 }
 
 // SelectOptions defines constraints applied during product selection and manifest generation.
