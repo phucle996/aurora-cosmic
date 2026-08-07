@@ -27,8 +27,12 @@ func main() {
 	defer stop()
 
 	if len(os.Args) < 2 {
-		printUsage()
-		os.Exit(1)
+		if err := app.Run(ctx, cfg, log); err != nil {
+			log.Error("Runtime error encountered", slog.Any("error", err))
+			os.Exit(1)
+		}
+		log.Info("Shutdown completed gracefully.")
+		return
 	}
 
 	switch os.Args[1] {

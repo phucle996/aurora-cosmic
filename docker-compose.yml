@@ -61,7 +61,6 @@ services:
   go-ingester:
     image: ghcr.io/phucle996/aurora-go-ingester:latest
     container_name: aurora-go-ingester
-    command: ["ingest"]
     env_file:
       - ./apps/go-ingester/.env.example
     networks:
