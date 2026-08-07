@@ -1,4 +1,6 @@
-pub mod helper;
-pub mod types;
+#![allow(clippy::module_inception)]
 
-pub use types::Config;
+pub mod config;
+pub mod helper;
+
+pub use config::Config;
