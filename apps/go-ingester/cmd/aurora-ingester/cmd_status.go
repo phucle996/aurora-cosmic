@@ -14,6 +14,9 @@ import (
 
 // runStatus executes the `aurora-ingester status` subcommand.
 func runStatus(ctx context.Context, cfg *config.Config, log *slog.Logger, args []string) error {
+	_ = args
+	log.Info("status: fetching current ingestion checkpoint")
+
 	accessKey := optionalEnv("MINIO_ACCESS_KEY", "minioadmin")
 	secretKey := optionalEnv("MINIO_SECRET_KEY", "minioadmin")
 
