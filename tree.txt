@@ -184,6 +184,7 @@
 │       ├── README.md
 │       └── src
 │           ├── app.rs
+│           ├── checkpoint.rs
 │           ├── config.rs
 │           ├── event.rs
 │           ├── fits
@@ -201,6 +202,7 @@
 │           │   └── mod.rs
 │           ├── storage.rs
 │           ├── tests
+│           │   ├── checkpoint_tests.rs
 │           │   ├── config_tests.rs
 │           │   ├── e2e_tests.rs
 │           │   ├── event_tests.rs
@@ -211,8 +213,14 @@
 │           │   ├── pipeline_lc_tests.rs
 │           │   ├── silver_tests.rs
 │           │   └── worker_tests.rs
-│           └── worker.rs
+│           └── worker
+│               ├── mod.rs
+│               ├── pipeline.rs
+│               ├── pool.rs
+│               ├── publisher.rs
+│               └── recovery.rs
 ├── ARCH.MD
+├── CHECKLIST_PHASE_4_1.md
 ├── contracts
 │   ├── data
 │   │   ├── silver-ffi-v1.md
@@ -223,6 +231,7 @@
 │   └── README.md
 ├── docker-compose.yml
 ├── docs
+│   ├── CHECKPOINTS.md
 │   ├── CONFIGURATION.md
 │   ├── STAGE2_VALIDATION.md
 │   └── STAGE3_VALIDATION.md
@@ -244,4 +253,4 @@
 │   └── fixtures
 └── tree.txt
 
-76 directories, 169 files
+77 directories, 177 files
