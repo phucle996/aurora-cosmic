@@ -135,22 +135,24 @@ Stage 3 [DONE]
 
 ### Stage 4 — Recovery, Idempotency & Rolling Lifecycle
 
-Mục tiêu: Đảm bảo khả năng phục hồi lỗi liên service (cross-service idempotency, preprocessor checkpoint, NATS redelivery), quản lý vòng đời và bộ nhớ đệm Bronze (~50 GiB).
+Mục tiêu: Đảm bảo khả năng phục hồi lỗi liên dịch vụ (cross-service idempotency, preprocessor checkpoint, NATS redelivery), quản lý vết dữ liệu (lineage tracking) và vòng đời bộ nhớ đệm Bronze (~50 GiB rolling window).
 
 ```text
 Stage 4
-├── Phase 4.1: Preprocessor Checkpoint
-├── Phase 4.2: Cross-Service Idempotency
-├── Phase 4.3: NATS Redelivery & Failure Recovery
-├── Phase 4.4: Raw Object Lifecycle
-└── Phase 4.5: Rolling ~50 GiB Storage Window
+├── Phase 4.1: Preprocessor Checkpoint & Processing State
+├── Phase 4.2: Cross-Service Idempotency & Reconciliation
+├── Phase 4.3: Redelivery, Retry & Poison-Message Policy
+├── Phase 4.4: Lineage Commit & Eviction Eligibility
+├── Phase 4.5: Rolling Bronze Window & Safe Eviction
+└── Phase 4.6: End-to-End Recovery & Lifecycle Validation
 ```
 
-* **Phase 4.1 — Preprocessor Checkpoint**: Lưu trạng thái xử lý NATS JetStream ack/deduplication offset cho Rust Preprocessor.
-* **Phase 4.2 — Cross-Service Idempotency**: Đảm bảo toàn hệ thống không bao giờ xử lý lặp dữ liệu giữa Ingester, Preprocessor và Storage layers.
-* **Phase 4.3 — NATS Redelivery & Failure Recovery**: Xử lý redelivery, exponential backoff và Dead Letter Queue (DLQ) khi có sự cố hạ tầng.
-* **Phase 4.4 — Raw Object Lifecycle**: Quản lý chính sách lưu trữ object thô, phân tầng dữ liệu thô giữa Bronze và Silver.
-* **Phase 4.5 — Rolling ~50 GiB Storage Window**: Tự động dọn dẹp file FITS thô cũ nhất khi bộ nhớ Bronze chạm High Watermark (90%) về mức Low Watermark (60%).
+* **Phase 4.1 — Preprocessor Checkpoint & Processing State**: Quản lý state xử lý bền vững tại `checkpoints/preprocessing/` (`PROCESSING` -> `SILVER_STORED` -> `COMPLETED` / `FAILED`). Phục hồi mượt mà sau sự cố crash giữa bước Silver write và NATS ACK.
+* **Phase 4.2 — Cross-Service Idempotency & Reconciliation**: Xây dựng các quy tắc đối soát dữ liệu (reconciliation rules) giữa Go Ingestion state, MinIO Bronze, NATS JetStream và Rust Processing state mà không cần giao dịch phân tán (distributed transactions).
+* **Phase 4.3 — Redelivery, Retry & Poison-Message Policy**: Đóng băng chính sách xử lý lỗi: retry tự động với lỗi hạ tầng tạm thời, gửi `TERM` cho poison message, và ghi nhận trạng thái `REJECTED` cho dữ liệu lỗi khoa học vĩnh viễn.
+* **Phase 4.4 — Lineage Commit & Eviction Eligibility**: Đảm bảo hợp đồng vết dữ liệu (`source_product_id` -> Bronze -> Processor Version -> Silver). Một file Bronze thô chỉ được đánh dấu `EVICTABLE` sau khi Lineage đã được commit đầy đủ.
+* **Phase 4.5 — Rolling Bronze Window & Safe Eviction**: Tự động dọn dẹp các file FITS thô `EVICTABLE` cũ nhất khi dung lượng Bronze chạm High Watermark (~45 GiB) về mức Low Watermark (~30 GiB). Tuyệt đối không xóa Manifest, Checkpoint, Lineage, Silver hay Gold Artifacts.
+* **Phase 4.6 — End-to-End Recovery & Lifecycle Validation**: Kiểm thử ma trận phục hồi sự cố (MinIO/NATS/Go/Rust crash & restart) và nghiệm thu chính sách xóa an toàn đệm Bronze.
 
 ---
 
