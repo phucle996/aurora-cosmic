@@ -56,8 +56,7 @@
 │   │   │   ├── app
 │   │   │   │   └── app.go
 │   │   │   ├── config
-│   │   │   │   ├── config.go
-│   │   │   │   └── helper.go
+│   │   │   │   └── config.go
 │   │   │   ├── http
 │   │   │   │   ├── anomalies.go
 │   │   │   │   ├── candidates.go
@@ -67,38 +66,67 @@
 │   │   │   └── store
 │   │   │       ├── clickhouse.go
 │   │   │       └── minio.go
-│   │   ├── README.md
-│   │   └── tests
-│   │       └── config_test.go
-│   ├── go-ingester
-│   │   ├── cmd
-│   │   │   └── aurora-ingester
-│   │   │       └── main.go
-│   │   ├── Dockerfile
-│   │   ├── go.mod
-│   │   ├── go.sum
-│   │   ├── internal
-│   │   │   ├── app
-│   │   │   │   └── app.go
-│   │   │   ├── checkpoint
-│   │   │   │   └── store.go
-│   │   │   ├── config
-│   │   │   │   ├── config.go
-│   │   │   │   └── helper.go
-│   │   │   ├── events
-│   │   │   │   └── nats.go
-│   │   │   ├── ingest
-│   │   │   │   └── pipeline.go
-│   │   │   ├── mast
-│   │   │   │   └── client.go
-│   │   │   └── storage
-│   │   │       └── minio.go
 │   │   ├── pkg
 │   │   │   └── logger
 │   │   │       └── logger.go
 │   │   ├── README.md
 │   │   └── tests
 │   │       └── config_test.go
+│   ├── go-ingester
+│   │   ├── cmd
+│   │   │   └── aurora-ingester
+│   │   │       ├── cmd_ingest.go
+│   │   │       ├── cmd_plan.go
+│   │   │       ├── cmd_status.go
+│   │   │       ├── main.go
+│   │   │       └── output.go
+│   │   ├── Dockerfile
+│   │   ├── go.mod
+│   │   ├── go.sum
+│   │   ├── infra
+│   │   │   ├── events
+│   │   │   │   └── nats.go
+│   │   │   ├── mast
+│   │   │   │   ├── client.go
+│   │   │   │   └── discover.go
+│   │   │   └── storage
+│   │   │       └── minio.go
+│   │   ├── internal
+│   │   │   ├── app
+│   │   │   │   └── app.go
+│   │   │   ├── config
+│   │   │   │   └── config.go
+│   │   │   ├── model
+│   │   │   │   ├── checkpoint.go
+│   │   │   │   ├── events.go
+│   │   │   │   ├── ingest.go
+│   │   │   │   ├── manifest.go
+│   │   │   │   ├── mast.go
+│   │   │   │   └── storage.go
+│   │   │   └── pipeline
+│   │   │       ├── checkpoint
+│   │   │       │   ├── manager.go
+│   │   │       │   └── store.go
+│   │   │       ├── ingest
+│   │   │       │   ├── pipeline.go
+│   │   │       │   ├── product.go
+│   │   │       │   └── recovery.go
+│   │   │       └── plan
+│   │   │           ├── select.go
+│   │   │           └── write.go
+│   │   ├── pkg
+│   │   │   └── logger
+│   │   │       └── logger.go
+│   │   ├── README.md
+│   │   └── tests
+│   │       ├── checkpoint_test.go
+│   │       ├── config_test.go
+│   │       ├── e2e_ingestion_test.go
+│   │       ├── events_test.go
+│   │       ├── ingest_test.go
+│   │       ├── manifest_test.go
+│   │       ├── mast_test.go
+│   │       └── storage_test.go
 │   ├── python-ml-worker
 │   │   ├── aurora_ml
 │   │   │   ├── anomaly
@@ -129,17 +157,12 @@
 │   ├── rust-inference
 │   │   ├── Cargo.toml
 │   │   ├── Dockerfile
-│   │   ├── pkg
-│   │   │   ├── logger.rs
-│   │   │   └── mod.rs
 │   │   ├── README.md
 │   │   ├── src
 │   │   │   ├── app.rs
-│   │   │   ├── config
-│   │   │   │   ├── config.rs
-│   │   │   │   ├── helper.rs
-│   │   │   │   └── mod.rs
+│   │   │   ├── config.rs
 │   │   │   ├── evidence.rs
+│   │   │   ├── logger.rs
 │   │   │   ├── main.rs
 │   │   │   ├── model.rs
 │   │   │   ├── nats.rs
@@ -153,22 +176,17 @@
 │       ├── Cargo.lock
 │       ├── Cargo.toml
 │       ├── Dockerfile
-│       ├── pkg
-│       │   ├── logger.rs
-│       │   └── mod.rs
 │       ├── README.md
 │       ├── src
 │       │   ├── app.rs
 │       │   ├── checkpoint.rs
-│       │   ├── config
-│       │   │   ├── config.rs
-│       │   │   ├── helper.rs
-│       │   │   └── mod.rs
+│       │   ├── config.rs
 │       │   ├── consumer.rs
 │       │   ├── fits
 │       │   │   ├── image.rs
 │       │   │   ├── lightcurve.rs
 │       │   │   └── mod.rs
+│       │   ├── logger.rs
 │       │   ├── main.rs
 │       │   ├── output
 │       │   │   ├── gold.rs
@@ -185,12 +203,14 @@
 ├── contracts
 │   ├── data
 │   ├── events
+│   │   └── bronze-object-ready.schema.json
 │   └── README.md
 ├── datasets
 │   └── examples
 ├── docker-compose.yml
 ├── docs
-│   └── CONFIGURATION.md
+│   ├── CONFIGURATION.md
+│   └── STAGE2_VALIDATION.md
 ├── infra
 │   ├── minio
 │   │   └── init.sh
@@ -208,4 +228,4 @@
 │   └── fixtures
 └── tree.txt
 
-75 directories, 134 files
+77 directories, 152 files
