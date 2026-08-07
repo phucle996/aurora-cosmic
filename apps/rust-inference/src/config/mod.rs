@@ -1,4 +1,4 @@
-pub mod config;
 pub mod helper;
+pub mod types;
 
-pub use config::Config;
+pub use types::Config;

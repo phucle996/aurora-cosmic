@@ -34,10 +34,7 @@ impl Config {
     pub fn from_env() -> Result<Self, String> {
         let device = get_env("AURORA_ML_DEVICE", "auto").to_lowercase();
         if !["auto", "cpu", "cuda"].contains(&device.as_str()) {
-            return Err(format!(
-                "Invalid AURORA_ML_DEVICE: '{}'. Must be 'auto', 'cpu', or 'cuda'",
-                device
-            ));
+            return Err(format!("Invalid AURORA_ML_DEVICE: '{}'. Must be 'auto', 'cpu', or 'cuda'", device));
         }
 
         Ok(Self {
