@@ -1,0 +1,89 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://aurora.cosmic/contracts/events/bronze-object-ready.schema.json",
+  "title": "BronzeObjectReady",
+  "description": "Event emitted when a raw FITS object has been durably stored and verified in MinIO Bronze.",
+  "type": "object",
+  "required": [
+    "event_id",
+    "event_type",
+    "occurred_at",
+    "source_product_id",
+    "product_kind",
+    "bucket",
+    "object_key",
+    "sector",
+    "size_bytes",
+    "sha256"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "description": "Unique identifier for this event emission (UUID/ULID)."
+    },
+    "event_type": {
+      "type": "string",
+      "enum": ["bronze.object.ready"],
+      "description": "Type discriminator for the event."
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 timestamp when the object was stored and verified."
+    },
+    "source_product_id": {
+      "type": "string",
+      "description": "Originating MAST product ID."
+    },
+    "sample_id": {
+      "type": "string",
+      "description": "Logical target observation sample identity (e.g. tess-tic-123456789-sector-0042)."
+    },
+    "product_kind": {
+      "type": "string",
+      "enum": ["TARGET_PIXEL", "LIGHT_CURVE", "FFI"],
+      "description": "AURORA classified product kind."
+    },
+    "bucket": {
+      "type": "string",
+      "description": "MinIO Bronze bucket name."
+    },
+    "object_key": {
+      "type": "string",
+      "description": "Deterministic MinIO object key."
+    },
+    "sector": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "TESS observing sector number."
+    },
+    "tic_id": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "TESS Input Catalog ID (required for TARGET_PIXEL and LIGHT_CURVE)."
+    },
+    "camera": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4,
+      "description": "TESS camera number (for FFI)."
+    },
+    "ccd": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4,
+      "description": "TESS CCD number (for FFI)."
+    },
+    "size_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Verified object size in bytes."
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{64}$",
+      "description": "SHA-256 checksum hex string."
+    }
+  },
+  "additionalProperties": false
+}
