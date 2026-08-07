@@ -1,23 +1,23 @@
 # Go Ingester Service
 
-`aurora-ingester` is responsible for querying NASA MAST, discovering TESS FITS products, creating deterministic ingestion manifests, streaming raw FITS into MinIO Bronze, and publishing lightweight ingestion events via NATS JetStream.
+`aurora-ingester` is responsible for querying NASA MAST, discovering TESS FITS products, creating deterministic ingestion manifests, streaming raw FITS directly into MinIO Bronze, and publishing lightweight ingestion events via NATS JetStream.
 
 ## Package Layout
 
-* `cmd/aurora-ingester/` — Entrypoint, subcommand routing
+* `cmd/aurora-ingester/` — Entrypoint, subcommand routing (`plan`, `ingest`)
 * `internal/app/` — Application runner and lifecycle
 * `internal/config/` — Environment-based configuration
 * `internal/logger/` — Structured JSON logger (stdlib slog)
-* `internal/mast/` — MAST API client, product discovery, classification
+* `internal/mast/` — MAST API client, product discovery, classification, streaming download
 * `internal/manifest/` — Product selection, TPF/LC pairing, manifest write/read
-* `internal/ingest/` — FITS streaming pipeline (Phase 2.3)
-* `internal/storage/` — MinIO object storage client
-* `internal/events/` — NATS JetStream event publisher
-* `internal/checkpoint/` — Ingestion progress state store
+* `internal/ingest/` — Streaming ingestion pipeline (SHA256, worker pool, verification)
+* `internal/storage/` — MinIO storage client, deterministic Bronze Object Key builder
+* `internal/events/` — NATS JetStream event publisher (Phase 2.4)
+* `internal/checkpoint/` — Ingestion progress state store (Phase 2.5)
 
-## Discovery
+## 1. Planning / Manifest
 
-Query NASA MAST for available TESS observations and products:
+Query NASA MAST and create a versioned JSON ingestion manifest without downloading binaries:
 
 ```bash
 go run ./cmd/aurora-ingester plan \
@@ -26,24 +26,34 @@ go run ./cmd/aurora-ingester plan \
     --output manifest.json
 ```
 
-## Planning / Manifest
+## 2. Streaming Ingestion
 
-`plan` performs discovery + selection + pairing and writes a versioned JSON manifest. No FITS files are downloaded; no MinIO objects are written; no NATS events are published.
+Stream selected TESS FITS products directly from MAST into MinIO Bronze:
 
-Options:
+```bash
+go run ./cmd/aurora-ingester ingest \
+    --manifest manifest.json \
+    --concurrency 4
+```
 
-| Flag | Default | Description |
-|---|---|---|
-| `--sector` | `0` (all) | Filter by TESS sector |
-| `--limit` | `100` | Max observations to discover |
-| `--max-bytes` | `0` (unlimited) | Optional byte budget |
-| `--max-ffi` | `0` (unlimited) | Max FFI products |
-| `--output` | `manifest.json` | Output path |
+Dry-run mode (prints planned MinIO object paths with zero write side effects):
 
-Selection policy is further controlled by environment variables (`AURORA_INCLUDE_TPF`, `AURORA_INCLUDE_LIGHTCURVE`, `AURORA_INCLUDE_FFI`, `AURORA_REQUIRE_TPF_LC_PAIR`).
+```bash
+go run ./cmd/aurora-ingester ingest \
+    --manifest manifest.json \
+    --dry-run
+```
+
+## Bronze Object Layout
+
+FITS files are stored deterministically in MinIO Bronze bucket (`MINIO_BUCKET=aurora`):
+
+* **Target Pixel**: `bronze/tess/target-pixel/sector=0042/tic=123456789/<filename>_tp.fits`
+* **Light Curve**: `bronze/tess/lightcurve/sector=0042/tic=123456789/<filename>_lc.fits`
+* **FFI**: `bronze/tess/ffi/sector=0042/camera=1/ccd=3/<filename>_ffic.fits`
 
 ## Running tests
 
 ```bash
-go test ./tests/...
+go test ./...
 ```

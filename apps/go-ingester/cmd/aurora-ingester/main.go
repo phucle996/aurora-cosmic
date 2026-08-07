@@ -12,9 +12,11 @@ import (
 
 	"go-ingester/internal/app"
 	"go-ingester/internal/config"
+	"go-ingester/internal/ingest"
 	"go-ingester/internal/logger"
 	"go-ingester/internal/manifest"
 	"go-ingester/internal/mast"
+	"go-ingester/internal/storage"
 )
 
 func main() {
@@ -33,6 +35,7 @@ func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "usage: aurora-ingester <command> [options]")
 		fmt.Fprintln(os.Stderr, "  plan     -- discover and create ingestion manifest")
+		fmt.Fprintln(os.Stderr, "  ingest   -- stream products from manifest into MinIO Bronze")
 		os.Exit(1)
 	}
 
@@ -40,6 +43,12 @@ func main() {
 	case "plan":
 		if err := runPlan(ctx, cfg, log, os.Args[2:]); err != nil {
 			log.Error("plan command failed", slog.Any("error", err))
+			os.Exit(1)
+		}
+
+	case "ingest":
+		if err := runIngest(ctx, cfg, log, os.Args[2:]); err != nil {
+			log.Error("ingest command failed", slog.Any("error", err))
 			os.Exit(1)
 		}
 
@@ -56,16 +65,15 @@ func main() {
 // runPlan executes the `aurora-ingester plan` subcommand.
 func runPlan(ctx context.Context, cfg *config.Config, log *slog.Logger, args []string) error {
 	fs := flag.NewFlagSet("plan", flag.ExitOnError)
-	sector   := fs.Int("sector", 0, "filter by TESS sector (0 = all)")
-	limit    := fs.Int("limit", 100, "max observations to discover")
+	sector := fs.Int("sector", 0, "filter by TESS sector (0 = all)")
+	limit := fs.Int("limit", 100, "max observations to discover")
 	maxBytes := fs.Int64("max-bytes", 0, "optional manifest byte budget (0 = unlimited)")
-	maxFFI   := fs.Int("max-ffi", 0, "max FFI products to include (0 = unlimited)")
-	output   := fs.String("output", "manifest.json", "output path for manifest JSON")
+	maxFFI := fs.Int("max-ffi", 0, "max FFI products to include (0 = unlimited)")
+	output := fs.String("output", "manifest.json", "output path for manifest JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	// Parse MAST timeout.
 	timeout, err := time.ParseDuration(cfg.MAST.Timeout)
 	if err != nil {
 		timeout = 30 * time.Second
@@ -111,7 +119,67 @@ func runPlan(ctx context.Context, cfg *config.Config, log *slog.Logger, args []s
 	return nil
 }
 
-// printPlanSummary prints a human-readable ingestion plan summary to stdout.
+// runIngest executes the `aurora-ingester ingest` subcommand.
+func runIngest(ctx context.Context, cfg *config.Config, log *slog.Logger, args []string) error {
+	fs := flag.NewFlagSet("ingest", flag.ExitOnError)
+	manifestPath := fs.String("manifest", "", "path to manifest JSON file")
+	concurrency := fs.Int("concurrency", cfg.Ingest.Concurrency, "bounded download concurrency")
+	dryRun := fs.Bool("dry-run", false, "print object paths without downloading")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	if *manifestPath == "" {
+		return fmt.Errorf("missing required --manifest argument")
+	}
+
+	log.Info("manifest: loading ingestion plan", slog.String("path", *manifestPath))
+	m, err := manifest.Read(*manifestPath)
+	if err != nil {
+		return fmt.Errorf("read manifest: %w", err)
+	}
+
+	var minioClient storage.Client
+	if !*dryRun {
+		// Environment credentials default: minioadmin/minioadmin for dev
+		accessKey := optionalEnv("MINIO_ACCESS_KEY", "minioadmin")
+		secretKey := optionalEnv("MINIO_SECRET_KEY", "minioadmin")
+
+		mc, err := storage.NewMinIOClient(cfg.MinIO.Endpoint, accessKey, secretKey)
+		if err != nil {
+			return fmt.Errorf("minio client: %w", err)
+		}
+		minioClient = mc
+	}
+
+	timeout, err := time.ParseDuration(cfg.MAST.Timeout)
+	if err != nil {
+		timeout = 30 * time.Second
+	}
+
+	mastClient := mast.NewClient(cfg.MAST.APIURL, timeout)
+	pipeline := ingest.NewPipeline(mastClient, minioClient, cfg.MinIO.Bucket, *concurrency, log)
+
+	log.Info("ingest: starting pipeline run",
+		slog.Int("concurrency", *concurrency),
+		slog.Bool("dry_run", *dryRun),
+	)
+
+	summary, results, err := pipeline.IngestManifest(ctx, m, *dryRun)
+	if err != nil {
+		return fmt.Errorf("pipeline execution: %w", err)
+	}
+
+	printIngestSummary(summary)
+
+	if summary.FailedCount > 0 {
+		return fmt.Errorf("ingestion completed with %d failures", summary.FailedCount)
+	}
+
+	_ = results // retain for future logging/events
+	return nil
+}
+
 func printPlanSummary(m *manifest.Manifest, path string) {
 	s := m.Statistics
 	fmt.Println()
@@ -132,6 +200,23 @@ func printPlanSummary(m *manifest.Manifest, path string) {
 	fmt.Println()
 }
 
+func printIngestSummary(s *ingest.Summary) {
+	fmt.Println()
+	fmt.Println("AURORA ingestion summary")
+	fmt.Println()
+	fmt.Printf("  products planned:  %d\n", s.PlannedProducts)
+	fmt.Printf("  stored:            %d\n", s.StoredCount)
+	fmt.Printf("  skipped:           %d\n", s.SkippedCount)
+	fmt.Printf("  failed:            %d\n", s.FailedCount)
+	fmt.Println()
+	fmt.Printf("  bytes stored:      %s\n", humanBytes(s.StoredBytes))
+	fmt.Printf("  elapsed:           %s\n", s.Elapsed.Round(time.Millisecond))
+	if s.ThroughputBps > 0 {
+		fmt.Printf("  throughput:        %s/s\n", humanBytes(int64(s.ThroughputBps)))
+	}
+	fmt.Println()
+}
+
 func humanBytes(b int64) string {
 	const (
 		KiB = 1024
@@ -148,4 +233,11 @@ func humanBytes(b int64) string {
 	default:
 		return fmt.Sprintf("%d B", b)
 	}
+}
+
+func optionalEnv(key, defaultVal string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return defaultVal
 }
