@@ -62,6 +62,11 @@ services:
     image: ghcr.io/phucle996/aurora-go-ingester:latest
     build: ./apps/go-ingester
     container_name: aurora-go-ingester
+    # Keep real-data ingest experiments reproducible on a 4 vCPU / 4 GiB host.
+    # memswap_limit equal to mem_limit prevents Docker from hiding pressure in swap.
+    cpus: "4.0"
+    mem_limit: 4g
+    memswap_limit: 4g
     env_file:
       - ./apps/go-ingester/.env.example
     networks:
