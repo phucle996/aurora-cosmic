@@ -22,6 +22,18 @@ Stage 6 ML training CANNOT:
 
 A model-specific dataset view extracts row views and model-input features from a committed Gold Candidate snapshot (`gold-candidate-v1`).
 
+## Dataset Partition Boundaries & Permitted Uses
+
+| Dataset Partition | Role | Permitted Use | Forbidden Use |
+|---|---|---|---|
+| **TRAIN** | Model Training | Fit model weights, learn preprocessing scales/medians | Threshold tuning, final performance claims |
+| **VALIDATION** | Model Development | Early stopping, decision threshold selection | Weight fitting, scaling parameter fitting |
+| **GOLDEN TEST** | Fixed Benchmark | Final unseen performance evaluation | Model fitting, threshold selection, architecture tuning |
+| **RECENT HOLDOUT** | Temporal Generalization | Freshness and temporal drift evaluation | Model fitting, threshold selection |
+
+### Group Isolation Invariant
+All splits and evaluation cohorts enforce target-level grouping (`tic:<id>`). A target group exposed during TRAIN or VALIDATION is contaminated and CAN NEVER participate in GOLDEN TEST or RECENT HOLDOUT.
+
 ### Column Role Boundaries & Leakage Exclusion
 
 Gold Candidate datasets classify columns into 5 distinct roles:

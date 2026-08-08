@@ -1,208 +1,136 @@
-````md
-# CHECKLIST_PHASE_6_3.md
+````md id="phase-6-4"
+# CHECKLIST_PHASE_6_4.md
 
 # Stage 6 — Machine Learning Training, Evaluation & Model Registry
-## Phase 6.3 — Astronomical Anomaly Detection Training
+## Phase 6.4 — Evaluation: Golden Test & Recent Holdout
 
 Status: TODO
 
 Goal:
 
-> Train the first reproducible AURORA astronomical anomaly-detection model
-> from one explicit immutable Gold anomaly snapshot.
+> Evaluate completed candidate-vetting and anomaly-detection training runs on
+> data that was never used to fit:
 >
-> V1 deliberately uses:
+> - model weights,
+> - preprocessing parameters,
+> - early stopping,
+> - decision thresholds.
 >
->     Gold light-curve anomaly scalar features
->             ->
->     compact tabular autoencoder
+> Phase 6.4 introduces:
 >
-> rather than:
+> - immutable Golden Test cohorts,
+> - rolling Recent Holdout cohorts,
+> - strict group-contamination checks,
+> - validation-only threshold selection,
+> - final candidate Golden Test metrics,
+> - recent-distribution evaluation,
+> - anomaly reconstruction threshold semantics,
+> - deterministic synthetic anomaly sanity evaluation,
+> - immutable evaluation-run artifacts.
 >
->     raw FITS
->     full Silver time-series tensors
->     giant FFI tensors
+> The central rule is:
 >
-> The model learns the structure of the observed feature distribution and
-> produces reconstruction-error evidence that can later be used to rank
-> unusual astronomical observations.
+>     TRAIN / VALIDATION
+>         may influence the model.
 >
-> Phase 6.3 introduces:
+>     GOLDEN TEST
+>         must never influence the model.
 >
-> - anomaly-specific ML dataset view,
-> - deterministic target-group TRAIN / VALIDATION split,
-> - train-only anomaly preprocessing,
-> - small tabular autoencoder,
-> - deterministic anomaly-score definition,
-> - immutable anomaly training runs,
-> - ML-training checkpoint recovery,
-> - development reconstruction metrics.
+>     RECENT HOLDOUT
+>         must never influence the model being evaluated.
 >
-> It does NOT:
->
-> - claim astrophysical ground truth,
-> - use TOI/TCE labels as anomaly supervision,
-> - define the final anomaly threshold,
-> - evaluate the frozen golden test,
-> - create a champion model,
-> - export ONNX,
-> - persist anomaly predictions,
-> - train directly from Bronze/Silver.
+> AURORA must never retrofit a "golden test" from targets that the model has
+> already seen during TRAIN or VALIDATION.
 
 ---
 
-# 1. V1 Scope Decision
+# 1. Important Correction From Phase 6.1
 
-Freeze the mandatory V1 learned anomaly model as:
+Phase 6.1 development splits currently contain:
 
 ```text
-anomaly-lightcurve-autoencoder-v1
+TRAIN
+VALIDATION
 ````
 
-Input source:
+and may have assigned all currently supervised target groups.
+
+Therefore Phase 6.4 MUST NOT do this:
 
 ```text
-Gold anomaly snapshot
-    |
-    v
-anomaly/lightcurve component
+existing TRAIN / VALIDATION universe
+          |
+          v
+pick some rows afterwards
+          |
+          v
+call them GOLDEN TEST
 ```
 
-TPF/FFI remain:
-
-```text
-deterministic anomaly/vetting evidence
-```
-
-but do NOT require separate learned TPF/FFI models in V1.
+That is invalid.
 
 ---
 
-# 2. Why Light-Curve Autoencoder First
+# 2. Golden Test Must Be Truly Unseen
 
-Current Stage 5 Gold already contains compact LC evidence such as:
+For one training run define:
 
 ```text
-time coverage
-
-cadence statistics
-
-flux variability
-
-robust scatter
-
-amplitude
-
-skewness
-
-kurtosis
+development_exposed_groups =
+    TRAIN groups
+    UNION
+    VALIDATION groups
 ```
 
-This is sufficient to validate the entire:
+A valid Golden Test group must satisfy:
+
+```text
+golden_group
+NOT IN
+development_exposed_groups
+```
+
+Mandatory.
+
+---
+
+# 3. Valid First Golden-Test Source
+
+Recommended V1:
+
+```text
+training Gold snapshot A
+        |
+        v
+train + validation
+        |
+        v
+completed training run
+
+later / independent committed Gold snapshot B
+        |
+        v
+eligible groups not exposed in A split
+        |
+        v
+freeze GOLDEN TEST
+```
+
+Snapshot B may be cumulative.
+
+Training groups appearing again in B are filtered out.
+
+---
+
+# 4. Do Not Require Bronze/Silver
+
+Evaluation consumes:
 
 ```text
 Gold
- ->
-training
- ->
-evaluation
- ->
-registry
- ->
-ONNX
- ->
-Rust
-```
-
-lifecycle without reopening the raw-array boundary.
-
----
-
-# 3. Do Not Force TPF/FFI Models Yet
-
-Do NOT create mandatory:
-
-```text
-anomaly-tpf-autoencoder-v1
-
-anomaly-ffi-autoencoder-v1
-```
-
-only to increase model count.
-
-A future model may use those evidence families after:
-
-```text
-dataset size
-scientific value
-runtime need
-```
-
-justify them.
-
----
-
-# 4. Canonical Input
-
-Required:
-
-```text
-explicit COMMITTED anomaly Gold snapshot
-+
-explicit anomaly split ID
-+
-anomaly-lightcurve-ml-view-v1
-+
-explicit training configuration
-+
-explicit training seed
-```
-
----
-
-# 5. Canonical Flow
-
-```text
-Committed Gold anomaly snapshot
-             |
-             v
- anomaly/lightcurve Gold table
-             |
-             v
- anomaly-lightcurve-ml-view-v1
-             |
-             v
- deterministic group split
-        +----------+
-        |          |
-        v          v
-      TRAIN    VALIDATION
-        |          |
-        v          |
- fit preprocessing |
-        |          |
-        v          |
-   autoencoder     |
-        |          |
-        +-----+----+
-              |
-              v
- development reconstruction
-       error distribution
-              |
-              v
- immutable training run
-```
-
----
-
-# 6. Gold-Only Requirement
-
-Normal Phase 6.3 reads:
-
-```text
-gold/
-manifests/ml-splits/
+training-run artifacts
+split manifests
+evaluation cohort manifests
 ```
 
 Expected:
@@ -215,312 +143,155 @@ Silver reads = 0
 
 ---
 
-# 7. RAW_DELETED Compatibility
+# 5. RAW_DELETED Remains Valid
 
 This remains valid:
 
 ```text
 Bronze = RAW_DELETED
-
-Silver = durable
-
-Gold = committed
+        |
+        X
+        |
+Gold
+training run
+evaluation
 ```
 
-Then:
-
-```text
-anomaly training succeeds
-```
-
-No source-product restoration.
+No raw restoration.
 
 ---
 
-# 8. ClickHouse Independence
+# 6. ClickHouse Is Optional
 
-Do NOT train canonical anomaly model from:
+Canonical evaluation must NOT depend on:
 
-```sql
-SELECT *
-FROM anomaly_lightcurve_v1
+```text
+ClickHouse
 ```
 
-ClickHouse may be used for exploration only.
+It may be used for exploratory inspection only.
 
-Canonical training source remains:
+Required evaluation path:
 
 ```text
 Gold Parquet
+    +
+immutable manifests
 ```
 
 ---
 
-# 9. ClickHouse Loss Test
+# 7. No Live Catalog Queries
 
-Mandatory:
-
-```text
-ClickHouse unavailable
-         |
-         X
-         |
-Gold + anomaly split
-         |
-         v
-anomaly training succeeds
-```
-
----
-
-# 10. No Live Catalog Calls
-
-Do not query:
+Do NOT query:
 
 ```text
 TIC
-
 TOI
-
 TCE
 ```
 
-during anomaly model training.
+during evaluation.
+
+Candidate labels are pinned by the exact Gold snapshot used for the cohort.
 
 ---
 
-# 11. No Label Supervision
+# 8. No NATS Requirement
 
-The V1 anomaly autoencoder is unsupervised.
+Phase 6.4 is an explicit batch evaluation workflow.
 
-Do NOT use:
-
-```text
-POSITIVE
-
-NEGATIVE
-
-UNRESOLVED
-
-EXCLUDED
-
-TOI disposition
-
-TCE disposition
-```
-
-to define the training loss.
-
----
-
-# 12. Important Separation
-
-Freeze:
+Do not add:
 
 ```text
-candidate model
-    =
-catalog-supervised classifier
-```
-
-```text
-anomaly model
-    =
-unsupervised reconstruction model
-```
-
-Do not make anomaly training secretly another planet classifier.
-
----
-
-# 13. Python Ownership
-
-Use existing:
-
-```text
-aurora_ml/anomaly/
-├── model.py
-└── train.py
-```
-
-Responsibilities:
-
-```text
-anomaly/model.py
-    autoencoder architecture
-
-anomaly/train.py
-    anomaly preprocessing
-    training
-    reconstruction scoring
-    validation
-    run orchestration
+evaluation-ready NATS events
 ```
 
 ---
 
-# 14. Reuse Existing Split Infrastructure
+# 9. Evaluation Families
 
-Reuse:
-
-```text
-aurora_ml/splits.py
-```
-
-for:
+Phase 6.4 evaluates:
 
 ```text
-canonical group keys
+candidate_vetting
 
-SHA256 group assignment
-
-split manifest persistence
-
-split validation
+astronomical_anomaly_detection
 ```
 
-Do not create a second independent splitter.
+with task-specific policies.
+
+Do not force one metric set onto both tasks.
 
 ---
 
-# 15. Anomaly Dataset View
+# 10. Evaluation Cohort Artifact
 
-Introduce:
+Introduce immutable evaluation cohorts.
 
-```text
-anomaly-lightcurve-ml-view-v1
-```
-
----
-
-# 16. Dataset View Contract
-
-Add:
+Recommended storage:
 
 ```text
-contracts/data/ml-anomaly-view-v1.md
-```
-
-Document:
-
-```text
-source Gold component
-
-row identity
-
-feature list
-
-feature order
-
-group identity
-
-nullable semantics
-
-eligibility policy
+evaluations/
+└── cohorts/
+    ├── candidate/
+    │   ├── golden/
+    │   └── recent/
+    │
+    └── anomaly/
+        ├── golden/
+        └── recent/
 ```
 
 ---
 
-# 17. Reuse `ml-split-v1`
+# 11. Golden Cohort Path
 
-Use the existing durable:
+Recommended:
 
 ```text
-contracts/data/ml-split-v1.md
+evaluations/cohorts/candidate/golden/<cohort-id>/manifest.json
 ```
 
-for anomaly split manifests if its schema is already generic as intended.
-
-Do NOT create another split schema merely because the task differs.
-
-The anomaly split is distinguished by:
+and:
 
 ```text
-dataset_view_version
-split_policy_version
-gold_snapshot_id
+evaluations/cohorts/anomaly/golden/<cohort-id>/manifest.json
 ```
 
 ---
 
-# 18. Anomaly Split Policy
+# 12. Recent Cohort Path
 
-Introduce:
+Recommended:
 
 ```text
-anomaly-group-split-v1
+evaluations/cohorts/candidate/recent/<cohort-id>/manifest.json
+```
+
+and:
+
+```text
+evaluations/cohorts/anomaly/recent/<cohort-id>/manifest.json
 ```
 
 ---
 
-# 19. Group Leakage Rule
+# 13. Cohort Contract
 
-Same target-level invariant applies:
+Create:
 
 ```text
-same TIC
-    ->
-same split
+contracts/data/ml-evaluation-cohort-v1.md
 ```
 
-even though training is unsupervised.
-
-This prevents the model from seeing one observation of a target during
-training and an almost-identical observation of that target during validation.
+One generic immutable cohort contract is sufficient.
 
 ---
 
-# 20. Group Key
+# 14. Cohort Kinds
 
-Use the existing V1 grouping semantics:
-
-```text
-tic:<tic-id>
-```
-
-when TIC exists.
-
-Fallback:
-
-```text
-source:<source-product-id>
-```
-
-when TIC is unavailable.
-
----
-
-# 21. Do Not Group By Sector Alone
-
-Wrong:
-
-```text
-group_key = sector
-```
-
-Sector is observational context, not target identity.
-
----
-
-# 22. Do Not Group By `sample_id` Alone
-
-One TIC may have multiple samples/sectors.
-
-Use target identity first.
-
----
-
-# 23. TRAIN / VALIDATION Only
-
-Phase 6.3 development split uses:
-
-```text
-TRAIN
-
-VALIDATION
-```
-
-Do NOT define:
+V1:
 
 ```text
 GOLDEN_TEST
@@ -528,1497 +299,1780 @@ GOLDEN_TEST
 RECENT_HOLDOUT
 ```
 
-here.
-
-Phase 6.4 owns final evaluation sets.
-
----
-
-# 24. Default Split Ratio
-
-Reuse Phase 6.1 V1 group policy where practical:
+Do not confuse them with:
 
 ```text
-TRAIN      80%
-
-VALIDATION 20%
-```
-
-at group level.
-
----
-
-# 25. Stable Cumulative Membership
-
-For same:
-
-```text
-group key
-split seed
-split policy
-```
-
-membership remains stable across cumulative Gold snapshots.
-
----
-
-# 26. Anomaly Split CLI
-
-Extend existing split command cleanly:
-
-```bash
-python -m aurora_ml.main ml-split \
-    --task anomaly-lightcurve \
-    --snapshot-id <gold-anomaly-snapshot-id> \
-    --seed 42
-```
-
-or an equivalent existing CLI shape.
-
-Do NOT create an unrelated second splitting program.
-
----
-
-# 27. Split Manifest Storage
-
-Reuse:
-
-```text
-manifests/ml-splits/<split-id>.json
+TRAIN
+VALIDATION
 ```
 
 ---
 
-# 28. Anomaly Split Identity
+# 15. Cohort Manifest Fields
 
-Must depend on:
-
-```text
-Gold snapshot ID
-
-anomaly-lightcurve-ml-view-v1
-
-anomaly-group-split-v1
-
-split seed
-
-canonical group assignments
-```
-
----
-
-# 29. Split Assignment Must Not Depend on Model Score
-
-Do NOT use:
-
-```text
-reconstruction error
-
-feature extremeness
-
-known anomaly status
-```
-
-when assigning TRAIN/VALIDATION groups.
-
----
-
-# 30. No "Clean" Cohort Filtering From Labels
-
-Do NOT define TRAIN as:
-
-```text
-all rows not marked planet
-
-all rows without TOI
-
-all rows labelled negative
-```
-
-That would make external catalog state influence the supposedly unsupervised
-anomaly model.
-
----
-
-# 31. V1 Eligibility
-
-A Gold LC anomaly row is eligible when:
-
-```text
-row identity valid
-
-Gold contract valid
-
-all required anomaly-view inputs structurally valid
-```
-
-Optional nullable inputs do not automatically remove the row.
-
----
-
-# 32. No Candidate Label Filtering
-
-Rows remain eligible regardless of:
-
-```text
-TOI state
-
-candidate training label
-```
-
-if such information is available elsewhere.
-
-Anomaly learning must remain label-independent.
-
----
-
-# 33. Gold Component
-
-Use:
-
-```text
-gold-anomaly-v1
-    ->
-lightcurve component
-```
-
-Do not train anomaly V1 from:
-
-```text
-gold-candidate-v1
-```
-
-just because its rows also contain LC features.
-
----
-
-# 34. Why Separate Gold Component
-
-The anomaly dataset should represent the broader LC population.
-
-Candidate Gold may already have candidate-oriented joins/selection semantics.
-
-Keep anomaly training attached to:
-
-```text
-Gold anomaly lightcurve table
-```
-
----
-
-# 35. Anomaly V1 Feature Philosophy
-
-Prefer generic observation/variability statistics.
-
-Recommended categories:
-
-```text
-TIME COVERAGE
-
-CADENCE / GAP STRUCTURE
-
-ROBUST FLUX VARIABILITY
-
-DISTRIBUTION SHAPE
-```
-
----
-
-# 36. Recommended Model Inputs
-
-Use actual existing contract names corresponding to:
-
-```text
-n_points
-
-time_span
-
-median_cadence
-
-max_gap
-
-flux_mean
-
-flux_median
-
-flux_std
-
-flux_mad
-
-flux_amplitude
-
-flux_rms
-
-flux_skewness
-
-flux_kurtosis
-```
-
-Only include fields that exist in the frozen Gold V1 contract.
-
----
-
-# 37. BLS Features in Anomaly V1
-
-Recommended:
-
-```text
-exclude BLS-specific candidate features
-```
-
-from mandatory `anomaly-lightcurve-ml-view-v1`.
-
-Reason:
-
-```text
-anomaly model should first learn generic LC statistical structure
-```
-
-rather than primarily learning:
-
-```text
-transit-search strength
-```
-
----
-
-# 38. If BLS Is Included
-
-Only include BLS fields if the actual implementation deliberately freezes them
-into:
-
-```text
-anomaly-lightcurve-ml-view-v1
-```
-
-and documents the scientific reason.
-
-Do not add them implicitly.
-
----
-
-# 39. Identity Fields Are Not Features
-
-Do NOT feed:
-
-```text
-source_product_id
-
-lineage_id
-
-tic_id
-
-sample_id
-
-sector
-```
-
-into the autoencoder.
-
----
-
-# 40. Catalog Fields Are Not Features
-
-Do NOT feed:
-
-```text
-TOI ID
-
-TCE ID
-
-training label
-
-catalog disposition
-```
-
-into anomaly V1.
-
----
-
-# 41. Feature Order
-
-Freeze exact ordered numeric vector in:
-
-```text
-ml-anomaly-view-v1.md
-```
-
----
-
-# 42. Feature Order Is Runtime-Semantic
-
-The same order must later be used by:
-
-```text
-Python training
-
-ONNX export
-
-Rust inference
-```
-
----
-
-# 43. Anomaly View Fingerprint
-
-Compute deterministic:
-
-```text
-SHA256(
-    anomaly-lightcurve-ml-view-v1
-    +
-    exact ordered feature list
-    +
-    eligibility semantics
-    +
-    group semantics
-)
-```
-
----
-
-# 44. Feature Change
-
-Adding/removing/reordering model inputs requires:
-
-```text
-anomaly-lightcurve-ml-view-v2
-```
-
-if the durable model input contract changes.
-
----
-
-# 45. No Feature Selection From Reconstruction Results
-
-Do not train once, inspect anomaly score, then silently drop features while
-keeping the same V1 view.
-
-Feature semantics are versioned.
-
----
-
-# 46. Anomaly Preprocessing Version
-
-Introduce:
-
-```text
-anomaly-lightcurve-preprocess-v1
-```
-
----
-
-# 47. TRAIN-Only Preprocessing
-
-Mandatory:
-
-```text
-fit preprocessing on TRAIN only
-```
-
-VALIDATION:
-
-```text
-transform only
-```
-
----
-
-# 48. Numeric Missing Values
-
-For nullable numeric features:
-
-```text
-TRAIN median imputation
-```
-
-same principle as candidate training.
-
----
-
-# 49. TRAIN Median
-
-For feature `f`:
-
-```text
-median_f =
-median(finite TRAIN values)
-```
-
-Validation never affects this value.
-
----
-
-# 50. All-Missing TRAIN Feature
-
-If one required model-view feature has:
-
-```text
-100% missing in TRAIN
-```
-
-fail:
-
-```text
-ALL_MISSING_TRAIN_FEATURE
-```
-
-Do not use validation to rescue it.
-
----
-
-# 51. Standardization
-
-After imputation:
-
-```text
-mean_f
-std_f
-```
-
-fit on TRAIN only.
-
-Transform:
-
-```text
-z = (x - mean_f) / scale_f
-```
-
----
-
-# 52. Constant Feature
-
-If:
-
-```text
-std_f == 0
-```
-
-use:
-
-```text
-scale_f = 1
-```
-
-and record diagnostic.
-
----
-
-# 53. Validation Must Not Influence Scaling
-
-Mandatory regression test.
-
----
-
-# 54. No Robust Scaler V1
-
-Use standardization for V1.
-
-Do not introduce several selectable scaler types.
-
-If scaling semantics change:
-
-```text
-anomaly-lightcurve-preprocess-v2
-```
-
----
-
-# 55. No Categorical Encoding
-
-Anomaly LC V1 input should be:
-
-```text
-numeric fixed-length vector
-```
-
-No one-hot sector/TIC/catalog values.
-
----
-
-# 56. Preprocessing Artifact
-
-Persist:
-
-```text
-preprocessing.json
-```
-
-containing:
+Conceptual:
 
 ```text
 schema_version
 
-preprocessing_version
+cohort_id
 
-feature_names
-
-imputation medians
-
-means
-
-scales
-
-split_id
-```
-
----
-
-# 57. No Label Encoding In Anomaly Artifact
-
-Unlike candidate model, anomaly preprocessing does NOT need:
-
-```text
-POSITIVE -> 1
-NEGATIVE -> 0
-```
-
-because the model is unsupervised.
-
----
-
-# 58. Score Definition Version
-
-Introduce:
-
-```text
-reconstruction-mse-v1
-```
-
----
-
-# 59. Anomaly Score
-
-For transformed input:
-
-```text
-x
-```
-
-and reconstruction:
-
-```text
-x_hat
-```
-
-define:
-
-```text
-anomaly_score =
-mean(
-    (x - x_hat)^2
-)
-```
-
-over the exact ordered model feature vector.
-
----
-
-# 60. Score Space
-
-Important:
-
-```text
-anomaly score is computed in standardized feature space
-```
-
-not directly in mixed-unit Gold feature space.
-
----
-
-# 61. Why Standardized Score
-
-Otherwise features with larger numerical scales could dominate reconstruction
-error for purely unit-related reasons.
-
----
-
-# 62. Score Is Evidence
-
-Freeze terminology:
-
-```text
-higher score
-    =
-larger reconstruction error
-```
-
-It means:
-
-```text
-more unusual relative to learned TRAIN feature structure
-```
-
-It does NOT mean:
-
-```text
-scientifically confirmed anomaly
-```
-
----
-
-# 63. No Threshold Yet
-
-Do NOT define:
-
-```text
-score > X = anomaly
-```
-
-in Phase 6.3.
-
-Phase 6.4 evaluates/finalizes threshold semantics if needed.
-
----
-
-# 64. No Percentile Threshold Yet
-
-Do not freeze:
-
-```text
-top 1%
-95th percentile
-3 sigma
-```
-
-as production behavior here.
-
-You may report score distribution diagnostics only.
-
----
-
-# 65. Autoencoder Version
-
-Freeze:
-
-```text
-anomaly-lightcurve-autoencoder-v1
-```
-
----
-
-# 66. V1 Architecture
-
-Recommended:
-
-```text
-input_dim
-   |
-Linear(input_dim, 32)
-   |
-ReLU
-   |
-Linear(32, 8)
-   |
-ReLU
-   |
-Linear(8, 32)
-   |
-ReLU
-   |
-Linear(32, input_dim)
-   |
-reconstruction
-```
-
----
-
-# 67. Latent Representation
-
-V1 latent dimension:
-
-```text
-8
-```
-
-Do not expose latent dimension as a casually mutable runtime parameter while
-keeping the same model version.
-
----
-
-# 68. Small Model Requirement
-
-The model must remain:
-
-```text
-CPU-friendly
-
-4 GB VRAM friendly
-
-ONNX-friendly
-
-easy to reproduce
-```
-
----
-
-# 69. No Dropout V1
-
-Recommended:
-
-```text
-no dropout
-```
-
-for simpler deterministic behavior/runtime parity.
-
----
-
-# 70. No BatchNorm V1
-
-Recommended:
-
-```text
-no BatchNorm
-```
-
-This avoids additional running-state semantics and simplifies tiny-dataset
-training.
-
----
-
-# 71. Activation
-
-Use:
-
-```text
-ReLU
-```
-
-for V1.
-
----
-
-# 72. Output Activation
-
-Use:
-
-```text
-none
-```
-
-on reconstruction output.
-
-The network reconstructs standardized real-valued inputs.
-
----
-
-# 73. Loss
-
-Use:
-
-```text
-MSELoss
-```
-
-between:
-
-```text
-reconstruction
-```
-
-and:
-
-```text
-standardized input
-```
-
----
-
-# 74. No Classification Loss
-
-Do NOT use:
-
-```text
-BCE
-
-cross entropy
-
-TOI labels
-```
-
-for anomaly model training.
-
----
-
-# 75. Optimizer
-
-Recommended:
-
-```text
-AdamW
-```
-
----
-
-# 76. Learning Rate
-
-Recommended default:
-
-```text
-1e-3
-```
-
-Persist actual value.
-
----
-
-# 77. Weight Decay
-
-Recommended:
-
-```text
-1e-5
-```
-
-Persist actual value.
-
----
-
-# 78. Batch Size
-
-Recommended default:
-
-```text
-64
-```
-
----
-
-# 79. Maximum Epochs
-
-Recommended:
-
-```text
-150
-```
-
-as a safety ceiling.
-
----
-
-# 80. Early Stopping
-
-Use:
-
-```text
-VALIDATION reconstruction loss
-```
-
-only.
-
----
-
-# 81. Early-Stopping Patience
-
-Recommended:
-
-```text
-15
-```
-
----
-
-# 82. Early-Stopping `min_delta`
-
-Use an explicit small value such as:
-
-```text
-1e-5
-```
-
-Persist it.
-
----
-
-# 83. Best Model
-
-Persist:
-
-```text
-best validation reconstruction-loss state
-```
-
-not blindly the final epoch.
-
----
-
-# 84. No Golden Test For Early Stopping
-
-Mandatory:
-
-```text
-GOLDEN TEST
-```
-
-is not loaded in Phase 6.3.
-
----
-
-# 85. No Recent Holdout
-
-Same for:
-
-```text
-RECENT HOLDOUT
-```
-
----
-
-# 86. DataLoader
-
-TRAIN:
-
-```text
-shuffle=true
-```
-
-using deterministic seeded generator.
-
-VALIDATION:
-
-```text
-shuffle=false
-```
-
----
-
-# 87. Training Seed
-
-Require explicit:
-
-```text
-training_seed
-```
-
----
-
-# 88. Seed Coverage
-
-Set deterministic seeds for used:
-
-```text
-Python random
-
-NumPy
-
-PyTorch
-```
-
----
-
-# 89. Split Seed Is Different
-
-Freeze:
-
-```text
-split_seed
-    =
-group membership
-```
-
-```text
-training_seed
-    =
-optimization randomness
-```
-
----
-
-# 90. CPU Reference Mode
-
-Normal automated validation should use:
-
-```text
-device=cpu
-```
-
----
-
-# 91. GPU Optional
-
-Support:
-
-```text
-device=auto
-
-device=cuda
-```
-
-only if existing training-device logic already supports this cleanly.
-
----
-
-# 92. CPU Fallback
-
-For:
-
-```text
-device=auto
-```
-
-CUDA absence:
-
-```text
-use CPU
-```
-
----
-
-# 93. Explicit CUDA Failure
-
-For:
-
-```text
-device=cuda
-```
-
-with no CUDA:
-
-```text
-fail clearly
-```
-
----
-
-# 94. No GPU Correctness Dependency
-
-The model must not require GPU to:
-
-```text
-train
-
-evaluate validation reconstruction
-
-serialize
-```
-
----
-
-# 95. Input Tensor
-
-Use:
-
-```text
-float32
-```
-
-shape:
-
-```text
-[N, input_dim]
-```
-
----
-
-# 96. Output Tensor
-
-Freeze:
-
-```text
-[N, input_dim]
-```
-
-reconstruction shape.
-
----
-
-# 97. Score Shape
-
-Per-row anomaly score:
-
-```text
-[N]
-```
-
----
-
-# 98. Finite Tensor Invariant
-
-After preprocessing:
-
-```text
-NaN = none
-
-+Inf = none
-
--Inf = none
-```
-
----
-
-# 99. No Whole Historical Dataset Requirement
-
-For current project scale the scalar dataset may fit in memory.
-
-Still avoid coupling correctness to loading arbitrary future history into GPU
-memory at once.
-
----
-
-# 100. Development Metrics
-
-Phase 6.3 should record:
-
-```text
-best_train_reconstruction_loss
-
-validation_reconstruction_loss
-
-validation_score_mean
-
-validation_score_median
-
-validation_score_p95
-
-validation_score_max
-```
-
----
-
-# 101. Optional Latent Diagnostics
-
-Do NOT persist giant latent-vector datasets.
-
-At most record small diagnostic statistics if actually useful.
-
-Not required.
-
----
-
-# 102. No Accuracy
-
-Do NOT report:
-
-```text
-accuracy
-```
-
-for an unsupervised anomaly model without ground-truth anomaly labels.
-
----
-
-# 103. No PR-AUC Claim
-
-Do NOT report:
-
-```text
-PR-AUC
-
-ROC-AUC
-```
-
-as model quality unless Phase 6.4 explicitly introduces a valid labeled or
-synthetic evaluation cohort.
-
----
-
-# 104. No False Scientific Benchmark
-
-Validation reconstruction loss is:
-
-```text
-development reconstruction metric
-```
-
-not:
-
-```text
-astronomical anomaly detection accuracy
-```
-
----
-
-# 105. Score Distribution Only
-
-Phase 6.3 can inspect:
-
-```text
-mean
-
-median
-
-p95
-
-max
-```
-
-of validation scores.
-
-Do not convert them into a final binary decision.
-
----
-
-# 106. Training Spec Fingerprint
-
-Compute:
-
-```text
-training_spec_fingerprint =
-SHA256(
-    gold_snapshot_id
-    +
-    split_id
-    +
-    anomaly view fingerprint
-    +
-    anomaly-lightcurve-autoencoder-v1
-    +
-    anomaly-lightcurve-preprocess-v1
-    +
-    reconstruction-mse-v1
-    +
-    training_seed
-    +
-    canonical hyperparameters
-)
-```
-
----
-
-# 107. Operational Config Exclusion
-
-Do not include:
-
-```text
-MinIO hostname
-
-log level
-
-temp directory
-```
-
-in training-spec fingerprint.
-
----
-
-# 108. Training Run ID
-
-Create one unique execution identity:
-
-```text
-anomaly-run-...
-```
-
-Distinct from:
-
-```text
-training_spec_fingerprint
-```
-
----
-
-# 109. Training Run Path
-
-Use:
-
-```text
-training-runs/
-└── anomaly/
-    └── <training-run-id>/
-        ├── model.pt
-        ├── preprocessing.json
-        ├── metrics.json
-        └── manifest.json
-```
-
-Optional:
-
-```text
-history.json
-```
-
-only if actually useful.
-
----
-
-# 110. Native Model
-
-Persist:
-
-```text
-state_dict
-```
-
-plus enough architecture/version metadata to reconstruct:
-
-```text
-anomaly-lightcurve-autoencoder-v1
-```
-
----
-
-# 111. Model SHA256
-
-Compute:
-
-```text
-model_sha256
-```
-
----
-
-# 112. Preprocessing SHA256
-
-Compute:
-
-```text
-preprocessing_sha256
-```
-
----
-
-# 113. Metrics SHA256
-
-Recommended:
-
-```text
-metrics_sha256
-```
-
----
-
-# 114. Reuse `training-run-v1`
-
-Phase 6.2 already introduced:
-
-```text
-contracts/data/training-run-v1.md
-```
-
-Reuse it for:
-
-```text
-task=astronomical_anomaly_detection
-```
-
-Do NOT create another training-run schema solely for anomaly models.
-
----
-
-# 115. Training Run Task
-
-Use:
-
-```text
-astronomical_anomaly_detection
-```
-
-or one equivalent stable task name.
-
-Do NOT call it:
-
-```text
-alien_detection
-```
-
----
-
-# 116. Anomaly Training Run Manifest
-
-Persist:
-
-```text
-schema_version
-
-training_run_id
-
-training_spec_fingerprint
+cohort_fingerprint
 
 task
 
-model_version
+cohort_kind
 
-score_definition_version
+source_gold_snapshot_id
 
-gold_snapshot_id
-
-gold_manifest_sha256
-
-split_id
-
-split_manifest_sha256
+source_gold_manifest_sha256
 
 dataset_view_version
 
 dataset_view_fingerprint
 
-feature_names
+selection_policy_version
 
-preprocessing_version
+excluded_group_cohort_ids
 
-training_seed
+group_count
 
-hyperparameters
+row_count
 
-train_row_count
+group_keys
+
+created_at
+
+producer
+```
+
+Candidate cohort may also record:
+
+```text
+positive_count
+negative_count
+```
+
+---
+
+# 16. Cohort Manifest Stores Groups
+
+Prefer storing:
+
+```text
+group_keys
+```
+
+instead of copying all Gold feature vectors.
+
+Rows are reconstructed from:
+
+```text
+exact Gold snapshot
++
+dataset view
++
+group keys
+```
+
+---
+
+# 17. Canonical Group Ordering
+
+Sort:
+
+```text
+group_keys ASC
+```
+
+before:
+
+```text
+fingerprinting
+writing
+```
+
+---
+
+# 18. Cohort Identity
+
+Compute deterministic:
+
+```text
+cohort_fingerprint =
+SHA256(
+    cohort kind
+    +
+    task
+    +
+    source Gold snapshot
+    +
+    source Gold manifest SHA
+    +
+    dataset view
+    +
+    selection policy
+    +
+    canonical group keys
+)
+```
+
+---
+
+# 19. Cohort ID
+
+Example:
+
+```text
+golden-v1-<sha-prefix>
+
+recent-v1-<sha-prefix>
+```
+
+Persist full fingerprint.
+
+---
+
+# 20. Cohort ID Ignores Clock
+
+Do NOT include:
+
+```text
+created_at
+
+hostname
+
+random UUID
+```
+
+in cohort identity.
+
+---
+
+# 21. Cohort Is Immutable
+
+Once:
+
+```text
+manifest.json
+```
+
+is committed:
+
+```text
+do not add groups
+
+do not remove groups
+
+do not relabel using today's catalog
+
+do not change source Gold snapshot
+```
+
+---
+
+# 22. Label Changes Require New Cohort
+
+If a future label snapshot changes Gold labels:
+
+```text
+Golden cohort V1 remains unchanged
+```
+
+A deliberately updated benchmark becomes:
+
+```text
+Golden cohort V2
+```
+
+Do not silently relabel V1.
+
+---
+
+# 23. Golden Benchmark Permanence
+
+A frozen Golden Test is intended for repeated comparable evaluation.
+
+Therefore future training splits should avoid its target groups.
+
+---
+
+# 24. Future Split Reservation
+
+After Golden Test exists:
+
+```text
+future TRAIN / VALIDATION
+```
+
+should exclude:
+
+```text
+frozen golden group keys
+```
+
+to preserve benchmark integrity.
+
+---
+
+# 25. Do Not Silently Change `ml-split-v1`
+
+If the existing:
+
+```text
+ml-split-v1
+```
+
+contract cannot record reserved benchmark cohorts cleanly:
+
+```text
+introduce ml-split-v2
+```
+
+with:
+
+```text
+reserved_cohort_ids
+```
+
+or equivalent explicit exclusion provenance.
+
+Do NOT silently change frozen V1 semantics.
+
+---
+
+# 26. Split Reservation Rule
+
+Future split manifest should be able to answer:
+
+```text
+Which frozen benchmark cohorts were excluded from training?
+```
+
+This is essential once a Golden Test exists.
+
+---
+
+# 27. Existing V1 Training Runs Remain Valid
+
+Do not rewrite old:
+
+```text
+ml-split-v1
+```
+
+manifests.
+
+For those runs, Golden Test eligibility is proven by:
+
+```text
+golden groups
+INTERSECT
+development groups
+=
+empty
+```
+
+---
+
+# 28. Candidate Golden Selection Policy
+
+Introduce:
+
+```text
+candidate-golden-unseen-v1
+```
+
+---
+
+# 29. Candidate Golden Source
+
+Input:
+
+```text
+completed candidate training run
++
+explicit committed candidate Gold snapshot
+```
+
+The source snapshot may be newer/cumulative.
+
+---
+
+# 30. Candidate Golden Eligible Labels
+
+Only:
+
+```text
+POSITIVE
+
+NEGATIVE
+```
+
+may participate in supervised final metrics.
+
+---
+
+# 31. Candidate Golden Excludes Development Groups
+
+Mandatory:
+
+```text
+candidate golden group
+NOT IN
+training split TRAIN groups
+
+candidate golden group
+NOT IN
+training split VALIDATION groups
+```
+
+---
+
+# 32. Previously Unresolved Target
+
+A target that existed in older Gold as:
+
+```text
+UNRESOLVED
+```
+
+but was never part of:
+
+```text
+TRAIN
+VALIDATION
+```
+
+may later become eligible Golden Test data after a versioned label update.
+
+This is valid because its features were not used for model fitting or
+validation.
+
+---
+
+# 33. Partially Exposed Target
+
+If one row from TIC 123 was in TRAIN:
+
+```text
+all future rows for TIC 123
+```
+
+are contaminated for that training run's Golden Test.
+
+Exclude the entire group.
+
+---
+
+# 34. Golden Test Uses All Selected Group Rows
+
+Once a group qualifies:
+
+```text
+include all supervised eligible rows
+```
+
+for that group from the frozen source Gold snapshot.
+
+Do not cherry-pick easiest rows.
+
+---
+
+# 35. No Golden Class Balancing
+
+Do NOT:
+
+```text
+oversample positives
+
+undersample negatives
+```
+
+in Golden Test.
+
+Preserve natural frozen cohort distribution.
+
+---
+
+# 36. Golden Class Coverage
+
+Candidate Golden Test requires:
+
+```text
+>= 1 positive group/row
+
+>= 1 negative group/row
+```
+
+for functional binary metrics.
+
+Prefer more data in real evaluation.
+
+---
+
+# 37. Tiny Golden Warning
+
+If Golden Test is very small:
+
+```text
+evaluation remains reproducible
+```
+
+but documentation must state:
+
+```text
+high statistical uncertainty
+```
+
+Do not make strong scientific claims.
+
+---
+
+# 38. Candidate Golden Freeze Command
+
+Recommended:
+
+```bash
+python -m aurora_ml.main evaluation-cohort \
+    --task candidate \
+    --kind golden \
+    --training-run-id <run-id> \
+    --snapshot-id <evaluation-gold-id>
+```
+
+---
+
+# 39. Candidate Recent Holdout Policy
+
+Introduce:
+
+```text
+candidate-recent-sector-v1
+```
+
+---
+
+# 40. Recent Holdout Meaning
+
+Recent Holdout should represent:
+
+```text
+newer observation context
++
+target groups unseen by the model
+```
+
+not merely another random sample.
+
+---
+
+# 41. Training Sector Cutoff
+
+Derive:
+
+```text
+training_max_sector
+```
+
+from the exact candidate Gold snapshot used by the training run.
+
+---
+
+# 42. Candidate Recent Eligibility
+
+Recommended V1:
+
+```text
+training_label in {POSITIVE, NEGATIVE}
+
+sector > training_max_sector
+
+group_key not in TRAIN
+
+group_key not in VALIDATION
+
+group_key not in GOLDEN TEST
+```
+
+---
+
+# 43. Existing TIC In New Sector
+
+If TIC 123 appeared in training and later appears in sector 50:
+
+```text
+exclude TIC 123
+```
+
+from Recent Holdout.
+
+New observation does not erase target leakage.
+
+---
+
+# 44. Recent Holdout Uses Explicit Gold Snapshot
+
+User/evaluator provides:
+
+```text
+recent_gold_snapshot_id
+```
+
+Do not query:
+
+```text
+whatever Gold is latest today
+```
+
+without pinning exact ID.
+
+---
+
+# 45. Recent Cohort Is Immutable Per Snapshot
+
+Each recent evaluation cohort is immutable.
+
+Example:
+
+```text
+recent-A from Gold snapshot 50
+
+recent-B from Gold snapshot 55
+```
+
+Both may coexist.
+
+---
+
+# 46. Recent Is Rolling Conceptually
+
+Unlike Golden Test:
+
+```text
+Recent Holdout may evolve
+```
+
+as new Gold snapshots arrive.
+
+But each individual recent cohort remains immutable.
+
+---
+
+# 47. Recent Holdout May Later Become Training Data
+
+A recent cohort used to evaluate model A may later be included in training
+model B.
+
+That is allowed.
+
+But:
+
+```text
+model B
+```
+
+must NOT claim that same cohort as unseen Recent Holdout.
+
+Evaluator contamination checks must reject it.
+
+---
+
+# 48. Candidate Recent Class Coverage
+
+For official supervised metrics, prefer both:
+
+```text
+POSITIVE
+NEGATIVE
+```
+
+If only one class exists:
+
+```text
+evaluation status =
+INSUFFICIENT_CLASS_COVERAGE
+```
+
+Do not fabricate ROC/PR metrics.
+
+---
+
+# 49. Candidate Training Run Input
+
+Evaluation starts from an immutable completed:
+
+```text
+training-runs/candidate/<run-id>/manifest.json
+```
+
+---
+
+# 50. Verify Candidate Training Run
+
+Before evaluation verify:
+
+```text
+manifest valid
+
+model.pt checksum valid
+
+preprocessing.json checksum valid
+
+metrics.json checksum valid
+
+Gold snapshot valid
+
+split manifest valid
+```
+
+---
+
+# 51. No Model Retraining
+
+Phase 6.4 must NOT call:
+
+```text
+optimizer.step()
+```
+
+for a completed candidate model.
+
+Evaluation is read-only with respect to training artifacts.
+
+---
+
+# 52. Candidate Validation Reconstruction
+
+Phase 6.2 did not need durable row predictions.
+
+Phase 6.4 may reconstruct:
+
+```text
+VALIDATION rows
+```
+
+from:
+
+```text
+training Gold
++
+split manifest
+```
+
+and run the frozen native model.
+
+---
+
+# 53. Candidate Threshold Selection
+
+Introduce:
+
+```text
+candidate-threshold-max-f1-v1
+```
+
+Threshold is selected using:
+
+```text
+VALIDATION only
+```
+
+---
+
+# 54. Golden Test Never Selects Threshold
+
+Mandatory:
+
+```text
+Golden Test
+    ->
+metrics only
+```
+
+Never:
+
+```text
+Golden Test
+    ->
+threshold tuning
+```
+
+---
+
+# 55. Recent Holdout Never Selects Threshold
+
+Same rule.
+
+---
+
+# 56. Candidate Threshold Candidates
+
+Given validation probabilities:
+
+```text
+p_1 ... p_n
+```
+
+construct deterministic candidate thresholds from:
+
+```text
+sorted unique validation probabilities
+```
+
+plus boundary values if needed.
+
+---
+
+# 57. Classification Rule
+
+Freeze:
+
+```text
+POSITIVE prediction
+iff
+probability >= threshold
+```
+
+---
+
+# 58. Threshold Objective
+
+For each candidate threshold compute:
+
+```text
+F1
+```
+
+on VALIDATION.
+
+Select:
+
+```text
+maximum F1
+```
+
+---
+
+# 59. Candidate Threshold Tie Break
+
+If multiple thresholds have same F1 within exact metric semantics:
+
+```text
+1. higher recall
+2. higher precision
+3. lower threshold
+```
+
+This final tie break favors recall for candidate vetting.
+
+---
+
+# 60. Threshold Policy Is Versioned
+
+Any change to:
+
+```text
+objective
+
+tie break
+
+classification comparison
+```
+
+requires:
+
+```text
+candidate-threshold-...-v2
+```
+
+---
+
+# 61. Threshold Value Is Durable
+
+Persist exact selected:
+
+```text
+decision_threshold
+```
+
+in the Phase 6.4 evaluation artifact.
+
+---
+
+# 62. Threshold Is Not Training Artifact
+
+Do NOT mutate:
+
+```text
+training-runs/candidate/<run-id>/
+```
+
+to insert the threshold.
+
+Training run remains immutable.
+
+---
+
+# 63. Candidate Golden Ranking Metrics
+
+Compute:
+
+```text
+golden_pr_auc
+
+golden_roc_auc
+```
+
+using continuous candidate probabilities.
+
+---
+
+# 64. Candidate Golden Threshold Metrics
+
+At the frozen validation-selected threshold compute:
+
+```text
+golden_precision
+
+golden_recall
+
+golden_f1
+
+golden_confusion_matrix
+```
+
+---
+
+# 65. Candidate Accuracy
+
+May optionally report:
+
+```text
+golden_accuracy
+```
+
+as a diagnostic.
+
+Do NOT make it the primary candidate metric.
+
+---
+
+# 66. Candidate Primary Metric
+
+Freeze project emphasis:
+
+```text
+PR-AUC
+```
+
+as primary ranking metric.
+
+---
+
+# 67. Candidate Recent Metrics
+
+Using the exact same frozen model + preprocessing + threshold:
+
+```text
+recent_pr_auc
+
+recent_roc_auc
+
+recent_precision
+
+recent_recall
+
+recent_f1
+
+recent_confusion_matrix
+```
+
+when class coverage permits.
+
+---
+
+# 68. No Recent Recalibration
+
+Do NOT recompute:
+
+```text
+imputation medians
+
+scaler means/stds
+
+decision threshold
+```
+
+from Recent Holdout.
+
+---
+
+# 69. No Golden Recalibration
+
+Same rule.
+
+---
+
+# 70. Candidate Distribution Comparison
+
+Report useful non-training diagnostics:
+
+```text
+golden row count
+
+recent row count
+
+golden positive fraction
+
+recent positive fraction
+
+missing-feature fractions
+```
+
+---
+
+# 71. Candidate Drift Summary
+
+Compute simple metric deltas such as:
+
+```text
+recent_pr_auc - golden_pr_auc
+
+recent_recall - golden_recall
+
+recent_precision - golden_precision
+```
+
+Do not define promotion behavior yet.
+
+Phase 6.5 uses evaluation evidence.
+
+---
+
+# 72. Do Not Tune From Drift
+
+A weak Recent Holdout result:
+
+```text
+does not trigger retraining automatically
+```
+
+in Phase 6.4.
+
+It is evaluation evidence only.
+
+---
+
+# 73. Candidate Probability Integrity
+
+Verify all:
+
+```text
+0 <= probability <= 1
+```
+
+---
+
+# 74. Candidate Feature Runtime Integrity
+
+Evaluation must use:
+
+```text
+exact preprocessing.json
+
+exact feature order
+
+exact native model
+```
+
+from the training run.
+
+Do not recompute preprocessing.
+
+---
+
+# 75. Candidate Model Version Check
+
+Expected:
+
+```text
+candidate-tabular-mlp-v1
+```
+
+or another explicitly supported model version.
+
+Unknown model version:
+
+```text
+fail
+```
+
+---
+
+# 76. Candidate Preprocessing Version Check
+
+Expected:
+
+```text
+candidate-preprocess-v1
+```
+
+or explicit supported version.
+
+---
+
+# 77. Anomaly Golden Evaluation
+
+Anomaly model has no natural POSITIVE/NEGATIVE ground truth.
+
+Therefore Golden Test semantics differ.
+
+---
+
+# 78. Anomaly Golden Base Cohort
+
+Freeze an unseen reference cohort from an explicit committed:
+
+```text
+Gold anomaly snapshot
+```
+
+using groups:
+
+```text
+NOT IN TRAIN
+NOT IN VALIDATION
+```
+
+for that training run.
+
+---
+
+# 79. Anomaly Golden Selection Policy
+
+Introduce:
+
+```text
+anomaly-golden-unseen-v1
+```
+
+---
+
+# 80. Anomaly Golden Labels Are Not Required
+
+Do NOT require:
+
+```text
+TOI label
+
+candidate training label
+```
+
+for anomaly base cohort eligibility.
+
+---
+
+# 81. Anomaly Golden Target Leakage
+
+Same invariant:
+
+```text
+Golden anomaly TIC
+NOT IN
+anomaly TRAIN / VALIDATION TICs
+```
+
+---
+
+# 82. Anomaly Threshold Policy
+
+Phase 6.3 deliberately created no final threshold.
+
+Introduce:
+
+```text
+anomaly-threshold-validation-p99-v1
+```
+
+---
+
+# 83. Anomaly Threshold Source
+
+Compute reconstruction scores for:
+
+```text
+VALIDATION
+```
+
+using frozen:
+
+```text
+anomaly-lightcurve-preprocess-v1
+
+anomaly-lightcurve-autoencoder-v1
+
+reconstruction-mse-v1
+```
+
+---
+
+# 84. Anomaly Threshold Formula
+
+Freeze:
+
+```text
+threshold =
+quantile(
+    validation_reconstruction_scores,
+    0.99,
+    method="linear"
+)
+```
+
+using NumPy's explicitly documented linear quantile semantics.
+
+---
+
+# 85. Anomaly Alert Rule
+
+Freeze:
+
+```text
+alert
+iff
+anomaly_score >= threshold
+```
+
+---
+
+# 86. No Golden Threshold Tuning
+
+Golden reference scores must not influence:
+
+```text
+p99 threshold
+```
+
+---
+
+# 87. No Recent Threshold Tuning
+
+Recent scores do not influence threshold either.
+
+---
+
+# 88. Anomaly Threshold Is Heuristic
+
+Document clearly:
+
+```text
+p99 reconstruction threshold
+    =
+operational anomaly-evidence threshold
+```
+
+not:
+
+```text
+scientifically validated anomaly boundary
+```
+
+---
+
+# 89. Golden Reference Alert Rate
+
+For unmodified Golden reference rows compute:
+
+```text
+golden_reference_alert_rate
+```
+
+using frozen validation threshold.
+
+---
+
+# 90. Golden Score Statistics
+
+Record:
+
+```text
+golden_score_mean
+
+golden_score_median
+
+golden_score_p95
+
+golden_score_p99
+
+golden_score_max
+```
+
+---
+
+# 91. Synthetic Evaluation Purpose
+
+AURORA needs a deterministic mechanical test that the autoencoder responds to
+strong out-of-distribution feature perturbations.
+
+This is NOT an astrophysical simulation benchmark.
+
+---
+
+# 92. Synthetic Policy
+
+Introduce:
+
+```text
+anomaly-synthetic-standardized-shift-v1
+```
+
+---
+
+# 93. Synthetic Inputs Do Not Modify Gold
+
+Synthetic evaluation operates:
+
+```text
+in memory
+```
+
+after the frozen preprocessing transform.
+
+Do NOT write synthetic values into canonical Gold.
+
+---
+
+# 94. Synthetic Perturbation Space
+
+Apply perturbation in:
+
+```text
+standardized model-input space
+```
+
+so the shift has clear scale semantics.
+
+---
+
+# 95. Deterministic Feature Selection
+
+For each reference row derive:
+
+```text
+feature_index =
+uint64(
+    first 8 bytes of SHA256(source_product_id)
+)
+mod
+input_dim
+```
+
+---
+
+# 96. Synthetic Shift
+
+Create:
+
+```text
+x_synthetic = x_reference
+```
+
+then:
+
+```text
+x_synthetic[feature_index] += 6.0
+```
+
+V1 uses one deterministic:
+
+```text
++6 standard-deviation-unit shift
+```
+
+per row.
+
+---
+
+# 97. Why Feature-Agnostic Synthetic Injection
+
+This avoids hard-coding assumptions such as:
+
+```text
+flux_mad is always the injected anomaly
+```
+
+and provides a generic runtime sanity evaluation.
+
+---
+
+# 98. Synthetic Policy Version
+
+Changing:
+
+```text
+shift magnitude
+
+number of perturbed features
+
+feature-selection algorithm
+```
+
+requires:
+
+```text
+anomaly-synthetic-standardized-shift-v2
+```
+
+---
+
+# 99. Synthetic Detection Rate
+
+Compute:
+
+```text
+golden_synthetic_detection_rate =
+fraction(
+    synthetic_score >= threshold
+)
+```
+
+---
+
+# 100. Synthetic Score Statistics
+
+Record:
+
+```text
+golden_synthetic_score_mean
+
+golden_synthetic_score_median
+
+golden_synthetic_score_p95
+```
+
+---
+
+# 101. Synthetic Score Separation
+
+Record useful diagnostic:
+
+```text
+golden_synthetic_median_score
+-
+golden_reference_median_score
+```
+
+or equivalent clearly defined delta.
+
+---
+
+# 102. Synthetic Test Is Mechanical
+
+Do NOT report:
+
+```text
+astronomical anomaly accuracy
+```
+
+from this synthetic perturbation.
+
+Correct wording:
+
+```text
+synthetic perturbation detection rate
+```
+
+---
+
+# 103. Anomaly Recent Holdout
+
+Introduce:
+
+```text
+anomaly-recent-sector-v1
+```
+
+---
+
+# 104. Anomaly Recent Eligibility
+
+Recommended:
+
+```text
+sector > training_max_sector
+
+group_key not in TRAIN
+
+group_key not in VALIDATION
+
+group_key not in GOLDEN TEST
+```
+
+No label requirement.
+
+---
+
+# 105. Anomaly Recent Reference Metrics
+
+Using unchanged frozen model/threshold report:
+
+```text
+recent_reference_alert_rate
+
+recent_score_mean
+
+recent_score_median
+
+recent_score_p95
+
+recent_score_p99
+
+recent_score_max
+```
+
+---
+
+# 106. Anomaly Recent Synthetic Test
+
+Apply exact same:
+
+```text
+anomaly-synthetic-standardized-shift-v1
+```
+
+to Recent Holdout.
+
+Report:
+
+```text
+recent_synthetic_detection_rate
+```
+
+---
+
+# 107. No Recent Refitting
+
+Do NOT refit autoencoder preprocessing from Recent Holdout.
+
+---
+
+# 108. Score Drift
+
+Report:
+
+```text
+recent_reference_alert_rate
+-
+golden_reference_alert_rate
+```
+
+and selected score-distribution differences.
+
+Do not automatically change threshold.
+
+---
+
+# 109. Evaluation Run
+
+Each complete evaluation execution gets:
+
+```text
+evaluation_run_id
+```
+
+---
+
+# 110. Evaluation Specification
+
+Also compute deterministic:
+
+```text
+evaluation_spec_fingerprint
+```
+
+---
+
+# 111. Evaluation Run ID vs Spec
+
+Freeze:
+
+```text
+evaluation_spec_fingerprint
+    =
+what was evaluated
+
+evaluation_run_id
+    =
+one concrete execution
+```
+
+Same pattern as training.
+
+---
+
+# 112. Candidate Evaluation Spec
+
+Fingerprint includes:
+
+```text
+training_run_id
+
+training-run manifest SHA
+
+model SHA
+
+preprocessing SHA
+
+golden cohort ID
+
+recent cohort ID if present
+
+candidate evaluation policy version
+
+threshold policy version
+```
+
+---
+
+# 113. Anomaly Evaluation Spec
+
+Also includes:
+
+```text
+score-definition version
+
+anomaly threshold policy
+
+synthetic perturbation policy
+```
+
+---
+
+# 114. Evaluation Run Storage
+
+Recommended:
+
+```text
+evaluations/
+└── runs/
+    ├── candidate/
+    │   └── <evaluation-run-id>/
+    │       ├── threshold.json
+    │       ├── metrics.json
+    │       └── manifest.json
+    │
+    └── anomaly/
+        └── <evaluation-run-id>/
+            ├── threshold.json
+            ├── metrics.json
+            └── manifest.json
+```
+
+---
+
+# 115. No Row-Level Prediction Artifact Yet
+
+Do NOT persist:
+
+```text
+one probability/score per Gold row
+```
+
+as production predictions.
+
+Phase 6.4 evaluation needs aggregate metrics only.
+
+---
+
+# 116. Threshold Artifact
+
+`threshold.json` should be immutable.
+
+Candidate example fields:
+
+```text
+schema_version
+
+task
+
+threshold_policy_version
+
+threshold
+
+selection_source = VALIDATION
+
+training_run_id
+
+split_id
 
 validation_row_count
+```
 
-best_epoch
+---
 
-device
+# 117. Candidate Threshold Metadata
 
-runtime_versions
+Also record:
 
-model_key
+```text
+validation_f1
+
+validation_precision
+
+validation_recall
+```
+
+at selected threshold.
+
+---
+
+# 118. Anomaly Threshold Metadata
+
+Record:
+
+```text
+threshold_policy_version
+
+threshold
+
+quantile = 0.99
+
+quantile_method = linear
+
+selection_source = VALIDATION
+
+validation_score_count
+
+score_definition_version
+```
+
+---
+
+# 119. Evaluation Metrics Artifact
+
+Candidate:
+
+```text
+golden_*
+
+recent_*
+```
+
+Anomaly:
+
+```text
+golden_reference_*
+
+golden_synthetic_*
+
+recent_reference_*
+
+recent_synthetic_*
+```
+
+---
+
+# 120. Evaluation Manifest Contract
+
+Create:
+
+```text
+contracts/data/model-evaluation-v1.md
+```
+
+---
+
+# 121. Evaluation Manifest Fields
+
+Conceptual:
+
+```text
+schema_version
+
+evaluation_run_id
+
+evaluation_spec_fingerprint
+
+task
+
+training_run_id
+
+training_run_manifest_sha256
+
+model_version
 
 model_sha256
 
-preprocessing_key
+preprocessing_version
 
 preprocessing_sha256
 
+golden_cohort_id
+
+golden_cohort_manifest_sha256
+
+recent_cohort_id
+
+recent_cohort_manifest_sha256
+
+evaluation_policy_version
+
+threshold_policy_version
+
+score_definition_version
+
+synthetic_policy_version
+
+threshold_key
+
+threshold_sha256
+
 metrics_key
+
+metrics_sha256
 
 created_at
 
 completed_at
 ```
 
----
-
-# 117. No Label Snapshot Requirement In Model Semantics
-
-The anomaly model is not supervised by:
-
-```text
-candidate-label snapshot
-```
-
-Do not make label policy a model-training dependency.
-
-Gold snapshot may still reference labels globally; anomaly model does not use
-them.
+Task-specific optional fields may be null/absent.
 
 ---
 
-# 118. Manifest Written Last
+# 122. Evaluation Manifest Written Last
 
 Required:
 
 ```text
-train model
-    |
-    v
-model.pt
-    |
-    v
-preprocessing.json
-    |
-    v
-metrics.json
-    |
-    v
-verify artifacts
-    |
-    v
-training run manifest
+load/verify inputs
+      |
+      v
+select threshold using VALIDATION
+      |
+      v
+evaluate GOLDEN
+      |
+      v
+evaluate RECENT if provided
+      |
+      v
+write threshold.json
+      |
+      v
+write metrics.json
+      |
+      v
+verify
+      |
+      v
+write manifest.json
 ```
 
 ---
 
-# 119. Partial Run
+# 123. Manifest Is Evaluation Commit Marker
 
 Without valid:
 
@@ -2026,7 +2080,7 @@ Without valid:
 manifest.json
 ```
 
-the training run is:
+evaluation run is:
 
 ```text
 NOT COMMITTED
@@ -2034,14 +2088,46 @@ NOT COMMITTED
 
 ---
 
-# 120. Immutable Completed Run
+# 124. No Evaluation Checkpoint Hierarchy
+
+Do NOT create:
+
+```text
+checkpoints/ml-evaluation/
+```
+
+in V1.
+
+Evaluation is cheap/rebuildable enough.
+
+Use:
+
+```text
+manifest-last immutable run commit
+```
+
+---
+
+# 125. Why No Evaluation Checkpoint
+
+If evaluation crashes:
+
+```text
+rerun evaluation
+```
+
+No model optimization state is lost.
+
+Avoid unnecessary checkpoint state.
+
+---
+
+# 126. Evaluation Artifact Immutability
 
 After manifest commit:
 
 ```text
-model.pt
-
-preprocessing.json
+threshold.json
 
 metrics.json
 
@@ -2052,2319 +2138,2436 @@ are immutable.
 
 ---
 
-# 121. No Registry Package Yet
+# 127. Evaluation Does Not Mutate Training Run
 
-Do NOT write:
+Record SHA before evaluation.
 
-```text
-models/anomaly/<model-id>/
-```
-
-in Phase 6.3.
-
-Phase 6.5 owns registry model packages.
-
----
-
-# 122. ML-Training Checkpoint
-
-Reuse Phase 6.2 checkpoint semantics.
-
-Path:
+After evaluation:
 
 ```text
-checkpoints/
-└── ml-training/
-    └── anomaly/
-        └── <training-run-id>.json
+training run artifacts unchanged
 ```
 
 ---
 
-# 123. Checkpoint States
+# 128. Evaluation Does Not Mutate Gold
 
-Reuse:
+Same invariant.
+
+---
+
+# 129. Evaluation Does Not Mutate Split
+
+Same invariant.
+
+---
+
+# 130. Evaluation Does Not Mutate Cohorts
+
+Golden/Recent cohort manifests are read-only after freeze.
+
+---
+
+# 131. Candidate Evaluation Policy
+
+Introduce:
 
 ```text
-PLANNED
-    |
-    v
-TRAINING
-    |
-    v
-ARTIFACT_STORED
-    |
-    v
-COMPLETED
+candidate-evaluation-v1
 ```
 
-Failure:
+It freezes:
 
 ```text
-FAILED
+validation-only threshold selection
+
+Golden ranking metrics
+
+Golden threshold metrics
+
+Recent metrics
+
+no benchmark tuning
 ```
 
 ---
 
-# 124. Do Not Invent Different State Machine
+# 132. Anomaly Evaluation Policy
 
-Candidate and anomaly training run recovery have the same run-level semantics.
-
-Reuse the explicit implementation where appropriate.
-
----
-
-# 125. Checkpoint Is Recovery State
-
-It is NOT:
+Introduce:
 
 ```text
-model registry
+anomaly-evaluation-v1
+```
 
-split truth
+It freezes:
 
-Gold truth
+```text
+validation p99 threshold
 
-distributed lock
+Golden reference alert rate
+
+synthetic shift evaluation
+
+Recent reference/synthetic evaluation
 ```
 
 ---
 
-# 126. V1 Resume Semantics
+# 133. Candidate Evaluate CLI
 
-No optimizer-state resume required.
-
-Crash during:
-
-```text
-TRAINING
-```
-
-may restart training from:
-
-```text
-epoch 0
-```
-
-using same:
-
-```text
-Gold
-split
-preprocessing fit policy
-training seed
-configuration
-```
-
----
-
-# 127. Why Restart Is Acceptable
-
-The V1 autoencoder is intentionally small.
-
-Do not introduce remote epoch checkpoint complexity without measured need.
-
----
-
-# 128. ARTIFACT_STORED Recovery
-
-If:
-
-```text
-model
-
-preprocessing
-
-metrics
-```
-
-exist and verify:
-
-```text
-commit run manifest
-```
-
-without retraining.
-
----
-
-# 129. Manifest Repairs Checkpoint
-
-Valid committed run manifest + missing/stale checkpoint:
-
-```text
-repair checkpoint -> COMPLETED
-```
-
----
-
-# 130. Checkpoint Is Not Proof
-
-```text
-checkpoint=COMPLETED
-```
-
-with missing/corrupt run manifest:
-
-```text
-not trusted
-```
-
----
-
-# 131. Training CLI
-
-Add:
+Recommended:
 
 ```bash
-python -m aurora_ml.main train-anomaly \
-    --snapshot-id <gold-anomaly-snapshot-id> \
-    --split-id <anomaly-split-id> \
-    --training-seed 42
+python -m aurora_ml.main evaluate-candidate \
+    --training-run-id <run-id> \
+    --golden-cohort-id <cohort-id> \
+    --recent-cohort-id <cohort-id>
+```
+
+`--recent-cohort-id` may be optional.
+
+---
+
+# 134. Candidate Golden-Only Evaluation
+
+Support:
+
+```bash
+python -m aurora_ml.main evaluate-candidate \
+    --training-run-id <run-id> \
+    --golden-cohort-id <cohort-id>
+```
+
+A recent cohort may not always exist yet.
+
+---
+
+# 135. Anomaly Evaluate CLI
+
+Recommended:
+
+```bash
+python -m aurora_ml.main evaluate-anomaly \
+    --training-run-id <run-id> \
+    --golden-cohort-id <cohort-id> \
+    --recent-cohort-id <cohort-id>
 ```
 
 ---
 
-# 132. Optional Device
+# 136. Cohort Creation Is Separate
 
-Support existing style:
+Do not have `evaluate-candidate` silently discover:
 
 ```text
---device cpu
-
---device auto
-
---device cuda
+latest Gold
 ```
+
+and invent benchmark membership.
+
+Freeze cohort first.
+
+Then evaluate.
 
 ---
 
-# 133. CLI Output
+# 137. Explicit Benchmark Inputs
 
-Example:
+Evaluation must log:
 
 ```text
-training_run_id:          anomaly-run-...
-training_spec:            ...
-gold_snapshot_id:         ...
-split_id:                 ...
+training_run_id
 
-model:                    anomaly-lightcurve-autoencoder-v1
-preprocessing:            anomaly-lightcurve-preprocess-v1
-score_definition:         reconstruction-mse-v1
+golden_cohort_id
 
-features:                 ...
-
-TRAIN:
-  groups:                 ...
-  rows:                   ...
-
-VALIDATION:
-  groups:                 ...
-  rows:                   ...
-
-best_epoch:               ...
-validation_loss:          ...
-validation_score_mean:    ...
-validation_score_median:  ...
-validation_score_p95:     ...
-
-state:                    COMPLETED
+recent_cohort_id
 ```
 
 ---
 
-# 134. No "Detected N Anomalies"
+# 138. Golden Contamination Preflight
 
-Do not output:
+Before candidate/anomaly evaluation:
 
 ```text
-detected 42 anomalies
+golden groups
+INTERSECT
+TRAIN groups
+=
+empty
 ```
 
-without a frozen threshold/evaluation policy.
-
-Use:
+and:
 
 ```text
-score distribution
+golden groups
+INTERSECT
+VALIDATION groups
+=
+empty
 ```
-
-only.
 
 ---
 
-# 135. No Prediction Persistence
+# 139. Recent Contamination Preflight
 
-Do NOT create:
+Require:
 
 ```text
-predictions/
+recent groups
+INTERSECT
+TRAIN groups
+=
+empty
 ```
-
-during Phase 6.3.
-
----
-
-# 136. No Row-Level Scores In MinIO Yet
-
-Validation scores may remain:
 
 ```text
-in memory
+recent groups
+INTERSECT
+VALIDATION groups
+=
+empty
 ```
-
-for metric calculation.
-
-Do not commit them as production anomaly results.
-
----
-
-# 137. Why No Scores Yet
-
-Durable prediction schema belongs to the inference/prediction serving stage.
-
-Training-run metrics are enough here.
-
----
-
-# 138. Pure Preprocessing Fit
-
-Preferred:
-
-```python
-fit_anomaly_preprocessing(
-    train_rows,
-    feature_names,
-)
-```
-
-No MinIO I/O inside the math.
-
----
-
-# 139. Pure Transform
-
-Preferred:
-
-```python
-transform_anomaly_rows(
-    rows,
-    preprocessing,
-)
-```
-
-Must never refit.
-
----
-
-# 140. Pure Score Function
-
-Preferred:
-
-```python
-reconstruction_mse(
-    input_tensor,
-    reconstructed_tensor,
-)
-```
-
-This definition must later be reused for ONNX/Rust parity.
-
----
-
-# 141. Model Builder
-
-Preferred:
-
-```python
-build_anomaly_model(input_dim)
-```
-
-returning:
 
 ```text
-anomaly-lightcurve-autoencoder-v1
+recent groups
+INTERSECT
+GOLDEN groups
+=
+empty
 ```
 
 ---
 
-# 142. Training Loop
+# 140. Failure On Contamination
 
-Preferred:
-
-```python
-train_anomaly_model(...)
-```
-
-No MinIO operation inside batch optimization.
-
----
-
-# 143. Orchestrator
-
-Higher-level `train.py` may:
+If any intersection exists:
 
 ```text
-validate Gold/split
-
-load rows
-
-fit preprocessing
-
-construct tensors
-
-train
-
-validate reconstruction
-
-write artifacts
-
-update checkpoint
+EVALUATION_GROUP_LEAKAGE
 ```
+
+Do not compute/report final metrics.
 
 ---
 
-# 144. No Generic Trainer Factory
+# 141. No Row-Level Leakage Exception
 
-Do not make candidate/anomaly training share a giant polymorphic framework.
-
-Small low-level helpers may be reused only where semantics are truly identical:
+Do not say:
 
 ```text
-artifact hashing
-
-checkpoint object I/O
-
-seed initialization
+same TIC but different sector is okay
 ```
+
+It is not okay.
+
+Target-level grouping remains mandatory.
 
 ---
 
-# 145. Candidate/Anomaly Preprocessing
+# 142. Golden Cohort Reusability
 
-Do NOT automatically force them into one ambiguous:
+The same Golden cohort may evaluate many models only when each model passes:
 
 ```text
-preprocess_ml()
+group contamination check
 ```
 
-Their version identities are different:
+---
+
+# 143. Future Model Contaminating Golden
+
+If future model training included a Golden target:
 
 ```text
-candidate-preprocess-v1
-
-anomaly-lightcurve-preprocess-v1
+that model cannot use this Golden benchmark
 ```
+
+Do not hide contamination.
 
 ---
 
-# 146. No Global `utils.py`
+# 144. Preferred Future Behavior
 
-Keep anomaly math in:
+After Golden freeze:
 
 ```text
-anomaly/train.py
-
-anomaly/model.py
+future ml-split
 ```
 
-or existing clear ownership modules.
+should explicitly reserve Golden group IDs so this situation does not occur.
 
 ---
 
-# 147. Model Input Integrity
+# 145. Candidate Validation Predictions
 
-Before training:
+Recompute from frozen native model.
+
+Do not use:
 
 ```text
-input_dim
-==
-len(feature_names)
+old console metrics
 ```
 
----
-
-# 148. Reconstruction Integrity
-
-For every batch:
-
-```text
-reconstruction.shape
-==
-input.shape
-```
+as threshold-selection input.
 
 ---
 
-# 149. Score Integrity
+# 146. Candidate Golden Predictions
 
-Every validation row gets exactly:
-
-```text
-one finite reconstruction score
-```
-
----
-
-# 150. No Negative Score
-
-MSE score must satisfy:
-
-```text
-score >= 0
-```
-
-within numerical tolerance.
-
----
-
-# 151. Model Output Is Reconstruction
-
-Do not make V1 ONNX-facing semantics:
-
-```text
-single anomaly probability
-```
-
-The model reconstructs input.
-
-Later runtime computes:
-
-```text
-reconstruction-mse-v1
-```
-
----
-
-# 152. Why No Probability
-
-Unsupervised reconstruction error is not inherently calibrated to:
-
-```text
-P(anomaly)
-```
-
-Do not mislabel it.
-
----
-
-# 153. Unit Test — Dataset View Feature List
-
-Verify exact:
-
-```text
-anomaly-lightcurve-ml-view-v1
-```
-
-feature order.
-
----
-
-# 154. Unit Test — Identity Exclusion
-
-Verify no:
-
-```text
-tic_id
-
-sector
-
-source_product_id
-
-sample_id
-```
-
-appears in model tensor.
-
----
-
-# 155. Unit Test — Label Independence
-
-Provide same LC Gold features with different external candidate label metadata.
-
-Expected:
-
-```text
-same anomaly input vector
-```
-
----
-
-# 156. Unit Test — BLS Exclusion
-
-If V1 contract excludes BLS:
-
-```text
-bls_period
-
-bls_depth
-
-bls_power
-```
-
-must not appear in anomaly feature vector.
-
----
-
-# 157. Unit Test — Group Key TIC
-
-Same as Phase 6.1 target grouping.
-
----
-
-# 158. Unit Test — Multi-Sector TIC
-
-```text
-TIC 123 sector 10
-TIC 123 sector 11
-```
-
-must stay in the same anomaly split.
-
----
-
-# 159. Unit Test — Split Determinism
-
-Same:
-
-```text
-Gold
-view
-policy
-seed
-```
-
-produces same assignments.
-
----
-
-# 160. Unit Test — Cumulative Membership
-
-Existing groups retain split membership across cumulative anomaly Gold snapshots.
-
----
-
-# 161. Unit Test — No Label Influence On Split
-
-Changing candidate label metadata does not move the TIC between TRAIN and
-VALIDATION.
-
----
-
-# 162. Unit Test — Train Median
-
-Known TRAIN values.
-
-Verify exact imputation median.
-
----
-
-# 163. Unit Test — Validation Median Leakage
-
-Extreme validation values must not affect TRAIN median.
-
----
-
-# 164. Unit Test — All Missing TRAIN
-
-Expected:
-
-```text
-ALL_MISSING_TRAIN_FEATURE
-```
-
----
-
-# 165. Unit Test — Standardization
-
-Verify:
-
-```text
-mean
-scale
-transformed values
-```
-
-from TRAIN only.
-
----
-
-# 166. Unit Test — Validation Scale Leakage
-
-Validation changes must not affect preprocessing parameters.
-
----
-
-# 167. Unit Test — Constant Feature
-
-Expected:
-
-```text
-scale=1
-```
-
-policy.
-
----
-
-# 168. Unit Test — Preprocessing Serialization
-
-Round-trip:
+Use exact same:
 
 ```text
 feature order
 
-medians
+preprocessing
 
-means
-
-scales
-
-preprocessing version
-
-split ID
+model
 ```
+
+No cohort-specific transformations.
 
 ---
 
-# 169. Unit Test — No Label Encoding
+# 147. Candidate Recent Predictions
 
-Anomaly preprocessing artifact should not contain candidate binary label
-mapping unless a shared serialization contract requires an explicitly unused
-field.
-
-Preferred:
-
-```text
-no label encoding field
-```
+Same exact runtime pipeline.
 
 ---
 
-# 170. Unit Test — Finite Preprocessing
+# 148. Anomaly Validation Scores
 
-After transform:
-
-```text
-no NaN
-
-no Inf
-```
-
----
-
-# 171. Unit Test — Autoencoder Shape
-
-Input:
+Recompute with:
 
 ```text
-[4, input_dim]
-```
+exact feature order
 
-Expected reconstruction:
+exact anomaly preprocessing
 
-```text
-[4, input_dim]
-```
+exact autoencoder
 
----
-
-# 172. Unit Test — Finite Reconstruction
-
-Deterministic finite input:
-
-```text
-finite output
-```
-
----
-
-# 173. Unit Test — Score Exactness
-
-Example:
-
-```text
-x     = [0, 2]
-x_hat = [0, 0]
-```
-
-Expected:
-
-```text
-score = (0^2 + 2^2) / 2 = 2
-```
-
----
-
-# 174. Unit Test — Score Nonnegative
-
-Mandatory.
-
----
-
-# 175. Unit Test — Score Per Row
-
-Batch score shape:
-
-```text
-[N]
-```
-
----
-
-# 176. Unit Test — Score Version
-
-Training metadata records:
-
-```text
 reconstruction-mse-v1
 ```
 
 ---
 
-# 177. Unit Test — Model Version
+# 149. No Dataset-Specific Preprocessor
 
-Artifact records:
+Forbidden:
 
 ```text
-anomaly-lightcurve-autoencoder-v1
+Golden scaler
+
+Recent scaler
+```
+
+There is only:
+
+```text
+TRAIN-fitted preprocessing artifact
 ```
 
 ---
 
-# 178. Unit Test — Preprocessing Version
+# 150. Candidate Metrics Library
 
-Artifact records:
+Use one explicit implementation such as:
 
 ```text
-anomaly-lightcurve-preprocess-v1
+scikit-learn
+```
+
+for:
+
+```text
+average_precision_score
+
+roc_auc_score
+
+precision_score
+
+recall_score
+
+f1_score
+
+confusion_matrix
 ```
 
 ---
 
-# 179. Unit Test — Loss Improvement
+# 151. Freeze PR-AUC Meaning
 
-Train on a tiny structured synthetic inlier dataset.
-
-Expected:
+For AURORA V1:
 
 ```text
-reconstruction loss decreases
+PR-AUC
+=
+Average Precision
+```
+
+if `average_precision_score` is selected.
+
+Document this rather than ambiguously calling several different integrations
+"PR-AUC".
+
+---
+
+# 152. ROC-AUC
+
+Use continuous probabilities.
+
+Do not compute ROC-AUC from binary predictions.
+
+---
+
+# 153. Confusion Matrix Order
+
+Freeze label order:
+
+```text
+NEGATIVE = 0
+POSITIVE = 1
+```
+
+Document matrix interpretation.
+
+---
+
+# 154. Precision Zero-Division
+
+Use an explicit deterministic policy.
+
+Recommended:
+
+```text
+zero_division=0
+```
+
+for diagnostic threshold metrics.
+
+Document it.
+
+---
+
+# 155. Candidate Golden Missing Class
+
+If Golden cohort somehow contains only one class:
+
+```text
+fail benchmark validation
+```
+
+Do not report misleading PR/ROC metrics.
+
+---
+
+# 156. Recent Missing Class
+
+Recent Holdout may legitimately be too small.
+
+Set:
+
+```text
+recent_status =
+INSUFFICIENT_CLASS_COVERAGE
+```
+
+and avoid undefined ranking metrics.
+
+---
+
+# 157. No NaN Metrics Without Explanation
+
+Undefined metrics should be:
+
+```text
+null + status/reason
+```
+
+rather than unexplained:
+
+```text
+NaN
+```
+
+in durable JSON.
+
+---
+
+# 158. Anomaly Quantile Determinism
+
+Test exact:
+
+```text
+np.quantile(
+    scores,
+    0.99,
+    method="linear"
+)
+```
+
+semantics.
+
+---
+
+# 159. Anomaly Empty Validation
+
+Fail:
+
+```text
+NO_VALIDATION_SCORES
 ```
 
 ---
 
-# 180. Unit Test — Early Stopping
+# 160. Anomaly Nonfinite Scores
 
-Controlled no-improvement case respects:
+Any:
 
 ```text
-patience
-min_delta
+NaN
+
+Inf
+```
+
+in reconstruction scores is an evaluation integrity error.
+
+---
+
+# 161. Candidate Nonfinite Probabilities
+
+Same rule.
+
+---
+
+# 162. Evaluation Run Errors
+
+Keep compact:
+
+```text
+INVALID_TRAINING_RUN
+
+INVALID_EVALUATION_COHORT
+
+EVALUATION_GROUP_LEAKAGE
+
+GOLD_SNAPSHOT_MISMATCH
+
+MODEL_ARTIFACT_INTEGRITY_ERROR
+
+PREPROCESSING_INTEGRITY_ERROR
+
+INSUFFICIENT_CLASS_COVERAGE
+
+NO_VALIDATION_SCORES
+
+NONFINITE_EVALUATION_OUTPUT
+
+EVALUATION_ARTIFACT_CONFLICT
 ```
 
 ---
 
-# 181. Unit Test — Best Epoch Restore
+# 163. Cohort Errors
 
-Final persisted model corresponds to best validation reconstruction loss.
-
----
-
-# 182. Unit Test — Training Seed
-
-Same seed/config in CPU test produces reproducible training behavior within
-frozen tolerance.
-
----
-
-# 183. Unit Test — Seed Change
-
-Changing training seed changes:
+Useful:
 
 ```text
-training_spec_fingerprint
+NO_UNSEEN_GROUPS
+
+INSUFFICIENT_GOLDEN_CLASS_COVERAGE
+
+NO_RECENT_GROUPS
+
+INVALID_RECENT_SECTOR_ORDER
 ```
 
 ---
 
-# 184. Unit Test — Hyperparameter Change
+# 164. Golden Cohort Existing Exact Match
 
-Changing:
-
-```text
-learning_rate
-```
-
-changes training-spec fingerprint.
-
----
-
-# 185. Unit Test — Score Definition Change
-
-Simulated:
+If deterministic cohort already exists and matches:
 
 ```text
-reconstruction-mae-v2
-```
-
-must change training specification/model runtime semantics.
-
-Do not silently change score formula under V1.
-
----
-
-# 186. Unit Test — Operational Config Independence
-
-Changing:
-
-```text
-log level
-
-MinIO endpoint
-```
-
-does not change training-spec fingerprint.
-
----
-
-# 187. Unit Test — No Labels In Loss
-
-Inject arbitrary candidate labels.
-
-Loss must remain identical for the same numeric batch/model state.
-
----
-
-# 188. Unit Test — Validation Score Summary
-
-Known score vector.
-
-Verify:
-
-```text
-mean
-
-median
-
-p95
-
-max
+reuse
 ```
 
 ---
 
-# 189. Unit Test — No Threshold
+# 165. Golden Cohort Conflict
 
-Ensure training artifacts do NOT contain:
-
-```text
-anomaly_threshold
-```
-
----
-
-# 190. Synthetic Outlier Mechanical Test
-
-Train a tiny autoencoder on simple clustered synthetic TRAIN data.
-
-Compare:
+Same deterministic cohort path with incompatible manifest:
 
 ```text
-normal-like validation point
-
-extreme synthetic point
+EVALUATION_COHORT_CONFLICT
 ```
 
-Expected:
-
-```text
-extreme point generally receives higher reconstruction error
-```
-
-Use this only as a mechanical sanity test.
-
-Do NOT claim astronomical benchmark performance from it.
+No overwrite.
 
 ---
 
-# 191. No Synthetic Outliers In Training
-
-The mechanical outlier fixture is evaluation/test-only.
-
-Do not inject it into TRAIN.
-
----
-
-# 192. Unit Test — Training Run Manifest
-
-Round-trip anomaly run through:
-
-```text
-training-run-v1
-```
-
----
-
-# 193. Unit Test — Task Field
-
-Expected:
-
-```text
-task=astronomical_anomaly_detection
-```
-
----
-
-# 194. Unit Test — No Label Policy Dependency
-
-Anomaly run manifest should not imply candidate-label policy is part of
-anomaly loss semantics.
-
----
-
-# 195. Unit Test — Artifact SHA
-
-Verify:
-
-```text
-model SHA
-
-preprocessing SHA
-
-metrics SHA
-```
-
----
-
-# 196. Unit Test — Checkpoint Serialization
-
-Reuse:
-
-```text
-PLANNED
-
-TRAINING
-
-ARTIFACT_STORED
-
-COMPLETED
-
-FAILED
-```
-
----
-
-# 197. Unit Test — Checkpoint Recovery
-
-Valid run manifest repairs stale/missing checkpoint.
-
----
-
-# 198. Unit Test — Checkpoint Not Proof
-
-`COMPLETED` checkpoint with missing run manifest:
-
-```text
-not trusted
-```
-
----
-
-# 199. Integration — Stage 5 Anomaly Gold
-
-Use a committed:
-
-```text
-gold-anomaly-v1
-```
-
-fixture.
-
-Build:
-
-```text
-anomaly-lightcurve-ml-view-v1
-```
-
----
-
-# 200. Integration — Anomaly Split
-
-Create/reuse deterministic:
-
-```text
-anomaly-group-split-v1
-```
-
-split manifest.
-
-Verify target disjointness.
-
----
-
-# 201. Integration — Train Anomaly
-
-Flow:
-
-```text
-Gold anomaly snapshot
-      |
-      v
-anomaly split
-      |
-      v
-TRAIN-only preprocessing
-      |
-      v
-autoencoder
-      |
-      v
-validation reconstruction
-      |
-      v
-COMPLETED run
-```
-
----
-
-# 202. Integration — Gold-Only Access
-
-Instrument storage.
-
-During entire training:
-
-```text
-Bronze reads = 0
-
-Silver reads = 0
-```
-
-Mandatory.
-
----
-
-# 203. Integration — ClickHouse Offline
-
-Stop ClickHouse.
-
-Training succeeds.
-
----
-
-# 204. Integration — NATS Offline
-
-Stop NATS.
-
-Training succeeds.
-
----
-
-# 205. Integration — No Network
-
-Disable external network.
-
-Training succeeds.
-
----
-
-# 206. Integration — CPU Only
-
-CUDA hidden/unavailable.
-
-Training succeeds.
-
----
-
-# 207. Integration — RAW_DELETED Provenance
-
-Use Gold derived from Stage 4 state where Bronze has been safely evicted.
-
-Training succeeds with no special-case code.
-
----
-
-# 208. Integration — Candidate Label Change
-
-Create equivalent anomaly Gold numeric features with different candidate label
-state elsewhere.
-
-Expected anomaly model input data unchanged.
-
----
-
-# 209. Integration — Validation Leakage
-
-Change validation feature distribution drastically.
-
-Expected:
-
-```text
-TRAIN preprocessing parameters unchanged
-```
-
-Training best epoch may change because validation loss changes; that is valid.
-
----
-
-# 210. Integration — Same Training Specification
-
-Two independent CPU runs with:
-
-```text
-same Gold
-
-same split
-
-same view
-
-same model/preprocessing versions
-
-same hyperparameters
-
-same training seed
-```
-
-Expected:
-
-```text
-same training_spec_fingerprint
-```
-
-and reproducible behavior within documented tolerance.
-
----
-
-# 211. Integration — Different Training Seed
-
-Expected:
-
-```text
-same split
-
-different training spec fingerprint
-```
-
-No membership change.
-
----
-
-# 212. Integration — Cumulative Gold
-
-Train against:
-
-```text
-Gold anomaly snapshot A
-```
-
-then:
-
-```text
-Gold anomaly snapshot B
-```
-
-Existing groups keep deterministic split membership.
-
-Training specification changes because:
-
-```text
-gold_snapshot_id changes
-```
-
----
-
-# 213. Crash Test — PLANNED
-
-Crash after:
-
-```text
-PLANNED
-```
-
-Restart.
-
-Expected normal training.
-
----
-
-# 214. Crash Test — TRAINING
-
-Kill during optimization.
-
-Restart same run.
-
-Expected:
-
-```text
-restart from epoch 0
-```
-
-No optimizer-state resume required.
-
----
-
-# 215. Crash Test — Model Written Only
-
-Partial artifact set:
-
-```text
-run remains uncommitted
-```
-
-V1 may restart training.
-
----
-
-# 216. Crash Test — All Artifacts Before Checkpoint
-
-If final exact artifact set exists and verifies:
-
-```text
-recover without unnecessary retraining
-```
-
-where implementation can prove completeness.
-
----
-
-# 217. Crash Test — ARTIFACT_STORED Before Manifest
-
-Mandatory:
-
-```text
-verify artifacts
-
-commit manifest
-
-COMPLETED
-```
-
----
-
-# 218. Crash Test — Manifest Before COMPLETED
-
-Mandatory:
-
-```text
-manifest truth
-    ->
-repair checkpoint
-```
-
-No retraining.
-
----
-
-# 219. MinIO Model Upload Failure
-
-Expected:
-
-```text
-no committed anomaly training run
-
-checkpoint FAILED
-```
-
-Gold/split unchanged.
-
----
-
-# 220. MinIO Manifest Failure
-
-Artifacts may exist.
-
-Without manifest:
-
-```text
-run uncommitted
-```
-
-Recovery is possible.
-
----
-
-# 221. Committed Model Corruption
-
-Modify:
-
-```text
-model.pt
-```
-
-after committed manifest.
-
-Expected:
-
-```text
-TRAINING_ARTIFACT_INTEGRITY_ERROR
-```
-
-No silent same-ID repair.
-
----
-
-# 222. Preprocessing Corruption
-
-Same behavior.
-
----
-
-# 223. Metrics Corruption
-
-Same behavior.
-
----
-
-# 224. No Gold Mutation
-
-Record Gold hashes before training.
-
-After:
-
-```text
-all identical
-```
-
----
-
-# 225. No Split Mutation
-
-Split manifest SHA remains unchanged.
-
----
-
-# 226. Output Mutation Scope
-
-Phase 6.3 may write:
-
-```text
-manifests/ml-splits/
-    # only new anomaly split manifests
-
-checkpoints/ml-training/anomaly/
-
-training-runs/anomaly/
-```
-
-It must NOT mutate:
-
-```text
-Bronze
-
-Silver
-
-Gold
-
-catalogs
-
-labels
-
-lineage
-
-feature-engineering checkpoints
-
-lifecycle checkpoints
-```
-
----
-
-# 227. No Candidate Training Mutation
-
-Do not modify committed:
-
-```text
-training-runs/candidate/
-```
-
----
-
-# 228. No Model Registry Yet
+# 166. Evaluation Run Is Not Registry Model
 
 Do not create:
 
 ```text
+models/candidate/<model-id>/
+
 models/anomaly/<model-id>/
-```
-
----
-
-# 229. No Champion
-
-Do not create/update:
-
-```text
-models/anomaly/champion.json
-```
-
----
-
-# 230. No Challenger Promotion
-
-Training run completion does not imply promotion eligibility.
-
----
-
-# 231. No ONNX Export
-
-Do not call:
-
-```text
-export_onnx.py
-```
-
-for final registry/runtime artifact yet.
-
-Phase 6.6 owns ONNX parity.
-
----
-
-# 232. No Rust Inference Changes
-
-Do not modify:
-
-```text
-apps/rust-inference/
-```
-
-in Phase 6.3.
-
----
-
-# 233. No Durable Predictions
-
-Do not create:
-
-```text
-predictions/
-```
-
----
-
-# 234. No Prediction Contract
-
-Do not introduce:
-
-```text
-prediction-v1.md
 ```
 
 yet.
 
 ---
 
-# 235. No Prediction NATS Event
+# 167. No Champion Pointer
 
-No:
+Do not update:
 
 ```text
-aurora.v1.anomaly.prediction.ready
+models/candidate/champion.json
+
+models/anomaly/champion.json
+```
+
+Phase 6.5 owns promotion.
+
+---
+
+# 168. Evaluation Does Not Promote
+
+Even excellent Golden metrics:
+
+```text
+do not automatically promote
+```
+
+in Phase 6.4.
+
+---
+
+# 169. Evaluation Does Not Retrain
+
+Poor Recent Holdout metrics:
+
+```text
+do not automatically train a new model
 ```
 
 ---
 
-# 236. No API Changes
+# 170. No ONNX
 
-Go API does not serve learned anomaly scores yet.
+Evaluation uses native Phase 6.2/6.3 model.
 
----
-
-# 237. No Dashboard Changes
-
-Do not wire anomaly model output into React yet.
+ONNX export/parity remains Phase 6.6.
 
 ---
 
-# 238. No Golden Test
+# 171. No Rust Inference
 
-Do not create/freeze final benchmark in Phase 6.3.
-
----
-
-# 239. No Recent Holdout
-
-Deferred to Phase 6.4.
+Do not invoke Rust inference for final parity here.
 
 ---
 
-# 240. No Final Threshold
+# 172. No Prediction Storage
 
-Deferred to Phase 6.4.
-
----
-
-# 241. No Promotion Comparison
-
-Deferred to Phase 6.5.
-
----
-
-# 242. Documentation
-
-Update:
+Do not create:
 
 ```text
-docs/ML_TRAINING.md
+predictions/
 ```
+
+---
+
+# 173. No API Changes
+
+Go API does not expose final model evaluations yet.
+
+---
+
+# 174. No Dashboard Changes
+
+React does not display model quality yet.
+
+---
+
+# 175. Candidate Cohort Unit Test
+
+Training exposed:
+
+```text
+TIC 1
+TIC 2
+```
+
+evaluation Gold contains:
+
+```text
+TIC 1
+TIC 3
+TIC 4
+```
+
+Expected Golden eligible:
+
+```text
+TIC 3
+TIC 4
+```
+
+Never TIC 1.
+
+---
+
+# 176. Multi-Sector Contamination Test
+
+Training includes:
+
+```text
+TIC 123 sector 10
+```
+
+evaluation Gold contains:
+
+```text
+TIC 123 sector 50
+```
+
+Expected:
+
+```text
+excluded from Golden and Recent
+```
+
+---
+
+# 177. Candidate Golden Class Test
+
+Ensure candidate Golden selection contains both labels.
+
+---
+
+# 178. Candidate Golden Label Preservation
+
+Labels come exactly from:
+
+```text
+source Gold snapshot
+```
+
+No live relabeling.
+
+---
+
+# 179. Cohort Input Order Test
+
+Shuffle Gold rows.
+
+Expected:
+
+```text
+same group list
+
+same cohort ID
+```
+
+---
+
+# 180. Cohort Partition Order Test
+
+Shuffle Gold sector read order.
+
+Expected same cohort.
+
+---
+
+# 181. Cohort Timestamp Test
+
+Different `created_at`:
+
+```text
+same cohort ID
+```
+
+---
+
+# 182. Cohort Gold Change Test
+
+Change source Gold snapshot:
+
+```text
+new cohort identity
+```
+
+---
+
+# 183. Cohort Policy Change Test
+
+Change:
+
+```text
+candidate-golden-unseen-v1
+```
+
+to simulated V2:
+
+```text
+new cohort identity
+```
+
+---
+
+# 184. Golden Immutability Test
+
+Attempt conflicting write.
+
+Expected failure.
+
+---
+
+# 185. Candidate Recent Sector Test
+
+Training max sector:
+
+```text
+42
+```
+
+Recent source contains:
+
+```text
+41
+43
+44
+```
+
+Only:
+
+```text
+43
+44
+```
+
+can qualify before group contamination filtering.
+
+---
+
+# 186. Recent Existing Target Test
+
+Training TIC 9 appears in sector 44.
+
+Expected:
+
+```text
+excluded
+```
+
+---
+
+# 187. Recent Golden Overlap Test
+
+TIC already in Golden:
+
+```text
+excluded from Recent
+```
+
+---
+
+# 188. Candidate Threshold Exact Test
+
+Provide deterministic validation probabilities/labels.
+
+Verify exact:
+
+```text
+selected threshold
+```
+
+under:
+
+```text
+max F1
+higher recall
+higher precision
+lower threshold
+```
+
+tie semantics.
+
+---
+
+# 189. Candidate Threshold Uses Validation Only
+
+Perturb Golden labels/probabilities.
+
+Expected:
+
+```text
+selected threshold unchanged
+```
+
+---
+
+# 190. Candidate Threshold Ignores Recent
+
+Same regression.
+
+---
+
+# 191. Candidate Threshold Classification Test
+
+Verify:
+
+```text
+probability == threshold
+```
+
+is classified:
+
+```text
+POSITIVE
+```
+
+because rule is `>=`.
+
+---
+
+# 192. Candidate Golden Metric Test
+
+Known probabilities/labels.
+
+Verify:
+
+```text
+average precision
+
+ROC-AUC
+
+precision
+
+recall
+
+F1
+
+confusion matrix
+```
+
+---
+
+# 193. Candidate Golden Primary Metric Naming
+
+Ensure durable JSON uses explicit:
+
+```text
+golden_average_precision
+```
+
+or documented equivalent.
+
+Avoid ambiguous unnamed `score`.
+
+---
+
+# 194. Candidate Recent Metric Test
+
+Known recent fixture.
+
+Verify same threshold is reused.
+
+---
+
+# 195. Candidate No Recent Cohort
+
+Golden-only evaluation must still commit successfully.
+
+Manifest records:
+
+```text
+recent_cohort_id = null
+```
+
+or equivalent.
+
+---
+
+# 196. Candidate Recent Single-Class Test
+
+Expected:
+
+```text
+INSUFFICIENT_CLASS_COVERAGE
+```
+
+for undefined ranking metrics.
+
+Golden results remain valid.
+
+---
+
+# 197. Candidate Preprocessor Immutability Test
+
+Record:
+
+```text
+preprocessing SHA
+```
+
+before/after evaluation.
+
+Unchanged.
+
+---
+
+# 198. Candidate Model Immutability Test
+
+Same for:
+
+```text
+model.pt
+```
+
+---
+
+# 199. Anomaly Threshold Exact Test
+
+Known validation scores.
+
+Verify exact p99 using:
+
+```text
+method="linear"
+```
+
+---
+
+# 200. Anomaly Threshold Uses Validation Only
+
+Change Golden reference score distribution.
+
+Expected threshold unchanged.
+
+---
+
+# 201. Anomaly Threshold Uses No Recent Data
+
+Same.
+
+---
+
+# 202. Anomaly Alert Boundary Test
+
+Verify:
+
+```text
+score == threshold
+```
+
+means:
+
+```text
+alert = true
+```
+
+---
+
+# 203. Synthetic Feature Index Test
+
+Same source product ID + same input dimension:
+
+```text
+same perturbed feature index
+```
+
+---
+
+# 204. Synthetic Input Order Independence
+
+Synthetic feature selection must not depend on cohort row order.
+
+---
+
+# 205. Synthetic Shift Exactness
+
+Verify:
+
+```text
+exactly one feature += 6.0
+```
+
+under V1.
+
+---
+
+# 206. Synthetic Gold Immutability Test
+
+Gold values unchanged.
+
+---
+
+# 207. Synthetic Preprocessor Immutability Test
+
+No preprocessing refit.
+
+---
+
+# 208. Synthetic Score Mechanical Test
+
+On deterministic small model/fixture, shifted examples should generally have
+higher reconstruction error.
+
+Do not require every single row to increase if model geometry causes an edge
+case.
+
+Use aggregate sanity.
+
+---
+
+# 209. Synthetic Detection-Rate Test
+
+Verify:
+
+```text
+fraction(score >= threshold)
+```
+
+formula.
+
+---
+
+# 210. Anomaly Reference Alert-Rate Test
+
+Verify same formula on unmodified Golden rows.
+
+---
+
+# 211. Anomaly Recent Test
+
+Recent rows use exact frozen:
+
+```text
+preprocessing
+
+model
+
+threshold
+```
+
+---
+
+# 212. Candidate Contamination Preflight Test
+
+Manually inject one Golden group into TRAIN.
+
+Expected:
+
+```text
+EVALUATION_GROUP_LEAKAGE
+```
+
+before inference.
+
+---
+
+# 213. Anomaly Contamination Preflight Test
+
+Same.
+
+---
+
+# 214. Recent Contamination Test
+
+Recent group overlaps Golden.
+
+Expected failure or cohort rejection.
+
+---
+
+# 215. Candidate Training Run Integrity Test
+
+Corrupt model artifact.
+
+Evaluation must fail before metric computation.
+
+---
+
+# 216. Candidate Preprocessing Integrity Test
+
+Corrupt preprocessing artifact.
+
+Fail.
+
+---
+
+# 217. Anomaly Model Integrity Test
+
+Same.
+
+---
+
+# 218. Training Run Manifest Corruption
+
+Do not trust evaluation input.
+
+Fail.
+
+---
+
+# 219. Split Manifest Corruption
+
+Fail contamination/membership reconstruction.
+
+---
+
+# 220. Gold Artifact Corruption
+
+Cohort source Gold invalid:
+
+```text
+evaluation fails
+```
+
+Do not fall back to ClickHouse.
+
+---
+
+# 221. No Bronze Read Integration
+
+Instrument storage across:
+
+```text
+cohort creation
+
+threshold selection
+
+Golden evaluation
+
+Recent evaluation
+```
+
+Expected:
+
+```text
+Bronze reads = 0
+```
+
+---
+
+# 222. No Silver Read Integration
+
+Expected:
+
+```text
+Silver reads = 0
+```
+
+---
+
+# 223. ClickHouse Offline Integration
+
+Stop ClickHouse.
+
+Candidate/anomaly evaluation succeeds.
+
+---
+
+# 224. NATS Offline Integration
+
+Stop NATS.
+
+Evaluation succeeds.
+
+---
+
+# 225. External Network Offline Integration
+
+Disable internet.
+
+Evaluation succeeds.
+
+---
+
+# 226. CPU Evaluation
+
+Mandatory.
+
+Evaluation must work with:
+
+```text
+CUDA unavailable
+```
+
+---
+
+# 227. GPU Optional
+
+GPU may be used for inference if implementation already supports it cleanly.
+
+Do not require it.
+
+---
+
+# 228. Candidate Full Evaluation Integration
+
+Flow:
+
+```text
+completed candidate training run
+        |
+        v
+validation threshold
+        |
+        v
+frozen candidate Golden cohort
+        |
+        v
+Golden metrics
+        |
+        v
+optional Recent cohort
+        |
+        v
+Recent metrics
+        |
+        v
+COMMITTED evaluation run
+```
+
+---
+
+# 229. Anomaly Full Evaluation Integration
+
+Flow:
+
+```text
+completed anomaly training run
+        |
+        v
+validation p99 threshold
+        |
+        v
+frozen unseen anomaly Golden cohort
+        |
+        +--> reference scores
+        |
+        +--> deterministic synthetic shifts
+        |
+        v
+Golden anomaly metrics
+        |
+        v
+optional Recent holdout
+        |
+        v
+COMMITTED evaluation run
+```
+
+---
+
+# 230. Evaluation Determinism
+
+Same:
+
+```text
+training run
+cohorts
+policies
+runtime
+```
+
+should produce:
+
+```text
+same threshold
+
+same logical metrics
+```
+
+within frozen numerical tolerance.
+
+---
+
+# 231. Evaluation Spec Stability
+
+Same exact inputs:
+
+```text
+same evaluation_spec_fingerprint
+```
+
+---
+
+# 232. Evaluation Run IDs May Differ
+
+Two executions:
+
+```text
+evaluation_run_A
+evaluation_run_B
+```
+
+may have the same:
+
+```text
+evaluation_spec_fingerprint
+```
+
+---
+
+# 233. Threshold Policy Change
+
+Simulate candidate threshold V2.
+
+Expected:
+
+```text
+new evaluation spec fingerprint
+```
+
+---
+
+# 234. Golden Cohort Change
+
+Expected new evaluation specification.
+
+---
+
+# 235. Recent Cohort Change
+
+Expected new evaluation specification.
+
+---
+
+# 236. Operational Config Independence
+
+Change:
+
+```text
+log level
+
+MinIO host
+```
+
+Expected:
+
+```text
+same evaluation_spec_fingerprint
+```
+
+---
+
+# 237. Evaluation Artifact SHA
+
+Compute:
+
+```text
+threshold_sha256
+
+metrics_sha256
+```
+
+and preserve in manifest.
+
+---
+
+# 238. Existing Evaluation Artifact Conflict
+
+Do not silently overwrite a committed evaluation run.
+
+---
+
+# 239. Partial Evaluation
+
+If:
+
+```text
+threshold.json
+
+metrics.json
+```
+
+exist but:
+
+```text
+manifest missing
+```
+
+run is uncommitted.
+
+Rerunning or creating a new run is acceptable.
+
+---
+
+# 240. No Complex Evaluation Recovery
+
+Do not add checkpoint machinery to recover a few metric calculations.
+
+---
+
+# 241. Golden Benchmark Documentation
 
 Add:
 
 ```text
-anomaly-lightcurve-ml-view-v1
-
-anomaly-group-split-v1
-
-anomaly-lightcurve-preprocess-v1
-
-anomaly-lightcurve-autoencoder-v1
-
-reconstruction-mse-v1
-
-unsupervised training semantics
-
-no threshold yet
+docs/ML_EVALUATION.md
 ```
 
 ---
 
-# 243. Keep Documentation Consolidated
-
-Do NOT add:
-
-```text
-docs/ML_ANOMALY.md
-```
-
-unless `ML_TRAINING.md` has genuinely become too large/confusing.
-
-Prefer current ownership structure first.
-
----
-
-# 244. Update ML_DATASETS.md
+# 242. `ML_EVALUATION.md` Candidate Section
 
 Document:
 
 ```text
-candidate supervised view
+why old TRAIN/VALIDATION cannot become Golden
+
+unseen target requirement
+
+Golden cohort freezing
+
+validation-only threshold selection
+
+PR-AUC / Average Precision
+
+Recent Holdout semantics
+```
+
+---
+
+# 243. `ML_EVALUATION.md` Anomaly Section
+
+Document:
+
+```text
+validation p99 threshold
+
+reconstruction score meaning
+
+reference alert rate
+
+synthetic standardized shift
+
+why synthetic detection is not astronomy ground truth
+
+Recent score drift
+```
+
+---
+
+# 244. Golden Reservation Documentation
+
+Document:
+
+```text
+Future training should reserve frozen Golden target groups.
+```
+
+If `ml-split-v2` is required, document migration explicitly.
+
+---
+
+# 245. Update ML_DATASETS.md
+
+Add final dataset boundaries:
+
+```text
+TRAIN
+
+VALIDATION
+
+GOLDEN TEST
+
+RECENT HOLDOUT
+```
+
+and their permitted uses.
+
+---
+
+# 246. Permitted Use Table
+
+Document equivalent:
+
+```text
+TRAIN:
+    fit weights
+    fit preprocessing
+
+VALIDATION:
+    early stopping
+    threshold selection
+
+GOLDEN TEST:
+    final fixed benchmark only
+
+RECENT HOLDOUT:
+    freshness / temporal generalization evaluation only
+```
+
+---
+
+# 247. Golden Test Cannot Tune Features
+
+Do NOT use Golden metrics to decide:
+
+```text
+feature allowlist
+
+model architecture
+
+hyperparameters
+
+preprocessing
+```
+
+then continue reporting the same Golden result as untouched final evaluation.
+
+---
+
+# 248. If Golden Influences Development
+
+Once engineers use Golden outcomes to redesign a model:
+
+```text
+Golden V1 is now development-visible
+```
+
+For rigorous final reporting, freeze:
+
+```text
+Golden V2
+```
+
+from previously unseen groups.
+
+Document this limitation.
+
+---
+
+# 249. This Is Especially Important For Coursework
+
+Do not repeatedly optimize against the same held-out benchmark while still
+calling it:
+
+```text
+untouched test set
+```
+
+Keep experiment reporting honest.
+
+---
+
+# 250. Update ML_TRAINING.md
+
+Cross-reference:
+
+```text
+Phase 6.2/6.3 VALIDATION metrics
     !=
-anomaly unsupervised view
-```
-
-and anomaly grouping semantics.
-
----
-
-# 245. Update CHECKPOINTS.md
-
-Confirm:
-
-```text
-checkpoints/ml-training/
-├── candidate/
-└── anomaly/
-```
-
-share run-level checkpoint semantics.
-
----
-
-# 246. Update CONFIGURATION.md
-
-Document only implemented anomaly training settings.
-
-Potential:
-
-```text
-default anomaly batch size
-
-learning rate
-
-weight decay
-
-epochs
-
-patience
-
-device
-```
-
-Avoid dead options.
-
----
-
-# 247. Python README
-
-Add:
-
-```text
-Gold anomaly LC
-      |
-      v
-anomaly ML view
-      |
-      v
-target-safe split
-      |
-      v
-TRAIN-only preprocessing
-      |
-      v
-autoencoder
-      |
-      v
-reconstruction-error evidence
+Phase 6.4 Golden metrics
 ```
 
 ---
 
-# 248. Contracts README
+# 251. Update CONFIGURATION.md
 
-Add:
+Only add real evaluation configuration.
+
+Prefer explicit CLI inputs for:
 
 ```text
-ml-anomaly-view-v1
+cohort IDs
+
+training run IDs
 ```
 
-and note reuse of:
+Threshold policy constants should normally be versioned in code/contract, not
+environment variables.
+
+---
+
+# 252. No `AURORA_GOLDEN_THRESHOLD`
+
+Do not hide scientific evaluation policy in a mutable deployment environment
+variable.
+
+---
+
+# 253. Python Ownership
+
+Evaluation logic belongs in existing:
 
 ```text
-ml-split-v1
+aurora_ml/evaluate.py
+```
 
-training-run-v1
+This file now gets its intended responsibility.
+
+---
+
+# 254. Keep `evaluate.py` Focused
+
+Responsibilities:
+
+```text
+cohort validation
+
+contamination checks
+
+threshold selection
+
+candidate metrics
+
+anomaly metrics
+
+evaluation run materialization
 ```
 
 ---
 
-# 249. STRUCTURE.md
+# 255. Split/Cohort Selection Ownership
 
-Reflect actual changes only.
-
-Likely no new Python module beyond existing:
+Group key generation remains in:
 
 ```text
-anomaly/model.py
-
-anomaly/train.py
+splits.py
 ```
 
-unless implementation genuinely needs one.
+Do not duplicate target-group semantics in `evaluate.py`.
 
 ---
 
-# 250. Suggested Tests
-
-Extend/create:
-
-```text
-tests/test_anomaly_training.py
-```
+# 256. Candidate Model Inference Ownership
 
 Reuse:
 
 ```text
-test_splits.py
-
-test_training_checkpoint.py
+transit/model.py
+transit/train.py preprocessing definitions/artifacts
 ```
 
-where semantics are shared.
+Do not rewrite model math.
 
 ---
 
-# 251. Do Not Duplicate Checkpoint Tests Excessively
+# 257. Anomaly Score Ownership
 
-Candidate/anomaly checkpoint state machine is the same.
-
-Add anomaly-specific path/task assertions rather than copy hundreds of tests.
-
----
-
-# 252. CI Fixture Scale
-
-Use tiny deterministic Gold anomaly fixture.
-
-No real NASA access.
-
-No giant tensors.
-
----
-
-# 253. CI Epoch Count
-
-Tests may use:
+Reuse the exact:
 
 ```text
-max_epochs=3..10
-```
-
-to prove behavior quickly.
-
-Production defaults may remain larger.
-
----
-
-# 254. Model Quality Is Not Frozen Yet
-
-Phase 6.3 validates:
-
-```text
-training correctness
-
-data leakage boundaries
-
-score definition
-
-reproducibility
-
-durable run lifecycle
-```
-
-not final scientific model quality.
-
----
-
-# 255. Phase 6.4 Handoff
-
-Phase 6.4 receives committed:
-
-```text
-candidate training runs
-
-anomaly training runs
-```
-
-and introduces:
-
-```text
-fixed golden test
-
-recent holdout
-
-candidate final metrics
-
-anomaly synthetic/holdout evaluation
-
-threshold evaluation
-```
-
----
-
-# 256. Anomaly Evaluation Handoff
-
-Phase 6.4 can later evaluate:
-
-```text
-clean/reference holdout
-
-synthetic injected outliers
-
-score stability
-
-false-alert behavior
-
-score distribution drift
-```
-
-without changing the Phase 6.3 training semantics.
-
----
-
-# 257. Runtime Handoff
-
-Later Phase 6.6 will need exact:
-
-```text
-feature order
-
-TRAIN medians
-
-TRAIN means
-
-TRAIN scales
-
-autoencoder architecture
-
 reconstruction-mse-v1
 ```
 
-Therefore all are durable now.
+function or one canonical implementation.
+
+Do not create a second slightly different MSE formula in evaluation code.
 
 ---
 
-# 258. Future TPF Model
+# 258. No Global `utils.py`
 
-If later desired:
+Keep threshold/metric code under evaluation ownership.
+
+---
+
+# 259. Expected Python Tree
+
+Likely unchanged structurally:
 
 ```text
-anomaly-tpf-autoencoder-v1
+aurora_ml/
+├── evaluate.py
+├── splits.py
+├── transit/
+│   ├── model.py
+│   └── train.py
+└── anomaly/
+    ├── model.py
+    └── train.py
 ```
 
-must have its own:
+Do not add an `evaluation/` package unless `evaluate.py` genuinely becomes too
+large.
+
+---
+
+# 260. Suggested Tests
+
+Expand:
 
 ```text
-dataset view
-
-feature order
-
-preprocessing version
-
-model version
+tests/
+├── test_evaluate.py
+├── test_splits.py
+├── test_candidate_training.py
+└── test_anomaly_training.py
 ```
 
-Do not piggyback silently on LC model semantics.
+One new:
+
+```text
+test_evaluate.py
+```
+
+is enough initially.
 
 ---
 
-# 259. Future FFI Model
+# 261. No New E2E Script Yet
 
-Same rule.
+Full Stage 6 orchestration belongs to:
 
-Never feed full-frame FFI tensors merely because GPU exists.
+```text
+Phase 6.7
+```
+
+Use Python integration tests here.
 
 ---
 
-# 260. Core Invariants
+# 262. Contracts After Phase
+
+Expected new contracts:
+
+```text
+contracts/data/
+├── ml-evaluation-cohort-v1.md
+└── model-evaluation-v1.md
+```
+
+Potential:
+
+```text
+ml-split-v2.md
+```
+
+ONLY if frozen Golden reservation cannot be represented compatibly by current
+split contract.
+
+---
+
+# 263. Do Not Add Model Manifest Yet
+
+Still defer:
+
+```text
+model-manifest-v1.md
+```
+
+to Phase 6.5.
+
+---
+
+# 264. Do Not Add Runtime Contract Yet
+
+Still defer:
+
+```text
+model-runtime-v1.md
+```
+
+to Phase 6.6.
+
+---
+
+# 265. Evaluation Lineage
+
+Candidate final evaluation must trace:
+
+```text
+evaluation run
+      |
+      v
+training run
+      |
+      v
+model + preprocessing
+      |
+      v
+Gold training snapshot
+      |
+      v
+split
+```
+
+and separately:
+
+```text
+evaluation run
+      |
+      +--> Golden cohort
+      |       |
+      |       v
+      |   Golden Gold snapshot
+      |
+      +--> Recent cohort
+              |
+              v
+          Recent Gold snapshot
+```
+
+---
+
+# 266. Candidate Threshold Provenance
+
+Must answer:
+
+```text
+Where did this threshold come from?
+```
+
+Trace:
+
+```text
+candidate threshold
+       |
+       v
+VALIDATION probabilities
+       |
+       v
+exact training split
+       |
+       v
+training model
+```
+
+Never Golden.
+
+---
+
+# 267. Anomaly Threshold Provenance
+
+Trace:
+
+```text
+anomaly threshold
+       |
+       v
+VALIDATION reconstruction scores
+       |
+       v
+p99 linear quantile
+       |
+       v
+training model/preprocessing
+```
+
+---
+
+# 268. Phase 6.5 Handoff
+
+Phase 6.5 should receive:
+
+```text
+completed training run
++
+completed Phase 6.4 evaluation run
+```
+
+before considering model registry promotion.
+
+---
+
+# 269. Registry Must Not Recompute Metrics
+
+Phase 6.5 should consume immutable:
+
+```text
+model-evaluation-v1
+```
+
+rather than rerunning Golden Test inside promotion logic.
+
+---
+
+# 270. Candidate Promotion Evidence Available
+
+After 6.4, registry can later compare:
+
+```text
+Golden Average Precision
+
+Golden recall/precision/F1
+
+Recent Average Precision
+
+Recent recall
+
+metric deltas
+```
+
+---
+
+# 271. Anomaly Promotion Evidence Available
+
+Later registry can compare:
+
+```text
+Golden reference alert rate
+
+Golden synthetic detection rate
+
+Recent reference alert rate
+
+Recent synthetic detection rate
+```
+
+plus reconstruction metrics.
+
+---
+
+# 272. No Promotion Criteria Yet
+
+Do not freeze champion/challenger rules in Phase 6.4.
+
+That belongs to Phase 6.5.
+
+---
+
+# 273. Core Invariants
 
 Invariant 1:
 
 ```text
-Phase 6.3 consumes an explicit COMMITTED Gold anomaly snapshot.
+Golden Test groups were never exposed to TRAIN or VALIDATION.
 ```
 
 Invariant 2:
 
 ```text
-Phase 6.3 performs zero Bronze reads.
+A previously exposed TIC can never become Golden for that training run.
 ```
 
 Invariant 3:
 
 ```text
-Phase 6.3 performs zero Silver reads.
+Different sector does not make an exposed TIC unseen.
 ```
 
 Invariant 4:
 
 ```text
-ClickHouse is not required for anomaly training correctness.
+Golden cohorts are immutable.
 ```
 
 Invariant 5:
 
 ```text
-No live catalog state is consulted.
+Golden labels are pinned to exact Gold snapshot state.
 ```
 
 Invariant 6:
 
 ```text
-Anomaly model V1 is unsupervised.
+Golden Test never selects model weights.
 ```
 
 Invariant 7:
 
 ```text
-Candidate labels never enter anomaly loss.
+Golden Test never fits preprocessing.
 ```
 
 Invariant 8:
 
 ```text
-Same TIC never crosses TRAIN / VALIDATION.
+Golden Test never selects candidate threshold.
 ```
 
 Invariant 9:
 
 ```text
-Anomaly split assignment is deterministic at target-group level.
+Recent Holdout never selects candidate threshold.
 ```
 
 Invariant 10:
 
 ```text
-Anomaly V1 trains from Gold LC scalar evidence, not raw arrays.
+Candidate threshold is selected from VALIDATION only.
 ```
 
 Invariant 11:
 
 ```text
-Identity/catalog fields are not anomaly model inputs.
+Anomaly threshold is selected from VALIDATION reconstruction scores only.
 ```
 
 Invariant 12:
 
 ```text
-Feature order is explicit and versioned.
+Candidate Golden primary ranking metric is Average Precision / PR-AUC.
 ```
 
 Invariant 13:
 
 ```text
-Imputation is fit on TRAIN only.
+Accuracy is not the sole candidate metric.
 ```
 
 Invariant 14:
 
 ```text
-Scaling is fit on TRAIN only.
+Anomaly reconstruction score is not a probability.
 ```
 
 Invariant 15:
 
 ```text
-Validation never influences preprocessing parameters.
+Synthetic anomaly evaluation is mechanical evidence, not astrophysical ground truth.
 ```
 
 Invariant 16:
 
 ```text
-Anomaly score is reconstruction MSE in standardized feature space.
+Recent Holdout uses unseen target groups.
 ```
 
 Invariant 17:
 
 ```text
-Anomaly score is not a calibrated probability.
+Recent Holdout uses newer-sector data under V1 policy.
 ```
 
 Invariant 18:
 
 ```text
-Phase 6.3 does not freeze an anomaly threshold.
+Evaluation never refits preprocessing.
 ```
 
 Invariant 19:
 
 ```text
-Golden test is not accessed.
+Evaluation never retrains the model.
 ```
 
 Invariant 20:
 
 ```text
-Recent holdout is not accessed.
+Evaluation performs zero Bronze reads.
 ```
 
 Invariant 21:
 
 ```text
-Training-run artifacts are immutable after manifest commit.
+Evaluation performs zero Silver reads.
 ```
 
 Invariant 22:
 
 ```text
-ML-training checkpoint is recovery state, not model registry truth.
+ClickHouse is optional.
 ```
 
 Invariant 23:
 
 ```text
-CPU correctness is mandatory.
+Evaluation artifacts are immutable after manifest commit.
 ```
 
 Invariant 24:
 
 ```text
-GPU remains optional.
+Evaluation does not mutate training-run artifacts.
 ```
 
 Invariant 25:
 
 ```text
-TPF/FFI learned anomaly models are not mandatory V1 scope.
+Phase 6.4 does not promote models.
 ```
 
 Invariant 26:
 
 ```text
-Phase 6.3 does not promote/export/serve the model.
+Future training should reserve frozen Golden groups.
 ```
 
 Invariant 27:
 
 ```text
-A high reconstruction error is anomaly evidence, not scientific confirmation.
+A Golden benchmark that influences model development is no longer an untouched final benchmark.
 ```
 
 ---
 
 # Definition of Done
 
-Phase 6.3 is COMPLETE when:
+Phase 6.4 is COMPLETE when:
 
-* [x] V1 mandatory anomaly task is explicitly light-curve scalar anomaly detection.
-* [x] `anomaly-lightcurve-autoencoder-v1` is defined.
-* [x] No mandatory TPF autoencoder is introduced.
-* [x] No mandatory FFI autoencoder is introduced.
-* [x] Anomaly training accepts explicit Gold anomaly snapshot ID.
-* [x] Anomaly training accepts explicit anomaly split ID.
-* [x] Anomaly training accepts explicit training seed.
-* [x] Gold snapshot must be COMMITTED.
-* [x] Gold anomaly schema is validated.
-* [x] Gold artifact integrity is validated.
-* [x] Only the Gold anomaly lightcurve component is used for V1 learned anomaly training.
-* [x] Phase 6.3 reads zero Bronze objects.
-* [x] Phase 6.3 reads zero Silver objects.
-* [x] Phase 6.3 works after Bronze `RAW_DELETED`.
-* [x] ClickHouse is not required.
-* [x] NATS is not required.
-* [x] Go API is not required.
-* [x] Dashboard is not required.
-* [x] External network is not required.
-* [x] No live TIC call occurs.
-* [x] No live TOI call occurs.
-* [x] No live TCE call occurs.
-* [x] Candidate label values are not used for anomaly training.
-* [x] TOI/TCE disposition is not used for anomaly training.
-* [x] `anomaly-lightcurve-ml-view-v1` exists.
-* [x] `contracts/data/ml-anomaly-view-v1.md` exists.
-* [x] Anomaly ML view has explicit ordered numeric feature list.
-* [x] Generic LC statistics are preferred over label/catalog metadata.
-* [x] Identity fields are excluded from anomaly tensor.
-* [x] TIC ID is excluded from anomaly tensor.
-* [x] Sector is excluded from anomaly tensor.
-* [x] Source product ID is excluded from anomaly tensor.
-* [x] Candidate label is excluded from anomaly tensor.
-* [x] TOI/TCE identifiers are excluded from anomaly tensor.
-* [x] BLS fields follow the explicitly frozen V1 anomaly-view policy.
-* [x] Anomaly view fingerprint is deterministic.
-* [x] Feature change/reorder changes view identity.
-* [x] Existing `ml-split-v1` is reused for anomaly split manifests where compatible.
-* [x] `anomaly-group-split-v1` exists.
-* [x] Anomaly grouping uses TIC when available.
-* [x] Missing TIC uses stable source-product fallback.
-* [x] Same TIC across sectors remains in one split.
-* [x] Anomaly split uses TRAIN / VALIDATION only.
-* [x] Golden test is not defined in Phase 6.3.
-* [x] Recent holdout is not defined in Phase 6.3.
-* [x] Group assignments use deterministic SHA-based semantics.
-* [x] Input ordering does not affect anomaly split.
-* [x] Cumulative Gold preserves existing group membership.
-* [x] Candidate label changes do not change anomaly group assignment.
-* [x] Anomaly split manifest is immutable.
-* [x] Anomaly split manifest is stored under `manifests/ml-splits/`.
-* [x] `anomaly-lightcurve-preprocess-v1` exists.
-* [x] Numeric missing values use TRAIN median imputation.
-* [x] Validation values do not influence medians.
-* [x] All-missing TRAIN feature fails clearly.
-* [x] Standardization parameters use TRAIN only.
-* [x] Validation values do not influence mean/scale.
-* [x] Constant-feature scale policy is deterministic.
-* [x] No categorical encoder is introduced for V1.
-* [x] Preprocessing artifact preserves exact feature order.
-* [x] Preprocessing artifact preserves medians.
-* [x] Preprocessing artifact preserves means.
-* [x] Preprocessing artifact preserves scales.
-* [x] Preprocessing artifact references exact split ID.
-* [x] Preprocessing artifact is immutable after run commit.
-* [x] Transformed tensors contain no NaN/Inf.
-* [x] Model input tensors use float32.
-* [x] `anomaly-lightcurve-autoencoder-v1` architecture is implemented in `anomaly/model.py`.
-* [x] Autoencoder input dimension equals feature count.
-* [x] Autoencoder reconstruction dimension equals feature count.
-* [x] Architecture uses small bounded layers.
-* [x] V1 architecture uses explicit ReLU semantics.
-* [x] No mandatory Dropout exists.
-* [x] No mandatory BatchNorm exists.
-* [x] `MSELoss` is used.
-* [x] Candidate classification losses are not used.
-* [x] AdamW or chosen explicit optimizer is documented.
-* [x] Learning rate is explicit.
-* [x] Weight decay is explicit.
-* [x] Batch size is explicit.
-* [x] Maximum epochs are bounded.
-* [x] Early stopping exists.
-* [x] Early stopping uses VALIDATION reconstruction loss.
-* [x] Golden test never affects early stopping.
-* [x] Best epoch is recorded.
-* [x] Best validation reconstruction state is stored.
-* [x] CPU training works.
-* [x] GPU is optional.
-* [x] `device=auto` falls back to CPU.
-* [x] Explicit unavailable CUDA request fails clearly.
-* [x] Model comfortably fits 4 GB VRAM.
-* [x] Training seed initializes relevant randomness.
-* [x] Split seed and training seed remain distinct.
-* [x] TRAIN DataLoader shuffling is deterministic.
-* [x] VALIDATION DataLoader does not shuffle.
-* [x] `reconstruction-mse-v1` exists.
-* [x] Score is computed in standardized feature space.
-* [x] Score formula is exactly documented.
-* [x] One finite score is computed per validation row.
-* [x] Score is always nonnegative within numerical tolerance.
-* [x] Score is not called a probability.
-* [x] Score is not called scientific ground truth.
-* [x] No final anomaly threshold is defined.
-* [x] No percentile threshold is frozen.
-* [x] Validation reconstruction loss is recorded.
-* [x] Validation anomaly-score mean is recorded.
-* [x] Validation anomaly-score median is recorded.
-* [x] Validation anomaly-score p95 is recorded.
-* [x] Validation anomaly-score max is recorded.
-* [x] Accuracy is not reported as anomaly quality.
-* [x] PR-AUC/ROC-AUC are not falsely reported without a valid labeled evaluation set.
-* [x] Training-spec fingerprint is deterministic.
-* [x] Gold snapshot ID participates in training-spec fingerprint.
-* [x] Split ID participates in training-spec fingerprint.
-* [x] Anomaly view fingerprint participates in training-spec fingerprint.
-* [x] Model version participates in training-spec fingerprint.
-* [x] Preprocessing version participates in training-spec fingerprint.
-* [x] Score-definition version participates in training-spec fingerprint.
-* [x] Training seed participates in training-spec fingerprint.
-* [x] Model-affecting hyperparameters participate in training-spec fingerprint.
-* [x] Operational log/storage settings do not affect training-spec fingerprint.
-* [x] Concrete anomaly training run gets unique training-run ID.
-* [x] Training-run ID is distinct from training-spec fingerprint.
-* [x] `training-runs/anomaly/<training-run-id>/` exists.
-* [x] Native `model.pt` is written.
-* [x] Model SHA256 is persisted.
-* [x] `preprocessing.json` is written.
-* [x] Preprocessing SHA256 is persisted.
-* [x] `metrics.json` is written.
-* [x] Metrics are clearly development reconstruction metrics.
-* [x] Training-run manifest uses `training-run-v1`.
-* [x] Training run task is explicitly astronomical anomaly detection.
-* [x] Training-run manifest references exact Gold snapshot.
-* [x] Training-run manifest references Gold manifest SHA.
-* [x] Training-run manifest references exact split.
-* [x] Training-run manifest references split manifest SHA.
-* [x] Training-run manifest references anomaly-view version/fingerprint.
-* [x] Training-run manifest records feature order.
-* [x] Training-run manifest records model version.
-* [x] Training-run manifest records preprocessing version.
-* [x] Training-run manifest records score-definition version.
-* [x] Training-run manifest records training seed.
-* [x] Training-run manifest records hyperparameters.
-* [x] Training-run manifest records TRAIN/VALIDATION counts.
-* [x] Training-run manifest records best epoch.
-* [x] Training-run manifest records runtime/device information.
-* [x] Training-run manifest is written last.
-* [x] Training-run manifest is immutable.
-* [x] Partial artifact directory without manifest is not a committed run.
-* [x] `checkpoints/ml-training/anomaly/` exists.
-* [x] Anomaly training reuses ML-training checkpoint state semantics.
-* [x] `PLANNED` works.
-* [x] `TRAINING` works.
-* [x] `ARTIFACT_STORED` works.
-* [x] `COMPLETED` works.
-* [x] `FAILED` works.
-* [x] Training checkpoint is written before expensive training.
-* [x] Checkpoint failure before training stops the run.
-* [x] Mid-training crash may restart from epoch zero.
-* [x] V1 does not require optimizer-state resume.
-* [x] ARTIFACT_STORED recovery commits manifest without retraining.
-* [x] Valid run manifest repairs missing/stale checkpoint.
-* [x] COMPLETED checkpoint without valid run manifest is not trusted.
-* [x] Committed model corruption is detected.
-* [x] Committed preprocessing corruption is detected.
-* [x] Committed metrics corruption is detected.
-* [x] Gold is never mutated.
-* [x] Split manifest is never mutated.
-* [x] Candidate training runs are never mutated.
-* [x] Dataset-view feature-list test passes.
-* [x] Identity-feature exclusion tests pass.
-* [x] Candidate-label independence test passes.
-* [x] Multi-sector target split test passes.
-* [x] Split determinism test passes.
-* [x] Cumulative membership test passes.
-* [x] TRAIN median test passes.
-* [x] Validation median-leakage test passes.
-* [x] TRAIN-only scaling test passes.
-* [x] Validation scaling-leakage test passes.
-* [x] Constant-feature test passes.
-* [x] Preprocessing serialization test passes.
-* [x] Finite preprocessing test passes.
-* [x] Autoencoder shape test passes.
-* [x] Autoencoder finite-output test passes.
-* [x] Reconstruction MSE exactness test passes.
-* [x] Score nonnegative test passes.
-* [x] Score-shape test passes.
-* [x] Loss-improvement test passes.
-* [x] Early-stopping test passes.
-* [x] Best-epoch restore test passes.
-* [x] Training-seed reproducibility test passes.
-* [x] Training-spec fingerprint tests pass.
-* [x] No-label-in-loss test passes.
-* [x] Validation score-summary test passes.
-* [x] No-threshold-artifact test passes.
-* [x] Synthetic outlier mechanical sanity test passes without being presented as science accuracy.
-* [x] Training-run manifest tests pass.
-* [x] Artifact checksum tests pass.
-* [x] Checkpoint serialization/recovery tests pass.
-* [x] Stage 5 anomaly Gold integration test passes.
-* [x] Anomaly deterministic split integration test passes.
-* [x] Gold-only access integration test passes.
-* [x] ClickHouse-offline training test passes.
-* [x] NATS-offline training test passes.
-* [x] network-offline training test passes.
-* [x] CPU-only training test passes.
-* [x] RAW_DELETED-derived Gold training test passes.
-* [x] crash-after-PLANNED recovery passes.
-* [x] crash-during-TRAINING recovery passes.
-* [x] crash-after-artifacts-before-manifest recovery passes.
-* [x] crash-after-manifest-before-COMPLETED recovery passes.
-* [x] MinIO artifact failure is safe.
-* [x] MinIO manifest failure leaves run uncommitted.
-* [x] `train-anomaly` CLI command exists or equivalent clean command.
-* [x] CLI does not report a binary anomaly count without a threshold.
-* [x] No final anomaly predictions are persisted.
-* [x] No `predictions/` objects are created.
-* [x] No registry model is created.
+* [x] Golden Test semantics are explicitly separated from TRAIN/VALIDATION.
+* [x] The implementation refuses to retrofit Golden groups from exposed development groups.
+* [x] `development_exposed_groups` includes both TRAIN and VALIDATION groups.
+* [x] Golden group intersection with TRAIN is empty.
+* [x] Golden group intersection with VALIDATION is empty.
+* [x] Same-TIC cross-sector contamination is rejected.
+* [x] A later sector does not make an already exposed target Golden.
+* [x] Candidate Golden source uses an explicit committed Gold snapshot.
+* [x] Anomaly Golden source uses an explicit committed Gold snapshot.
+* [x] Candidate Recent source uses an explicit committed Gold snapshot.
+* [x] Anomaly Recent source uses an explicit committed Gold snapshot.
+* [x] No Bronze reads occur.
+* [x] No Silver reads occur.
+* [x] Evaluation works after Bronze `RAW_DELETED`.
+* [x] Evaluation works with ClickHouse offline.
+* [x] Evaluation works with NATS offline.
+* [x] Evaluation works with Go API offline.
+* [x] Evaluation works without dashboard.
+* [x] Evaluation works with external network disabled.
+* [x] Evaluation works CPU-only.
+* [x] No live TIC/TOI/TCE query occurs.
+* [x] `ml-evaluation-cohort-v1.md` exists.
+* [x] Golden cohort IDs are deterministic.
+* [x] Recent cohort IDs are deterministic.
+* [x] Cohort IDs do not depend on creation timestamp.
+* [x] Cohort manifests reference exact source Gold snapshot IDs.
+* [x] Cohort manifests reference source Gold manifest SHA256.
+* [x] Cohort manifests reference dataset-view version/fingerprint.
+* [x] Cohort manifests reference selection-policy version.
+* [x] Cohort group keys are canonically ordered.
+* [x] Cohort manifests do not copy Gold feature matrices.
+* [x] Golden cohorts are immutable.
+* [x] Recent cohorts are immutable per snapshot.
+* [x] Existing identical cohort reuse is idempotent.
+* [x] Existing conflicting cohort is rejected.
+* [x] Candidate Golden selection uses `candidate-golden-unseen-v1`.
+* [x] Candidate Golden includes only `POSITIVE`/`NEGATIVE` supervised rows.
+* [x] Candidate Golden preserves natural label distribution.
+* [x] Candidate Golden has both classes for official binary metrics.
+* [x] Previously unresolved but development-unexposed targets may become Golden after versioned relabeling.
+* [x] Any target with an exposed supervised row is excluded entirely from Golden.
+* [x] Candidate Recent uses `candidate-recent-sector-v1`.
+* [x] Candidate Recent requires sector newer than the training cutoff.
+* [x] Candidate Recent excludes TRAIN groups.
+* [x] Candidate Recent excludes VALIDATION groups.
+* [x] Candidate Recent excludes Golden groups.
+* [x] Candidate Recent does not reuse an existing TIC merely because it appears in a newer sector.
+* [x] Recent single-class state is reported explicitly instead of fabricating ROC/PR metrics.
+* [x] Anomaly Golden uses `anomaly-golden-unseen-v1`.
+* [x] Anomaly Golden requires no candidate labels.
+* [x] Anomaly Golden excludes TRAIN/VALIDATION target groups.
+* [x] Anomaly Recent uses `anomaly-recent-sector-v1`.
+* [x] Anomaly Recent excludes TRAIN/VALIDATION/Golden groups.
+* [x] Future split behavior can reserve frozen Golden groups.
+* [x] Existing `ml-split-v1` manifests are never rewritten.
+* [x] If Golden reservation requires incompatible split semantics, `ml-split-v2` is introduced rather than silently changing V1.
+* [x] Frozen Golden group IDs can be recorded as future split exclusions.
+* [x] Candidate training-run manifest integrity is validated.
+* [x] Candidate model checksum is validated.
+* [x] Candidate preprocessing checksum is validated.
+* [x] Candidate split manifest integrity is validated.
+* [x] Anomaly training-run manifest integrity is validated.
+* [x] Anomaly model checksum is validated.
+* [x] Anomaly preprocessing checksum is validated.
+* [x] Anomaly split manifest integrity is validated.
+* [x] Candidate evaluation never retrains the model.
+* [x] Anomaly evaluation never retrains the model.
+* [x] Candidate evaluation never refits preprocessing.
+* [x] Anomaly evaluation never refits preprocessing.
+* [x] Candidate validation probabilities are recomputed from frozen artifacts.
+* [x] Candidate threshold policy is versioned.
+* [x] `candidate-threshold-max-f1-v1` exists.
+* [x] Candidate threshold uses VALIDATION only.
+* [x] Candidate Golden data does not influence threshold.
+* [x] Candidate Recent data does not influence threshold.
+* [x] Candidate classification uses `probability >= threshold`.
+* [x] Candidate threshold maximizes validation F1.
+* [x] Candidate threshold tie-break semantics are deterministic.
+* [x] Tie break prefers higher recall, then precision, then lower threshold.
+* [x] Candidate threshold value is persisted.
+* [x] Candidate validation threshold-selection metrics are persisted.
+* [x] Candidate Golden Average Precision is computed.
+* [x] Candidate Golden ROC-AUC is computed.
+* [x] Candidate Golden precision is computed at frozen threshold.
+* [x] Candidate Golden recall is computed at frozen threshold.
+* [x] Candidate Golden F1 is computed at frozen threshold.
+* [x] Candidate Golden confusion matrix is computed.
+* [x] Average Precision / PR-AUC is the primary candidate ranking metric.
+* [x] Accuracy is not the sole/primary candidate metric.
+* [x] Candidate Recent uses the exact same frozen model.
+* [x] Candidate Recent uses the exact same preprocessing.
+* [x] Candidate Recent uses the exact same decision threshold.
+* [x] Candidate Recent ranking metrics are computed when class coverage permits.
+* [x] Candidate Recent threshold metrics are computed when class coverage permits.
+* [x] Candidate Recent vs Golden metric deltas are recorded.
+* [x] Candidate recent metrics do not trigger retraining automatically.
+* [x] Candidate probabilities are finite and within `[0,1]`.
+* [x] Candidate unknown model/preprocessing versions fail clearly.
+* [x] `anomaly-threshold-validation-p99-v1` exists.
+* [x] Anomaly validation scores are recomputed using frozen artifacts.
+* [x] Anomaly threshold uses validation reconstruction scores only.
+* [x] Anomaly p99 uses explicitly documented linear quantile semantics.
+* [x] Anomaly alert rule uses `score >= threshold`.
+* [x] Anomaly threshold is documented as heuristic evidence threshold.
+* [x] Anomaly Golden data does not influence threshold.
+* [x] Anomaly Recent data does not influence threshold.
+* [x] Golden reference alert rate is computed.
+* [x] Golden reference score mean is computed.
+* [x] Golden reference score median is computed.
+* [x] Golden reference score p95 is computed.
+* [x] Golden reference score p99 is computed.
+* [x] Golden reference score max is computed.
+* [x] `anomaly-synthetic-standardized-shift-v1` exists.
+* [x] Synthetic perturbation occurs only in memory.
+* [x] Synthetic perturbation occurs after frozen preprocessing.
+* [x] Synthetic perturbation does not mutate Gold.
+* [x] Synthetic feature index is deterministic from source-product identity.
+* [x] Synthetic feature index is independent of row ordering.
+* [x] V1 synthetic perturbation changes exactly one standardized feature.
+* [x] V1 synthetic shift magnitude is exactly documented.
+* [x] Golden synthetic detection rate is computed.
+* [x] Golden synthetic score statistics are computed.
+* [x] Synthetic/reference score separation diagnostic is computed.
+* [x] Synthetic results are not called astrophysical anomaly accuracy.
+* [x] Anomaly Recent uses exact same model/preprocessing/threshold.
+* [x] Recent anomaly reference alert rate is computed.
+* [x] Recent anomaly score distribution is computed.
+* [x] Recent synthetic detection rate is computed.
+* [x] Recent vs Golden anomaly drift diagnostics are computed.
+* [x] No anomaly probability is claimed.
+* [x] No anomaly threshold is tuned from Golden/Recent.
+* [x] Candidate evaluation policy is versioned.
+* [x] `candidate-evaluation-v1` exists.
+* [x] Anomaly evaluation policy is versioned.
+* [x] `anomaly-evaluation-v1` exists.
+* [x] Each concrete evaluation has `evaluation_run_id`.
+* [x] Evaluation run ID is distinct from deterministic evaluation-spec fingerprint.
+* [x] Evaluation-spec fingerprint includes exact training run.
+* [x] Evaluation-spec fingerprint includes exact model/preprocessing hashes.
+* [x] Evaluation-spec fingerprint includes Golden cohort ID.
+* [x] Evaluation-spec fingerprint includes Recent cohort ID when present.
+* [x] Evaluation-spec fingerprint includes evaluation policy.
+* [x] Evaluation-spec fingerprint includes threshold policy.
+* [x] Anomaly evaluation spec includes score-definition version.
+* [x] Anomaly evaluation spec includes synthetic-policy version.
+* [x] Operational logging/storage settings do not alter evaluation-spec fingerprint.
+* [x] Candidate evaluation artifacts live under `evaluations/runs/candidate/`.
+* [x] Anomaly evaluation artifacts live under `evaluations/runs/anomaly/`.
+* [x] `threshold.json` is persisted.
+* [x] `metrics.json` is persisted.
+* [x] Threshold artifact SHA256 is persisted.
+* [x] Metrics artifact SHA256 is persisted.
+* [x] Evaluation manifest is persisted.
+* [x] `model-evaluation-v1.md` exists.
+* [x] Evaluation manifest references exact training-run manifest SHA.
+* [x] Evaluation manifest references exact model SHA.
+* [x] Evaluation manifest references exact preprocessing SHA.
+* [x] Evaluation manifest references exact Golden cohort.
+* [x] Evaluation manifest references Recent cohort when used.
+* [x] Evaluation manifest references threshold artifact.
+* [x] Evaluation manifest references metrics artifact.
+* [x] Evaluation manifest is written last.
+* [x] Evaluation manifest is the run commit marker.
+* [x] Evaluation artifacts are immutable after commit.
+* [x] Partial evaluation artifacts without manifest are not a committed evaluation run.
+* [x] No `checkpoints/ml-evaluation/` hierarchy is introduced.
+* [x] Candidate Golden contamination test passes.
+* [x] Anomaly Golden contamination test passes.
+* [x] Recent-vs-development contamination test passes.
+* [x] Recent-vs-Golden contamination test passes.
+* [x] Multi-sector target leakage test passes.
+* [x] Candidate cohort determinism tests pass.
+* [x] Candidate cohort Gold-change identity test passes.
+* [x] Candidate Golden class-coverage test passes.
+* [x] Candidate Recent-sector test passes.
+* [x] Candidate threshold exact-selection test passes.
+* [x] Candidate threshold Golden-independence test passes.
+* [x] Candidate threshold Recent-independence test passes.
+* [x] Candidate threshold equality-boundary test passes.
+* [x] Candidate Golden metric tests pass.
+* [x] Candidate Recent metric tests pass.
+* [x] Candidate Golden-only evaluation works without Recent cohort.
+* [x] Candidate Recent single-class handling test passes.
+* [x] Candidate model/preprocessing immutability tests pass.
+* [x] Anomaly p99 threshold exactness test passes.
+* [x] Anomaly threshold Golden-independence test passes.
+* [x] Anomaly threshold Recent-independence test passes.
+* [x] Anomaly alert-boundary test passes.
+* [x] Synthetic feature-index determinism test passes.
+* [x] Synthetic shift exactness test passes.
+* [x] Synthetic Gold immutability test passes.
+* [x] Synthetic detection-rate test passes.
+* [x] Anomaly reference alert-rate test passes.
+* [x] Anomaly Recent evaluation test passes.
+* [x] Corrupt training model prevents evaluation.
+* [x] Corrupt preprocessing prevents evaluation.
+* [x] Corrupt training manifest prevents evaluation.
+* [x] Corrupt split manifest prevents evaluation.
+* [x] Corrupt cohort Gold prevents evaluation.
+* [x] Full candidate evaluation integration test passes.
+* [x] Full anomaly evaluation integration test passes.
+* [x] RAW_DELETED evaluation integration test passes.
+* [x] Evaluation performs zero Bronze reads.
+* [x] Evaluation performs zero Silver reads.
+* [x] ClickHouse-offline evaluation test passes.
+* [x] NATS-offline evaluation test passes.
+* [x] network-offline evaluation test passes.
+* [x] CPU-only evaluation test passes.
+* [x] Same evaluation specification produces reproducible logical metrics.
+* [x] Same evaluation specification produces same spec fingerprint.
+* [x] Different threshold policy changes evaluation specification.
+* [x] Different Golden cohort changes evaluation specification.
+* [x] Different Recent cohort changes evaluation specification.
+* [x] No training-run artifact is mutated.
+* [x] No Gold artifact is mutated.
+* [x] No split manifest is mutated.
+* [x] No cohort manifest is mutated after freeze.
+* [x] No row-level production predictions are persisted.
+* [x] No model registry package is created.
 * [x] No champion pointer is changed.
-* [x] No challenger is promoted.
-* [x] No ONNX is exported.
+* [x] No promotion decision occurs.
+* [x] No retraining is triggered automatically.
+* [x] No ONNX export occurs.
 * [x] Rust inference remains unchanged.
 * [x] No prediction NATS event exists.
-* [x] No Go API ML change exists.
-* [x] No dashboard ML change exists.
-* [x] `docs/ML_TRAINING.md` documents anomaly training semantics.
-* [x] `docs/ML_DATASETS.md` distinguishes candidate and anomaly views.
-* [x] `docs/CHECKPOINTS.md` documents candidate/anomaly ML-training ownership.
-* [x] `docs/CONFIGURATION.md` documents only implemented anomaly settings.
-* [x] Python README documents anomaly-training flow.
-* [x] Contracts README documents `ml-anomaly-view-v1`.
-* [x] STRUCTURE.md matches actual files.
-* [x] Existing Stage 5, Phase 6.1 and Phase 6.2 tests remain green.
-* [x] Repository is ready for Phase 6.4.
+* [x] No Go API ML endpoint is added.
+* [x] No dashboard ML evaluation view is added.
+* [x] `docs/ML_EVALUATION.md` exists.
+* [x] `docs/ML_EVALUATION.md` explains why TRAIN/VALIDATION cannot later become Golden.
+* [x] `docs/ML_EVALUATION.md` documents candidate threshold semantics.
+* [x] `docs/ML_EVALUATION.md` documents anomaly p99 threshold semantics.
+* [x] `docs/ML_EVALUATION.md` documents synthetic anomaly limitations.
+* [x] `docs/ML_EVALUATION.md` documents Recent Holdout semantics.
+* [x] `docs/ML_DATASETS.md` documents TRAIN/VALIDATION/GOLDEN/RECENT roles.
+* [x] `docs/ML_TRAINING.md` distinguishes development validation from final evaluation.
+* [x] `docs/CONFIGURATION.md` contains only implemented evaluation settings.
+* [x] Python README reflects final evaluation boundary.
+* [x] Contracts README includes evaluation contracts.
+* [x] STRUCTURE.md matches actual changes.
+* [x] Existing Stage 5 and Phase 6.1–6.3 tests remain green.
+* [x] Repository is ready for Phase 6.5.
 
 ---
 
 # Out of Scope
 
-Do NOT implement in Phase 6.3:
+Do NOT implement in Phase 6.4:
 
-* full light-curve tensor autoencoder
-* 1D convolutional anomaly model
-* TPF CNN
-* FFI CNN
-* giant FFI tensors
-* Silver-array training
-* Bronze/FITS training
-* label-supervised anomaly classifier
-* TOI-driven anomaly cohort filtering
-* TCE-driven anomaly cohort filtering
-* anomaly probability calibration
-* final anomaly threshold
-* percentile alert threshold
-* golden test evaluation
-* recent holdout evaluation
-* scientific false-alert benchmark
-* production anomaly score persistence
-* prediction schema
-* candidate-vetting final evaluation
-* model comparison
-* champion/challenger promotion
-* model registry packaging
+* model promotion
+* champion pointer
+* challenger pointer
 * rollback
+* registry model packaging
+* model-manifest-v1
 * ONNX export
+* model-runtime-v1
 * Rust inference parity
-* inference checkpoint
+* production prediction generation
+* prediction storage
 * prediction NATS events
-* Go API anomaly prediction endpoints
-* React anomaly prediction UI
+* Go API ML endpoints
+* dashboard model metrics
+* automated retraining
+* hyperparameter search
+* feature selection from Golden Test
+* retraining from Golden Test
+* preprocessing refit from Golden Test
+* threshold selection from Golden Test
+* threshold selection from Recent Holdout
+* anomaly probability calibration
 * scientific anomaly confirmation
+* scientific exoplanet confirmation
 
 ---
 
@@ -4379,7 +4582,10 @@ Phase 6.2  Candidate Vetting Model Training                   [DONE]
 
 Phase 6.3  Astronomical Anomaly Detection Training            [DONE]
 
-Phase 6.4  Evaluation — Golden Test & Recent Holdout
+Phase 6.4  Evaluation — Golden Test & Recent Holdout          [DONE]
+
+Phase 6.5  Model Registry — Champion / Challenger,
+           Promotion & Rollback
 ```
 
 ```

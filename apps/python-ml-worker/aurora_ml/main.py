@@ -37,10 +37,41 @@ def main():
     view_parser = subparsers.add_parser("ml-view", help="Inspect ML dataset view for a committed Gold candidate snapshot")
     view_parser.add_argument("--snapshot-id", required=True, help="Explicit committed Gold snapshot ID")
 
-    # Command: ml-split
-    split_parser = subparsers.add_parser("ml-split", help="Create deterministic group-safe train/validation split")
-    split_parser.add_argument("--snapshot-id", required=True, help="Explicit committed Gold snapshot ID")
-    split_parser.add_argument("--seed", type=int, default=42, help="Split random seed (default: 42)")
+    # Command: candidate-train
+    train_parser = subparsers.add_parser("candidate-train", help="Train candidate vetting tabular model")
+    train_parser.add_argument("--gold-snapshot-id", required=True, help="Explicit committed Gold snapshot ID")
+    train_parser.add_argument("--split-id", required=True, help="Explicit split manifest ID")
+    train_parser.add_argument("--seed", type=int, default=42, help="Training random seed (default: 42)")
+    train_parser.add_argument("--epochs", type=int, default=50, help="Maximum epochs")
+    train_parser.add_argument("--lr", type=float, default=0.001, help="Learning rate")
+
+    # Command: train-anomaly
+    anom_parser = subparsers.add_parser("train-anomaly", help="Train anomaly detection tabular autoencoder")
+    anom_parser.add_argument("--gold-snapshot-id", required=True, help="Explicit committed Gold snapshot ID")
+    anom_parser.add_argument("--split-id", required=True, help="Explicit split manifest ID")
+    anom_parser.add_argument("--seed", type=int, default=42, help="Training random seed (default: 42)")
+    anom_parser.add_argument("--epochs", type=int, default=150, help="Maximum epochs")
+    anom_parser.add_argument("--lr", type=float, default=0.001, help="Learning rate")
+
+    # Command: evaluation-cohort
+    cohort_parser = subparsers.add_parser("evaluation-cohort", help="Freeze an immutable Golden Test or Recent Holdout cohort")
+    cohort_parser.add_argument("--task", choices=["candidate", "anomaly"], default="candidate", help="Task name")
+    cohort_parser.add_argument("--kind", choices=["golden", "recent"], default="golden", help="Cohort kind")
+    cohort_parser.add_argument("--snapshot-id", required=True, help="Explicit committed Gold snapshot ID")
+    cohort_parser.add_argument("--split-id", required=True, help="Explicit training split ID to exclude")
+    cohort_parser.add_argument("--golden-cohort-id", help="Optional Golden cohort ID to exclude for recent cohorts")
+
+    # Command: evaluate-candidate
+    eval_cand_parser = subparsers.add_parser("evaluate-candidate", help="Evaluate candidate model against Golden Test and Recent Holdout")
+    eval_cand_parser.add_argument("--training-run-id", required=True, help="Explicit candidate training run ID")
+    eval_cand_parser.add_argument("--golden-cohort-id", required=True, help="Explicit Golden cohort ID")
+    eval_cand_parser.add_argument("--recent-cohort-id", help="Optional Recent holdout cohort ID")
+
+    # Command: evaluate-anomaly
+    eval_anom_parser = subparsers.add_parser("evaluate-anomaly", help="Evaluate anomaly autoencoder against Golden Test and Recent Holdout")
+    eval_anom_parser.add_argument("--training-run-id", required=True, help="Explicit anomaly training run ID")
+    eval_anom_parser.add_argument("--golden-cohort-id", required=True, help="Explicit Golden cohort ID")
+    eval_anom_parser.add_argument("--recent-cohort-id", help="Optional Recent holdout cohort ID")
 
     args = parser.parse_args()
 
@@ -63,6 +94,26 @@ def main():
 
     if args.command == "ml-split":
         print(f"[aurora-ml-worker] ML deterministic group split generated for snapshot '{args.snapshot_id}' (seed={args.seed})")
+        return
+
+    if args.command == "candidate-train":
+        print(f"[aurora-ml-worker] Candidate model training initiated for gold='{args.gold_snapshot_id}' split='{args.split_id}' (seed={args.seed}, epochs={args.epochs})")
+        return
+
+    if args.command == "train-anomaly":
+        print(f"[aurora-ml-worker] Anomaly model training initiated for gold='{args.gold_snapshot_id}' split='{args.split_id}' (seed={args.seed}, epochs={args.epochs})")
+        return
+
+    if args.command == "evaluation-cohort":
+        print(f"[aurora-ml-worker] Evaluation cohort generated for task='{args.task}' kind='{args.kind}' snapshot='{args.snapshot_id}' split='{args.split_id}'")
+        return
+
+    if args.command == "evaluate-candidate":
+        print(f"[aurora-ml-worker] Candidate model evaluation initiated for run='{args.training_run_id}' golden='{args.golden_cohort_id}' recent='{args.recent_cohort_id}'")
+        return
+
+    if args.command == "evaluate-anomaly":
+        print(f"[aurora-ml-worker] Anomaly model evaluation initiated for run='{args.training_run_id}' golden='{args.golden_cohort_id}' recent='{args.recent_cohort_id}'")
         return
 
     logger = init_logger("info")
