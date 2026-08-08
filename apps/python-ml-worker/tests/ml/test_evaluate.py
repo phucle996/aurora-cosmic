@@ -4,7 +4,7 @@ Tests Golden Test and Recent Holdout cohorts, validation-only threshold selectio
 group contamination checks, PR-AUC / ROC-AUC, p99 anomaly thresholds, and synthetic shifts.
 """
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 import json
 import os
 import tempfile
@@ -206,7 +206,7 @@ def test_candidate_golden_cohort_group_isolation():
     train_rows = all_rows[:4]  # TICs 101, 102, 103, 104
 
     view = build_candidate_ml_view(manifest, train_rows)
-    split = create_deterministic_group_split(view, seed=42)
+    split = create_deterministic_group_split(view, seed=42, train_ratio=0.5)
 
     golden_cohort = build_candidate_golden_cohort(
         gold_manifest=manifest,
@@ -230,7 +230,7 @@ def test_candidate_recent_cohort_isolation_and_sector():
     train_rows = all_rows[:4]
 
     view = build_candidate_ml_view(manifest, train_rows)
-    split = create_deterministic_group_split(view, seed=42)
+    split = create_deterministic_group_split(view, seed=42, train_ratio=0.5)
     golden_cohort = build_candidate_golden_cohort(manifest, all_rows, split)
 
     recent_cohort = build_candidate_recent_cohort(
@@ -267,7 +267,7 @@ def test_cross_sector_contamination_rejection():
 
     train_rows = all_rows[:4]
     view = build_candidate_ml_view(manifest, train_rows)
-    split = create_deterministic_group_split(view, seed=42)
+    split = create_deterministic_group_split(view, seed=42, train_ratio=0.5)
     golden = build_candidate_golden_cohort(manifest, all_rows, split)
 
     recent = build_candidate_recent_cohort(
@@ -410,32 +410,27 @@ def test_full_candidate_evaluation_flow():
 
         # Create candidate training run manifest
         train_manifest = TrainingRunManifest(
-            schema_version=1,
             training_run_id="run-cand-v1-test123",
             training_spec_fingerprint="f" * 64,
-            task="candidate_vetting",
             model_version="candidate-tabular-mlp-v1",
+            preprocessing_version="candidate-preprocess-v1",
             gold_snapshot_id=manifest.snapshot_id,
             gold_manifest_sha256="s" * 64,
             split_id=split.split_id,
             split_manifest_sha256="m" * 64,
             dataset_view_version=view.dataset_view_version,
             dataset_view_fingerprint=view.view_fingerprint,
-            feature_order=CANDIDATE_MODEL_INPUT_FEATURES,
-            preprocessing_version="candidate-preprocess-v1",
-            preprocessing_sha256="p" * 64,
+            feature_order=list(CANDIDATE_MODEL_INPUT_FEATURES),
             training_seed=42,
             hyperparameters={},
-            train_row_count=5,
-            validation_row_count=5,
-            train_positive_count=1,
-            train_negative_count=1,
-            val_positive_count=1,
-            val_negative_count=1,
+            counts={"train_row_count": 5, "validation_row_count": 5,
+                    "train_positive_count": 1, "train_negative_count": 1,
+                    "val_positive_count": 1, "val_negative_count": 1},
             best_epoch=10,
-            best_validation_loss=0.05,
-            model_sha256="mod" * 21 + "m",
-            metrics_sha256="met" * 21 + "m",
+            artifacts={"model_sha256": "mod" * 21 + "m",
+                       "preprocessing_sha256": "p" * 64,
+                       "metrics_sha256": "met" * 21 + "m"},
+            schema_version=1,
             created_at="2026-08-08T00:00:00Z",
         )
 
