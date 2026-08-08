@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: 'AURORA Dashboards'
+    orgId: 1
+    folder: 'AURORA Cosmic'
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/aurora-overview.json

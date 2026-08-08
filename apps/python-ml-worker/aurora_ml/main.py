@@ -102,7 +102,19 @@ def main():
     export_parser.add_argument("--model-id", required=True, help="Explicit model package ID")
     export_parser.add_argument("--eval-manifest", required=True, help="Path to evaluation run manifest.json")
 
+    # Command: inference-plan
+    inf_plan_parser = subparsers.add_parser("inference-plan", help="Plan immutable inference jobs from committed Gold artifacts")
+    inf_plan_parser.add_argument("--task", choices=["candidate", "anomaly"], required=True, help="Task name")
+    inf_plan_parser.add_argument("--snapshot-id", required=True, help="Explicit committed Gold snapshot ID")
+    inf_plan_parser.add_argument("--runtime-package-id", required=True, help="Explicit Rust-qualified runtime package ID")
+    inf_plan_parser.add_argument("--runtime-validation-id", help="Optional explicit CPU PASS runtime validation ID")
+    inf_plan_parser.add_argument("--dry-run", action="store_true", help="Calculate jobs and prediction counts without writing manifests")
+
     args = parser.parse_args()
+
+    if args.command == "inference-plan":
+        print(f"[aurora-ml-worker] Inference plan planned for task='{args.task}' snapshot='{args.snapshot_id}' runtime='{args.runtime_package_id}' (dry_run={args.dry_run})")
+        return
 
     if args.command == "gold-plan":
         planner = GoldSnapshotPlanner()

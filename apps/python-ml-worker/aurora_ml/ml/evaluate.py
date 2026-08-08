@@ -467,6 +467,25 @@ def build_anomaly_recent_cohort(
     )
 
 
+def build_evaluation_cohort(
+    task: str,
+    kind: str,
+    gold_manifest: Any,
+    rows: List[Dict[str, Any]],
+    training_split: Optional[Any] = None,
+    golden_cohort: Optional[Any] = None,
+) -> EvaluationCohort:
+    """Convenience helper to build Golden or Recent evaluation cohort for a task."""
+    if task == "candidate_vetting":
+        if kind in ("GOLDEN", "GOLDEN_TEST"):
+            return build_candidate_golden_cohort(gold_manifest, rows, training_split)
+        return build_candidate_recent_cohort(gold_manifest, rows, training_split, golden_cohort)
+    else:
+        if kind in ("GOLDEN", "GOLDEN_TEST"):
+            return build_anomaly_golden_cohort(gold_manifest, rows, training_split)
+        return build_anomaly_recent_cohort(gold_manifest, rows, training_split, golden_cohort)
+
+
 def save_evaluation_cohort(
     cohort: EvaluationCohort, dest_root: str = "evaluations/cohorts"
 ) -> str:

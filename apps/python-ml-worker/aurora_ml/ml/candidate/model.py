@@ -8,6 +8,8 @@ from typing import List, Tuple
 import torch
 import torch.nn as nn
 
+from aurora_ml.ml.datasets.splits import CANDIDATE_MODEL_INPUT_FEATURES
+
 
 class CandidateTabularMLP(nn.Module):
     """Candidate Tabular MLP Classifier (candidate-tabular-mlp-v1).
@@ -67,3 +69,6 @@ class CandidateTabularMLP(nn.Module):
             return out
 
         return self.net(x)
+
+
+CandidateTabularMlpV1 = CandidateTabularMLP

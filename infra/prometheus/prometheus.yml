@@ -1,0 +1,33 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: 'aurora-go-ingester'
+    static_configs:
+      - targets: ['go-ingester:8081']
+
+  - job_name: 'aurora-rust-preprocessor'
+    static_configs:
+      - targets: ['rust-preprocessor:8082']
+
+  - job_name: 'aurora-python-ml-worker'
+    static_configs:
+      - targets: ['python-ml-worker:8083']
+
+  - job_name: 'aurora-rust-inference'
+    static_configs:
+      - targets: ['rust-inference:8084']
+
+  - job_name: 'aurora-go-api'
+    static_configs:
+      - targets: ['go-api:8080']
+
+  - job_name: 'aurora-nats'
+    static_configs:
+      - targets: ['nats:8222']
+
+  - job_name: 'aurora-minio'
+    metrics_path: /minio/v2/metrics/cluster
+    static_configs:
+      - targets: ['minio:9000']

@@ -192,7 +192,17 @@ e2e-stage5:
 
 e2e-stage6:
 	@echo "Running Stage 6 ML Training, Evaluation & Runtime Parity E2E validation..."
-	@./tests/e2e/stage6-runtime-parity.sh
+	@./tests/e2e/stage6-e2e.sh
+
+e2e-stage7:
+	@echo "Running Stage 7 Inference, Go API & Dashboard E2E validation script..."
+	@./tests/e2e/stage7-e2e.sh
+
+e2e-stage8: production-gate
+
+production-gate:
+	@echo "Running Stage 8 Final Production Gate verification script..."
+	@./tests/e2e/stage8-production-gate.sh
 
 test-rust:
 	@echo "Running Rust tests..."

@@ -42,12 +42,41 @@ class CandidatePreprocessor:
         if self.label_encoding is None:
             self.label_encoding = {"NEGATIVE": 0, "POSITIVE": 1}
 
-    def fit(self, train_rows: List[Dict[str, Any]], split_id: str = "") -> "CandidatePreprocessor":
+    def fit(self_or_cls, train_rows: List[Dict[str, Any]], *args: Any, **kwargs: Any) -> "CandidatePreprocessor":
         """Fit preprocessor statistics strictly on TRAIN split rows."""
         if not train_rows:
             raise PreprocessingError("EMPTY_TRAIN_ROWS: Cannot fit preprocessor on empty train rows")
 
-        self.split_id = split_id
+        if isinstance(self_or_cls, type):
+            inst = self_or_cls()
+            if len(args) == 2:
+                inst.feature_order = tuple(args[0])
+                inst.split_id = str(args[1])
+            elif len(args) == 1:
+                if isinstance(args[0], (list, tuple)):
+                    inst.feature_order = tuple(args[0])
+                else:
+                    inst.split_id = str(args[0])
+            if "feature_order" in kwargs:
+                inst.feature_order = tuple(kwargs["feature_order"])
+            if "split_id" in kwargs:
+                inst.split_id = str(kwargs["split_id"])
+            return inst.fit(train_rows)
+
+        self = self_or_cls
+        if len(args) == 2:
+            self.feature_order = tuple(args[0])
+            self.split_id = str(args[1])
+        elif len(args) == 1:
+            if isinstance(args[0], (list, tuple)):
+                self.feature_order = tuple(args[0])
+            else:
+                self.split_id = str(args[0])
+        if "feature_order" in kwargs:
+            self.feature_order = tuple(kwargs["feature_order"])
+        if "split_id" in kwargs:
+            self.split_id = str(kwargs["split_id"])
+
         medians: Dict[str, float] = {}
         means: Dict[str, float] = {}
         scales: Dict[str, float] = {}

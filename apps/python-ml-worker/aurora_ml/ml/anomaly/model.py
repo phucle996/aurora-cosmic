@@ -9,6 +9,8 @@ from typing import Tuple
 import torch
 import torch.nn as nn
 
+from aurora_ml.ml.datasets.splits import ANOMALY_MODEL_INPUT_FEATURES
+
 
 class AnomalyLightcurveAutoencoder(nn.Module):
     """PyTorch Tabular Autoencoder for astronomical light-curve anomaly detection."""
@@ -62,3 +64,6 @@ def compute_reconstruction_mse(x: torch.Tensor, x_hat: torch.Tensor) -> torch.Te
     diff_sq = (x - x_hat) ** 2
     per_row_mse = torch.mean(diff_sq, dim=1)
     return per_row_mse
+
+
+AnomalyAutoencoderV1 = AnomalyLightcurveAutoencoder

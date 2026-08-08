@@ -8,7 +8,7 @@ model-runtime-v1 package materialization.
 import json
 import os
 import tempfile
-from typing import Any, Dict
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import pytest
