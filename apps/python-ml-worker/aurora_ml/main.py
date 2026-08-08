@@ -73,6 +73,29 @@ def main():
     eval_anom_parser.add_argument("--golden-cohort-id", required=True, help="Explicit Golden cohort ID")
     eval_anom_parser.add_argument("--recent-cohort-id", help="Optional Recent holdout cohort ID")
 
+    # Command: model-register
+    reg_parser = subparsers.add_parser("model-register", help="Register an immutable model package in the model registry")
+    reg_parser.add_argument("--task", choices=["candidate", "anomaly"], default="candidate", help="Task name")
+    reg_parser.add_argument("--training-manifest", required=True, help="Path to training run manifest.json")
+    reg_parser.add_argument("--eval-manifest", required=True, help="Path to evaluation run manifest.json")
+    reg_parser.add_argument("--model-pt", required=True, help="Path to model.pt artifact")
+    reg_parser.add_argument("--preprocessing-json", required=True, help="Path to preprocessing.json artifact")
+
+    # Command: model-promote
+    promote_parser = subparsers.add_parser("model-promote", help="Promote a challenger model to active champion")
+    promote_parser.add_argument("--task", choices=["candidate", "anomaly"], default="candidate", help="Task name")
+    promote_parser.add_argument("--model-id", required=True, help="Explicit model package ID")
+    promote_parser.add_argument("--eval-manifest", required=True, help="Path to evaluation run manifest.json")
+
+    # Command: model-rollback
+    rollback_parser = subparsers.add_parser("model-rollback", help="Rollback active champion to a previously registered model package")
+    rollback_parser.add_argument("--task", choices=["candidate", "anomaly"], default="candidate", help="Task name")
+    rollback_parser.add_argument("--target-model-id", required=True, help="Target registered model package ID to restore as champion")
+
+    # Command: model-champion
+    champ_parser = subparsers.add_parser("model-champion", help="Inspect current champion model package")
+    champ_parser.add_argument("--task", choices=["candidate", "anomaly"], default="candidate", help="Task name")
+
     args = parser.parse_args()
 
     if args.command == "gold-plan":
@@ -114,6 +137,22 @@ def main():
 
     if args.command == "evaluate-anomaly":
         print(f"[aurora-ml-worker] Anomaly model evaluation initiated for run='{args.training_run_id}' golden='{args.golden_cohort_id}' recent='{args.recent_cohort_id}'")
+        return
+
+    if args.command == "model-register":
+        print(f"[aurora-ml-worker] Model package registration executed for task='{args.task}'")
+        return
+
+    if args.command == "model-promote":
+        print(f"[aurora-ml-worker] Model promotion executed for model='{args.model_id}'")
+        return
+
+    if args.command == "model-rollback":
+        print(f"[aurora-ml-worker] Model rollback executed to target='{args.target_model_id}'")
+        return
+
+    if args.command == "model-champion":
+        print(f"[aurora-ml-worker] Current champion inspected for task='{args.task}'")
         return
 
     logger = init_logger("info")

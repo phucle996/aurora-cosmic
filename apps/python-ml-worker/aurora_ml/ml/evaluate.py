@@ -631,7 +631,8 @@ def compute_roc_auc(y_true: np.ndarray, y_prob: np.ndarray) -> float:
     tpr = np.insert(tpr, 0, 0.0)
     fpr = np.insert(fpr, 0, 0.0)
 
-    auc = float(np.trapz(tpr, fpr))
+    # Trapezoid integration compatible with both NumPy 1.x and 2.x
+    auc = float(0.5 * np.sum((tpr[1:] + tpr[:-1]) * np.diff(fpr)))
     return max(0.0, min(1.0, auc))
 
 

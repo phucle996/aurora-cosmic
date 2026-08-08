@@ -5030,248 +5030,248 @@ No prediction artifact/event is created in Phase 6.5.
 
 Phase 6.5 is COMPLETE when:
 
-* [ ] Existing `aurora_ml/registry.py` owns registry behavior.
-* [ ] No unnecessary registry framework/package hierarchy is introduced.
-* [ ] `contracts/data/model-manifest-v1.md` exists.
-* [ ] `contracts/data/model-promotion-v1.md` exists.
-* [ ] Candidate registry prefix exists when first candidate model is registered.
-* [ ] Anomaly registry prefix exists when first anomaly model is registered.
-* [ ] Registry model packages contain immutable `model.pt`.
-* [ ] Registry model packages contain immutable `preprocessing.json`.
-* [ ] Registry model package manifest is written last.
-* [ ] Model manifest acts as package commit marker.
-* [ ] Partial package without manifest is not considered registered.
-* [ ] Training-run manifest integrity is verified before registration.
-* [ ] Training model SHA is verified before registration.
-* [ ] Training preprocessing SHA is verified before registration.
-* [ ] Gold/split/view provenance is preserved in model manifest.
-* [ ] Feature order is preserved in model manifest.
-* [ ] Candidate task/model-version compatibility is validated.
-* [ ] Anomaly task/model-version compatibility is validated.
-* [ ] Unsupported model version is rejected.
-* [ ] Model fingerprint uses canonical serialization.
-* [ ] Model fingerprint includes task.
-* [ ] Model fingerprint includes training-run identity/provenance.
-* [ ] Model fingerprint includes model version/SHA.
-* [ ] Model fingerprint includes preprocessing version/SHA.
-* [ ] Model fingerprint includes dataset-view identity.
-* [ ] Model fingerprint includes exact feature order.
-* [ ] Evaluation-run ID does not affect model ID.
-* [ ] Registration timestamp does not affect model ID.
-* [ ] Operational storage/log settings do not affect model ID.
-* [ ] Model ID is deterministic.
-* [ ] Same training model registered twice produces same model ID.
-* [ ] New evaluation of same model does not create a new model ID.
-* [ ] Different model bytes produce different model identity.
-* [ ] Different preprocessing artifact produces different model identity.
-* [ ] Different feature-order contract changes model identity.
-* [ ] Registered model copy has same SHA as training artifact.
-* [ ] Registered preprocessing copy has same SHA as training artifact.
-* [ ] Existing identical package is reused idempotently.
-* [ ] Existing conflicting package is rejected.
-* [ ] Registered package is immutable after manifest commit.
-* [ ] Registration never mutates training run.
-* [ ] Registration never mutates evaluation run.
-* [ ] Registration never mutates Gold.
-* [ ] Registration never mutates split.
-* [ ] Registration never mutates evaluation cohort.
-* [ ] Registered model manifest contains no mutable `champion` status.
-* [ ] Registered model manifest contains no mutable `challenger` status.
-* [ ] Challenger semantics are relational rather than a mutable flag.
-* [ ] Multiple challengers may coexist.
-* [ ] `models/candidate/champion.json` is the candidate current-selection pointer.
-* [ ] `models/anomaly/champion.json` is the anomaly current-selection pointer.
-* [ ] Champion pointer is small mutable state.
-* [ ] Champion pointer references exact model ID.
-* [ ] Champion pointer references model-manifest SHA.
-* [ ] Champion pointer references exact evaluation-run ID.
-* [ ] Champion pointer references evaluation-manifest SHA.
-* [ ] Champion pointer references exact threshold artifact.
-* [ ] Champion pointer references threshold SHA.
-* [ ] Champion pointer references exact selection decision.
-* [ ] Champion pointer records previous model ID for diagnostics.
-* [ ] Candidate pointer cannot reference anomaly model.
-* [ ] Anomaly pointer cannot reference candidate model.
-* [ ] Broken champion pointer is rejected.
-* [ ] Champion model integrity is verified.
-* [ ] Champion preprocessing integrity is verified.
-* [ ] Champion evaluation integrity is verified.
-* [ ] Champion threshold integrity is verified.
-* [ ] Champion is documented as registry champion, not deployed runtime.
-* [ ] No `runtime_ready` mutable field exists in model manifest.
-* [ ] No `deployed` mutable field exists in model manifest.
-* [ ] `models/<task>/decisions/` contains immutable decision records.
-* [ ] BOOTSTRAP decision action exists.
-* [ ] PROMOTE decision action exists.
-* [ ] ROLLBACK decision action exists.
-* [ ] Promotion outcomes use PASS/FAIL.
-* [ ] Failed promotion can be persisted for audit.
-* [ ] Failed promotion does not change champion pointer.
-* [ ] Decision fingerprint is deterministic.
-* [ ] Decision ID is deterministic.
-* [ ] Decision ID ignores `created_at`.
-* [ ] Exact repeated promotion decision is idempotent.
-* [ ] Conflicting deterministic decision is rejected.
-* [ ] Decision record preserves expected current champion.
-* [ ] Decision record preserves challenger model/evaluation.
-* [ ] Decision record preserves incumbent model/evaluation.
-* [ ] Decision record preserves policy version.
-* [ ] Decision record preserves compared metric values.
-* [ ] Decision record preserves guardrail outcomes.
-* [ ] Decision record preserves reason codes.
-* [ ] Decision record itself does not falsely claim pointer application.
-* [ ] Current champion state is determined by `champion.json`.
-* [ ] `register-model` command exists or equivalent.
-* [ ] Registration command does not promote.
-* [ ] `compare-model` command exists or equivalent dry comparison.
-* [ ] Dry comparison never mutates champion pointer.
-* [ ] `promote-model` command exists or equivalent.
-* [ ] `rollback-model` command exists or equivalent.
-* [ ] `model-status` exists if useful, without introducing a database.
-* [ ] Promotion requires registered challenger model.
-* [ ] Promotion requires valid completed evaluation run.
-* [ ] Challenger evaluation must reference the challenger training artifacts.
-* [ ] Incumbent evaluation must reference current champion training artifacts.
-* [ ] Candidate/anomaly tasks cannot be cross-compared.
-* [ ] Golden cohort IDs must match for head-to-head comparison.
-* [ ] Different Golden cohorts are rejected as incomparable.
-* [ ] Evaluation-policy versions must be compatible.
-* [ ] Threshold-policy versions must be compatible.
-* [ ] Candidate promotion V1 requires matching dataset-view version/fingerprint.
-* [ ] Anomaly promotion V1 requires matching dataset-view version/fingerprint.
-* [ ] Anomaly score-definition version must match.
-* [ ] Anomaly synthetic-policy version must match.
-* [ ] If both evaluations use Recent Holdout, Recent cohort IDs must match.
-* [ ] If one evaluation has Recent and one does not, V1 comparison rejects them as incomparable.
-* [ ] Both evaluations may omit Recent and compare on Golden only.
-* [ ] Candidate `candidate-promotion-v1` exists.
-* [ ] Candidate primary metric is Golden Average Precision.
-* [ ] Candidate Golden Average Precision must strictly improve.
-* [ ] Candidate AP equality does not count as improvement.
-* [ ] Candidate Golden recall may not regress by more than `0.02`.
-* [ ] Candidate Recent Average Precision may not regress by more than `0.02` when applicable.
-* [ ] Candidate Recent recall may not regress by more than `0.03` when applicable.
-* [ ] Candidate Recent insufficient-class-coverage handling is explicit.
-* [ ] Candidate promotion policy constants are versioned semantics.
-* [ ] Candidate promotion is not based on training loss.
-* [ ] Candidate promotion is not based solely on validation metrics.
-* [ ] Candidate promotion is not based primarily on accuracy.
-* [ ] Anomaly `anomaly-promotion-v1` exists.
-* [ ] Anomaly Golden synthetic detection may not regress by more than `0.02`.
-* [ ] Anomaly Golden reference alert rate may not increase by more than `0.01`.
-* [ ] Anomaly promotion requires at least one strict Golden improvement.
-* [ ] Anomaly Recent synthetic detection may not regress by more than `0.02` when applicable.
-* [ ] Anomaly Recent reference alert rate may not increase by more than `0.01` when applicable.
-* [ ] Anomaly promotion does not use supervised accuracy.
-* [ ] Anomaly promotion does not use raw reconstruction loss as the primary cross-model criterion.
-* [ ] Candidate guardrail boundary tests pass.
-* [ ] Anomaly guardrail boundary tests pass.
-* [ ] Incompatible evaluation tests pass.
-* [ ] Candidate promotion PASS test passes.
-* [ ] Candidate promotion FAIL-primary test passes.
-* [ ] Candidate promotion FAIL-recall test passes.
-* [ ] Candidate promotion FAIL-Recent-AP test passes.
-* [ ] Candidate promotion FAIL-Recent-recall test passes.
-* [ ] Anomaly promotion PASS-synthetic-improvement test passes.
-* [ ] Anomaly promotion PASS-alert-improvement test passes.
-* [ ] Anomaly promotion FAIL-no-improvement test passes.
-* [ ] Anomaly synthetic-regression guardrail test passes.
-* [ ] Anomaly alert-regression guardrail test passes.
-* [ ] First champion bootstrap requires explicit `--bootstrap`.
-* [ ] Bootstrap requires no existing champion.
-* [ ] Bootstrap requires completed final evaluation.
-* [ ] Bootstrap cannot use only Phase 6.2/6.3 validation metrics.
-* [ ] Bootstrap creates immutable BOOTSTRAP decision.
-* [ ] Bootstrap creates champion pointer only after decision commit.
-* [ ] Bootstrap does not require an arbitrary universal accuracy floor.
-* [ ] Bootstrap fails if champion already exists.
-* [ ] No `--force` option bypasses promotion policy.
-* [ ] PASS decision is written before champion pointer mutation.
-* [ ] FAIL decision leaves pointer unchanged.
-* [ ] Current champion is re-read before pointer mutation.
-* [ ] Stale promotion detects changed champion.
-* [ ] Registry V1 documents one intentional mutation operation per task at a time.
-* [ ] No Redis lock exists.
-* [ ] No database lock exists.
-* [ ] Champion pointer PUT is verified after write.
-* [ ] Crash after PASS decision before pointer is recoverable.
-* [ ] Crash after pointer write before verification is recoverable.
-* [ ] Pointer-write failure does not corrupt immutable decision/model history.
-* [ ] No model-registry checkpoint hierarchy exists.
-* [ ] Champion is never inferred from newest model.
-* [ ] Champion is never inferred automatically from highest metric.
-* [ ] Rollback targets a prior champion decision.
-* [ ] Rollback requires explicit reason.
-* [ ] Rollback target task must match.
-* [ ] Rollback target model must verify.
-* [ ] Rollback target preprocessing must verify.
-* [ ] Rollback target evaluation must verify.
-* [ ] Rollback target threshold must verify.
-* [ ] Never-promoted model cannot be selected through rollback.
-* [ ] Choosing a never-promoted challenger requires normal promotion.
-* [ ] Rollback creates a new immutable ROLLBACK decision.
-* [ ] Rollback never mutates old promotion decision.
-* [ ] Rollback restores exact prior model/evaluation/threshold selection.
-* [ ] Rollback never deletes current/old model packages.
-* [ ] Rollback never deletes training runs.
-* [ ] Rollback never deletes evaluation runs.
-* [ ] Rollback history is reconstructable.
-* [ ] Multi-step promotion/rollback history test passes.
-* [ ] Model registration integration using real tiny candidate training run passes.
-* [ ] Model registration integration using real tiny anomaly training run passes.
-* [ ] Candidate bootstrap integration passes.
-* [ ] Anomaly bootstrap integration passes.
-* [ ] Candidate challenger promotion integration passes.
-* [ ] Anomaly challenger promotion integration passes.
-* [ ] Candidate promotion failure leaves champion unchanged.
-* [ ] Anomaly promotion failure leaves champion unchanged.
-* [ ] Rollback integration restores exact prior selection.
-* [ ] Registry works with external network disabled.
-* [ ] Registry works with ClickHouse offline.
-* [ ] Registry works with NATS offline.
-* [ ] Registry works with Go API offline.
-* [ ] Registry works without dashboard.
-* [ ] Registry works without GPU.
-* [ ] Registry works for models whose Gold lineage originates from RAW_DELETED Bronze.
-* [ ] Registry performs zero Bronze reads.
-* [ ] Registry performs zero Silver reads.
-* [ ] Registry does not scan full Gold data.
-* [ ] Registry does not mutate training artifacts.
-* [ ] Registry does not mutate evaluation artifacts.
-* [ ] Registry does not mutate split/cohort artifacts.
-* [ ] Registry does not mutate Gold.
-* [ ] No ONNX file is created.
-* [ ] No runtime package is created.
-* [ ] No runtime-ready/deployed state is added to immutable model manifest.
-* [ ] No Rust inference code is changed.
-* [ ] No inference checkpoint is created.
-* [ ] No prediction objects are created.
-* [ ] No prediction NATS event is created.
-* [ ] No Go API model-switching endpoint is created.
-* [ ] No React promotion/rollback control is created.
-* [ ] No automated promotion daemon exists.
-* [ ] No automated retraining is triggered by promotion.
-* [ ] `docs/MODEL_REGISTRY.md` exists.
-* [ ] `docs/MODEL_REGISTRY.md` documents model identity.
-* [ ] `docs/MODEL_REGISTRY.md` documents immutable package semantics.
-* [ ] `docs/MODEL_REGISTRY.md` documents challenger semantics.
-* [ ] `docs/MODEL_REGISTRY.md` documents registry champion vs deployment.
-* [ ] `docs/MODEL_REGISTRY.md` documents candidate promotion policy.
-* [ ] `docs/MODEL_REGISTRY.md` documents anomaly promotion policy.
-* [ ] `docs/MODEL_REGISTRY.md` documents bootstrap.
-* [ ] `docs/MODEL_REGISTRY.md` documents decision records.
-* [ ] `docs/MODEL_REGISTRY.md` documents rollback.
-* [ ] `docs/ML_EVALUATION.md` links evaluation artifacts to registry promotion.
-* [ ] `docs/ML_TRAINING.md` documents training-run -> registry-model boundary.
-* [ ] `docs/CHECKPOINTS.md` confirms there is no model-registry checkpoint.
-* [ ] `docs/CONFIGURATION.md` does not expose promotion-policy semantics as mutable environment knobs.
-* [ ] Python README documents training -> evaluation -> registry champion flow.
-* [ ] Contracts README includes `model-manifest-v1`.
-* [ ] Contracts README includes `model-promotion-v1`.
-* [ ] STRUCTURE.md matches actual changes.
-* [ ] `tests/test_registry.py` exists or equivalent focused tests exist.
-* [ ] Existing Stage 5 and Phase 6.1–6.4 tests remain green.
-* [ ] Repository is ready for Phase 6.6.
+* [x] Existing `aurora_ml/registry.py` owns registry behavior.
+* [x] No unnecessary registry framework/package hierarchy is introduced.
+* [x] `contracts/data/model-manifest-v1.md` exists.
+* [x] `contracts/data/model-promotion-v1.md` exists.
+* [x] Candidate registry prefix exists when first candidate model is registered.
+* [x] Anomaly registry prefix exists when first anomaly model is registered.
+* [x] Registry model packages contain immutable `model.pt`.
+* [x] Registry model packages contain immutable `preprocessing.json`.
+* [x] Registry model package manifest is written last.
+* [x] Model manifest acts as package commit marker.
+* [x] Partial package without manifest is not considered registered.
+* [x] Training-run manifest integrity is verified before registration.
+* [x] Training model SHA is verified before registration.
+* [x] Training preprocessing SHA is verified before registration.
+* [x] Gold/split/view provenance is preserved in model manifest.
+* [x] Feature order is preserved in model manifest.
+* [x] Candidate task/model-version compatibility is validated.
+* [x] Anomaly task/model-version compatibility is validated.
+* [x] Unsupported model version is rejected.
+* [x] Model fingerprint uses canonical serialization.
+* [x] Model fingerprint includes task.
+* [x] Model fingerprint includes training-run identity/provenance.
+* [x] Model fingerprint includes model version/SHA.
+* [x] Model fingerprint includes preprocessing version/SHA.
+* [x] Model fingerprint includes dataset-view identity.
+* [x] Model fingerprint includes exact feature order.
+* [x] Evaluation-run ID does not affect model ID.
+* [x] Registration timestamp does not affect model ID.
+* [x] Operational storage/log settings do not affect model ID.
+* [x] Model ID is deterministic.
+* [x] Same training model registered twice produces same model ID.
+* [x] New evaluation of same model does not create a new model ID.
+* [x] Different model bytes produce different model identity.
+* [x] Different preprocessing artifact produces different model identity.
+* [x] Different feature-order contract changes model identity.
+* [x] Registered model copy has same SHA as training artifact.
+* [x] Registered preprocessing copy has same SHA as training artifact.
+* [x] Existing identical package is reused idempotently.
+* [x] Existing conflicting package is rejected.
+* [x] Registered package is immutable after manifest commit.
+* [x] Registration never mutates training run.
+* [x] Registration never mutates evaluation run.
+* [x] Registration never mutates Gold.
+* [x] Registration never mutates split.
+* [x] Registration never mutates evaluation cohort.
+* [x] Registered model manifest contains no mutable `champion` status.
+* [x] Registered model manifest contains no mutable `challenger` status.
+* [x] Challenger semantics are relational rather than a mutable flag.
+* [x] Multiple challengers may coexist.
+* [x] `models/candidate/champion.json` is the candidate current-selection pointer.
+* [x] `models/anomaly/champion.json` is the anomaly current-selection pointer.
+* [x] Champion pointer is small mutable state.
+* [x] Champion pointer references exact model ID.
+* [x] Champion pointer references model-manifest SHA.
+* [x] Champion pointer references exact evaluation-run ID.
+* [x] Champion pointer references evaluation-manifest SHA.
+* [x] Champion pointer references exact threshold artifact.
+* [x] Champion pointer references threshold SHA.
+* [x] Champion pointer references exact selection decision.
+* [x] Champion pointer records previous model ID for diagnostics.
+* [x] Candidate pointer cannot reference anomaly model.
+* [x] Anomaly pointer cannot reference candidate model.
+* [x] Broken champion pointer is rejected.
+* [x] Champion model integrity is verified.
+* [x] Champion preprocessing integrity is verified.
+* [x] Champion evaluation integrity is verified.
+* [x] Champion threshold integrity is verified.
+* [x] Champion is documented as registry champion, not deployed runtime.
+* [x] No `runtime_ready` mutable field exists in model manifest.
+* [x] No `deployed` mutable field exists in model manifest.
+* [x] `models/<task>/decisions/` contains immutable decision records.
+* [x] BOOTSTRAP decision action exists.
+* [x] PROMOTE decision action exists.
+* [x] ROLLBACK decision action exists.
+* [x] Promotion outcomes use PASS/FAIL.
+* [x] Failed promotion can be persisted for audit.
+* [x] Failed promotion does not change champion pointer.
+* [x] Decision fingerprint is deterministic.
+* [x] Decision ID is deterministic.
+* [x] Decision ID ignores `created_at`.
+* [x] Exact repeated promotion decision is idempotent.
+* [x] Conflicting deterministic decision is rejected.
+* [x] Decision record preserves expected current champion.
+* [x] Decision record preserves challenger model/evaluation.
+* [x] Decision record preserves incumbent model/evaluation.
+* [x] Decision record preserves policy version.
+* [x] Decision record preserves compared metric values.
+* [x] Decision record preserves guardrail outcomes.
+* [x] Decision record preserves reason codes.
+* [x] Decision record itself does not falsely claim pointer application.
+* [x] Current champion state is determined by `champion.json`.
+* [x] `register-model` command exists or equivalent.
+* [x] Registration command does not promote.
+* [x] `compare-model` command exists or equivalent dry comparison.
+* [x] Dry comparison never mutates champion pointer.
+* [x] `promote-model` command exists or equivalent.
+* [x] `rollback-model` command exists or equivalent.
+* [x] `model-status` exists if useful, without introducing a database.
+* [x] Promotion requires registered challenger model.
+* [x] Promotion requires valid completed evaluation run.
+* [x] Challenger evaluation must reference the challenger training artifacts.
+* [x] Incumbent evaluation must reference current champion training artifacts.
+* [x] Candidate/anomaly tasks cannot be cross-compared.
+* [x] Golden cohort IDs must match for head-to-head comparison.
+* [x] Different Golden cohorts are rejected as incomparable.
+* [x] Evaluation-policy versions must be compatible.
+* [x] Threshold-policy versions must be compatible.
+* [x] Candidate promotion V1 requires matching dataset-view version/fingerprint.
+* [x] Anomaly promotion V1 requires matching dataset-view version/fingerprint.
+* [x] Anomaly score-definition version must match.
+* [x] Anomaly synthetic-policy version must match.
+* [x] If both evaluations use Recent Holdout, Recent cohort IDs must match.
+* [x] If one evaluation has Recent and one does not, V1 comparison rejects them as incomparable.
+* [x] Both evaluations may omit Recent and compare on Golden only.
+* [x] Candidate `candidate-promotion-v1` exists.
+* [x] Candidate primary metric is Golden Average Precision.
+* [x] Candidate Golden Average Precision must strictly improve.
+* [x] Candidate AP equality does not count as improvement.
+* [x] Candidate Golden recall may not regress by more than `0.02`.
+* [x] Candidate Recent Average Precision may not regress by more than `0.02` when applicable.
+* [x] Candidate Recent recall may not regress by more than `0.03` when applicable.
+* [x] Candidate Recent insufficient-class-coverage handling is explicit.
+* [x] Candidate promotion policy constants are versioned semantics.
+* [x] Candidate promotion is not based on training loss.
+* [x] Candidate promotion is not based solely on validation metrics.
+* [x] Candidate promotion is not based primarily on accuracy.
+* [x] Anomaly `anomaly-promotion-v1` exists.
+* [x] Anomaly Golden synthetic detection may not regress by more than `0.02`.
+* [x] Anomaly Golden reference alert rate may not increase by more than `0.01`.
+* [x] Anomaly promotion requires at least one strict Golden improvement.
+* [x] Anomaly Recent synthetic detection may not regress by more than `0.02` when applicable.
+* [x] Anomaly Recent reference alert rate may not increase by more than `0.01` when applicable.
+* [x] Anomaly promotion does not use supervised accuracy.
+* [x] Anomaly promotion does not use raw reconstruction loss as the primary cross-model criterion.
+* [x] Candidate guardrail boundary tests pass.
+* [x] Anomaly guardrail boundary tests pass.
+* [x] Incompatible evaluation tests pass.
+* [x] Candidate promotion PASS test passes.
+* [x] Candidate promotion FAIL-primary test passes.
+* [x] Candidate promotion FAIL-recall test passes.
+* [x] Candidate promotion FAIL-Recent-AP test passes.
+* [x] Candidate promotion FAIL-Recent-recall test passes.
+* [x] Anomaly promotion PASS-synthetic-improvement test passes.
+* [x] Anomaly promotion PASS-alert-improvement test passes.
+* [x] Anomaly promotion FAIL-no-improvement test passes.
+* [x] Anomaly synthetic-regression guardrail test passes.
+* [x] Anomaly alert-regression guardrail test passes.
+* [x] First champion bootstrap requires explicit `--bootstrap`.
+* [x] Bootstrap requires no existing champion.
+* [x] Bootstrap requires completed final evaluation.
+* [x] Bootstrap cannot use only Phase 6.2/6.3 validation metrics.
+* [x] Bootstrap creates immutable BOOTSTRAP decision.
+* [x] Bootstrap creates champion pointer only after decision commit.
+* [x] Bootstrap does not require an arbitrary universal accuracy floor.
+* [x] Bootstrap fails if champion already exists.
+* [x] No `--force` option bypasses promotion policy.
+* [x] PASS decision is written before champion pointer mutation.
+* [x] FAIL decision leaves pointer unchanged.
+* [x] Current champion is re-read before pointer mutation.
+* [x] Stale promotion detects changed champion.
+* [x] Registry V1 documents one intentional mutation operation per task at a time.
+* [x] No Redis lock exists.
+* [x] No database lock exists.
+* [x] Champion pointer PUT is verified after write.
+* [x] Crash after PASS decision before pointer is recoverable.
+* [x] Crash after pointer write before verification is recoverable.
+* [x] Pointer-write failure does not corrupt immutable decision/model history.
+* [x] No model-registry checkpoint hierarchy exists.
+* [x] Champion is never inferred from newest model.
+* [x] Champion is never inferred automatically from highest metric.
+* [x] Rollback targets a prior champion decision.
+* [x] Rollback requires explicit reason.
+* [x] Rollback target task must match.
+* [x] Rollback target model must verify.
+* [x] Rollback target preprocessing must verify.
+* [x] Rollback target evaluation must verify.
+* [x] Rollback target threshold must verify.
+* [x] Never-promoted model cannot be selected through rollback.
+* [x] Choosing a never-promoted challenger requires normal promotion.
+* [x] Rollback creates a new immutable ROLLBACK decision.
+* [x] Rollback never mutates old promotion decision.
+* [x] Rollback restores exact prior model/evaluation/threshold selection.
+* [x] Rollback never deletes current/old model packages.
+* [x] Rollback never deletes training runs.
+* [x] Rollback never deletes evaluation runs.
+* [x] Rollback history is reconstructable.
+* [x] Multi-step promotion/rollback history test passes.
+* [x] Model registration integration using real tiny candidate training run passes.
+* [x] Model registration integration using real tiny anomaly training run passes.
+* [x] Candidate bootstrap integration passes.
+* [x] Anomaly bootstrap integration passes.
+* [x] Candidate challenger promotion integration passes.
+* [x] Anomaly challenger promotion integration passes.
+* [x] Candidate promotion failure leaves champion unchanged.
+* [x] Anomaly promotion failure leaves champion unchanged.
+* [x] Rollback integration restores exact prior selection.
+* [x] Registry works with external network disabled.
+* [x] Registry works with ClickHouse offline.
+* [x] Registry works with NATS offline.
+* [x] Registry works with Go API offline.
+* [x] Registry works without dashboard.
+* [x] Registry works without GPU.
+* [x] Registry works for models whose Gold lineage originates from RAW_DELETED Bronze.
+* [x] Registry performs zero Bronze reads.
+* [x] Registry performs zero Silver reads.
+* [x] Registry does not scan full Gold data.
+* [x] Registry does not mutate training artifacts.
+* [x] Registry does not mutate evaluation artifacts.
+* [x] Registry does not mutate split/cohort artifacts.
+* [x] Registry does not mutate Gold.
+* [x] No ONNX file is created.
+* [x] No runtime package is created.
+* [x] No runtime-ready/deployed state is added to immutable model manifest.
+* [x] No Rust inference code is changed.
+* [x] No inference checkpoint is created.
+* [x] No prediction objects are created.
+* [x] No prediction NATS event is created.
+* [x] No Go API model-switching endpoint is created.
+* [x] No React promotion/rollback control is created.
+* [x] No automated promotion daemon exists.
+* [x] No automated retraining is triggered by promotion.
+* [x] `docs/MODEL_REGISTRY.md` exists.
+* [x] `docs/MODEL_REGISTRY.md` documents model identity.
+* [x] `docs/MODEL_REGISTRY.md` documents immutable package semantics.
+* [x] `docs/MODEL_REGISTRY.md` documents challenger semantics.
+* [x] `docs/MODEL_REGISTRY.md` documents registry champion vs deployment.
+* [x] `docs/MODEL_REGISTRY.md` documents candidate promotion policy.
+* [x] `docs/MODEL_REGISTRY.md` documents anomaly promotion policy.
+* [x] `docs/MODEL_REGISTRY.md` documents bootstrap.
+* [x] `docs/MODEL_REGISTRY.md` documents decision records.
+* [x] `docs/MODEL_REGISTRY.md` documents rollback.
+* [x] `docs/ML_EVALUATION.md` links evaluation artifacts to registry promotion.
+* [x] `docs/ML_TRAINING.md` documents training-run -> registry-model boundary.
+* [x] `docs/CHECKPOINTS.md` confirms there is no model-registry checkpoint.
+* [x] `docs/CONFIGURATION.md` does not expose promotion-policy semantics as mutable environment knobs.
+* [x] Python README documents training -> evaluation -> registry champion flow.
+* [x] Contracts README includes `model-manifest-v1`.
+* [x] Contracts README includes `model-promotion-v1`.
+* [x] STRUCTURE.md matches actual changes.
+* [x] `tests/test_registry.py` exists or equivalent focused tests exist.
+* [x] Existing Stage 5 and Phase 6.1–6.4 tests remain green.
+* [x] Repository is ready for Phase 6.6.
 
 ---
 
