@@ -15,6 +15,8 @@ the selected GPU through `gpus: all`.
 aurora_ml/
 ├── main.py                         # CLI entrypoint and GPU-only training commands
 ├── config.py                       # Infrastructure config (MinIO, ClickHouse, env)
+├── observer/                       # Bounded Prometheus metrics and /healthz server
+│   └── metrics.py                  # Seven worker-level metric families, no ID labels
 ├── data.py                         # Generic Gold data loading & lineage discovery
 │
 ├── pipeline/                       # Stage 5 — Data Pipeline Layer
@@ -75,3 +77,11 @@ python -m aurora_ml.main train-anomaly \
 The training loop uses CUDA AMP, pinned host memory, non-blocking host-to-device
 copies, TF32 tensor-core math, per-epoch recovery checkpoints, and CPU-portable
 model artifacts. `AURORA_ML_MAX_VRAM_MB=0` means no allocator cap.
+
+## Observer
+
+The long-running worker exposes `AURORA_METRICS_ADDR` (default
+`0.0.0.0:8083`) with `/metrics` for Prometheus and `/healthz` for container
+health checks. Metrics are intentionally low-cardinality and cover job outcomes,
+duration, errors, in-flight work, queue depth, processed rows, and the last
+successful job timestamp. Runtime IDs and object paths are never labels.

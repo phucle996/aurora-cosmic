@@ -1,4 +1,4 @@
-use aurora_inference::{application, config, telemetry};
+use aurora_inference::{application, config, logger};
 
 #[tokio::main]
 async fn main() {
@@ -10,7 +10,7 @@ async fn main() {
         }
     };
 
-    telemetry::init(&cfg.core.log_level, &cfg.core.env);
+    logger::init(&cfg.core.log_level, &cfg.core.env);
     cfg.log_summary();
 
     if let Err(e) = application::run(cfg).await {

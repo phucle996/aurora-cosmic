@@ -33,11 +33,17 @@ pub struct MlConfig {
 }
 
 #[derive(Debug, Clone)]
+pub struct ObserverConfig {
+    pub addr: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct Config {
     pub core: CoreConfig,
     pub minio: MinioConfig,
     pub nats: NatsConfig,
     pub ml: MlConfig,
+    pub observer: ObserverConfig,
 }
 
 impl Config {
@@ -103,6 +109,10 @@ impl Config {
                 intra_threads,
                 max_gold_bytes,
             },
+            observer: ObserverConfig {
+                addr: env::var("AURORA_INFERENCE_METRICS_ADDR")
+                    .unwrap_or_else(|_| "0.0.0.0:8084".to_string()),
+            },
         })
     }
 
@@ -119,6 +129,7 @@ impl Config {
             nats_durable = %self.nats.durable,
             nats_subject = %self.nats.subject,
             workers = self.nats.workers,
+            observer_addr = %self.observer.addr,
             "Configuration summary loaded"
         );
     }

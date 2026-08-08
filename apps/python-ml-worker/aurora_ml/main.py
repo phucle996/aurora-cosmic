@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from aurora_ml.config import Config
 from aurora_ml.ml.device import CudaRequiredError, require_cuda
+from aurora_ml.observer import Metrics, ObserverServer
 from aurora_ml.ml.anomaly.train import train_anomaly_model
 from aurora_ml.ml.candidate.train import train_candidate_model
 from aurora_ml.ml.datasets.splits import CandidateGroupSplit
@@ -237,10 +238,15 @@ def main():
 
     logger = init_logger("info")
     logger.info("Starting Python PyTorch ML worker service...")
+    observer_server = None
     try:
         cfg = Config()
         logger.setLevel(cfg.log_level.upper())
         cfg.log_summary()
+        metrics = Metrics()
+        observer_server = ObserverServer(metrics, cfg.metrics_addr)
+        observer_server.start()
+        logger.info("ML observer listening on %s", cfg.metrics_addr)
         _, cuda_info = require_cuda(cfg.device, cfg.max_vram_mb)
         logger.info(
             "CUDA training runtime ready: device=%s name=%s vram=%sMB torch=%s cuda=%s",
@@ -270,6 +276,9 @@ def main():
         raise
     except Exception:
         logger.exception("Failed to start service")
+    finally:
+        if observer_server is not None:
+            observer_server.shutdown()
 
 
 if __name__ == "__main__":

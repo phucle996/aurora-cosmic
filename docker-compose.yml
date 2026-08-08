@@ -124,8 +124,11 @@ services:
     cpus: "1.0"
     mem_limit: 1g
     memswap_limit: 1g
+    ports:
+      - "${AURORA_ML_METRICS_PORT:-8083}:8083"
     environment:
       AURORA_ML_MAX_VRAM_MB: "2000"
+      AURORA_METRICS_ADDR: "0.0.0.0:8083"
     env_file:
       - ./apps/python-ml-worker/.env.example
     networks:
@@ -135,12 +138,20 @@ services:
         condition: service_healthy
       nats:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8083/healthz', timeout=2)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   rust-inference:
     image: ghcr.io/phucle996/aurora-rust-inference:latest
     build: ./apps/rust-inference
     container_name: aurora-rust-inference
     gpus: all
+    ports:
+      - "${AURORA_INFERENCE_METRICS_PORT:-8084}:8084"
     env_file:
       - ./apps/rust-inference/.env.example
     networks:
@@ -150,6 +161,12 @@ services:
         condition: service_healthy
       nats:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8084/healthz >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
 
   go-api:
     image: ghcr.io/phucle996/aurora-go-api:latest

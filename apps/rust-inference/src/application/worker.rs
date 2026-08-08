@@ -21,6 +21,7 @@ use crate::runtime::{
 use crate::adapters::gold::{read_gold, GoldRow};
 use crate::adapters::storage::ObjectStore;
 use crate::config::{Config, NatsConfig};
+use crate::observer::Metrics;
 
 const INFERENCE_STREAM_SUBJECT: &str = "aurora.v1.inference.>";
 
@@ -45,6 +46,7 @@ pub async fn run_pool(
     store: Arc<ObjectStore>,
     config: Config,
     cancel: tokio_util::sync::CancellationToken,
+    metrics: Arc<Metrics>,
 ) -> Result<()> {
     let stream = ensure_stream(&js, &config.nats).await?;
     let consumer = stream
@@ -78,24 +80,31 @@ pub async fn run_pool(
                     tokio::time::sleep(Duration::from_millis(250)).await;
                     continue;
                 }
+                metrics.set_queue_depth(batch.len());
                 for message in batch {
                     let message = match message {
                         Ok(message) => message,
-                        Err(error) => { tracing::warn!(%error, "failed to receive inference message"); continue; }
+                        Err(error) => {
+                            tracing::warn!(%error, "failed to receive inference message");
+                            metrics.record_transport_error();
+                            continue;
+                        }
                     };
                     let task_store = store.clone();
                     let task_config = config.clone();
                     let task_semaphore = semaphore.clone();
+                    let task_metrics = metrics.clone();
                     tasks.spawn(async move {
                         let _permit = match task_semaphore.acquire_owned().await {
                             Ok(permit) => permit,
                             Err(_) => return,
                         };
-                        if let Err(error) = process_message(message, task_store, &task_config).await {
+                        if let Err(error) = process_message(message, task_store, &task_config, task_metrics).await {
                             tracing::error!(%error, "inference job failed");
                         }
                     });
                 }
+                metrics.set_queue_depth(0);
                 while let Some(result) = tasks.try_join_next() {
                     if let Err(error) = result { tracing::error!(%error, "inference task panicked"); }
                 }
@@ -114,7 +123,9 @@ async fn process_message(
     message: jetstream::Message,
     store: Arc<ObjectStore>,
     config: &Config,
+    metrics: Arc<Metrics>,
 ) -> Result<()> {
+    let mut observation = metrics.begin("unknown", 0);
     let event: InferenceJobRequestedEvent = match serde_json::from_slice(&message.payload) {
         Ok(event) => event,
         Err(error) => {
@@ -139,6 +150,7 @@ async fn process_message(
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         anyhow::bail!("invalid inference event contract")
     }
+    observation.set_task(&event.task);
 
     let job_bytes = store
         .get_verified(
@@ -188,6 +200,7 @@ async fn process_message(
     {
         anyhow::bail!("Gold row count does not match job manifest")
     }
+    observation.set_rows(rows.len());
 
     let mut output = Vec::with_capacity(rows.len() * 512);
     for row in rows {
@@ -223,6 +236,7 @@ async fn process_message(
         .map_err(|error| anyhow::anyhow!(error.to_string()))
         .context("ack inference job")?;
     tracing::info!(job_id = %job.job_id, rows = job.expected_prediction_count, output_key = %key, "inference job completed");
+    observation.set_success();
     Ok(())
 }
 

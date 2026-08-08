@@ -18,7 +18,7 @@ RUN find /root/.cache/ort.pyke.io -type f -name 'libonnxruntime*.so' -exec cp {}
 FROM nvidia/cuda:13.0.2-runtime-ubuntu24.04
 WORKDIR /app
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libstdc++6 \
+    && apt-get install -y --no-install-recommends ca-certificates libstdc++6 curl \
     && rm -rf /var/lib/apt/lists/*
 ENV NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility

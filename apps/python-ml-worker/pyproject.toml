@@ -20,6 +20,7 @@ dependencies = [
     "onnx>=1.16,<2",
     "onnxruntime-gpu>=1.18,<2",
     "nvidia-ml-py>=12,<13",
+    "prometheus-client>=0.20,<1",
 ]
 
 [project.optional-dependencies]

@@ -30,6 +30,13 @@ outputs are expected values only and are never used as model outputs.
 `AURORA_INFERENCE_INTRA_THREADS` bounds ONNX intra-op threads. Gold objects are
 rejected above `AURORA_INFERENCE_MAX_GOLD_BYTES` before Parquet decoding.
 
+The worker exposes `AURORA_INFERENCE_METRICS_ADDR` (default
+`0.0.0.0:8084`) with `/metrics` for Prometheus and `/healthz` for container
+health checks. The observer publishes seven bounded metric families: job
+outcomes, processing duration, errors, in-flight jobs, queue depth, processed
+rows, and last successful job timestamp. Runtime IDs and object keys are never
+metric labels.
+
 Inference is GPU-only: the image includes the ONNX Runtime CUDA execution
 provider, Compose exposes the NVIDIA device, and startup/session creation fails
 if CUDA cannot be registered. Training is also GPU-only in the Python ML
@@ -43,8 +50,9 @@ src/
 ├── adapters/       MinIO and Gold Parquet I/O
 ├── domain/         job, model-runtime, and prediction contracts
 ├── runtime/        ONNX session, preprocessing, checksums, and parity
+├── observer.rs     bounded Prometheus metrics and HTTP health endpoint
 ├── config.rs       environment-backed deployment configuration
-├── telemetry.rs    structured logging setup
+├── logger.rs       structured logging setup
 └── main.rs         process entrypoint
 ```
 

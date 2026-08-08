@@ -8,6 +8,7 @@ class Config:
         self.minio_endpoint = self._require_env("MINIO_ENDPOINT")
         self.minio_bucket = self._require_env("MINIO_BUCKET")
         self.nats_url = self._require_env("NATS_URL")
+        self.metrics_addr = os.getenv("AURORA_METRICS_ADDR", "0.0.0.0:8083")
 
         self.device = self._require_env("AURORA_ML_DEVICE").lower()
         if self.device != "cuda":
