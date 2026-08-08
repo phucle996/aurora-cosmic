@@ -1,4 +1,4 @@
-.PHONY: help config-check repo-check infra-up infra-down infra-restart infra-logs infra-ps infra-reset build build-go build-rust build-python up down restart ps logs test test-go e2e-ingestion e2e-ingestion-live e2e-preprocessing e2e-stage4 test-rust test-python fmt fmt-go fmt-rust fmt-python lint lint-go lint-rust lint-python smoke clean
+.PHONY: help config-check repo-check infra-up infra-down infra-restart infra-logs infra-ps infra-reset build build-go build-rust build-python build-dashboard up down restart ps logs test test-go e2e-ingestion e2e-ingestion-live e2e-preprocessing e2e-stage4 test-rust test-python fmt fmt-go fmt-rust fmt-python lint lint-go lint-rust lint-python lint-dashboard smoke clean
 
 help:
 	@echo "AURORA Cosmic Data Platform - Makefile Targets:"
@@ -22,7 +22,8 @@ help:
 	@echo "  build          - Build all application containers via Docker Compose"
 	@echo "  build-go       - Build native Go binaries (go-ingester, go-api)"
 	@echo "  build-rust     - Build native Rust binaries (rust-preprocessor, rust-inference)"
-	@echo "  build-python   - Sync Python environments via uv (python-ml-worker, dashboard)"
+	@echo "  build-python   - Sync Python ML Worker dependencies via uv"
+	@echo "  build-dashboard - Build the Vite dashboard"
 	@echo ""
 	@echo "Quality & Formatting:"
 	@echo "  fmt            - Format all source code across Go, Rust, and Python"
@@ -116,8 +117,11 @@ build-rust:
 
 build-python:
 	@echo "Syncing Python dependencies..."
-	@cd apps/python-ml-worker && uv sync
-	@cd apps/dashboard && uv sync
+	@cd apps/python-ml-worker && uv sync --extra dev
+
+build-dashboard:
+	@echo "Building dashboard..."
+	@cd apps/dashboard && npm ci && npm run build
 
 # ------------------------------------------------------------------------------
 # Code Formatting
@@ -142,7 +146,7 @@ fmt-python:
 # ------------------------------------------------------------------------------
 # Linting
 # ------------------------------------------------------------------------------
-lint: lint-go lint-rust lint-python
+lint: lint-go lint-rust lint-python lint-dashboard
 
 lint-go:
 	@echo "Linting Go code..."
@@ -157,7 +161,10 @@ lint-rust:
 lint-python:
 	@echo "Linting Python code..."
 	@cd apps/python-ml-worker && uv run ruff check .
-	@cd apps/dashboard && uv run ruff check .
+
+lint-dashboard:
+	@echo "Linting dashboard..."
+	@cd apps/dashboard && npm run lint
 
 # ------------------------------------------------------------------------------
 # Testing
@@ -212,7 +219,6 @@ test-rust:
 test-python:
 	@echo "Running Python tests..."
 	@cd apps/python-ml-worker && uv run pytest
-	@cd apps/dashboard && uv run pytest
 
 # ------------------------------------------------------------------------------
 # Cleanup

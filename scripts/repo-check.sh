@@ -4,7 +4,7 @@ set -euo pipefail
 echo "==> Running AURORA repository sanity checks..."
 
 # 1. Check required root files
-for file in README.md ARCH.MD STRUCTURE.MD STAGE.MD Makefile docker-compose.yml; do
+for file in README.md ARCH.MD Makefile docker-compose.yml; do
     if [ ! -f "$file" ]; then
         echo "❌ Error: Required root file '$file' is missing."
         exit 1

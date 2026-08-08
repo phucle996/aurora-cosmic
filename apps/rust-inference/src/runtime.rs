@@ -1,9 +1,9 @@
 //! Runtime Package Engine & Numerical Parity Validation (Phase 6.6).
 
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::model::{
@@ -166,10 +166,15 @@ pub fn validate_runtime_package_parity(
     let rtol_limit = 1e-5;
 
     for case in &fixture.cases {
-        let rust_std = preprocess_features(&case.raw_features, &manifest.feature_order, &prep_config)?;
+        let rust_std =
+            preprocess_features(&case.raw_features, &manifest.feature_order, &prep_config)?;
 
         // Preprocessing parity check
-        for (i, (&actual, &expected)) in rust_std.iter().zip(case.standardized_features.iter()).enumerate() {
+        for (i, (&actual, &expected)) in rust_std
+            .iter()
+            .zip(case.standardized_features.iter())
+            .enumerate()
+        {
             let abs_err = ((actual as f64) - expected).abs();
             let rel_err = abs_err / (expected.abs() + 1e-9);
             if abs_err > max_abs_error {
@@ -188,7 +193,9 @@ pub fn validate_runtime_package_parity(
 
         // Task-specific scoring parity
         if manifest.task == "candidate_vetting" {
-            if let (Some(expected_logit), Some(expected_score)) = (case.expected_logit, case.expected_score) {
+            if let (Some(expected_logit), Some(expected_score)) =
+                (case.expected_logit, case.expected_score)
+            {
                 let rust_score = stable_sigmoid(expected_logit);
                 let score_abs_err = (rust_score - expected_score).abs();
                 if score_abs_err > max_abs_error {
@@ -202,7 +209,9 @@ pub fn validate_runtime_package_parity(
                 }
             }
         } else if manifest.task == "astronomical_anomaly_detection" {
-            if let (Some(expected_recon), Some(expected_mse)) = (&case.expected_reconstruction, case.expected_mse) {
+            if let (Some(expected_recon), Some(expected_mse)) =
+                (&case.expected_reconstruction, case.expected_mse)
+            {
                 let recon_f32: Vec<f32> = expected_recon.iter().map(|&x| x as f32).collect();
                 let rust_mse = compute_reconstruction_mse(&rust_std, &recon_f32);
                 let mse_abs_err = (rust_mse - expected_mse).abs();

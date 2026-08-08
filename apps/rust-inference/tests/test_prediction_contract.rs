@@ -1,9 +1,8 @@
 //! Rust Inference Prediction Contracts & Job Manifest Parsing Tests (Phase 7.1).
 
-use aurora_inference::job::{InferenceJobManifest, InferenceJobRequestedEvent, compute_job_fingerprint};
+use aurora_inference::job::{InferenceJobManifest, InferenceJobRequestedEvent};
 use aurora_inference::prediction::{
-    CandidatePredictionRecord, AnomalyPredictionRecord,
-    compute_candidate_prediction_id, compute_anomaly_prediction_id, compute_model_input_sha256,
+    compute_anomaly_prediction_id, compute_candidate_prediction_id, compute_model_input_sha256,
 };
 
 #[test]
@@ -86,7 +85,8 @@ fn test_rust_nats_request_event_json_parsing() {
         "producer": "python-ml-worker"
     }"#;
 
-    let event: InferenceJobRequestedEvent = serde_json::from_str(raw_event).expect("Event parse error");
+    let event: InferenceJobRequestedEvent =
+        serde_json::from_str(raw_event).expect("Event parse error");
     assert_eq!(event.schema_version, 1);
     assert_eq!(event.event_type, "aurora.v1.inference.candidate.requested");
     assert_eq!(event.expected_prediction_count, 100);

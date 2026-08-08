@@ -17,5 +17,11 @@ dependencies = [
     "clickhouse-connect",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["aurora_ml", "pkg"]

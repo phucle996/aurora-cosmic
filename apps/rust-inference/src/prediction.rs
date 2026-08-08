@@ -18,7 +18,8 @@ pub fn compute_candidate_prediction_id(
     gold_snapshot_id: &str,
     source_product_id: &str,
 ) -> (String, String) {
-    let canonical = format!("pred-cand-v1:{runtime_package_id}:{gold_snapshot_id}:{source_product_id}");
+    let canonical =
+        format!("pred-cand-v1:{runtime_package_id}:{gold_snapshot_id}:{source_product_id}");
     let mut hasher = Sha256::new();
     hasher.update(canonical.as_bytes());
     let fp = format!("{:x}", hasher.finalize());
@@ -32,7 +33,8 @@ pub fn compute_anomaly_prediction_id(
     gold_snapshot_id: &str,
     source_product_id: &str,
 ) -> (String, String) {
-    let canonical = format!("pred-anom-v1:{runtime_package_id}:{gold_snapshot_id}:{source_product_id}");
+    let canonical =
+        format!("pred-anom-v1:{runtime_package_id}:{gold_snapshot_id}:{source_product_id}");
     let mut hasher = Sha256::new();
     hasher.update(canonical.as_bytes());
     let fp = format!("{:x}", hasher.finalize());

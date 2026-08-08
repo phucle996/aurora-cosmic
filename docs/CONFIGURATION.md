@@ -16,6 +16,7 @@ All platform and service configurations are strictly managed via environment var
 | **NATS Monitor** | `http://nats:8222` | `http://localhost:8222` |
 | **Go API** | `http://go-api:8080` | `http://localhost:8080` |
 | **Dashboard** | `http://dashboard:8501` | `http://localhost:8501` |
+| **ClickHouse HTTP** | `http://clickhouse:8123` | `http://localhost:8123` |
 
 > ⚠️ **Rule:** Containers communicate using Docker service names (`minio`, `nats`, `go-api`), never `localhost`.
 
@@ -34,15 +35,22 @@ Each sub-project owns its `.env.example` in its application directory:
 
 1. Never commit `.env` or real credentials to Git.
 2. Credentials (`MINIO_SECRET_KEY`, passwords, tokens) must never be logged during service startup configuration dumps.
+3. Change all development defaults before deployment. In particular, set non-default MinIO and Grafana credentials and a specific `AURORA_CORS_ALLOWED_ORIGIN`.
 
-## 5. GPU & Device Selection
+## 5. Go API data access
+
+The Go API reads ClickHouse from `AURORA_CLICKHOUSE_ENDPOINT` and `AURORA_CLICKHOUSE_DATABASE`. Browser CORS is restricted to the exact origin in `AURORA_CORS_ALLOWED_ORIGIN`; wildcard origins are rejected.
+
+The analytical endpoints return `503 Service Unavailable` when ClickHouse is unreachable. They never return fabricated candidate, anomaly, target, or lightcurve records.
+
+## 6. GPU & Device Selection
 
 `AURORA_ML_DEVICE` supports:
 * `auto` (default): Detects CUDA availability automatically; falls back to CPU if unavailable.
 * `cpu`: Forces CPU execution.
 * `cuda`: Forces CUDA execution; fails at startup if CUDA is unavailable.
 
-## 6. Stage 5 Light Curve Feature Configuration
+## 7. Stage 5 Light Curve Feature Configuration
 
 `python-ml-worker` supports the following scientific feature environment variables:
 
@@ -53,7 +61,7 @@ Each sub-project owns its `.env.example` in its application directory:
 | `AURORA_LC_BLS_MAX_PERIOD_DAYS` | `20.0` | Maximum BLS period search limit (days) |
 | `AURORA_LC_MIN_POINTS` | `100` | Minimum required light curve cadence rows for BLS |
 
-## 7. Stage 5 TPF & FFI Evidence Configuration
+## 8. Stage 5 TPF & FFI Evidence Configuration
 
 | Variable | Default | Description |
 | :--- | :--- | :--- |
@@ -63,7 +71,7 @@ Each sub-project owns its `.env.example` in its application directory:
 | `AURORA_TPF_MIN_IN_TRANSIT_CADENCES` | `3` | Minimum required cadences inside transit window |
 | `AURORA_FFI_FEATURE_VERSION` | `ffi-evidence-v1` | FFI evidence schema version |
 
-## 8. Stage 5 Catalog & Label Configuration
+## 9. Stage 5 Catalog & Label Configuration
 
 | Variable | Default | Description |
 | :--- | :--- | :--- |
@@ -73,6 +81,5 @@ Each sub-project owns its `.env.example` in its application directory:
 | `AURORA_TIC_SOURCE` | `local` | Source for TIC catalog snapshots (`local` or URI) |
 | `AURORA_TOI_SOURCE` | `local` | Source for TOI catalog snapshots (`local` or URI) |
 | `AURORA_TCE_SOURCE` | `local` | Source for TCE catalog snapshots (`local` or URI) |
-
 
 

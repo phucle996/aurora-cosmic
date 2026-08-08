@@ -10,18 +10,18 @@ import (
 
 // Router registers and manages all HTTP REST endpoints for the AURORA API Gateway.
 type Router struct {
-	mux        *http.ServeMux
-	chStore    *store.ClickHouseStore
-	minioStore *store.MinIOStore
+	mux           *http.ServeMux
+	chStore       *store.ClickHouseStore
+	minioStore    *store.MinIOStore
 	allowedOrigin string
 }
 
 func NewRouter(chStore *store.ClickHouseStore, minioStore *store.MinIOStore, allowedOrigin string) *Router {
 	mux := http.NewServeMux()
 	r := &Router{
-		mux:        mux,
-		chStore:    chStore,
-		minioStore: minioStore,
+		mux:           mux,
+		chStore:       chStore,
+		minioStore:    minioStore,
 		allowedOrigin: allowedOrigin,
 	}
 	r.registerRoutes()

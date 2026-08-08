@@ -7,8 +7,6 @@
 ## 📚 System Architecture & Specifications
 
 * **Architecture**: [ARCH.MD](file:///home/phucle/Desktop/aurora-cosmic/ARCH.MD)
-* **Monorepo Directory Structure**: [STRUCTURE.MD](file:///home/phucle/Desktop/aurora-cosmic/STRUCTURE.MD)
-* **Execution Roadmap & Phases**: [STAGE.MD](file:///home/phucle/Desktop/aurora-cosmic/STAGE.MD)
 * **Configuration Specification**: [docs/CONFIGURATION.md](file:///home/phucle/Desktop/aurora-cosmic/docs/CONFIGURATION.md)
 
 ---
@@ -54,7 +52,7 @@ make smoke
 # Format code across Go, Rust, and Python
 make fmt
 
-# Run linters (go vet, cargo clippy, ruff)
+# Run linters (go vet, cargo clippy, ruff, oxlint)
 make lint
 
 # Run unit test suites

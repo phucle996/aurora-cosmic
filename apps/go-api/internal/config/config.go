@@ -28,10 +28,10 @@ type ClickHouseConfig struct {
 }
 
 type Config struct {
-	Core   CoreConfig
-	Server ServerConfig
-	MinIO  MinIOConfig
-	ClickHouse ClickHouseConfig
+	Core              CoreConfig
+	Server            ServerConfig
+	MinIO             MinIOConfig
+	ClickHouse        ClickHouseConfig
 	CORSAllowedOrigin string
 }
 
