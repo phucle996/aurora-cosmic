@@ -165,6 +165,10 @@ services:
     image: ghcr.io/phucle996/aurora-dashboard:latest
     build: ./apps/dashboard
     container_name: aurora-dashboard
+    restart: unless-stopped
+    cpus: "0.25"
+    mem_limit: 256m
+    memswap_limit: 256m
     ports:
       - "${AURORA_DASHBOARD_PORT:-8501}:8501"
     env_file:
@@ -173,6 +177,12 @@ services:
       - aurora-net
     depends_on:
       - go-api
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8501/ >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
 
   clickhouse:
     image: clickhouse/clickhouse-server:24.3-alpine

@@ -1,4 +1,4 @@
-import React from 'react';
+import type { JSX } from 'react';
 import { Server, ShieldCheck, Cpu } from 'lucide-react';
 
 export default function HealthSection(): JSX.Element {
@@ -7,7 +7,7 @@ export default function HealthSection(): JSX.Element {
       <div className="flex items-center gap-3">
         <Server className="w-6 h-6 text-indigo-400" />
         <div>
-          <h3 className="text-lg font-bold text-white font-display">System Infrastructure Health</h3>
+        <h3 className="text-lg font-semibold text-white font-display">System Infrastructure Health</h3>
           <p className="text-xs text-slate-400">Monitoring Docker Compose Services, MinIO Storage & NATS JetStream</p>
         </div>
       </div>

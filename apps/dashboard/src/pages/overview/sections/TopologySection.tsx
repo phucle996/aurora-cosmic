@@ -1,4 +1,4 @@
-import React from 'react';
+import type { JSX } from 'react';
 import { CheckCircle2 } from 'lucide-react';
 
 interface ServiceItem {
@@ -20,16 +20,16 @@ export default function TopologySection(): JSX.Element {
 
   return (
     <div className="glass-card p-6 space-y-4">
-      <h3 className="text-lg font-bold text-white font-display">Microservice Topology Status</h3>
+      <h3 className="text-lg font-semibold text-white font-display">Microservice Topology Status</h3>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {services.map((srv, idx) => (
           <div key={idx} className="p-4 rounded-xl bg-slate-900/60 border border-white/5 flex items-center justify-between">
             <div>
-              <div className="font-mono font-semibold text-indigo-300 text-sm">{srv.name}</div>
+              <div className="font-mono font-medium text-indigo-300 text-sm">{srv.name}</div>
               <div className="text-xs text-slate-400 mt-0.5">{srv.role}</div>
               <div className="text-[11px] text-slate-500 font-mono mt-1">{srv.lang}</div>
             </div>
-            <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1.5">
+            <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1.5">
               <CheckCircle2 className="w-3.5 h-3.5" />
               {srv.status}
             </span>

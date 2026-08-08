@@ -1,4 +1,4 @@
-import React from 'react';
+import type { JSX } from 'react';
 import { Search, Filter } from 'lucide-react';
 
 interface TargetRow {

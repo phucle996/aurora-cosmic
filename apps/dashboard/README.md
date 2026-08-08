@@ -1,16 +1,38 @@
-# React + Vite
+# AURORA Dashboard
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React 19 + Vite dashboard for the AURORA scientific data platform.
 
-Currently, two official plugins are available:
+## UI foundation
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+The dashboard uses Tailwind CSS v4 and shadcn/ui source components. The
+component sources live in `src/components/ui/` and are owned by this project;
+they can be updated with the shadcn CLI when the upstream registry changes.
 
-## React Compiler
+The full shadcn registry is vendored locally (`npx shadcn@latest add --all`).
+The application shell uses the generated `Sidebar`, `SidebarProvider`,
+`SidebarTrigger`, `Breadcrumb`, `Button`, `Avatar`, `Tooltip`, and `Separator`
+primitives.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Structure
 
-## Expanding the Oxlint configuration
+```text
+src/
+├── components/       shared application components and shadcn/ui primitives
+├── hooks/             reusable UI hooks
+├── lib/               shared utilities (`cn`)
+├── pages/             route-level features
+└── App.tsx            router and application shell
+```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+## Commands
+
+```bash
+npm ci
+npx tsc --noEmit
+npm run lint
+npm run build
+```
+
+`VITE_AURORA_API_URL` is reserved for the API client layer. The current shell
+does not fabricate backend data; feature pages should consume versioned Go API
+contracts as they are wired in.

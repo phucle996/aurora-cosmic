@@ -1,4 +1,4 @@
-import React from 'react';
+import type { JSX } from 'react';
 import { CheckCircle2 } from 'lucide-react';
 
 interface CandidateItem {
@@ -23,7 +23,7 @@ export default function CandidatesSection(): JSX.Element {
         {candidates.map((item, idx) => (
           <div key={idx} className="glass-card p-6 space-y-4 border-indigo-500/20">
             <div className="flex items-center justify-between">
-              <span className="font-mono font-bold text-lg text-white">{item.ticId}</span>
+              <span className="font-mono font-semibold text-lg text-white">{item.ticId}</span>
               <span className="badge badge-purple">{item.label}</span>
             </div>
 
@@ -42,7 +42,7 @@ export default function CandidatesSection(): JSX.Element {
               </div>
               <div className="flex justify-between pt-1">
                 <span className="text-slate-400">ML Model Score:</span>
-                <span className="font-mono text-emerald-400 font-bold flex items-center gap-1">
+                <span className="font-mono text-emerald-400 font-semibold flex items-center gap-1">
                   <CheckCircle2 className="w-3.5 h-3.5" /> {item.confidence}
                 </span>
               </div>

@@ -1,64 +1,100 @@
-import React from 'react';
-import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Target, Sparkles, AlertTriangle, Server, LucideIcon } from 'lucide-react';
+import {
+  Activity,
+  AlertTriangle,
+  Database,
+  LayoutDashboard,
+  Server,
+  Sparkles,
+  Target,
+} from 'lucide-react';
+import { NavLink, useLocation } from 'react-router-dom';
+import type { JSX } from 'react';
 
-interface MenuItem {
-  path: string;
-  label: string;
-  icon: LucideIcon;
-}
+import {
+  Sidebar as UISidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from '@/components/ui/sidebar';
+
+const menuItems = [
+  { path: '/', label: 'Platform Overview', icon: LayoutDashboard },
+  { path: '/targets', label: 'TESS Target Discovery', icon: Target },
+  { path: '/candidates', label: 'ML Transit Candidates', icon: Sparkles },
+  { path: '/anomalies', label: 'Anomaly Engine', icon: AlertTriangle },
+  { path: '/system', label: 'System Topology', icon: Server },
+];
 
 export default function Sidebar(): JSX.Element {
-  const menuItems: MenuItem[] = [
-    { path: '/', label: 'Platform Overview', icon: LayoutDashboard },
-    { path: '/targets', label: 'TESS Target Discovery', icon: Target },
-    { path: '/candidates', label: 'ML Transit Candidates', icon: Sparkles },
-    { path: '/anomalies', label: 'Anomaly Engine', icon: AlertTriangle },
-    { path: '/system', label: 'System Topology', icon: Server },
-  ];
+  const location = useLocation();
 
   return (
-    <aside className="w-64 glass-card m-4 p-4 flex flex-col justify-between hidden md:flex shrink-0">
-      <div className="space-y-6">
-        <div className="px-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
-          Domain Routes
+    <UISidebar collapsible="icon" variant="inset">
+      <SidebarHeader className="border-b border-sidebar-border">
+        <div className="flex items-center gap-3 px-2 py-2">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground shadow-sm">
+            <Activity className="size-5" aria-hidden="true" />
+          </div>
+          <div className="min-w-0 group-data-[collapsible=icon]:hidden">
+            <p className="truncate font-heading text-sm font-semibold tracking-tight">AURORA</p>
+            <p className="truncate text-xs text-sidebar-foreground/60">Cosmic data platform</p>
+          </div>
         </div>
-        <nav className="space-y-1">
-          {menuItems.map((item) => {
-            const Icon = item.icon;
-            return (
-              <NavLink
-                key={item.path}
-                to={item.path}
-                className={({ isActive }) =>
-                  `w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium text-sm transition-all ${
-                    isActive
-                      ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 shadow-lg shadow-indigo-500/10'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-                  }`
-                }
-              >
-                {({ isActive }) => (
-                  <>
-                    <Icon className={`w-5 h-5 ${isActive ? 'text-indigo-400' : 'text-slate-400'}`} />
-                    <span>{item.label}</span>
-                  </>
-                )}
-              </NavLink>
-            );
-          })}
-        </nav>
-      </div>
+      </SidebarHeader>
 
-      <div className="p-4 rounded-xl bg-gradient-to-br from-indigo-900/30 to-purple-900/30 border border-indigo-500/20 text-xs">
-        <div className="flex items-center gap-2 text-indigo-300 font-semibold mb-1">
-          <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
-          Router DOM Active
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#7f8ea3]">Workspace</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {menuItems.map((item) => {
+                const Icon = item.icon;
+                const isActive = item.path === '/'
+                  ? location.pathname === '/'
+                  : location.pathname.startsWith(item.path);
+
+                return (
+                  <SidebarMenuItem key={item.path}>
+                    <SidebarMenuButton asChild isActive={isActive} tooltip={item.label} className="font-medium">
+                      <NavLink to={item.path}>
+                        <Icon aria-hidden="true" />
+                        <span>{item.label}</span>
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#7f8ea3]">Data plane</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton tooltip="Storage and event streams" className="font-medium">
+                  <Database aria-hidden="true" />
+                  <span>Storage & event streams</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+
+      <SidebarFooter className="border-t border-sidebar-border">
+        <div className="flex items-center gap-2 px-2 py-2 text-xs text-sidebar-foreground/60">
+          <span className="size-2 rounded-full bg-emerald-500" aria-hidden="true" />
+          <span className="group-data-[collapsible=icon]:hidden">AURORA workspace</span>
         </div>
-        <p className="text-slate-400 leading-relaxed">
-          Domain-separated TSX subfolders with React Router DOM v6 navigation.
-        </p>
-      </div>
-    </aside>
+      </SidebarFooter>
+    </UISidebar>
   );
 }

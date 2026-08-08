@@ -1,4 +1,4 @@
-import React from 'react';
+import type { JSX } from 'react';
 import { AlertTriangle, Zap, Radio, LucideIcon } from 'lucide-react';
 
 interface AnomalyItem {
@@ -19,7 +19,7 @@ export default function AnomaliesSection(): JSX.Element {
 
   return (
     <div className="glass-card p-6 space-y-4">
-      <h3 className="text-lg font-bold text-white font-display">Unsupervised Detection Events</h3>
+      <h3 className="text-lg font-semibold text-white font-display">Unsupervised Detection Events</h3>
       <div className="space-y-3">
         {anomalies.map((item, idx) => {
           const Icon = item.icon;
@@ -31,7 +31,7 @@ export default function AnomaliesSection(): JSX.Element {
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="font-mono font-bold text-white text-sm">{item.id}</span>
+                    <span className="font-mono font-semibold text-white text-sm">{item.id}</span>
                     <span className="badge badge-amber">{item.type}</span>
                   </div>
                   <div className="text-xs text-slate-400 mt-1">Target: <strong className="text-indigo-300 font-mono">{item.ticId}</strong> • Detected {item.time}</div>
