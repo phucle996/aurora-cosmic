@@ -33,9 +33,8 @@ class AnomalyPreprocessor:
     feature_scales: Dict[str, float] = field(default_factory=dict)
     schema_version: int = 1
 
-    @classmethod
     def fit(
-        cls_or_self,
+        self,
         train_rows: List[Dict[str, Any]],
         feature_order: Optional[Any] = None,
         split_id: str = "",
@@ -45,28 +44,23 @@ class AnomalyPreprocessor:
         if not train_rows:
             raise AnomalyPreprocessingError("EMPTY_TRAIN_ROWS: Cannot fit preprocessor on empty train rows")
 
-        if isinstance(cls_or_self, type):
-            inst = cls_or_self()
-        else:
-            inst = cls_or_self
-
         if feature_order is not None:
             if isinstance(feature_order, str):
-                inst.split_id = feature_order
+                self.split_id = feature_order
             elif isinstance(feature_order, (list, tuple)):
-                inst.feature_order = tuple(feature_order)
+                self.feature_order = tuple(feature_order)
         if split_id:
-            inst.split_id = split_id
+            self.split_id = split_id
         if "feature_order" in kwargs and kwargs["feature_order"]:
-            inst.feature_order = tuple(kwargs["feature_order"])
+            self.feature_order = tuple(kwargs["feature_order"])
         if "split_id" in kwargs and kwargs["split_id"]:
-            inst.split_id = str(kwargs["split_id"])
+            self.split_id = str(kwargs["split_id"])
 
         medians: Dict[str, float] = {}
         means: Dict[str, float] = {}
         scales: Dict[str, float] = {}
 
-        for feat in inst.feature_order:
+        for feat in self.feature_order:
             raw_vals = []
             for r in train_rows:
                 val = r.get(feat)
@@ -95,10 +89,10 @@ class AnomalyPreprocessor:
                 means[feat] = mean_val
                 scales[feat] = scale_val
 
-        inst.feature_medians = medians
-        inst.feature_means = means
-        inst.feature_scales = scales
-        return inst
+        self.feature_medians = medians
+        self.feature_means = means
+        self.feature_scales = scales
+        return self
 
     def transform_features(self, rows: List[Dict[str, Any]]) -> np.ndarray:
         """Transform input rows to a 2D float32 standardized feature matrix."""

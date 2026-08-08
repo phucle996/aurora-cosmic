@@ -402,7 +402,7 @@ def test_full_candidate_evaluation_flow():
     split = create_deterministic_group_split(view, seed=42)
 
     # Fit preprocessor and save to temp file
-    preprocessor = CandidatePreprocessor.fit(train_rows, CANDIDATE_MODEL_INPUT_FEATURES, split.split_id)
+    preprocessor = CandidatePreprocessor().fit(train_rows, CANDIDATE_MODEL_INPUT_FEATURES, split.split_id)
     with tempfile.TemporaryDirectory() as tmp_dir:
         prep_path = os.path.join(tmp_dir, "preprocessing.json")
         with open(prep_path, "w", encoding="utf-8") as f:
@@ -489,7 +489,7 @@ def test_full_anomaly_evaluation_flow():
     view = build_anomaly_ml_view(manifest, train_rows)
     split = create_anomaly_group_split(view, seed=42)
 
-    preprocessor = AnomalyPreprocessor.fit(train_rows, ANOMALY_MODEL_INPUT_FEATURES, split.split_id)
+    preprocessor = AnomalyPreprocessor().fit(train_rows, ANOMALY_MODEL_INPUT_FEATURES, split.split_id)
     with tempfile.TemporaryDirectory() as tmp_dir:
         prep_path = os.path.join(tmp_dir, "preprocessing.json")
         with open(prep_path, "w", encoding="utf-8") as f:

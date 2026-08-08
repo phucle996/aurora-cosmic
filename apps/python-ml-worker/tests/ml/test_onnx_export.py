@@ -47,7 +47,7 @@ def setup_test_candidate_registered_model(root_dir: str) -> Tuple[str, str, List
         row = {f: 1.0 + i * 0.1 for f in CANDIDATE_MODEL_INPUT_FEATURES}
         sample_rows.append(row)
 
-    prep = CandidatePreprocessor.fit(sample_rows, CANDIDATE_MODEL_INPUT_FEATURES, "split-cand-v1")
+    prep = CandidatePreprocessor().fit(sample_rows, CANDIDATE_MODEL_INPUT_FEATURES, "split-cand-v1")
     prep_json = os.path.join(root_dir, "preprocessing.json")
     with open(prep_json, "w", encoding="utf-8") as f:
         json.dump(prep.to_dict(), f)
@@ -176,7 +176,7 @@ def test_anomaly_onnx_export_and_python_parity():
             row = {f: 0.2 + i * 0.05 for f in ANOMALY_MODEL_INPUT_FEATURES}
             sample_rows.append(row)
 
-        prep = AnomalyPreprocessor.fit(sample_rows, ANOMALY_MODEL_INPUT_FEATURES, "split-anom-v1")
+        prep = AnomalyPreprocessor().fit(sample_rows, ANOMALY_MODEL_INPUT_FEATURES, "split-anom-v1")
         prep_json = os.path.join(tmp_dir, "preprocessing_anom.json")
         with open(prep_json, "w", encoding="utf-8") as f:
             json.dump(prep.to_dict(), f)

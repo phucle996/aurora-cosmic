@@ -109,6 +109,7 @@ class AnomalyTrainingRunManifest:
     validation_score_mean: float = 0.0
     validation_score_median: float = 0.0
     validation_score_p95: float = 0.0
+    validation_score_p99: float = 0.0
     validation_score_max: float = 0.0
     model_sha256: str = ""
     preprocessing_sha256: str = ""

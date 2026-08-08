@@ -128,7 +128,7 @@ def test_stage6_candidate_end_to_end_lifecycle():
         assert split.validation_row_count > 0
 
         # 2. Fit Preprocessor
-        prep = CandidatePreprocessor.fit(train_rows, CANDIDATE_MODEL_INPUT_FEATURES, split.split_id)
+        prep = CandidatePreprocessor().fit(train_rows, CANDIDATE_MODEL_INPUT_FEATURES, split.split_id)
         prep_path = os.path.join(tmp_dir, "preprocessing.json")
         with open(prep_path, "w", encoding="utf-8") as f:
             json.dump(prep.to_dict(), f)

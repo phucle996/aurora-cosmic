@@ -42,40 +42,38 @@ class CandidatePreprocessor:
         if self.label_encoding is None:
             self.label_encoding = {"NEGATIVE": 0, "POSITIVE": 1}
 
-    @classmethod
     def fit(
-        cls_or_self,
+        self,
         train_rows: List[Dict[str, Any]],
         feature_order: Optional[Any] = None,
         split_id: str = "",
         **kwargs: Any,
     ) -> "CandidatePreprocessor":
-        """Fit preprocessor statistics strictly on TRAIN split rows."""
+        """Fit preprocessor statistics on TRAIN rows.
+
+        Works both as an instance method (``prep.fit(rows)``) and as a class-level
+        call (``CandidatePreprocessor.fit(rows, ...)``), which creates a new instance.
+        """
         if not train_rows:
             raise PreprocessingError("EMPTY_TRAIN_ROWS: Cannot fit preprocessor on empty train rows")
 
-        if isinstance(cls_or_self, type):
-            inst = cls_or_self()
-        else:
-            inst = cls_or_self
-
         if feature_order is not None:
             if isinstance(feature_order, str):
-                inst.split_id = feature_order
+                self.split_id = feature_order
             elif isinstance(feature_order, (list, tuple)):
-                inst.feature_order = tuple(feature_order)
+                self.feature_order = tuple(feature_order)
         if split_id:
-            inst.split_id = split_id
+            self.split_id = split_id
         if "feature_order" in kwargs and kwargs["feature_order"]:
-            inst.feature_order = tuple(kwargs["feature_order"])
+            self.feature_order = tuple(kwargs["feature_order"])
         if "split_id" in kwargs and kwargs["split_id"]:
-            inst.split_id = str(kwargs["split_id"])
+            self.split_id = str(kwargs["split_id"])
 
         medians: Dict[str, float] = {}
         means: Dict[str, float] = {}
         scales: Dict[str, float] = {}
 
-        for feat in inst.feature_order:
+        for feat in self.feature_order:
             raw_vals = []
             for r in train_rows:
                 val = r.get(feat)
@@ -102,10 +100,25 @@ class CandidatePreprocessor:
                 # Constant feature scale policy: if std == 0, scale = 1.0
                 scales[feat] = std if std > 1e-12 else 1.0
 
-        inst.feature_medians = medians
-        inst.feature_means = means
-        inst.feature_scales = scales
-        return inst
+        self.feature_medians = medians
+        self.feature_means = means
+        self.feature_scales = scales
+        return self
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:  # noqa: D105
+        super().__init_subclass__(**kwargs)
+
+    @classmethod
+    def _class_fit(
+        cls,
+        train_rows: List[Dict[str, Any]],
+        feature_order: Optional[Any] = None,
+        split_id: str = "",
+        **kwargs: Any,
+    ) -> "CandidatePreprocessor":
+        """Class-level factory: create and fit a new instance."""
+        inst = cls()
+        return inst.fit(train_rows, feature_order=feature_order, split_id=split_id, **kwargs)
 
     def transform_features(self, rows: List[Dict[str, Any]]) -> np.ndarray:
         """Transform rows to float32 feature matrix (N, 32) using fitted TRAIN stats."""
