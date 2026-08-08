@@ -24,6 +24,12 @@ pub struct NatsConfig {
     pub url: String,
 }
 
+/// Prometheus observer HTTP endpoint configuration.
+#[derive(Debug, Clone)]
+pub struct ObserverConfig {
+    pub addr: String,
+}
+
 /// JetStream consumer config.
 #[derive(Debug, Clone)]
 pub struct ConsumerConfig {
@@ -77,6 +83,7 @@ pub struct Config {
     pub core: CoreConfig,
     pub minio: MinioConfig,
     pub nats: NatsConfig,
+    pub observer: ObserverConfig,
     pub consumer: ConsumerConfig,
     pub lc_pipeline: LightCurveConfig,
     pub image_pipeline: ImageConfig,
@@ -172,6 +179,10 @@ impl Config {
             nats: NatsConfig {
                 url: require_env("NATS_URL")?,
             },
+            observer: ObserverConfig {
+                addr: env::var("AURORA_METRICS_ADDR")
+                    .unwrap_or_else(|_| "0.0.0.0:8082".to_string()),
+            },
             consumer: ConsumerConfig {
                 workers,
                 durable: env::var("AURORA_PREPROCESS_DURABLE")
@@ -212,6 +223,7 @@ impl Config {
             log_level = %self.core.log_level,
             workers = self.consumer.workers,
             nats_url = %self.nats.url,
+            metrics_addr = %self.observer.addr,
             minio_endpoint = %self.minio.endpoint,
             minio_bucket = %self.minio.bucket,
             stream = %self.consumer.stream,

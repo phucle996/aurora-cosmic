@@ -3,9 +3,18 @@ global:
   evaluation_interval: 5s
 
 scrape_configs:
-  # cAdvisor is the source of truth for container CPU, memory, network, and
-  # lifecycle metrics. Application-level /metrics endpoints can be added as
-  # each worker exposes Prometheus instrumentation without changing the UI.
+  - job_name: 'aurora-go-ingester'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['go-ingester:8081']
+
+  - job_name: 'aurora-rust-preprocessor'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['rust-preprocessor:8082']
+
+  # Infrastructure exporters are optional. Service-level observers expose
+  # stable application metrics directly through their own /metrics endpoints.
   - job_name: 'aurora-cadvisor'
     static_configs:
       - targets: ['cadvisor:8080']

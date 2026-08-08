@@ -105,6 +105,18 @@ The Bronze message is ACKed only after Silver durability, checkpoint, lineage,
 and Silver-event publication succeed. This prevents downstream consumers from
 missing a valid Silver artifact.
 
+## Observer metrics
+
+The service exposes a deliberately small Prometheus surface on
+`AURORA_METRICS_ADDR` (default `0.0.0.0:8082`):
+
+* `/healthz` — process health
+* `/metrics` — terminal product counts, processing duration, failures, worker
+  concurrency, fetched queue depth, Bronze/Silver bytes, and last success time
+
+The only labels are bounded product kind, terminal status, and pipeline stage;
+product IDs, object keys, and source URLs are never emitted as labels.
+
 ## Storage layout
 
 ```text
@@ -127,6 +139,7 @@ object key, Bronze SHA-256, and Silver SHA-256 metadata.
 | `MINIO_ACCESS_KEY` | yes | — | MinIO access key |
 | `MINIO_SECRET_KEY` | yes | — | MinIO secret key |
 | `MINIO_BUCKET` | yes | — | Default data bucket |
+| `AURORA_METRICS_ADDR` | no | `0.0.0.0:8082` | Prometheus observer and health endpoint |
 | `AURORA_PREPROCESS_WORKERS` | yes | — | Maximum concurrent products; must be at least 1 |
 | `AURORA_PREPROCESS_STREAM` | no | `AURORA_BRONZE` | JetStream stream name |
 | `AURORA_PREPROCESS_DURABLE` | no | `aurora-rust-preprocessor` | Durable consumer name |

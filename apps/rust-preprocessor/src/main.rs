@@ -2,6 +2,7 @@ mod app;
 mod domain;
 mod fits;
 mod infra;
+mod observer;
 mod output;
 mod pipeline;
 mod worker;

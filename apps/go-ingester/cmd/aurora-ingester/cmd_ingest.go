@@ -13,6 +13,7 @@ import (
 	storageinfra "go-ingester/infra/storage"
 	"go-ingester/internal/config"
 	"go-ingester/internal/model"
+	"go-ingester/internal/observer"
 	"go-ingester/internal/pipeline/checkpoint"
 	"go-ingester/internal/pipeline/ingest"
 	"go-ingester/internal/pipeline/plan"
@@ -21,7 +22,7 @@ import (
 )
 
 // runIngest executes the `aurora-ingester ingest` subcommand.
-func runIngest(ctx context.Context, cfg *config.Config, log *slog.Logger, args []string) error {
+func runIngest(ctx context.Context, cfg *config.Config, log *slog.Logger, args []string, metrics *observer.Metrics) error {
 	fs := flag.NewFlagSet("ingest", flag.ExitOnError)
 	manifestPath := fs.String("manifest", "", "path to manifest JSON file")
 	concurrency := fs.Int("concurrency", cfg.Ingest.Concurrency, "bounded download concurrency")
@@ -101,6 +102,7 @@ func runIngest(ctx context.Context, cfg *config.Config, log *slog.Logger, args [
 
 	mastClient := mast.NewClient(cfg.MAST.APIURL, timeout)
 	pipeline := ingest.NewPipeline(mastClient, minioClient, publisher, cpManager, cfg.MinIO.Bucket, *concurrency, log)
+	pipeline.SetObserver(metrics)
 	pipeline.SetCheckpointInterval(cfg.Ingest.CheckpointInterval)
 	pipeline.SetMaxRunBytes(cfg.Bronze.MaxBytes)
 	var progress *progressPrinter

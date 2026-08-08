@@ -7,9 +7,11 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"go-ingester/internal/app"
 	"go-ingester/internal/config"
+	"go-ingester/internal/observer"
 	"go-ingester/pkg/logger"
 )
 
@@ -22,6 +24,20 @@ func main() {
 
 	log := logger.Init(cfg)
 	cfg.LogSummary(log)
+
+	metrics := observer.New()
+	metricsServer, err := observer.Start(cfg.Metrics.Addr, metrics)
+	if err != nil {
+		log.Error("metrics server startup failed", slog.Any("error", err))
+		os.Exit(1)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+			log.Warn("metrics server shutdown failed", slog.Any("error", err))
+		}
+	}()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
@@ -43,7 +59,7 @@ func main() {
 		}
 
 	case "ingest":
-		if err := runIngest(ctx, cfg, log, os.Args[2:]); err != nil {
+		if err := runIngest(ctx, cfg, log, os.Args[2:], metrics); err != nil {
 			log.Error("ingest command failed", slog.Any("error", err))
 			os.Exit(1)
 		}

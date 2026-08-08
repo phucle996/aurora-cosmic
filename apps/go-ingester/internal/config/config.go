@@ -22,6 +22,10 @@ type NATSConfig struct {
 	URL string
 }
 
+type MetricsConfig struct {
+	Addr string
+}
+
 type IngestConfig struct {
 	Concurrency        int
 	CheckpointInterval time.Duration
@@ -50,6 +54,7 @@ type Config struct {
 	Core     CoreConfig
 	MinIO    MinIOConfig
 	NATS     NATSConfig
+	Metrics  MetricsConfig
 	Ingest   IngestConfig
 	Bronze   BronzeConfig
 	MAST     MASTConfig
@@ -118,6 +123,9 @@ func Load() (*Config, error) {
 		},
 		NATS: NATSConfig{
 			URL: natsURL,
+		},
+		Metrics: MetricsConfig{
+			Addr: optionalEnv("AURORA_METRICS_ADDR", ":8081"),
 		},
 		Ingest: IngestConfig{
 			Concurrency:        concurrency,

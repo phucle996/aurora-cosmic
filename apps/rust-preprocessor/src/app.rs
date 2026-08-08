@@ -7,6 +7,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::config::Config;
 use crate::infra::MinioClient;
+use crate::observer;
 use crate::worker;
 
 /// Application entry point.
@@ -73,8 +74,20 @@ pub async fn run(config: Config) -> Result<()> {
             )
         })?;
 
-    // 3. Shared cancellation token for graceful shutdown
+    // 3. Shared cancellation token and low-cardinality Prometheus observer
     let cancel = CancellationToken::new();
+    let metrics =
+        Arc::new(observer::Metrics::new().context("Failed to initialize observer metrics")?);
+    let observer_task =
+        observer::start(&config.observer.addr, Arc::clone(&metrics), cancel.clone())
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "Failed to bind observer endpoint at {}: {error}",
+                    config.observer.addr
+                )
+            })?;
+
     let cancel_worker = cancel.clone();
 
     // 4. Spawn Tokio Worker Pool
@@ -89,6 +102,7 @@ pub async fn run(config: Config) -> Result<()> {
             lc_config,
             img_config,
             cancel_worker,
+            metrics,
         )
         .await
         {
@@ -123,6 +137,10 @@ pub async fn run(config: Config) -> Result<()> {
             timeout_secs = shutdown_timeout,
             "Shutdown drain timeout exceeded — forcing exit"
         ),
+    }
+
+    if let Err(error) = observer_task.await {
+        tracing::warn!(error = %error, "Observer task exited unexpectedly");
     }
 
     tracing::info!("NATS connection closed");

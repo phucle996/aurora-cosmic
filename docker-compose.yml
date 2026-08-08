@@ -73,10 +73,18 @@ services:
     cpus: "1.25"
     mem_limit: 768m
     memswap_limit: 768m
+    ports:
+      - "${AURORA_INGESTER_METRICS_PORT:-8081}:8081"
     env_file:
       - ./apps/go-ingester/.env.example
     networks:
       - aurora-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8081/healthz >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
     depends_on:
       minio:
         condition: service_healthy
@@ -90,10 +98,18 @@ services:
     cpus: "1.25"
     mem_limit: 1536m
     memswap_limit: 1536m
+    ports:
+      - "${AURORA_PREPROCESSOR_METRICS_PORT:-8082}:8082"
     env_file:
       - ./apps/rust-preprocessor/.env.example
     networks:
       - aurora-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8082/healthz >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
     depends_on:
       minio:
         condition: service_healthy

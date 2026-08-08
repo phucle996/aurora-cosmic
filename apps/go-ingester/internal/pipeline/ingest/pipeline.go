@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go-ingester/internal/model"
+	"go-ingester/internal/observer"
 	"go-ingester/internal/pipeline/checkpoint"
 )
 
@@ -50,6 +51,7 @@ type Pipeline struct {
 	checkpointInterval time.Duration
 	maxRunBytes        int64
 	progress           ProgressReporter
+	metrics            *observer.Metrics
 	log                *slog.Logger
 }
 
@@ -96,6 +98,13 @@ func (p *Pipeline) SetProgressReporter(reporter ProgressReporter) {
 	p.progress = reporter
 }
 
+// SetObserver attaches the bounded Prometheus instrumentation for this
+// pipeline. The pipeline remains usable without it in unit tests and CLI
+// modes that do not need metrics.
+func (p *Pipeline) SetObserver(metrics *observer.Metrics) {
+	p.metrics = metrics
+}
+
 // IngestManifest processes all products in the manifest using bounded worker goroutines.
 func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun bool) (*model.Summary, []model.ProductResult, error) {
 	startTime := time.Now()
@@ -107,6 +116,9 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun
 	allProducts := m.Products()
 
 	if len(allProducts) == 0 {
+		if p.metrics != nil {
+			p.metrics.SetQueueDepth(0)
+		}
 		return &model.Summary{Elapsed: time.Since(startTime)}, nil, nil
 	}
 	for _, prod := range allProducts {
@@ -179,13 +191,18 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun
 		if p.cpManager != nil {
 			pc, ok := p.cpManager.GetProductCheckpoint(prod.SourceProductID)
 			if ok {
+				recoveryStart := time.Now()
 				res, handled := p.recoverCheckpointProduct(ctx, prod, pc)
 				if handled {
+					if p.metrics != nil {
+						p.metrics.ProductStarted()
+					}
 					if res.Status == model.StatusStored || res.Status == model.StatusPublished || res.Status == model.StatusStoredEventFailed {
 						atomic.AddInt64(&storedBytesCounter, res.SizeBytes)
 					}
 					resultsChan <- res
 					reportProgress(res)
+					recordMetrics(p.metrics, res, time.Since(recoveryStart))
 					continue
 				}
 			}
@@ -245,6 +262,11 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun
 		go func() {
 			defer wg.Done()
 			for prod := range jobs {
+				if p.metrics != nil {
+					p.metrics.SetQueueDepth(len(jobs))
+					p.metrics.ProductStarted()
+				}
+				productStart := time.Now()
 				activeWorkers.Add(1)
 				var res model.ProductResult
 				select {
@@ -265,6 +287,9 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun
 					res = p.ingestProduct(ctx, prod, dryRun)
 				}
 				activeWorkers.Add(-1)
+				if p.metrics != nil {
+					p.metrics.ProductFinished(metricStatus(res), time.Since(productStart).Seconds(), res.SizeBytes)
+				}
 				if res.Status == model.StatusStored || res.Status == model.StatusPublished || res.Status == model.StatusStoredEventFailed {
 					atomic.AddInt64(&storedBytesCounter, res.SizeBytes)
 				}
@@ -292,10 +317,16 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun
 		// Keep enqueueing even after cancellation so workers can emit a
 		// deterministic FAILED result for every planned product.
 		jobs <- prod
+		if p.metrics != nil {
+			p.metrics.SetQueueDepth(len(jobs))
+		}
 	}
 	close(jobs)
 
 	wg.Wait()
+	if p.metrics != nil {
+		p.metrics.SetQueueDepth(0)
+	}
 	close(checkpointStop)
 	checkpointWG.Wait()
 	close(resultsChan)
@@ -337,4 +368,22 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun
 	}
 
 	return summary, results, nil
+}
+
+func metricStatus(res model.ProductResult) string {
+	switch res.Status {
+	case model.StatusSkipped:
+		return "skipped"
+	case model.StatusStored, model.StatusPublished:
+		return "success"
+	default:
+		return "failed"
+	}
+}
+
+func recordMetrics(metrics *observer.Metrics, res model.ProductResult, elapsed time.Duration) {
+	if metrics == nil {
+		return
+	}
+	metrics.ProductFinished(metricStatus(res), elapsed.Seconds(), res.SizeBytes)
 }

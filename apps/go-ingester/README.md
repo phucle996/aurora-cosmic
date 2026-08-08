@@ -7,6 +7,7 @@
 * `cmd/aurora-ingester/` — Entrypoint, subcommand routing (`plan`, `ingest`, `status`)
 * `internal/app/` — Application runner and lifecycle
 * `internal/config/` — Environment-based configuration
+* `internal/observer/` — Bounded Prometheus metrics and `/healthz` endpoint
 * `pkg/logger/` — Structured JSON logger (stdlib slog)
 * `internal/mast/` — MAST API client, product discovery, classification, streaming download
 * `internal/manifest/` — Product selection, TPF/LC pairing, manifest write/read
@@ -67,6 +68,18 @@ Display progress status of the current/latest ingestion run:
 ```bash
 go run ./cmd/aurora-ingester status
 ```
+
+## 4. Metrics
+
+The service exposes a small, low-cardinality observer surface on
+`AURORA_METRICS_ADDR` (default `:8081`):
+
+* `/healthz` — process health
+* `/metrics` — terminal product counts, product duration, errors, in-flight
+  workers, queue depth, processed bytes, and last successful product timestamp
+
+The observer never emits product IDs, object keys, or source URLs as labels.
+Prometheus scrapes the Compose service at `go-ingester:8081`.
 
 ## Bronze Object Layout
 

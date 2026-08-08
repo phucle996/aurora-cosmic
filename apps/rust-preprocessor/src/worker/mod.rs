@@ -24,6 +24,7 @@ use crate::infra::MinioClient;
 use crate::lineage::{
     build_lineage_object_key, build_lineage_record, LineageOutcome, LineageRecord,
 };
+use crate::observer::Metrics;
 
 /// Process a single Data Object through the end-to-end flow:
 /// 1. Recovery Check: Load checkpoint — fast-path reuse / terminal guard
@@ -41,9 +42,11 @@ pub async fn process_message(
     tmp_dir: PathBuf,
     lc_cfg: LightCurveConfig,
     img_cfg: ImageConfig,
+    metrics: Arc<Metrics>,
     _permit: Option<tokio::sync::OwnedSemaphorePermit>,
 ) {
     let subject = msg.subject.clone();
+    let mut observation = metrics.begin("unknown", 0);
 
     // Read JetStream delivery metadata
     let delivery_attempt = msg.info().map(|info| info.delivered).unwrap_or(1);
@@ -67,6 +70,12 @@ pub async fn process_message(
     };
 
     let event_id = event.event_id.clone();
+    observation.set_kind(match event.product_kind {
+        ProductKind::LightCurve => "lightcurve",
+        ProductKind::TargetPixel => "target_pixel",
+        ProductKind::Ffi => "ffi",
+    });
+    observation.set_input_bytes(event.size_bytes);
     let processor_version = match event.product_kind {
         ProductKind::LightCurve => "lc-preprocess-v1",
         ProductKind::TargetPixel => "tpf-preprocess-v1",
@@ -133,6 +142,8 @@ pub async fn process_message(
                 if let Err(e) = msg.ack().await {
                     tracing::error!(event_id = %event_id, error = %e, "Failed to ACK message during fast-recovery");
                 } else {
+                    observation.set_output_bytes(s_size);
+                    observation.set_recovered();
                     tracing::info!(
                         event_id = %event_id,
                         silver_key = %s_key,
@@ -189,6 +200,8 @@ pub async fn process_message(
                 if let Err(e) = msg.ack().await {
                     tracing::error!(event_id = %event_id, error = %e, "Failed to ACK message during promoted recovery");
                 }
+                observation.set_output_bytes(s_size);
+                observation.set_recovered();
                 return;
             }
         }
@@ -380,6 +393,9 @@ pub async fn process_message(
         let _ = msg.ack_with(AckKind::Nak(None)).await;
         return;
     }
+
+    observation.set_output_bytes(artifact.size_bytes);
+    observation.set_success();
 
     // Step 8: Final ACK
     if let Err(e) = msg.ack().await {

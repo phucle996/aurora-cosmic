@@ -9,6 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::config::{ConsumerConfig, ImageConfig, LightCurveConfig};
 use crate::infra::MinioClient;
+use crate::observer::Metrics;
 use crate::worker::process_message;
 
 /// Subjects to subscribe from AURORA_BRONZE stream.
@@ -22,6 +23,7 @@ pub async fn run_pool(
     lc_cfg: LightCurveConfig,
     img_cfg: ImageConfig,
     cancel: CancellationToken,
+    metrics: Arc<Metrics>,
 ) -> Result<()> {
     // The ingester creates AURORA_BRONZE lazily when it publishes the first
     // product. Keep the preprocessor alive while that happens instead of
@@ -122,6 +124,7 @@ pub async fn run_pool(
                     Ok(msgs) => msgs,
                     Err(e) => {
                         tracing::error!(error = %e, "Failed to fetch messages from JetStream");
+                        metrics.record_transport_error();
                         drop(permit);
                         tokio::time::sleep(Duration::from_secs(1)).await;
                         continue;
@@ -137,12 +140,18 @@ pub async fn run_pool(
                     continue;
                 }
 
+                let mut pending_messages = msgs.len();
+                metrics.set_queue_depth(pending_messages);
+
                 let mut available_permit = Some(permit);
                 for msg_result in msgs {
                     let msg = match msg_result {
                         Ok(m) => m,
                         Err(e) => {
                             tracing::warn!(error = %e, "Failed to receive message from fetch batch");
+                            metrics.record_transport_error();
+                            pending_messages = pending_messages.saturating_sub(1);
+                            metrics.set_queue_depth(pending_messages);
                             continue;
                         }
                     };
@@ -152,6 +161,7 @@ pub async fn run_pool(
                     let tmp_dir = cfg.tmp_dir.clone();
                     let lc_config = lc_cfg.clone();
                     let img_config = img_cfg.clone();
+                    let metrics_ref = metrics.clone();
 
                     // The fetch above may return up to `workers` messages. A
                     // permit is attached to every spawned task so every
@@ -175,10 +185,13 @@ pub async fn run_pool(
                             tmp_dir,
                             lc_config,
                             img_config,
+                            metrics_ref,
                             Some(task_permit),
                         )
                         .await;
                     });
+                    pending_messages = pending_messages.saturating_sub(1);
+                    metrics.set_queue_depth(pending_messages);
                 }
 
                 while let Some(result) = tasks.try_join_next() {
