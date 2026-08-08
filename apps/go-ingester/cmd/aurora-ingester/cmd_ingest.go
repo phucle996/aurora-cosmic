@@ -112,6 +112,8 @@ func runIngest(ctx context.Context, cfg *config.Config, log *slog.Logger, args [
 
 	mastClient := mast.NewClient(cfg.MAST.APIURL, timeout)
 	pipeline := ingest.NewPipeline(mastClient, minioClient, publisher, cpManager, cfg.MinIO.Bucket, *concurrency, log)
+	pipeline.SetCheckpointInterval(cfg.Ingest.CheckpointInterval)
+	pipeline.SetMaxRunBytes(cfg.Bronze.MaxBytes)
 
 	log.Info("ingest: starting pipeline run",
 		slog.Int("concurrency", *concurrency),

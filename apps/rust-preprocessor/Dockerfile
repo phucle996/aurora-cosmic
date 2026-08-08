@@ -10,6 +10,6 @@ RUN cargo build --release
 # Runtime Stage
 FROM alpine:latest
 WORKDIR /app
-RUN apk add --no-cache cfitsio
+RUN apk add --no-cache cfitsio libgcc
 COPY --from=builder /app/target/release/aurora-preprocessor .
 ENTRYPOINT ["./aurora-preprocessor"]

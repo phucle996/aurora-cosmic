@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,16 +23,21 @@ func TestE2EIngestionOfflinePipeline(t *testing.T) {
 	lcData := "SIMPLE  =                    T / FITS STANDARD HEADER LC                       BITPIX  =                    8 / 8-BIT UNSIGNED INTEGERS                       NAXIS   =                    0 / NO AXES IN MAIN FITS ARRAY                    END                                                                             "
 
 	downloadCounts := make(map[string]int)
+	var downloadCountsMu sync.Mutex
 
 	mastServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/tpf.fits":
+			downloadCountsMu.Lock()
 			downloadCounts["tpf.fits"]++
+			downloadCountsMu.Unlock()
 			w.Header().Set("Content-Type", "application/fits")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(tpfData))
 		case "/lc.fits":
+			downloadCountsMu.Lock()
 			downloadCounts["lc.fits"]++
+			downloadCountsMu.Unlock()
 			w.Header().Set("Content-Type", "application/fits")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(lcData))
@@ -120,8 +126,11 @@ func TestE2EIngestionOfflinePipeline(t *testing.T) {
 	if summary.PublishedCount != 2 || summary.FailedCount != 0 {
 		t.Errorf("expected 2 published products and 0 failed, got published=%d failed=%d", summary.PublishedCount, summary.FailedCount)
 	}
-	if downloadCounts["tpf.fits"] != 1 || downloadCounts["lc.fits"] != 1 {
-		t.Errorf("expected 1 MAST download per product, got tpf=%d lc=%d", downloadCounts["tpf.fits"], downloadCounts["lc.fits"])
+	downloadCountsMu.Lock()
+	tpfDownloads, lcDownloads := downloadCounts["tpf.fits"], downloadCounts["lc.fits"]
+	downloadCountsMu.Unlock()
+	if tpfDownloads != 1 || lcDownloads != 1 {
+		t.Errorf("expected 1 MAST download per product, got tpf=%d lc=%d", tpfDownloads, lcDownloads)
 	}
 
 	// Check MinIO Object Key and Bytes
@@ -160,8 +169,11 @@ func TestE2EIngestionOfflinePipeline(t *testing.T) {
 	if rerunSummary.SkippedCount != 2 {
 		t.Errorf("expected 2 skipped products on rerun, got %d", rerunSummary.SkippedCount)
 	}
-	if downloadCounts["tpf.fits"] != 1 || downloadCounts["lc.fits"] != 1 {
-		t.Errorf("rerun caused extra MAST downloads: tpf=%d lc=%d", downloadCounts["tpf.fits"], downloadCounts["lc.fits"])
+	downloadCountsMu.Lock()
+	tpfDownloads, lcDownloads = downloadCounts["tpf.fits"], downloadCounts["lc.fits"]
+	downloadCountsMu.Unlock()
+	if tpfDownloads != 1 || lcDownloads != 1 {
+		t.Errorf("rerun caused extra MAST downloads: tpf=%d lc=%d", tpfDownloads, lcDownloads)
 	}
 
 	_ = results

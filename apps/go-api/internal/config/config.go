@@ -25,6 +25,8 @@ type MinIOConfig struct {
 type ClickHouseConfig struct {
 	Endpoint string
 	Database string
+	User     string
+	Password string
 }
 
 type Config struct {
@@ -76,6 +78,16 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	clickHouseUser, err := requireEnv("AURORA_CLICKHOUSE_USER")
+	if err != nil {
+		return nil, err
+	}
+
+	clickHousePassword, err := requireEnv("AURORA_CLICKHOUSE_PASSWORD")
+	if err != nil {
+		return nil, err
+	}
+
 	corsAllowedOrigin, err := requireEnv("AURORA_CORS_ALLOWED_ORIGIN")
 	if err != nil {
 		return nil, err
@@ -97,6 +109,8 @@ func Load() (*Config, error) {
 		ClickHouse: ClickHouseConfig{
 			Endpoint: clickHouseEndpoint,
 			Database: clickHouseDatabase,
+			User:     clickHouseUser,
+			Password: clickHousePassword,
 		},
 		CORSAllowedOrigin: corsAllowedOrigin,
 	}

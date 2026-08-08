@@ -46,7 +46,6 @@ func (p *Pipeline) recoverCheckpointProduct(ctx context.Context, prod model.Mani
 			} else {
 				p.cpManager.UpdateProductState(prod.SourceProductID, model.StateStored, info.Size, sha, res.Error)
 			}
-			_ = p.cpManager.Flush(ctx)
 			return res, true
 		}
 	}

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"time"
 )
 
 type CoreConfig struct {
@@ -22,7 +23,8 @@ type NATSConfig struct {
 }
 
 type IngestConfig struct {
-	Concurrency int
+	Concurrency        int
+	CheckpointInterval time.Duration
 }
 
 type BronzeConfig struct {
@@ -85,6 +87,11 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	checkpointInterval, err := optionalEnvDuration("AURORA_CHECKPOINT_FLUSH_INTERVAL", 5*time.Second)
+	if err != nil {
+		return nil, err
+	}
+
 	highWMBytes, err := optionalEnvInt64("AURORA_BRONZE_HIGH_WATERMARK_BYTES", 48318382080) // 45 GiB
 	if err != nil {
 		return nil, err
@@ -113,10 +120,11 @@ func Load() (*Config, error) {
 			URL: natsURL,
 		},
 		Ingest: IngestConfig{
-			Concurrency: concurrency,
+			Concurrency:        concurrency,
+			CheckpointInterval: checkpointInterval,
 		},
 		Bronze: BronzeConfig{
-			MaxBytes:           optionalEnvInt64OrDefault("AURORA_BRONZE_MAX_BYTES", 53687091200),  // 50 GiB
+			MaxBytes:           optionalEnvInt64OrDefault("AURORA_BRONZE_MAX_BYTES", 53687091200), // 50 GiB
 			HighWatermarkBytes: highWMBytes,
 			LowWatermarkBytes:  lowWMBytes,
 		},
@@ -143,6 +151,9 @@ func Load() (*Config, error) {
 func (c *Config) Validate() error {
 	if c.Ingest.Concurrency < 1 {
 		return fmt.Errorf("AURORA_INGEST_CONCURRENCY must be >= 1, got %d", c.Ingest.Concurrency)
+	}
+	if c.Ingest.CheckpointInterval < 0 {
+		return fmt.Errorf("AURORA_CHECKPOINT_FLUSH_INTERVAL must not be negative")
 	}
 	if c.Bronze.MaxBytes <= 0 {
 		return fmt.Errorf("AURORA_BRONZE_MAX_BYTES must be > 0")
@@ -257,6 +268,18 @@ func optionalEnvInt(key string, defaultVal int) (int, error) {
 		return defaultVal, fmt.Errorf("invalid integer value for '%s'", key)
 	}
 	return i, nil
+}
+
+func optionalEnvDuration(key string, defaultVal time.Duration) (time.Duration, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultVal, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return defaultVal, fmt.Errorf("invalid duration value for '%s': %w", key, err)
+	}
+	return d, nil
 }
 
 // optionalEnvBool returns the env var parsed as bool or the given default.

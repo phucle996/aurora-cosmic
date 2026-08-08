@@ -41,6 +41,8 @@ Each sub-project owns its `.env.example` in its application directory:
 
 The Go API reads ClickHouse from `AURORA_CLICKHOUSE_ENDPOINT` and `AURORA_CLICKHOUSE_DATABASE`. Browser CORS is restricted to the exact origin in `AURORA_CORS_ALLOWED_ORIGIN`; wildcard origins are rejected.
 
+ClickHouse HTTP access uses `AURORA_CLICKHOUSE_USER` and `AURORA_CLICKHOUSE_PASSWORD`. The Compose development defaults are intentionally explicit so a network request cannot silently fall back to the disabled `default` account.
+
 The analytical endpoints return `503 Service Unavailable` when ClickHouse is unreachable. They never return fabricated candidate, anomaly, target, or lightcurve records.
 
 ## 6. GPU & Device Selection
@@ -81,5 +83,4 @@ The analytical endpoints return `503 Service Unavailable` when ClickHouse is unr
 | `AURORA_TIC_SOURCE` | `local` | Source for TIC catalog snapshots (`local` or URI) |
 | `AURORA_TOI_SOURCE` | `local` | Source for TOI catalog snapshots (`local` or URI) |
 | `AURORA_TCE_SOURCE` | `local` | Source for TCE catalog snapshots (`local` or URI) |
-
 

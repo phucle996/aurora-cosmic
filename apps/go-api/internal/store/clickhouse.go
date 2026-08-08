@@ -67,7 +67,16 @@ type clickHouseJSONResponse[T any] struct {
 type ClickHouseStore struct {
 	Endpoint string
 	Database string
+	Username string
+	Password string
 	Client   *http.Client
+}
+
+// SetCredentials configures ClickHouse HTTP basic authentication without
+// exposing credentials in query strings or logs.
+func (s *ClickHouseStore) SetCredentials(username, password string) {
+	s.Username = username
+	s.Password = password
 }
 
 func NewClickHouseStore(endpoint, database string) *ClickHouseStore {
@@ -191,6 +200,9 @@ func (s *ClickHouseStore) executeSQL(ctx context.Context, query string) ([]byte,
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build ClickHouse request: %w", err)
+	}
+	if s.Username != "" {
+		req.SetBasicAuth(s.Username, s.Password)
 	}
 
 	resp, err := s.Client.Do(req)

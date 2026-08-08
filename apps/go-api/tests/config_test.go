@@ -16,6 +16,8 @@ func setDummyEnv() {
 	os.Setenv("MINIO_BUCKET", "aurora")
 	os.Setenv("AURORA_CLICKHOUSE_ENDPOINT", "http://clickhouse:8123")
 	os.Setenv("AURORA_CLICKHOUSE_DATABASE", "aurora")
+	os.Setenv("AURORA_CLICKHOUSE_USER", "aurora")
+	os.Setenv("AURORA_CLICKHOUSE_PASSWORD", "aurora-dev-password")
 	os.Setenv("AURORA_CORS_ALLOWED_ORIGIN", "http://localhost:8501")
 }
 

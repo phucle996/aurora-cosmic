@@ -298,3 +298,37 @@ func TestPipelineSizeMismatchFailure(t *testing.T) {
 		t.Errorf("expected FAILED status in result, got %v", results[0].Status)
 	}
 }
+
+func TestPipelineRejectsManifestAboveRunBudget(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	pipe := ingest.NewPipeline(nil, newMockStorageClient(), nil, nil, "aurora", 1, logger)
+	pipe.SetMaxRunBytes(3)
+	man := &model.Manifest{
+		Samples: []model.Sample{{TargetPixel: &model.ManifestProduct{
+			SourceProductID: "budget-product",
+			Kind:            model.KindTargetPixel,
+			Filename:        "budget_tp.fits",
+			DataURI:         "mast:TESS/budget_tp.fits",
+			SizeBytes:       4,
+			Sector:          1,
+			TICID:           1,
+		}}},
+	}
+
+	if _, _, err := pipe.IngestManifest(context.Background(), man, true); err == nil {
+		t.Fatal("expected manifest run budget rejection")
+	}
+}
+
+func TestPipelineRejectsInvalidManifestSizes(t *testing.T) {
+	pipe := ingest.NewPipeline(nil, newMockStorageClient(), nil, nil, "aurora", 1, nil)
+	if _, _, err := pipe.IngestManifest(context.Background(), nil, true); err == nil {
+		t.Fatal("expected nil manifest rejection")
+	}
+	man := &model.Manifest{Samples: []model.Sample{{TargetPixel: &model.ManifestProduct{
+		SourceProductID: "negative-size", SizeBytes: -1,
+	}}}}
+	if _, _, err := pipe.IngestManifest(context.Background(), man, true); err == nil {
+		t.Fatal("expected negative product size rejection")
+	}
+}

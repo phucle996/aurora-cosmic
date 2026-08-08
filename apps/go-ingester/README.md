@@ -33,7 +33,7 @@ Stream selected TESS FITS products directly from MAST into MinIO Bronze with aut
 ```bash
 go run ./cmd/aurora-ingester ingest \
     --manifest manifest.json \
-    --concurrency 4
+    --concurrency 8
 ```
 
 Restart / Resume existing run:
@@ -82,3 +82,15 @@ FITS files are stored deterministically in MinIO Bronze bucket (`MINIO_BUCKET=au
 ```bash
 go test ./...
 ```
+
+## Throughput tuning
+
+The ingester is network-bound: increase concurrency gradually while watching
+MAST 429 responses, MinIO latency, and host NIC utilization. Start at 8 and
+test 16 only when the upstream remains healthy. FITS downloads use a bounded
+queue and an HTTP keep-alive pool; large streams are not cut off by a total
+30-second client timeout.
+
+Checkpoint state is flushed every 5 seconds by default instead of writing two
+MinIO objects after every product. Set `AURORA_CHECKPOINT_FLUSH_INTERVAL` to a
+larger duration for maximum throughput, accepting a larger recovery window.

@@ -28,7 +28,17 @@ func NewClient(baseURL string, timeout time.Duration) *Client {
 		baseURL:     baseURL,
 		downloadURL: "https://mast.stsci.edu/api/v0/download/file",
 		httpClient: &http.Client{
-			Timeout: timeout,
+			// A total client timeout breaks large FITS streams. Bound header
+			// acquisition instead and let the caller's context cancel the body.
+			Timeout: 0,
+			Transport: &http.Transport{
+				MaxIdleConns:          256,
+				MaxIdleConnsPerHost:   64,
+				MaxConnsPerHost:       64,
+				IdleConnTimeout:       90 * time.Second,
+				ResponseHeaderTimeout: timeout,
+				ForceAttemptHTTP2:     true,
+			},
 		},
 	}
 }
