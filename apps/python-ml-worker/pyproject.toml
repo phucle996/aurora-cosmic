@@ -15,6 +15,11 @@ dependencies = [
     "pyarrow",
     "pydantic",
     "clickhouse-connect",
+    # CUDA-enabled Linux wheels; the container is intentionally GPU-only.
+    "torch>=2.5,<3",
+    "onnx>=1.16,<2",
+    "onnxruntime-gpu>=1.18,<2",
+    "nvidia-ml-py>=12,<13",
 ]
 
 [project.optional-dependencies]

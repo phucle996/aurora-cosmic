@@ -10,9 +10,9 @@ class Config:
         self.nats_url = self._require_env("NATS_URL")
 
         self.device = self._require_env("AURORA_ML_DEVICE").lower()
-        if self.device not in ("auto", "cpu", "cuda"):
+        if self.device != "cuda":
             raise ValueError(
-                f"Invalid AURORA_ML_DEVICE: '{self.device}'. Must be 'auto', 'cpu', or 'cuda'"
+                f"Invalid AURORA_ML_DEVICE: '{self.device}'. GPU-only training requires 'cuda'"
             )
 
         try:

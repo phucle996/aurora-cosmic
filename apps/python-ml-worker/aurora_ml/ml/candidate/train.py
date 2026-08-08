@@ -30,6 +30,7 @@ from aurora_ml.ml.datasets.splits import (
     CandidateMlView,
     derive_group_key,
 )
+from aurora_ml.ml.device import require_cuda
 from aurora_ml.pipeline.gold import GoldSnapshotManifest
 
 
@@ -124,7 +125,8 @@ def train_candidate_model(
     weight_decay: float = 0.0001,
     early_stopping_patience: int = 10,
     dest_dir: Optional[str] = None,
-    device_str: str = "auto",
+    device_str: str = "cuda",
+    max_vram_mb: int = 0,
 ) -> Tuple[TrainingRunManifest, TrainingRunCheckpoint]:
     """Execute Phase 6.2 Candidate Tabular Model Training Run.
 
@@ -186,11 +188,25 @@ def train_candidate_model(
         "learning_rate": learning_rate,
         "max_epochs": epochs,
         "weight_decay": weight_decay,
+        "device": "cuda",
+        "amp_dtype": "float16",
     }
 
     # Derive dataset_view_fingerprint from preprocessor feature order
     view_fp_payload = json.dumps({"feature_names": list(CANDIDATE_MODEL_INPUT_FEATURES)}, sort_keys=True)
     dataset_view_fp = hashlib.sha256(view_fp_payload.encode("utf-8")).hexdigest()
+
+    # 3. Seed Randomness
+    random.seed(training_seed)
+    np.random.seed(training_seed)
+    torch.manual_seed(training_seed)
+
+    # Device selection is deliberately strict: there is no CPU training path.
+    try:
+        device, cuda_info = require_cuda(device_str, max_vram_mb)
+    except Exception as exc:
+        raise CandidateTrainingError(str(exc)) from exc
+    hyperparams["cuda_runtime"] = cuda_info.to_dict()
 
     spec = TrainingRunSpec(
         gold_snapshot_id=gold_manifest.snapshot_id,
@@ -199,7 +215,6 @@ def train_candidate_model(
         training_seed=training_seed,
         hyperparameters=hyperparams,
     )
-
     checkpoint = TrainingRunCheckpoint(
         training_run_id=spec.training_run_id,
         training_spec_fingerprint=spec.training_spec_fingerprint,
@@ -207,21 +222,6 @@ def train_candidate_model(
         gold_snapshot_id=gold_manifest.snapshot_id,
         split_id=split_manifest.split_id,
     )
-
-    # 3. Seed Randomness
-    random.seed(training_seed)
-    np.random.seed(training_seed)
-    torch.manual_seed(training_seed)
-
-    # Device selection
-    if device_str == "auto":
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    elif device_str == "cuda":
-        if not torch.cuda.is_available():
-            raise CandidateTrainingError("CUDA_UNAVAILABLE: Explicit CUDA requested but CUDA is not available")
-        device = torch.device("cuda")
-    else:
-        device = torch.device("cpu")
 
     # 4. Preprocessing Fit (TRAIN only)
     preprocessor = CandidatePreprocessor(split_id=split_manifest.split_id)
@@ -253,9 +253,15 @@ def train_candidate_model(
     val_dataset = TensorDataset(X_val_t, y_val_t)
 
     train_loader = DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True, generator=g
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        generator=g,
+        pin_memory=True,
     )
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    val_loader = DataLoader(
+        val_dataset, batch_size=batch_size, shuffle=False, pin_memory=True
+    )
 
     # 5. Model & Optimizer Initialization
     model = CandidateTabularMLP(
@@ -269,6 +275,11 @@ def train_candidate_model(
     )
 
     checkpoint.update_status("TRAINING")
+    checkpoint_path = os.path.join(
+        "checkpoints", "ml-training", "candidate", f"{spec.training_run_id}.json"
+    )
+    os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
+    scaler = torch.amp.GradScaler("cuda", enabled=True)
 
     # 6. Training Loop with Early Stopping
     best_val_loss = float("inf")
@@ -279,12 +290,15 @@ def train_candidate_model(
     for epoch in range(1, epochs + 1):
         model.train()
         for batch_x, batch_y in train_loader:
-            batch_x, batch_y = batch_x.to(device), batch_y.to(device)
-            optimizer.zero_grad()
-            logits = model(batch_x)
-            loss = loss_fn(logits, batch_y)
-            loss.backward()
-            optimizer.step()
+            batch_x = batch_x.to(device, non_blocking=True)
+            batch_y = batch_y.to(device, non_blocking=True)
+            optimizer.zero_grad(set_to_none=True)
+            with torch.autocast(device_type="cuda", dtype=torch.float16):
+                logits = model(batch_x)
+                loss = loss_fn(logits, batch_y)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
         # Evaluate on VALIDATION split
         model.eval()
@@ -292,9 +306,11 @@ def train_candidate_model(
         val_count = 0
         with torch.no_grad():
             for batch_x, batch_y in val_loader:
-                batch_x, batch_y = batch_x.to(device), batch_y.to(device)
-                logits = model(batch_x)
-                loss = loss_fn(logits, batch_y)
+                batch_x = batch_x.to(device, non_blocking=True)
+                batch_y = batch_y.to(device, non_blocking=True)
+                with torch.autocast(device_type="cuda", dtype=torch.float16):
+                    logits = model(batch_x)
+                    loss = loss_fn(logits, batch_y)
                 val_loss_sum += float(loss.item()) * len(batch_y)
                 val_count += len(batch_y)
 
@@ -310,6 +326,12 @@ def train_candidate_model(
             if patience_counter >= early_stopping_patience:
                 break
 
+        checkpoint.current_epoch = epoch
+        checkpoint.best_epoch = best_epoch
+        checkpoint.best_val_loss = best_val_loss
+        with open(checkpoint_path, "w", encoding="utf-8") as f:
+            f.write(checkpoint.to_json())
+
     # Restore best model state
     if best_model_state is not None:
         model.load_state_dict(best_model_state)
@@ -323,8 +345,9 @@ def train_candidate_model(
     val_preds_list: List[np.ndarray] = []
     with torch.no_grad():
         for batch_x, _ in val_loader:
-            batch_x = batch_x.to(device)
-            logits = model(batch_x)
+            batch_x = batch_x.to(device, non_blocking=True)
+            with torch.autocast(device_type="cuda", dtype=torch.float16):
+                logits = model(batch_x)
             probs = torch.sigmoid(logits).cpu().numpy()
             val_preds_list.append(probs)
 
@@ -341,7 +364,9 @@ def train_candidate_model(
 
     # Save model.pt
     model_pt_path = os.path.join(output_dir, "model.pt")
-    torch.save(model.state_dict(), model_pt_path)
+    # Training is GPU-only, but artifacts must remain portable to CPU export/runtime.
+    cpu_state_dict = {k: v.detach().cpu() for k, v in model.state_dict().items()}
+    torch.save(cpu_state_dict, model_pt_path)
     with open(model_pt_path, "rb") as f:
         model_pt_sha = hashlib.sha256(f.read()).hexdigest()
 
@@ -404,10 +429,7 @@ def train_candidate_model(
     checkpoint.update_status("COMPLETED")
 
     # Save recovery checkpoint file
-    chkpt_dir = os.path.join("checkpoints", "ml-training", "candidate")
-    os.makedirs(chkpt_dir, exist_ok=True)
-    chkpt_path = os.path.join(chkpt_dir, f"{spec.training_run_id}.json")
-    with open(chkpt_path, "w", encoding="utf-8") as f:
+    with open(checkpoint_path, "w", encoding="utf-8") as f:
         f.write(checkpoint.to_json())
 
     return manifest, checkpoint

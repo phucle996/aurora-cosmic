@@ -4,11 +4,16 @@
 - **Stage 5** — Scientific Feature Engineering, Gold Snapshot materialization, Catalog enrichment, and ClickHouse analytical index
 - **Stage 6** — ML Dataset boundary, deterministic group split, Candidate Vetting & Anomaly Detection model training, ONNX export, and Model Registry
 
+Training is GPU-only. The worker fails fast when CUDA is not visible; CPU is
+allowed for data preparation and ONNX export, never as a training fallback.
+The Compose service must be started with NVIDIA Container Toolkit and exposes
+the selected GPU through `gpus: all`.
+
 ## Package Layout
 
 ```
 aurora_ml/
-├── main.py                         # CLI entrypoint (gold-plan, gold-build, analytics-load, ml-view, ml-split)
+├── main.py                         # CLI entrypoint and GPU-only training commands
 ├── config.py                       # Infrastructure config (MinIO, ClickHouse, env)
 ├── data.py                         # Generic Gold data loading & lineage discovery
 │
@@ -54,4 +59,19 @@ python -m aurora_ml.main analytics-load --snapshot-id gold-v1-<id> [--rebuild]
 # Stage 6 — ML Platform
 python -m aurora_ml.main ml-view   --snapshot-id gold-v1-<id>
 python -m aurora_ml.main ml-split  --snapshot-id gold-v1-<id> [--seed 42]
+
+# GPU-only training from committed manifests and materialized rows
+python -m aurora_ml.main candidate-train \
+  --gold-snapshot-id gold-v1-<id> --split-id split-v1-<id> \
+  --gold-manifest gold-manifest.json --split-manifest split-manifest.json \
+  --rows-json candidate-rows.json --epochs 50 --max-vram-mb 3500
+
+python -m aurora_ml.main train-anomaly \
+  --gold-snapshot-id gold-v1-<id> --split-id split-v1-<id> \
+  --gold-manifest gold-manifest.json --split-manifest split-manifest.json \
+  --rows-json anomaly-rows.json --epochs 150 --max-vram-mb 3500
 ```
+
+The training loop uses CUDA AMP, pinned host memory, non-blocking host-to-device
+copies, TF32 tensor-core math, per-epoch recovery checkpoints, and CPU-portable
+model artifacts. `AURORA_ML_MAX_VRAM_MB=0` means no allocator cap.

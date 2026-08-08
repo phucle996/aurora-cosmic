@@ -283,6 +283,41 @@ class CandidateGroupSplit:
             "created_at": self.created_at,
         }
 
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "CandidateGroupSplit":
+        """Load and validate an immutable split manifest from JSON data."""
+        assignments = [
+            GroupAssignmentRecord(**assignment)
+            for assignment in d.get("assignments", [])
+        ]
+        return cls(
+            schema_version=d.get("schema_version", 1),
+            split_id=d["split_id"],
+            split_fingerprint=d["split_fingerprint"],
+            gold_snapshot_id=d["gold_snapshot_id"],
+            gold_manifest_sha256=d["gold_manifest_sha256"],
+            dataset_view_version=d["dataset_view_version"],
+            split_policy_version=d["split_policy_version"],
+            split_seed=d["split_seed"],
+            eligible_row_count=d["eligible_row_count"],
+            eligible_group_count=d["eligible_group_count"],
+            train_group_count=d["train_group_count"],
+            validation_group_count=d["validation_group_count"],
+            train_row_count=d["train_row_count"],
+            validation_row_count=d["validation_row_count"],
+            train_positive_count=d["train_positive_count"],
+            train_negative_count=d["train_negative_count"],
+            val_positive_count=d["val_positive_count"],
+            val_negative_count=d["val_negative_count"],
+            feature_names=tuple(d["feature_names"]),
+            assignments=assignments,
+            created_at=d.get("created_at", ""),
+        )
+
+    @classmethod
+    def from_json(cls, json_str: str) -> "CandidateGroupSplit":
+        return cls.from_dict(json.loads(json_str))
+
 
 def derive_group_key(row: Dict[str, Any]) -> str:
     """Derive group key for astronomical target grouping (TIC ID if available else source_product_id)."""

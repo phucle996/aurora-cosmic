@@ -1,4 +1,5 @@
 import argparse
+import json
 import signal
 import sys
 import time
@@ -8,7 +9,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from aurora_ml.config import Config
-from aurora_ml.pipeline.gold import GoldSnapshotPlanner, SilverInputRef
+from aurora_ml.ml.device import CudaRequiredError, require_cuda
+from aurora_ml.ml.anomaly.train import train_anomaly_model
+from aurora_ml.ml.candidate.train import train_candidate_model
+from aurora_ml.ml.datasets.splits import CandidateGroupSplit
+from aurora_ml.pipeline.gold import GoldSnapshotManifest, GoldSnapshotPlanner, SilverInputRef
 from pkg.logger import init_logger
 
 
@@ -37,6 +42,11 @@ def main():
     view_parser = subparsers.add_parser("ml-view", help="Inspect ML dataset view for a committed Gold candidate snapshot")
     view_parser.add_argument("--snapshot-id", required=True, help="Explicit committed Gold snapshot ID")
 
+    # Command: ml-split
+    split_parser = subparsers.add_parser("ml-split", help="Generate a deterministic group split manifest")
+    split_parser.add_argument("--snapshot-id", required=True, help="Explicit committed Gold snapshot ID")
+    split_parser.add_argument("--seed", type=int, default=42, help="Split random seed")
+
     # Command: candidate-train
     train_parser = subparsers.add_parser("candidate-train", help="Train candidate vetting tabular model")
     train_parser.add_argument("--gold-snapshot-id", required=True, help="Explicit committed Gold snapshot ID")
@@ -44,6 +54,11 @@ def main():
     train_parser.add_argument("--seed", type=int, default=42, help="Training random seed (default: 42)")
     train_parser.add_argument("--epochs", type=int, default=50, help="Maximum epochs")
     train_parser.add_argument("--lr", type=float, default=0.001, help="Learning rate")
+    train_parser.add_argument("--gold-manifest", required=True, help="Committed Gold manifest JSON")
+    train_parser.add_argument("--split-manifest", required=True, help="Immutable group split manifest JSON")
+    train_parser.add_argument("--rows-json", required=True, help="Materialized ML rows JSON array")
+    train_parser.add_argument("--dest-dir", help="Training artifact output directory")
+    train_parser.add_argument("--max-vram-mb", type=int, default=0, help="Optional CUDA allocator cap (0=full GPU)")
 
     # Command: train-anomaly
     anom_parser = subparsers.add_parser("train-anomaly", help="Train anomaly detection tabular autoencoder")
@@ -52,6 +67,11 @@ def main():
     anom_parser.add_argument("--seed", type=int, default=42, help="Training random seed (default: 42)")
     anom_parser.add_argument("--epochs", type=int, default=150, help="Maximum epochs")
     anom_parser.add_argument("--lr", type=float, default=0.001, help="Learning rate")
+    anom_parser.add_argument("--gold-manifest", required=True, help="Committed Gold manifest JSON")
+    anom_parser.add_argument("--split-manifest", required=True, help="Immutable group split manifest JSON")
+    anom_parser.add_argument("--rows-json", required=True, help="Materialized ML rows JSON array")
+    anom_parser.add_argument("--dest-dir", help="Training artifact output directory")
+    anom_parser.add_argument("--max-vram-mb", type=int, default=0, help="Optional CUDA allocator cap (0=full GPU)")
 
     # Command: evaluation-cohort
     cohort_parser = subparsers.add_parser("evaluation-cohort", help="Freeze an immutable Golden Test or Recent Holdout cohort")
@@ -138,11 +158,49 @@ def main():
         return
 
     if args.command == "candidate-train":
-        print(f"[aurora-ml-worker] Candidate model training initiated for gold='{args.gold_snapshot_id}' split='{args.split_id}' (seed={args.seed}, epochs={args.epochs})")
+        with open(args.gold_manifest, "r", encoding="utf-8") as f:
+            gold_manifest = GoldSnapshotManifest.from_json(f.read())
+        with open(args.split_manifest, "r", encoding="utf-8") as f:
+            split_manifest = CandidateGroupSplit.from_json(f.read())
+        with open(args.rows_json, "r", encoding="utf-8") as f:
+            rows = json.load(f)
+        if gold_manifest.snapshot_id != args.gold_snapshot_id or split_manifest.split_id != args.split_id:
+            raise SystemExit("CLI_INPUT_MISMATCH: IDs do not match the supplied manifests")
+        manifest, checkpoint = train_candidate_model(
+            gold_manifest=gold_manifest,
+            split_manifest=split_manifest,
+            rows=rows,
+            training_seed=args.seed,
+            epochs=args.epochs,
+            learning_rate=args.lr,
+            dest_dir=args.dest_dir,
+            device_str="cuda",
+            max_vram_mb=args.max_vram_mb,
+        )
+        print(f"[aurora-ml-worker] Candidate training completed run='{manifest.training_run_id}' status='{checkpoint.status}'")
         return
 
     if args.command == "train-anomaly":
-        print(f"[aurora-ml-worker] Anomaly model training initiated for gold='{args.gold_snapshot_id}' split='{args.split_id}' (seed={args.seed}, epochs={args.epochs})")
+        with open(args.gold_manifest, "r", encoding="utf-8") as f:
+            gold_manifest = GoldSnapshotManifest.from_json(f.read())
+        with open(args.split_manifest, "r", encoding="utf-8") as f:
+            split_manifest = CandidateGroupSplit.from_json(f.read())
+        with open(args.rows_json, "r", encoding="utf-8") as f:
+            rows = json.load(f)
+        if gold_manifest.snapshot_id != args.gold_snapshot_id or split_manifest.split_id != args.split_id:
+            raise SystemExit("CLI_INPUT_MISMATCH: IDs do not match the supplied manifests")
+        manifest, checkpoint = train_anomaly_model(
+            gold_manifest=gold_manifest,
+            split_manifest=split_manifest,
+            rows=rows,
+            training_seed=args.seed,
+            epochs=args.epochs,
+            learning_rate=args.lr,
+            dest_dir=args.dest_dir,
+            device_str="cuda",
+            max_vram_mb=args.max_vram_mb,
+        )
+        print(f"[aurora-ml-worker] Anomaly training completed run='{manifest.training_run_id}' status='{checkpoint.status}'")
         return
 
     if args.command == "evaluation-cohort":
@@ -183,6 +241,15 @@ def main():
         cfg = Config()
         logger.setLevel(cfg.log_level.upper())
         cfg.log_summary()
+        _, cuda_info = require_cuda(cfg.device, cfg.max_vram_mb)
+        logger.info(
+            "CUDA training runtime ready: device=%s name=%s vram=%sMB torch=%s cuda=%s",
+            cuda_info.device,
+            cuda_info.device_name,
+            cuda_info.total_vram_mb,
+            cuda_info.torch_version,
+            cuda_info.cuda_version,
+        )
 
         stop_event = False
 
@@ -198,6 +265,9 @@ def main():
         while not stop_event:
             time.sleep(1)
 
+    except CudaRequiredError:
+        logger.exception("GPU-only ML worker cannot start without a valid CUDA device")
+        raise
     except Exception:
         logger.exception("Failed to start service")
 

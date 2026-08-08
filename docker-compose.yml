@@ -3,6 +3,9 @@ services:
     image: minio/minio:latest
     container_name: aurora-minio
     restart: unless-stopped
+    cpus: "0.25"
+    mem_limit: 512m
+    memswap_limit: 512m
     ports:
       - "${MINIO_API_PORT:-9000}:9000"
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
@@ -43,6 +46,9 @@ services:
     image: nats:alpine
     container_name: aurora-nats
     restart: unless-stopped
+    cpus: "0.25"
+    mem_limit: 256m
+    memswap_limit: 256m
     ports:
       - "${NATS_CLIENT_PORT:-4222}:4222"
       - "${NATS_MONITOR_PORT:-8222}:8222"
@@ -64,9 +70,9 @@ services:
     container_name: aurora-go-ingester
     # Keep real-data ingest experiments reproducible on a 4 vCPU / 4 GiB host.
     # memswap_limit equal to mem_limit prevents Docker from hiding pressure in swap.
-    cpus: "4.0"
-    mem_limit: 4g
-    memswap_limit: 4g
+    cpus: "1.25"
+    mem_limit: 768m
+    memswap_limit: 768m
     env_file:
       - ./apps/go-ingester/.env.example
     networks:
@@ -81,6 +87,9 @@ services:
     image: ghcr.io/phucle996/aurora-rust-preprocessor:latest
     build: ./apps/rust-preprocessor
     container_name: aurora-rust-preprocessor
+    cpus: "1.25"
+    mem_limit: 1536m
+    memswap_limit: 1536m
     env_file:
       - ./apps/rust-preprocessor/.env.example
     networks:
@@ -95,6 +104,12 @@ services:
     image: ghcr.io/phucle996/aurora-python-ml-worker:latest
     build: ./apps/python-ml-worker
     container_name: aurora-python-ml-worker
+    gpus: all
+    cpus: "1.0"
+    mem_limit: 1g
+    memswap_limit: 1g
+    environment:
+      AURORA_ML_MAX_VRAM_MB: "2000"
     env_file:
       - ./apps/python-ml-worker/.env.example
     networks:
