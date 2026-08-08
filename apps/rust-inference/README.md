@@ -35,6 +35,23 @@ Python ML worker; `AURORA_ML_DEVICE` here selects the inference deployment
 policy and is currently informational until a CUDA ONNX Runtime provider is
 installed in the image.
 
+## Source layout
+
+```text
+src/
+├── application/    service lifecycle and JetStream worker orchestration
+├── adapters/       MinIO and Gold Parquet I/O
+├── domain/         job, model-runtime, and prediction contracts
+├── runtime/        ONNX session, preprocessing, checksums, and parity
+├── config.rs       environment-backed deployment configuration
+├── telemetry.rs    structured logging setup
+└── main.rs         process entrypoint
+```
+
+The dependency direction is intentional: domain contracts do not depend on
+adapters; runtime owns numerical/model validation; application coordinates
+the adapters and runtime.
+
 ## Tests
 
 ```bash

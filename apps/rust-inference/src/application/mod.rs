@@ -1,3 +1,5 @@
+mod worker;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -5,9 +7,8 @@ use anyhow::{Context, Result};
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
 
+use crate::adapters::storage::ObjectStore;
 use crate::config::Config;
-use crate::storage::ObjectStore;
-use crate::worker;
 
 pub async fn run(config: Config) -> Result<()> {
     tracing::info!(device = %config.ml.device, "Service runner started");

@@ -1,5 +1,9 @@
+pub mod adapters;
+pub mod application;
 pub mod config;
-pub mod job;
-pub mod model;
-pub mod prediction;
+pub mod domain;
 pub mod runtime;
+pub mod telemetry;
+
+// Preserve the original public paths for downstream contract tests and callers.
+pub use domain::{job, model, prediction};

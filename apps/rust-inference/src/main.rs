@@ -1,9 +1,4 @@
-mod app;
-mod config;
-mod gold;
-mod logger;
-mod storage;
-mod worker;
+use aurora_inference::{application, config, telemetry};
 
 #[tokio::main]
 async fn main() {
@@ -15,10 +10,10 @@ async fn main() {
         }
     };
 
-    logger::init(&cfg.core.log_level, &cfg.core.env);
+    telemetry::init(&cfg.core.log_level, &cfg.core.env);
     cfg.log_summary();
 
-    if let Err(e) = app::run(cfg).await {
+    if let Err(e) = application::run(cfg).await {
         tracing::error!(error = %e, "Runtime error encountered");
         std::process::exit(1);
     }

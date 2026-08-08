@@ -11,7 +11,7 @@ use std::io::{BufReader, Read};
 use std::path::Path;
 use thiserror::Error;
 
-use crate::model::{
+use crate::domain::model::{
     ModelRuntimeManifest, ModelRuntimeValidationRecord, ParityFixture, PreprocessingConfig,
 };
 
@@ -285,7 +285,7 @@ impl OnnxRuntime {
                 "threshold SHA mismatch".to_string(),
             ));
         }
-        let threshold_config: crate::model::ThresholdConfig =
+        let threshold_config: crate::domain::model::ThresholdConfig =
             serde_json::from_slice(&fs::read(threshold_path)?)?;
         if (threshold_config.decision_threshold - manifest.decision_threshold).abs() > 1e-12 {
             return Err(RuntimeError::Integrity(
@@ -450,7 +450,7 @@ pub fn validate_runtime_package_parity(
             manifest.threshold_sha256
         )));
     }
-    let threshold: crate::model::ThresholdConfig =
+    let threshold: crate::domain::model::ThresholdConfig =
         serde_json::from_slice(&fs::read(&threshold_path)?)?;
     if !threshold.decision_threshold.is_finite()
         || (threshold.decision_threshold - manifest.decision_threshold).abs() > 1e-12

@@ -9,18 +9,18 @@ use tempfile::TempDir;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
-use aurora_inference::job::{InferenceJobManifest, InferenceJobRequestedEvent};
-use aurora_inference::prediction::{
+use crate::domain::job::{InferenceJobManifest, InferenceJobRequestedEvent};
+use crate::domain::prediction::{
     compute_anomaly_prediction_id, compute_candidate_prediction_id, compute_model_input_sha256,
     AnomalyPredictionRecord, CandidatePredictionRecord,
 };
-use aurora_inference::runtime::{
+use crate::runtime::{
     compute_reconstruction_mse, stable_sigmoid, validate_runtime_package_parity, OnnxRuntime,
 };
 
+use crate::adapters::gold::{read_gold, GoldRow};
+use crate::adapters::storage::ObjectStore;
 use crate::config::{Config, NatsConfig};
-use crate::gold::{read_gold, GoldRow};
-use crate::storage::ObjectStore;
 
 const INFERENCE_STREAM_SUBJECT: &str = "aurora.v1.inference.>";
 
