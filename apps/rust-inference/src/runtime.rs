@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::model::{
-    ModelRuntimeManifest, ModelRuntimeValidationRecord, ParityFixture, PreprocessingConfig, ThresholdConfig,
+    ModelRuntimeManifest, ModelRuntimeValidationRecord, ParityFixture, PreprocessingConfig,
 };
 
 #[derive(Error, Debug)]
@@ -108,7 +108,7 @@ pub fn validate_runtime_package_parity(
     let manifest_path = package_dir.join("manifest.json");
     let onnx_path = package_dir.join("model.onnx");
     let prep_path = package_dir.join("preprocessing.json");
-    let thresh_path = package_dir.join("threshold.json");
+    let threshold_path = package_dir.join("threshold.json");
     let fixture_path = package_dir.join("parity-fixture.json");
 
     // 1. Read and parse manifest
@@ -136,7 +136,7 @@ pub fn validate_runtime_package_parity(
         )));
     }
 
-    let actual_thresh_sha = compute_sha256(&thresh_path)?;
+    let actual_thresh_sha = compute_sha256(&threshold_path)?;
     if actual_thresh_sha != manifest.threshold_sha256 {
         return Err(RuntimeError::Integrity(format!(
             "Threshold SHA mismatch: actual {actual_thresh_sha} != manifest {}",

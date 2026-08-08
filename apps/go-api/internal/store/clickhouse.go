@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"time"
@@ -56,6 +58,11 @@ type LightcurveData struct {
 	Flux  []float64 `json:"flux"`
 }
 
+type clickHouseJSONResponse[T any] struct {
+	Data []T `json:"data"`
+	Rows int `json:"rows"`
+}
+
 // ClickHouseStore queries analytical metadata stored in ClickHouse.
 type ClickHouseStore struct {
 	Endpoint string
@@ -73,47 +80,133 @@ func NewClickHouseStore(endpoint, database string) *ClickHouseStore {
 	return &ClickHouseStore{
 		Endpoint: endpoint,
 		Database: database,
-		Client:   &http.Client{Timeout: 5 * time.Second},
+		Client:   &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
-// QueryCandidates fetches candidate prediction records filtered by sector.
+// QueryCandidates fetches candidate prediction records filtered by sector from ClickHouse.
 func (s *ClickHouseStore) QueryCandidates(ctx context.Context, sector int) ([]CandidateRecord, error) {
-	// Execute SQL query against ClickHouse HTTP Interface
 	query := "SELECT prediction_id, source_product_id, tic_id, sector, raw_logit, candidate_score, decision_threshold, above_threshold, model_version, runtime_package_id FROM candidate_predictions"
 	if sector > 0 {
 		query += fmt.Sprintf(" WHERE sector = %d", sector)
 	}
-	query += " ORDER BY candidate_score DESC LIMIT 1000"
+	query += " ORDER BY candidate_score DESC LIMIT 1000 FORMAT JSON"
 
-	// Attempt live execution; if ClickHouse table is not yet populated, return empty slice
-	_ = s.executeSQL(ctx, query)
+	body, err := s.executeSQL(ctx, query)
+	if err != nil {
+		return nil, err
+	}
 
-	return nil, nil
+	var resp clickHouseJSONResponse[CandidateRecord]
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse ClickHouse JSON response: %w", err)
+	}
+
+	if resp.Data == nil {
+		return []CandidateRecord{}, nil
+	}
+	return resp.Data, nil
 }
 
-// QueryAnomalies fetches anomaly detection records filtered by sector.
+// QueryAnomalies fetches anomaly detection records filtered by sector from ClickHouse.
 func (s *ClickHouseStore) QueryAnomalies(ctx context.Context, sector int) ([]AnomalyRecord, error) {
 	query := "SELECT prediction_id, source_product_id, tic_id, sector, reconstruction_mse, decision_threshold, above_threshold, model_version, runtime_package_id FROM anomaly_predictions"
 	if sector > 0 {
 		query += fmt.Sprintf(" WHERE sector = %d", sector)
 	}
-	query += " ORDER BY reconstruction_mse DESC LIMIT 1000"
+	query += " ORDER BY reconstruction_mse DESC LIMIT 1000 FORMAT JSON"
 
-	_ = s.executeSQL(ctx, query)
-	return nil, nil
+	body, err := s.executeSQL(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp clickHouseJSONResponse[AnomalyRecord]
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse ClickHouse JSON response: %w", err)
+	}
+
+	if resp.Data == nil {
+		return []AnomalyRecord{}, nil
+	}
+	return resp.Data, nil
 }
 
-func (s *ClickHouseStore) executeSQL(ctx context.Context, query string) string {
+// QueryTargets fetches stellar targets filtered by sector from ClickHouse.
+func (s *ClickHouseStore) QueryTargets(ctx context.Context, sector int) ([]TargetRecord, error) {
+	query := "SELECT tic_id, tess_mag, ra, dec, effective_t, surface_grav, radius, sector, matched_toi, disposition FROM targets"
+	if sector > 0 {
+		query += fmt.Sprintf(" WHERE sector = %d", sector)
+	}
+	query += " ORDER BY tic_id ASC LIMIT 1000 FORMAT JSON"
+
+	body, err := s.executeSQL(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp clickHouseJSONResponse[TargetRecord]
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse ClickHouse JSON response: %w", err)
+	}
+
+	if resp.Data == nil {
+		return []TargetRecord{}, nil
+	}
+	return resp.Data, nil
+}
+
+// QueryLightcurve fetches time and normalized flux for a specific TIC from ClickHouse.
+func (s *ClickHouseStore) QueryLightcurve(ctx context.Context, ticID int64) (*LightcurveData, error) {
+	query := fmt.Sprintf("SELECT time, flux FROM lightcurves WHERE tic_id = %d ORDER BY time ASC LIMIT 5000 FORMAT JSON", ticID)
+	body, err := s.executeSQL(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	type lcPoint struct {
+		Time float64 `json:"time"`
+		Flux float64 `json:"flux"`
+	}
+
+	var resp clickHouseJSONResponse[lcPoint]
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse ClickHouse lightcurve JSON response: %w", err)
+	}
+
+	lc := &LightcurveData{
+		TICID: ticID,
+		Time:  make([]float64, len(resp.Data)),
+		Flux:  make([]float64, len(resp.Data)),
+	}
+	for i, pt := range resp.Data {
+		lc.Time[i] = pt.Time
+		lc.Flux[i] = pt.Flux
+	}
+	return lc, nil
+}
+
+func (s *ClickHouseStore) executeSQL(ctx context.Context, query string) ([]byte, error) {
 	reqURL := fmt.Sprintf("%s/?database=%s&query=%s", s.Endpoint, url.QueryEscape(s.Database), url.QueryEscape(query))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
-		return ""
+		return nil, fmt.Errorf("failed to build ClickHouse request: %w", err)
 	}
+
 	resp, err := s.Client.Do(req)
 	if err != nil {
-		return ""
+		return nil, fmt.Errorf("clickhouse connection failed: %w", err)
 	}
 	defer resp.Body.Close()
-	return ""
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed reading ClickHouse response body: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("clickhouse returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	return body, nil
 }

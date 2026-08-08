@@ -207,6 +207,7 @@ class RuntimeExporter:
             input_names=["features"],
             output_names=["logits"],
             dynamic_axes={"features": {0: "batch"}, "logits": {0: "batch"}},
+            dynamo=False,
         )
 
         # 4. Validate ONNX structure
@@ -418,6 +419,7 @@ class RuntimeExporter:
             input_names=["features"],
             output_names=["reconstruction"],
             dynamic_axes={"features": {0: "batch"}, "reconstruction": {0: "batch"}},
+            dynamo=False,
         )
 
         # 4. Validate ONNX structure

@@ -44,7 +44,7 @@ class CandidatePreprocessor:
 
     @classmethod
     def fit(
-        cls,
+        cls_or_self,
         train_rows: List[Dict[str, Any]],
         feature_order: Optional[Any] = None,
         split_id: str = "",
@@ -54,7 +54,11 @@ class CandidatePreprocessor:
         if not train_rows:
             raise PreprocessingError("EMPTY_TRAIN_ROWS: Cannot fit preprocessor on empty train rows")
 
-        inst = cls()
+        if isinstance(cls_or_self, type):
+            inst = cls_or_self()
+        else:
+            inst = cls_or_self
+
         if feature_order is not None:
             if isinstance(feature_order, str):
                 inst.split_id = feature_order

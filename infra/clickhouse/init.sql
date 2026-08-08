@@ -2,6 +2,69 @@
 
 CREATE DATABASE IF NOT EXISTS aurora;
 
+-- API serving tables. Writers must insert only validated prediction records;
+-- the Go API never substitutes synthetic records when these tables are empty.
+CREATE TABLE IF NOT EXISTS aurora.candidate_predictions (
+    prediction_id String,
+    source_product_id String,
+    tic_id Int64,
+    sector Int32,
+    raw_logit Float64,
+    candidate_score Float64,
+    decision_threshold Float64,
+    above_threshold Bool,
+    model_version LowCardinality(String),
+    runtime_package_id String,
+    predicted_at DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(predicted_at)
+PARTITION BY sector
+ORDER BY (sector, prediction_id);
+
+CREATE TABLE IF NOT EXISTS aurora.anomaly_predictions (
+    prediction_id String,
+    source_product_id String,
+    tic_id Int64,
+    sector Int32,
+    reconstruction_mse Float64,
+    decision_threshold Float64,
+    above_threshold Bool,
+    model_version LowCardinality(String),
+    runtime_package_id String,
+    predicted_at DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(predicted_at)
+PARTITION BY sector
+ORDER BY (sector, prediction_id);
+
+CREATE TABLE IF NOT EXISTS aurora.targets (
+    tic_id Int64,
+    tess_mag Float64,
+    ra Float64,
+    dec Float64,
+    effective_t Float64,
+    surface_grav Float64,
+    radius Float64,
+    sector Int32,
+    matched_toi Nullable(String),
+    disposition LowCardinality(String),
+    updated_at DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(updated_at)
+PARTITION BY sector
+ORDER BY (sector, tic_id);
+
+CREATE TABLE IF NOT EXISTS aurora.lightcurves (
+    tic_id Int64,
+    sector Int32,
+    time Float64,
+    flux Float64,
+    observed_at DateTime DEFAULT now()
+)
+ENGINE = MergeTree()
+PARTITION BY sector
+ORDER BY (tic_id, time);
+
 -- Snapshot Registry Table
 CREATE TABLE IF NOT EXISTS aurora.gold_snapshots_v1 (
     snapshot_id String,

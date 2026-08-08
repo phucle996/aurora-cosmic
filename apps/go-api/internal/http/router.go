@@ -13,24 +13,28 @@ type Router struct {
 	mux        *http.ServeMux
 	chStore    *store.ClickHouseStore
 	minioStore *store.MinIOStore
+	allowedOrigin string
 }
 
-func NewRouter(chStore *store.ClickHouseStore, minioStore *store.MinIOStore) *Router {
+func NewRouter(chStore *store.ClickHouseStore, minioStore *store.MinIOStore, allowedOrigin string) *Router {
 	mux := http.NewServeMux()
 	r := &Router{
 		mux:        mux,
 		chStore:    chStore,
 		minioStore: minioStore,
+		allowedOrigin: allowedOrigin,
 	}
 	r.registerRoutes()
 	return r
 }
 
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	// Enable CORS for dashboard frontend
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	if req.Header.Get("Origin") == r.allowedOrigin {
+		w.Header().Set("Access-Control-Allow-Origin", r.allowedOrigin)
+		w.Header().Set("Vary", "Origin")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	}
 
 	if req.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusOK)
@@ -53,6 +57,12 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(data)
+}
+
+func writeServiceUnavailable(w http.ResponseWriter) {
+	writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+		"error": "analytical data store is unavailable",
+	})
 }
 
 func handleHealthz(w http.ResponseWriter, req *http.Request) {

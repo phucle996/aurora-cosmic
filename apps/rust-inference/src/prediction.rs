@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 pub fn compute_model_input_sha256(standardized: &[f32]) -> String {
     let mut hasher = Sha256::new();
     for &val in standardized {
-        hasher.update(&val.to_le_bytes());
+        hasher.update(val.to_le_bytes());
     }
     format!("{:x}", hasher.finalize())
 }

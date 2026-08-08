@@ -22,10 +22,17 @@ type MinIOConfig struct {
 	Bucket   string
 }
 
+type ClickHouseConfig struct {
+	Endpoint string
+	Database string
+}
+
 type Config struct {
 	Core   CoreConfig
 	Server ServerConfig
 	MinIO  MinIOConfig
+	ClickHouse ClickHouseConfig
+	CORSAllowedOrigin string
 }
 
 func Load() (*Config, error) {
@@ -59,6 +66,21 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	clickHouseEndpoint, err := requireEnv("AURORA_CLICKHOUSE_ENDPOINT")
+	if err != nil {
+		return nil, err
+	}
+
+	clickHouseDatabase, err := requireEnv("AURORA_CLICKHOUSE_DATABASE")
+	if err != nil {
+		return nil, err
+	}
+
+	corsAllowedOrigin, err := requireEnv("AURORA_CORS_ALLOWED_ORIGIN")
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
 		Core: CoreConfig{
 			Env:      envName,
@@ -72,6 +94,11 @@ func Load() (*Config, error) {
 			Endpoint: minioEndpoint,
 			Bucket:   minioBucket,
 		},
+		ClickHouse: ClickHouseConfig{
+			Endpoint: clickHouseEndpoint,
+			Database: clickHouseDatabase,
+		},
+		CORSAllowedOrigin: corsAllowedOrigin,
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -84,6 +111,9 @@ func Load() (*Config, error) {
 func (c *Config) Validate() error {
 	if c.Server.Port < 1 || c.Server.Port > 65535 {
 		return fmt.Errorf("AURORA_API_PORT must be between 1 and 65535, got %d", c.Server.Port)
+	}
+	if c.CORSAllowedOrigin == "*" {
+		return fmt.Errorf("AURORA_CORS_ALLOWED_ORIGIN must be a specific origin")
 	}
 	return nil
 }

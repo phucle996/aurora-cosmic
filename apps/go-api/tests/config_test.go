@@ -14,6 +14,9 @@ func setDummyEnv() {
 	os.Setenv("AURORA_API_PORT", "8080")
 	os.Setenv("MINIO_ENDPOINT", "http://minio:9000")
 	os.Setenv("MINIO_BUCKET", "aurora")
+	os.Setenv("AURORA_CLICKHOUSE_ENDPOINT", "http://clickhouse:8123")
+	os.Setenv("AURORA_CLICKHOUSE_DATABASE", "aurora")
+	os.Setenv("AURORA_CORS_ALLOWED_ORIGIN", "http://localhost:8501")
 }
 
 func TestConfigValidation(t *testing.T) {

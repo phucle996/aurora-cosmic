@@ -17,9 +17,9 @@ func handleSystemHealth(w http.ResponseWriter, req *http.Request) {
 		"alloc_bytes": mem.Alloc,
 		"uptime_sec":  time.Since(startTime).Seconds(),
 		"subsystems": map[string]string{
-			"storage_minio": "CONNECTED",
-			"query_engine":  "READY",
-			"ml_inference":  "STANDBY",
+			"storage_minio": "UNKNOWN",
+			"query_engine":  "UNKNOWN",
+			"ml_inference":  "UNKNOWN",
 		},
 	})
 }

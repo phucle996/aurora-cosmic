@@ -14,9 +14,9 @@ import (
 )
 
 func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
-	chStore := store.NewClickHouseStore("http://clickhouse:8123", "aurora")
+	chStore := store.NewClickHouseStore(cfg.ClickHouse.Endpoint, cfg.ClickHouse.Database)
 	minioStore := store.NewMinIOStore(cfg.MinIO.Endpoint, cfg.MinIO.Bucket)
-	router := apiHttp.NewRouter(chStore, minioStore)
+	router := apiHttp.NewRouter(chStore, minioStore, cfg.CORSAllowedOrigin)
 	addr := net.JoinHostPort(cfg.Server.Host, fmt.Sprintf("%d", cfg.Server.Port))
 
 	srv := &http.Server{

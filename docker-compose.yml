@@ -60,6 +60,7 @@ services:
 
   go-ingester:
     image: ghcr.io/phucle996/aurora-go-ingester:latest
+    build: ./apps/go-ingester
     container_name: aurora-go-ingester
     env_file:
       - ./apps/go-ingester/.env.example
@@ -73,6 +74,7 @@ services:
 
   rust-preprocessor:
     image: ghcr.io/phucle996/aurora-rust-preprocessor:latest
+    build: ./apps/rust-preprocessor
     container_name: aurora-rust-preprocessor
     env_file:
       - ./apps/rust-preprocessor/.env.example
@@ -86,6 +88,7 @@ services:
 
   python-ml-worker:
     image: ghcr.io/phucle996/aurora-python-ml-worker:latest
+    build: ./apps/python-ml-worker
     container_name: aurora-python-ml-worker
     env_file:
       - ./apps/python-ml-worker/.env.example
@@ -99,6 +102,7 @@ services:
 
   rust-inference:
     image: ghcr.io/phucle996/aurora-rust-inference:latest
+    build: ./apps/rust-inference
     container_name: aurora-rust-inference
     env_file:
       - ./apps/rust-inference/.env.example
@@ -112,6 +116,7 @@ services:
 
   go-api:
     image: ghcr.io/phucle996/aurora-go-api:latest
+    build: ./apps/go-api
     container_name: aurora-go-api
     ports:
       - "${AURORA_API_PORT:-8080}:8080"
@@ -122,9 +127,12 @@ services:
     depends_on:
       minio:
         condition: service_healthy
+      clickhouse:
+        condition: service_healthy
 
   dashboard:
     image: ghcr.io/phucle996/aurora-dashboard:latest
+    build: ./apps/dashboard
     container_name: aurora-dashboard
     ports:
       - "${AURORA_DASHBOARD_PORT:-8501}:8501"
@@ -141,7 +149,6 @@ services:
     restart: unless-stopped
     ports:
       - "${AURORA_CLICKHOUSE_HTTP_PORT:-8123}:8123"
-      - "${AURORA_CLICKHOUSE_NATIVE_PORT:-9000}:9000"
     environment:
       CLICKHOUSE_DB: "${AURORA_CLICKHOUSE_DATABASE:-aurora}"
       CLICKHOUSE_USER: "${AURORA_CLICKHOUSE_USER:-default}"
@@ -149,6 +156,10 @@ services:
     volumes:
       - aurora-clickhouse-data:/var/lib/clickhouse
       - ./infra/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - aurora-net
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --query 'SELECT 1' || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 5

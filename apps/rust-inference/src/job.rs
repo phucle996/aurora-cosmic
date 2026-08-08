@@ -91,6 +91,9 @@ pub struct InferenceJobManifest {
 }
 
 /// Compute deterministic SHA-256 job fingerprint.
+// The event contract contributes all nine fields to the identity; grouping them
+// would make call sites less explicit at the boundary where manifests are built.
+#[allow(clippy::too_many_arguments)]
 pub fn compute_job_fingerprint(
     task: &str,
     selection_policy_version: &str,
