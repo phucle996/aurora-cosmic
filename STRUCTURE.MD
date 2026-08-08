@@ -61,10 +61,21 @@ aurora-cosmic/
 │   │   ├── src/
 │   │   │   ├── main.rs
 │   │   │   ├── app.rs
-│   │   │   │
 │   │   │   ├── consumer.rs
 │   │   │   ├── storage.rs
-│   │   │   ├── checkpoint.rs
+│   │   │   │
+│   │   │   ├── domain/                       # Core domain models (checkpoint, event, failure, lineage)
+│   │   │   │   ├── mod.rs
+│   │   │   │   ├── checkpoint.rs
+│   │   │   │   ├── event.rs
+│   │   │   │   ├── failure.rs
+│   │   │   │   └── lineage.rs
+│   │   │   │
+│   │   │   ├── infra/                        # Infrastructure layer (config, logger, minio)
+│   │   │   │   ├── mod.rs
+│   │   │   │   ├── config.rs
+│   │   │   │   ├── logger.rs
+│   │   │   │   └── minio.rs
 │   │   │   │
 │   │   │   ├── fits/
 │   │   │   │   ├── mod.rs
@@ -76,11 +87,16 @@ aurora-cosmic/
 │   │   │   │   ├── image.rs
 │   │   │   │   └── lightcurve.rs
 │   │   │   │
-│   │   │   └── output/
+│   │   │   ├── output/
+│   │   │   │   ├── mod.rs
+│   │   │   │   ├── silver.rs
+│   │   │   │   └── gold.rs
+│   │   │   │
+│   │   │   └── tests/                        # Layered test suite
 │   │   │       ├── mod.rs
-│   │   │       ├── silver.rs
-│   │   │       └── gold.rs
-│   │   │
+│   │   │       ├── unit/                     # Unit tests (checkpoint, config, event, failure, fits, lineage, worker)
+│   │   │       ├── pipeline/                 # Pipeline tests (image, lightcurve, silver)
+│   │   │       └── e2e/                      # End-to-end integration flow
 │   │   ├── benches/
 │   │   │   └── preprocessing.rs
 │   │   │
@@ -89,44 +105,60 @@ aurora-cosmic/
 │   │
 │   ├── python-ml-worker/
 │   │   ├── pyproject.toml
-│   │   ├── uv.lock
 │   │   ├── Dockerfile
 │   │   │
-│   │   ├── aurora_ml/
+│   │   ├── aurora_ml/                        # Main package
 │   │   │   ├── __init__.py
-│   │   │   ├── main.py
+│   │   │   ├── main.py                       # CLI entrypoint
+│   │   │   ├── config.py                     # Infrastructure config
+│   │   │   ├── data.py                       # Generic data loading utils
 │   │   │   │
-│   │   │   ├── data.py
-│   │   │   ├── checkpoint.py
+│   │   │   ├── pipeline/                     # Stage 5 — Data Pipeline Layer
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── gold.py                   # Gold snapshot identity & manifest
+│   │   │   │   ├── features.py               # LC scientific feature engineering
+│   │   │   │   ├── evidence.py               # TPF / FFI vetting evidence
+│   │   │   │   ├── catalogs.py               # TIC / TOI / TCE catalog enrichment
+│   │   │   │   ├── gold_materialize.py       # Gold Parquet materialization
+│   │   │   │   ├── feature_checkpoint.py     # Feature engineering progress tracking
+│   │   │   │   ├── analytics.py              # ClickHouse analytical projection
+│   │   │   │   └── checkpoint.py             # Generic pipeline checkpoint state
 │   │   │   │
-│   │   │   ├── features.py
-│   │   │   ├── evidence.py
-│   │   │   ├── catalogs.py
-│   │   │   ├── gold_materialize.py
-│   │   │   ├── analytics.py
-│   │   │   │
-│   │   │   ├── transit/
-│   │   │   │   ├── model.py
-│   │   │   │   └── train.py
-│   │   │   │
-│   │   │   ├── anomaly/
-│   │   │   │   ├── model.py
-│   │   │   │   └── train.py
-│   │   │   │
-│   │   │   ├── evaluate.py
-│   │   │   ├── registry.py
-│   │   │   └── export_onnx.py
+│   │   │   └── ml/                           # Stage 6 — ML Platform Layer
+│   │   │       ├── __init__.py
+│   │   │       ├── datasets/                 # ML dataset view & deterministic split
+│   │   │       │   ├── __init__.py
+│   │   │       │   └── splits.py
+│   │   │       ├── candidate/                # Supervised candidate vetting model
+│   │   │       │   ├── __init__.py
+│   │   │       │   ├── model.py
+│   │   │       │   └── train.py
+│   │   │       ├── anomaly/                  # Unsupervised anomaly detection
+│   │   │       │   ├── __init__.py
+│   │   │       │   ├── model.py
+│   │   │       │   └── train.py
+│   │   │       ├── evaluate.py               # Evaluation: PR-AUC, ROC-AUC, metrics
+│   │   │       ├── registry.py               # Champion/Challenger model registry
+│   │   │       └── export_onnx.py            # ONNX export & runtime parity
 │   │   │
 │   │   ├── tests/
-│   │   │   ├── test_analytics.py
-│   │   │   ├── test_catalogs.py
+│   │   │   ├── fixtures/
+│   │   │   │   └── catalogs/
+│   │   │   │       ├── tic-small.csv
+│   │   │   │       ├── toi-small.csv
+│   │   │   │       └── tce-small.csv
+│   │   │   ├── pipeline/                     # Stage 5 pipeline unit tests
+│   │   │   │   ├── test_analytics.py
+│   │   │   │   ├── test_catalogs.py
+│   │   │   │   ├── test_evidence.py
+│   │   │   │   ├── test_features.py
+│   │   │   │   ├── test_gold.py
+│   │   │   │   └── test_gold_materialize.py
+│   │   │   ├── ml/                           # Stage 6 ML unit tests
+│   │   │   │   ├── test_splits.py
+│   │   │   │   └── test_training.py
 │   │   │   ├── test_config.py
-│   │   │   ├── test_evidence.py
-│   │   │   ├── test_features.py
-│   │   │   ├── test_gold.py
-│   │   │   ├── test_gold_materialize.py
-│   │   │   ├── test_stage5_e2e.py
-│   │   │   └── test_training.py
+│   │   │   └── test_stage5_e2e.py            # Stage 5 integration test
 │   │   │
 │   │   └── README.md
 │   │
@@ -264,7 +296,8 @@ aurora-cosmic/
 │   ├── STAGE2_VALIDATION.md
 │   ├── STAGE3_VALIDATION.md
 │   ├── STAGE4_VALIDATION.md
-│   └── STAGE5_VALIDATION.md
+│   ├── STAGE5_VALIDATION.md
+│   └── ML_DATASETS.md
 │
 │
 └── .github/

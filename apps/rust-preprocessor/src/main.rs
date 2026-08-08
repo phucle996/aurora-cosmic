@@ -1,18 +1,17 @@
 mod app;
-mod checkpoint;
-mod config;
-mod event;
-mod failure;
+mod domain;
 mod fits;
 mod infra;
-mod lineage;
-mod logger;
 mod output;
 mod pipeline;
 mod worker;
 
 #[cfg(test)]
 mod tests;
+
+// Re-export domain & infra modules for crate root compatibility
+pub use domain::{checkpoint, event, failure, lineage};
+pub use infra::{config, logger};
 
 #[tokio::main]
 async fn main() {
