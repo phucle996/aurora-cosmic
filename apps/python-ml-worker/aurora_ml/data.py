@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, Optional
 
-from aurora_ml.gold import SilverInputRef
+from aurora_ml.pipeline.gold import SilverInputRef
 
 
 def parse_lineage_to_silver_ref(

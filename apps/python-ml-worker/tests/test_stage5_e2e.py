@@ -5,18 +5,18 @@ import tempfile
 import pytest
 import numpy as np
 
-from aurora_ml.analytics import GoldAnalyticsLoader, SnapshotIsolationError
-from aurora_ml.catalogs import (
+from aurora_ml.pipeline.analytics import GoldAnalyticsLoader, SnapshotIsolationError
+from aurora_ml.pipeline.catalogs import (
     CandidateEnrichmentRecord,
     ToiCatalogRecord,
     derive_candidate_label,
     match_toi_candidate,
 )
-from aurora_ml.evidence import TpfVettingFeatures, compute_tpf_features
-from aurora_ml.feature_checkpoint import FeatureCheckpointRecord, FeatureCheckpointState
-from aurora_ml.features import compute_lightcurve_features
-from aurora_ml.gold import GoldSnapshotManifest, GoldSnapshotPlanner, SilverInputRef
-from aurora_ml.gold_materialize import (
+from aurora_ml.pipeline.evidence import TpfVettingFeatures, compute_tpf_features
+from aurora_ml.pipeline.feature_checkpoint import FeatureCheckpointRecord, FeatureCheckpointState
+from aurora_ml.pipeline.features import compute_lightcurve_features
+from aurora_ml.pipeline.gold import GoldSnapshotManifest, GoldSnapshotPlanner, SilverInputRef
+from aurora_ml.pipeline.gold_materialize import (
     derive_partition_content_sha256,
     get_candidate_arrow_schema,
     write_partition_parquet,

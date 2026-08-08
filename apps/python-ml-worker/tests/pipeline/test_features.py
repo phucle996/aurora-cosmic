@@ -3,13 +3,13 @@
 import numpy as np
 import pytest
 
-from aurora_ml.features import (
+from aurora_ml.pipeline.features import (
     LightCurveFeatures,
     compute_lightcurve_features,
     derive_feature_fingerprint,
     extract_features_from_silver,
 )
-from aurora_ml.gold import SilverInputRef
+from aurora_ml.pipeline.gold import SilverInputRef
 
 
 def sample_silver_ref() -> SilverInputRef:

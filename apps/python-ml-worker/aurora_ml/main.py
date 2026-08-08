@@ -8,7 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from aurora_ml.config import Config
-from aurora_ml.gold import GoldSnapshotPlanner, SilverInputRef
+from aurora_ml.pipeline.gold import GoldSnapshotPlanner, SilverInputRef
 from pkg.logger import init_logger
 
 
@@ -33,6 +33,15 @@ def main():
     analytics_parser.add_argument("--snapshot-id", required=True, help="Explicit committed Gold snapshot ID")
     analytics_parser.add_argument("--rebuild", action="store_true", help="Force drop ClickHouse partition and reload from Gold")
 
+    # Command: ml-view
+    view_parser = subparsers.add_parser("ml-view", help="Inspect ML dataset view for a committed Gold candidate snapshot")
+    view_parser.add_argument("--snapshot-id", required=True, help="Explicit committed Gold snapshot ID")
+
+    # Command: ml-split
+    split_parser = subparsers.add_parser("ml-split", help="Create deterministic group-safe train/validation split")
+    split_parser.add_argument("--snapshot-id", required=True, help="Explicit committed Gold snapshot ID")
+    split_parser.add_argument("--seed", type=int, default=42, help="Split random seed (default: 42)")
+
     args = parser.parse_args()
 
     if args.command == "gold-plan":
@@ -46,6 +55,14 @@ def main():
 
     if args.command == "analytics-load":
         print(f"[aurora-ml-worker] Analytics load executed for snapshot '{args.snapshot_id}' (rebuild={args.rebuild})")
+        return
+
+    if args.command == "ml-view":
+        print(f"[aurora-ml-worker] ML dataset view generated for snapshot '{args.snapshot_id}'")
+        return
+
+    if args.command == "ml-split":
+        print(f"[aurora-ml-worker] ML deterministic group split generated for snapshot '{args.snapshot_id}' (seed={args.seed})")
         return
 
     logger = init_logger("info")

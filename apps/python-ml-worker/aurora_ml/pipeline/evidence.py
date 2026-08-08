@@ -11,8 +11,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 from scipy import stats
 
-from aurora_ml.features import LightCurveFeatures
-from aurora_ml.gold import SilverInputRef
+from aurora_ml.pipeline.features import LightCurveFeatures
+from aurora_ml.pipeline.gold import SilverInputRef
 
 
 def derive_tpf_feature_fingerprint(

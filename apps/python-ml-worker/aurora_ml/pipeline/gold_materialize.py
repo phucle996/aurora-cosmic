@@ -15,16 +15,16 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from aurora_ml.catalogs import CandidateEnrichmentRecord
-from aurora_ml.evidence import FfiEvidenceFeatures, TpfVettingFeatures
-from aurora_ml.feature_checkpoint import (
+from aurora_ml.pipeline.catalogs import CandidateEnrichmentRecord
+from aurora_ml.pipeline.evidence import FfiEvidenceFeatures, TpfVettingFeatures
+from aurora_ml.pipeline.feature_checkpoint import (
     FeatureArtifactProgress,
     FeatureCheckpointRecord,
     FeatureCheckpointState,
     get_feature_checkpoint_key,
 )
-from aurora_ml.features import LightCurveFeatures
-from aurora_ml.gold import GoldSnapshotManifest, GoldSnapshotPlan, SilverInputRef
+from aurora_ml.pipeline.features import LightCurveFeatures
+from aurora_ml.pipeline.gold import GoldSnapshotManifest, GoldSnapshotPlan, SilverInputRef
 
 
 class GoldMaterializeError(Exception):

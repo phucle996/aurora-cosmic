@@ -4,7 +4,7 @@ import json
 import pytest
 
 from aurora_ml.data import parse_lineage_to_silver_ref
-from aurora_ml.gold import (
+from aurora_ml.pipeline.gold import (
     GoldSnapshotManifest,
     GoldSnapshotPlanner,
     SilverInputRef,

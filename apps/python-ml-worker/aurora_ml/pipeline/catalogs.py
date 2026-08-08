@@ -12,8 +12,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from aurora_ml.evidence import TpfVettingFeatures
-from aurora_ml.features import LightCurveFeatures
+from aurora_ml.pipeline.evidence import TpfVettingFeatures
+from aurora_ml.pipeline.features import LightCurveFeatures
 
 # Strict Leakage Prevention Allowlists
 MODEL_INPUT_ALLOWLIST = {

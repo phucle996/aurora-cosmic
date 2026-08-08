@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 import json
 from typing import Any, Dict, List, Optional
 
-from aurora_ml.gold import GoldSnapshotManifest
+from aurora_ml.pipeline.gold import GoldSnapshotManifest
 
 
 class AnalyticsLoaderError(Exception):

@@ -1,13 +1,13 @@
 """Unit & integration test suite for ClickHouse Analytics & Query Index (Phase 5.6)."""
 
 import pytest
-from aurora_ml.analytics import (
+from aurora_ml.pipeline.analytics import (
     AnalyticsLoaderError,
     GoldAnalyticsLoader,
     SnapshotIsolationError,
     UncommittedGoldError,
 )
-from aurora_ml.gold import GoldSnapshotManifest, SilverInputRef
+from aurora_ml.pipeline.gold import GoldSnapshotManifest, SilverInputRef
 
 
 def sample_silver_ref(sector: int = 1) -> SilverInputRef:

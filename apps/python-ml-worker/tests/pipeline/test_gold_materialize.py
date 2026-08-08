@@ -6,14 +6,14 @@ import pytest
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from aurora_ml.feature_checkpoint import (
+from aurora_ml.pipeline.feature_checkpoint import (
     FeatureArtifactProgress,
     FeatureCheckpointRecord,
     FeatureCheckpointState,
     get_feature_checkpoint_key,
 )
-from aurora_ml.gold import SilverInputRef
-from aurora_ml.gold_materialize import (
+from aurora_ml.pipeline.gold import SilverInputRef
+from aurora_ml.pipeline.gold_materialize import (
     derive_partition_content_sha256,
     extract_sector_from_input_ref,
     format_sector_partition_path,

@@ -4,7 +4,7 @@ import csv
 from pathlib import Path
 import pytest
 
-from aurora_ml.catalogs import (
+from aurora_ml.pipeline.catalogs import (
     MODEL_INPUT_ALLOWLIST,
     SUPERVISION_ALLOWLIST,
     TicCatalogRecord,
@@ -19,8 +19,8 @@ from aurora_ml.catalogs import (
     normalize_toi_catalog,
     normalize_tce_catalog,
 )
-from aurora_ml.evidence import TpfVettingFeatures
-from aurora_ml.features import LightCurveFeatures
+from aurora_ml.pipeline.evidence import TpfVettingFeatures
+from aurora_ml.pipeline.features import LightCurveFeatures
 
 
 def sample_lc_features() -> LightCurveFeatures:
@@ -73,7 +73,9 @@ def sample_tpf_features() -> TpfVettingFeatures:
 
 
 def load_csv_fixture(fixture_filename: str):
-    fixture_path = Path(__file__).parent / "fixtures" / "catalogs" / fixture_filename
+    # Fixtures live in tests/fixtures/catalogs/ — resolve from tests/ root
+    tests_root = Path(__file__).parent.parent
+    fixture_path = tests_root / "fixtures" / "catalogs" / fixture_filename
     with open(fixture_path, mode="r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         return list(reader)

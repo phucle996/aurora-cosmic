@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from aurora_ml.evidence import (
+from aurora_ml.pipeline.evidence import (
     FfiEvidenceFeatures,
     TpfVettingFeatures,
     build_transit_masks,
@@ -14,8 +14,8 @@ from aurora_ml.evidence import (
     extract_ffi_features_from_silver,
     extract_tpf_features_from_silver,
 )
-from aurora_ml.features import LightCurveFeatures
-from aurora_ml.gold import SilverInputRef
+from aurora_ml.pipeline.features import LightCurveFeatures
+from aurora_ml.pipeline.gold import SilverInputRef
 
 
 def sample_tpf_ref() -> SilverInputRef:

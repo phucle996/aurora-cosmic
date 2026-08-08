@@ -12,7 +12,7 @@ from astropy.timeseries import BoxLeastSquares
 import numpy as np
 from scipy import stats
 
-from aurora_ml.gold import SilverInputRef
+from aurora_ml.pipeline.gold import SilverInputRef
 
 
 def derive_feature_fingerprint(
