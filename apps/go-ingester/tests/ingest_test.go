@@ -139,6 +139,13 @@ func TestPipelineStreamingIngestion(t *testing.T) {
 	mockStorage := newMockStorageClient()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	pipe := ingest.NewPipeline(mastClient, mockStorage, nil, nil, "aurora", 2, logger)
+	var progressMu sync.Mutex
+	var progressEvents []ingest.ProgressEvent
+	pipe.SetProgressReporter(func(event ingest.ProgressEvent) {
+		progressMu.Lock()
+		progressEvents = append(progressEvents, event)
+		progressMu.Unlock()
+	})
 
 	man := &model.Manifest{
 		SchemaVersion: 1,
@@ -196,6 +203,14 @@ func TestPipelineStreamingIngestion(t *testing.T) {
 	}
 	if string(mockStorage.content[tpKey]) != tpData {
 		t.Errorf("content mismatch for TP fits")
+	}
+	progressMu.Lock()
+	defer progressMu.Unlock()
+	if len(progressEvents) != 2 {
+		t.Fatalf("expected 2 progress events, got %d", len(progressEvents))
+	}
+	if progressEvents[len(progressEvents)-1].CompletedProducts != 2 || progressEvents[len(progressEvents)-1].ConfiguredWorkers != 2 {
+		t.Errorf("unexpected progress counters: %+v", progressEvents[len(progressEvents)-1])
 	}
 }
 

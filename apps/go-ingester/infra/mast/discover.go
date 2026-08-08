@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"path"
 	"strconv"
 	"strings"
 
@@ -29,10 +30,19 @@ func DiscoverTESS(ctx context.Context, client *Client, opts DiscoverOptions, log
 	if err != nil {
 		return nil, fmt.Errorf("discover TESS: %w", err)
 	}
+	if opts.Limit > 0 && len(rawObs) > opts.Limit {
+		// Keep the client-side guard even when MAST honors pagesize. It prevents
+		// a server-side pagination change from turning a bounded plan into an
+		// unexpectedly large download.
+		rawObs = rawObs[:opts.Limit]
+	}
 
 	products := make([]model.Product, 0, len(rawObs))
 	for _, obs := range rawObs {
 		kind := ClassifyProduct(obs)
+		if kind == model.KindUnknown {
+			kind = classifyCAOMProduct(obs)
+		}
 		if kind == model.KindUnknown {
 			log.Debug("mast: skipping unknown product kind",
 				slog.String("obs_id", obs.ObsID),
@@ -47,12 +57,20 @@ func DiscoverTESS(ctx context.Context, client *Client, opts DiscoverOptions, log
 			sector = parseSectorFromObsID(obs.ObsID)
 		}
 
+		filename := obs.ProductFilename
+		if filename == "" && obs.DataURL != "" {
+			filename = path.Base(obs.DataURL)
+			if colon := strings.LastIndex(filename, ":"); colon >= 0 {
+				filename = filename[colon+1:]
+			}
+		}
+
 		products = append(products, model.Product{
 			ObsID:           obs.ObsID,
 			TICID:           ticID,
 			Sector:          sector,
 			Kind:            kind,
-			Filename:        obs.ProductFilename,
+			Filename:        filename,
 			DataURI:         obs.DataURL,
 			SizeBytes:       obs.SizeBytes,
 			ProductSubGroup: obs.ProductSubGroup,
@@ -64,6 +82,23 @@ func DiscoverTESS(ctx context.Context, client *Client, opts DiscoverOptions, log
 	)
 
 	return products, nil
+}
+
+// classifyCAOMProduct maps the compact fields returned by Mast.Caom.Filtered.
+// That service returns dataproduct_type/dataURL rather than the richer product
+// subgroup fields returned by Mast.Caom.Products.
+func classifyCAOMProduct(obs model.Observation) model.ProductKind {
+	name := strings.ToLower(obs.ProductFilename + " " + obs.DataURL)
+	if strings.Contains(name, "_lc") || strings.EqualFold(obs.DataProductType, "timeseries") {
+		return model.KindLightCurve
+	}
+	if strings.Contains(name, "_ffic") || strings.Contains(name, "_ffi") {
+		return model.KindFFI
+	}
+	if strings.Contains(name, "_tp") || strings.Contains(name, "targetpixel") || strings.EqualFold(obs.DataProductType, "targetpixel") {
+		return model.KindTargetPixel
+	}
+	return model.KindUnknown
 }
 
 func queryMASTObservations(ctx context.Context, client *Client, opts DiscoverOptions, log *slog.Logger) ([]model.Observation, error) {
@@ -81,8 +116,14 @@ func queryMASTObservations(ctx context.Context, client *Client, opts DiscoverOpt
 	}
 
 	requestMap := map[string]any{
-		"service": "Mashup.Table.Query",
-		"format":  "json",
+		// Mast.Caom.Filtered is the supported service for portal-style
+		// observation filters. Mashup.Table.Query can return an empty dataset
+		// for the same payload without reporting an error.
+		"service":  "Mast.Caom.Filtered",
+		"format":   "json",
+		"pagesize": opts.PageSize,
+		"page":     1,
+		"timeout":  10,
 		"params": map[string]any{
 			"columns": "*",
 			"filters": filters,

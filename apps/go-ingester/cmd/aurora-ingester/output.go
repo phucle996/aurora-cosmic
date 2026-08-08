@@ -111,12 +111,16 @@ func (p *progressPrinter) Update(event ingest.ProgressEvent) {
 	}
 	path = compactPath(path, 72)
 
+	totalBytes := "?"
+	if event.TotalBytes > 0 {
+		totalBytes = humanBytes(event.TotalBytes)
+	}
 	line := fmt.Sprintf("\rdownload %d/%d (%5.1f%%) | %s/%s | %s/s | workers %d/%d | %s",
 		event.CompletedProducts,
 		event.TotalProducts,
 		percent,
 		humanBytes(event.CompletedBytes),
-		humanBytes(event.TotalBytes),
+		totalBytes,
 		humanBytes(int64(event.ThroughputBps)),
 		event.ActiveWorkers,
 		event.ConfiguredWorkers,

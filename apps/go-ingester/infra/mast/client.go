@@ -2,11 +2,13 @@ package mast
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"go-ingester/internal/model"
@@ -26,7 +28,7 @@ func NewClient(baseURL string, timeout time.Duration) *Client {
 	}
 	return &Client{
 		baseURL:     baseURL,
-		downloadURL: "https://mast.stsci.edu/api/v0/download/file",
+		downloadURL: "https://mast.stsci.edu/api/v0.1/Download/file",
 		httpClient: &http.Client{
 			// A total client timeout breaks large FITS streams. Bound header
 			// acquisition instead and let the caller's context cancel the body.
@@ -50,31 +52,47 @@ func (c *Client) SetDownloadURL(downloadURL string) {
 
 // Query performs a POST request to the MAST API endpoint.
 func (c *Client) Query(ctx context.Context, reqBody url.Values) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("mast query: create request: %w", err)
+	// MAST's SOAP-backed endpoint reads form parameters from the POST body;
+	// putting `request` in the URL query results in HTTP 500 "Missing parameter".
+	for attempt := 0; attempt < 60; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL, strings.NewReader(reqBody.Encode()))
+		if err != nil {
+			return nil, fmt.Errorf("mast query: create request: %w", err)
+		}
+
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("mast query: execute: %w", err)
+		}
+
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("mast query: read body: %w", readErr)
+		}
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("mast query status %d: %s", resp.StatusCode, string(body))
+		}
+
+		if !mastQueryExecuting(body) {
+			return body, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
 	}
 
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.URL.RawQuery = reqBody.Encode()
+	return nil, fmt.Errorf("mast query: polling timed out after 60 attempts")
+}
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("mast query: execute: %w", err)
+func mastQueryExecuting(body []byte) bool {
+	var status struct {
+		Status string `json:"status"`
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("mast query status %d: %s", resp.StatusCode, string(body))
-	}
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("mast query: read body: %w", err)
-	}
-
-	return data, nil
+	return json.Unmarshal(body, &status) == nil && status.Status == "EXECUTING"
 }
 
 // OpenProduct streams product content by URI with retry logic (429 / 5xx).
@@ -84,8 +102,12 @@ func (c *Client) OpenProduct(ctx context.Context, dataURI string) (io.ReadCloser
 		return nil, 0, fmt.Errorf("mast open product: dataURI is empty")
 	}
 
-	if len(dataURI) < 4 || dataURI[:4] != "http" {
-		targetURL = fmt.Sprintf("%s?uri=%s", c.downloadURL, url.QueryEscape(dataURI))
+	isDirectURL := strings.HasPrefix(strings.ToLower(dataURI), "http://") || strings.HasPrefix(strings.ToLower(dataURI), "https://")
+	if !isDirectURL {
+		// The MAST download service accepts a GET with the data URI as a
+		// query parameter and responds with a redirect to the public object.
+		// A POST is rejected with HTTP 405 by the production endpoint.
+		targetURL = c.downloadURL + "?" + url.Values{"uri": []string{dataURI}}.Encode()
 	}
 
 	maxRetries := 3

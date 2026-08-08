@@ -25,6 +25,7 @@ type Observation struct {
 	Description        string   `json:"description"`
 	Distance           *float64 `json:"distance,omitempty"`
 	ProductType        string   `json:"productType"`
+	DataProductType    string   `json:"dataproduct_type"`
 	CalibLevel         int      `json:"calib_level"`
 	SizeBytes          int64    `json:"size_bytes"`
 	JPEGURL            string   `json:"jpegURL"`

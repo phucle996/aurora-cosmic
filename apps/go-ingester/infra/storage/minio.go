@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 
 	"go-ingester/internal/model"
@@ -21,14 +22,37 @@ type MinIOClient struct {
 
 // NewMinIOClient creates a connected MinIOClient.
 func NewMinIOClient(endpoint, accessKey, secretKey string) (*MinIOClient, error) {
+	endpoint, secure, err := normalizeEndpoint(endpoint)
+	if err != nil {
+		return nil, err
+	}
 	client, err := minio.New(endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
-		Secure: false,
+		Secure: secure,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("minio init %s: %w", endpoint, err)
 	}
 	return &MinIOClient{client: client}, nil
+}
+
+func normalizeEndpoint(endpoint string) (string, bool, error) {
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		return "", false, fmt.Errorf("minio endpoint cannot be empty")
+	}
+	if !strings.Contains(endpoint, "://") {
+		return strings.TrimRight(endpoint, "/"), false, nil
+	}
+
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Host == "" {
+		return "", false, fmt.Errorf("invalid minio endpoint %q", endpoint)
+	}
+	if u.Path != "" && u.Path != "/" {
+		return "", false, fmt.Errorf("minio endpoint must not contain a path: %q", endpoint)
+	}
+	return u.Host, strings.EqualFold(u.Scheme, "https"), nil
 }
 
 // EnsureBucket ensures target S3 bucket exists in MinIO.

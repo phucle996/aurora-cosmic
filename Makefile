@@ -6,6 +6,7 @@ DOWNLOAD_DIR ?= tmp/aurora-download
 DOWNLOAD_MANIFEST ?= $(DOWNLOAD_DIR)/manifest.json
 DOWNLOAD_SECTOR ?= 42
 DOWNLOAD_LIMIT ?= 5
+DOWNLOAD_MAX_FFI ?= $(DOWNLOAD_LIMIT)
 DOWNLOAD_CONCURRENCY ?= 8
 
 help:
@@ -99,8 +100,8 @@ up:
 download: up
 	@mkdir -p "$(DOWNLOAD_DIR)"
 	@echo "Creating download manifest: sector=$(DOWNLOAD_SECTOR), limit=$(DOWNLOAD_LIMIT)"
-	docker compose run --rm --no-deps -v "$(CURDIR)/$(DOWNLOAD_DIR):/data" go-ingester \
-		plan --sector "$(DOWNLOAD_SECTOR)" --limit "$(DOWNLOAD_LIMIT)" --output /data/manifest.json
+	docker compose run --rm --no-deps -e AURORA_REQUIRE_TPF_LC_PAIR=false -v "$(CURDIR)/$(DOWNLOAD_DIR):/data" go-ingester \
+		plan --sector "$(DOWNLOAD_SECTOR)" --limit "$(DOWNLOAD_LIMIT)" --max-ffi "$(DOWNLOAD_MAX_FFI)" --output /data/manifest.json
 	@echo "Starting download with $(DOWNLOAD_CONCURRENCY) workers"
 	docker compose run --rm --no-deps -v "$(CURDIR)/$(DOWNLOAD_DIR):/data" go-ingester \
 		ingest --manifest /data/manifest.json --concurrency "$(DOWNLOAD_CONCURRENCY)"
