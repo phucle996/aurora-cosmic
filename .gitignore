@@ -47,8 +47,8 @@ bin/
 # Runtime storage & database data volumes
 infra/minio/data/
 infra/nats/data/
-infra/clickhouse/data/
-data/
+/data/
+!contracts/data/
 
 # Logs & Temporary Files
 *.log

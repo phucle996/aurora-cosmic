@@ -46,10 +46,10 @@ STAGE 8: Observability, Benchmark & System Hardening (Prometheus/Grafana -> Stre
 | **Stage 3** | Rust Preprocessing Pipeline [DONE] | 6 | Bounded Tokio consumer, FITS decode, LC/TPF/FFI preprocessing, MinIO Silver Parquet |
 | **Stage 4** | Checkpoint, Recovery & Rolling Lifecycle [DONE] | 6 | State checkpoints, idempotency, rolling Bronze window ~50 GiB |
 | **Stage 5** | Gold Dataset & Scientific Analytics [DONE] | 7 | Feature engineering, catalog/labels integration, Gold snapshots, analytical query index |
-| **Stage 6** | ML Platform & Model Evolution | 6 | Candidate & anomaly models, ONNX export, Champion/Challenger |
+| **Stage 6** | ML Platform & Model Evolution | 7 | Deterministic group splits, tabular candidate & anomaly models, Golden Test & Recent Holdout, Model Registry (Champion/Challenger), ONNX export & Rust parity |
 | **Stage 7** | Rust Inference, Go API & Dashboard | 5 | Rust ONNX serving, Go Query API, Interactive Scientific Dashboard |
 | **Stage 8** | Observability, Benchmark & Hardening | 6 | Prometheus/Grafana metrics, system benchmarks, end-to-end resilience |
-| **Tổng** | **8 Stages** | **46 Phases** | **Full Production-Grade Data & ML Pipeline** |
+| **Tổng** | **8 Stages** | **47 Phases** | **Full Production-Grade Data & ML Pipeline** |
 
 ---
 
@@ -188,24 +188,31 @@ Stage 5
 
 ### Stage 6 — ML Platform & Model Evolution
 
-Mục tiêu: Xây dựng pipeline huấn luyện ML phát hiện Exoplanet Candidates và Anomaly, export mô hình sang ONNX format.
+Mục tiêu: Xây dựng nền tảng huấn luyện ML Gold-first, split-first, reproducibility-first, registry-driven. Quản lý toàn bộ vòng đời huấn luyện mô hình phân loại ứng viên hành tinh (Candidate Vetting) và phát hiện bất thường (Anomaly Detection), đánh giá khách quan trên Golden Test & Recent Holdout, quản lý Model Registry (Champion/Challenger, promotion & rollback), xuất định dạng ONNX và đảm bảo tính đồng nhất kết quả dự đoán với Rust Inference Engine.
+
+> ⚠️ **Quy tắc bất biến tuyệt đối (Strict Stage 6 Invariant):**
+> 1. **Dữ liệu huấn luyện chuẩn (Canonical ML Input)** bắt buộc bắt đầu từ `gold_snapshot_id` bất biến (MinIO Gold Parquet + `manifest.json`), tuyệt đối KHÔNG scan trực tiếp đệm Silver/Bronze hay đọc trực tiếp ClickHouse.
+> 2. **Group-Safe Split**: Phân chia tập dữ liệu (train / validation / golden test / recent holdout) theo `group_key` (`tic_id` nếu có, ngược lại là `source_product_id`), đảm bảo cùng một target/sao KHÔNG BAO GIỜ bị rò rỉ chéo giữa các tập.
+> 3. **Label Leakage & Preprocessing Fit**: Không đưa các trường supervision/audit vào model input; Preprocessor (imputer, scaler) chỉ được `fit` trên tập Train và đóng gói cùng model artifact để Rust Inference dùng lại y hệt.
 
 ```text
 Stage 6
-├── Phase 6.1: ML Training Framework & Data Loader
-├── Phase 6.2: Transit Candidate Classifier Model
-├── Phase 6.3: Unsupervised Anomaly Detection Model
-├── Phase 6.4: Model Evaluation & Metrics Tracking
-├── Phase 6.5: ONNX Export & Optimization
-└── Phase 6.6: Champion / Challenger Registry
+├── Phase 6.1: ML Dataset View & Deterministic Group Split
+├── Phase 6.2: Candidate Vetting Model Training
+├── Phase 6.3: Astronomical Anomaly Detection Training
+├── Phase 6.4: Evaluation — Golden Test & Recent Holdout
+├── Phase 6.5: Model Registry — Champion / Challenger, Promotion & Rollback
+├── Phase 6.6: ONNX Export & Rust Inference Parity
+└── Phase 6.7: End-to-End ML Training & Model Validation
 ```
 
-* **Phase 6.1 — ML Training Framework & Data Loader**: Xây dựng PyTorch Dataset/DataLoader tối ưu đọc Gold Parquet.
-* **Phase 6.2 — Transit Candidate Classifier Model**: Huấn luyện mô hình 1D-CNN / Transformer phân loại tín hiệu transit.
-* **Phase 6.3 — Unsupervised Anomaly Detection Model**: Huấn luyện Autoencoder / Isolation Forest phát hiện hiện tượng thiên văn dị biệt.
-* **Phase 6.4 — Model Evaluation & Metrics Tracking**: Đánh giá Precision, Recall, ROC-AUC và F1-score.
-* **Phase 6.5 — ONNX Export & Optimization**: Export PyTorch model sang ONNX format và tối ưu hóa graph execution.
-* **Phase 6.6 — Champion / Challenger Registry**: Lưu trữ phiên bản mô hình chiến thắng và quản lý metadata phiên bản.
+* **Phase 6.1 — ML Dataset View & Deterministic Group Split [DONE]**: Xây dựng ranh giới đầu vào ML từ Gold candidate snapshot bất biến, hợp đồng `candidate-ml-view-v1` (`contracts/data/ml-dataset-view-v1.md`) quy định danh sách 32 đặc trưng `MODEL_INPUT` theo thứ tự cố định, chính sách nhãn `UNRESOLVED != NEGATIVE`, thuật toán phân nhóm target theo TIC ID (group-safe: same TIC → same split), phân bổ train/validation deterministic SHA-256, và lưu split manifest bất biến tại `manifests/ml-splits/<split-id>.json` (`contracts/data/ml-split-v1.md`). Triển khai trong `aurora_ml/splits.py` với CLI `ml-view` và `ml-split`. Tài liệu kiến trúc `docs/ML_DATASETS.md`. Xác nhận: 13/13 unit test PASS.
+* **Phase 6.2 — Candidate Vetting Model Training**: Huấn luyện mô hình phân loại ứng viên dạng Tabular trên tập đặc trưng khoa học Gold, quản lý trạng thái tiến trình huấn luyện qua `checkpoints/ml-training/candidate/<training-run-id>.json` và đóng gói tham số preprocessor.
+* **Phase 6.3 — Astronomical Anomaly Detection Training**: Huấn luyện mô hình phát hiện bất thường không giám sát (Autoencoder / Isolation Forest) trên tập đặc trưng bất thường Gold (LC, TPF, FFI evidence), đánh giá tỷ lệ cảnh báo sai (false alert rate) và độ ổn định điểm số.
+* **Phase 6.4 — Evaluation — Golden Test & Recent Holdout**: Đánh giá hiệu năng mô hình khách quan trên tập Golden Test cố định (đã đóng băng) và Recent Holdout (dữ liệu/sector mới arrival), tính toán các chỉ số PR-AUC, ROC-AUC, F1, Confusion Matrix và chốt ngưỡng quyết định (decision threshold) từ tập Validation.
+* **Phase 6.5 — Model Registry — Champion / Challenger, Promotion & Rollback**: Quản lý phiên bản mô hình bất biến tại `models/candidate/<model-id>/` (`manifest.json`, `model.onnx`, `preprocessing.json`, `metrics.json`), duy trì con trỏ mutable `champion.json`, thực hiện quy trình Promotion dựa trên tiêu chí PR-AUC/Recall và hỗ trợ Rollback tức thì không cần huấn luyện lại.
+* **Phase 6.6 — ONNX Export & Rust Inference Parity**: Định nghĩa hợp đồng runtime liên ngôn ngữ (`contracts/data/model-runtime-v1.md`), cố định thứ tự đặc trưng (`feature_order`), đóng gói tham số biến đổi preprocessor và kiểm thử tính đồng nhất kết quả dự đoán (numeric tolerance parity) giữa Python ONNX Runtime và Rust ONNX Engine.
+* **Phase 6.7 — End-to-End ML Training & Model Validation**: Kiểm thử toàn bộ quy trình từ Gold Snapshot -> Group Split -> Training -> Evaluation -> Champion Registry -> ONNX Export -> Rust Parity (`tests/e2e/stage6-ml-platform.sh`, `test_stage6_e2e.py`). Đảm bảo 100% khả năng truy xuất nguồn gốc (provenance traceability) từ model trở lại đúng Gold snapshot nguyên bản.
 
 ---
 
