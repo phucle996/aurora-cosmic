@@ -4,16 +4,24 @@ import (
 	"encoding/json"
 	"net/http"
 	"time"
+
+	"go-api/internal/store"
 )
 
 // Router registers and manages all HTTP REST endpoints for the AURORA API Gateway.
 type Router struct {
-	mux *http.ServeMux
+	mux        *http.ServeMux
+	chStore    *store.ClickHouseStore
+	minioStore *store.MinIOStore
 }
 
-func NewRouter() *Router {
+func NewRouter(chStore *store.ClickHouseStore, minioStore *store.MinIOStore) *Router {
 	mux := http.NewServeMux()
-	r := &Router{mux: mux}
+	r := &Router{
+		mux:        mux,
+		chStore:    chStore,
+		minioStore: minioStore,
+	}
 	r.registerRoutes()
 	return r
 }
@@ -35,10 +43,10 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("GET /healthz", handleHealthz)
 	r.mux.HandleFunc("GET /api/v1/system", handleSystemHealth)
-	r.mux.HandleFunc("GET /api/v1/targets", handleTargets)
-	r.mux.HandleFunc("GET /api/v1/candidates", handleCandidates)
-	r.mux.HandleFunc("GET /api/v1/anomalies", handleAnomalies)
-	r.mux.HandleFunc("GET /api/v1/lightcurves", handleLightcurves)
+	r.mux.HandleFunc("GET /api/v1/targets", r.handleTargets)
+	r.mux.HandleFunc("GET /api/v1/candidates", r.handleCandidates)
+	r.mux.HandleFunc("GET /api/v1/anomalies", r.handleAnomalies)
+	r.mux.HandleFunc("GET /api/v1/lightcurves", r.handleLightcurves)
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {

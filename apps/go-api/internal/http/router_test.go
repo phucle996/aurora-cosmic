@@ -7,7 +7,7 @@ import (
 )
 
 func TestRouterEndpoints(t *testing.T) {
-	router := NewRouter()
+	router := NewRouter(nil, nil)
 
 	endpoints := []string{
 		"/healthz",
@@ -34,7 +34,7 @@ func TestRouterEndpoints(t *testing.T) {
 }
 
 func TestCORSHeaders(t *testing.T) {
-	router := NewRouter()
+	router := NewRouter(nil, nil)
 	req := httptest.NewRequest(http.MethodOptions, "/api/v1/candidates", nil)
 	rec := httptest.NewRecorder()
 

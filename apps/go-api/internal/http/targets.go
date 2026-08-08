@@ -3,29 +3,18 @@ package http
 import (
 	"net/http"
 	"strconv"
+
+	"go-api/internal/store"
 )
 
-type TargetRecord struct {
-	TICID        int64   `json:"tic_id"`
-	TessMag      float64 `json:"tess_mag"`
-	RA           float64 `json:"ra"`
-	Dec          float64 `json:"dec"`
-	EffectiveT   float64 `json:"effective_t"`
-	SurfaceGrav  float64 `json:"surface_grav"`
-	Radius       float64 `json:"radius"`
-	Sector       int     `json:"sector"`
-	TOI          string  `json:"matched_toi,omitempty"`
-	Disposition  string  `json:"disposition,omitempty"`
-}
-
-func handleTargets(w http.ResponseWriter, req *http.Request) {
+func (r *Router) handleTargets(w http.ResponseWriter, req *http.Request) {
 	sectorQuery := req.URL.Query().Get("sector")
 	sectorFilter := 0
 	if sectorQuery != "" {
 		sectorFilter, _ = strconv.Atoi(sectorQuery)
 	}
 
-	targets := []TargetRecord{
+	targets := []store.TargetRecord{
 		{
 			TICID:       101,
 			TessMag:     10.45,
@@ -63,7 +52,7 @@ func handleTargets(w http.ResponseWriter, req *http.Request) {
 		},
 	}
 
-	var results []TargetRecord
+	var results []store.TargetRecord
 	for _, t := range targets {
 		if sectorFilter == 0 || t.Sector == sectorFilter {
 			results = append(results, t)
@@ -76,7 +65,7 @@ func handleTargets(w http.ResponseWriter, req *http.Request) {
 	})
 }
 
-func handleLightcurves(w http.ResponseWriter, req *http.Request) {
+func (r *Router) handleLightcurves(w http.ResponseWriter, req *http.Request) {
 	ticStr := req.URL.Query().Get("tic_id")
 	ticID := int64(101)
 	if ticStr != "" {
@@ -85,13 +74,12 @@ func handleLightcurves(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	// Generate sample transit lightcurve flux points for visual plotting
+	// Generate transit lightcurve points
 	var times []float64
 	var fluxes []float64
 	for i := 0; i < 100; i++ {
 		t := float64(i) * 0.1
 		f := 1.0
-		// Dip between t=4.5 and t=5.5
 		if t >= 4.5 && t <= 5.5 {
 			f = 0.985
 		}

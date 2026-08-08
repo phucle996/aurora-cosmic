@@ -33,46 +33,36 @@ class AnomalyPreprocessor:
     feature_scales: Dict[str, float] = field(default_factory=dict)
     schema_version: int = 1
 
-    def fit(self_or_cls, train_rows: List[Dict[str, Any]], *args: Any, **kwargs: Any) -> "AnomalyPreprocessor":
+    @classmethod
+    def fit(
+        cls,
+        train_rows: List[Dict[str, Any]],
+        feature_order: Optional[Any] = None,
+        split_id: str = "",
+        **kwargs: Any,
+    ) -> "AnomalyPreprocessor":
         """Fit preprocessor statistics strictly on TRAIN split rows."""
         if not train_rows:
             raise AnomalyPreprocessingError("EMPTY_TRAIN_ROWS: Cannot fit preprocessor on empty train rows")
 
-        if isinstance(self_or_cls, type):
-            inst = self_or_cls()
-            if len(args) == 2:
-                inst.feature_order = tuple(args[0])
-                inst.split_id = str(args[1])
-            elif len(args) == 1:
-                if isinstance(args[0], (list, tuple)):
-                    inst.feature_order = tuple(args[0])
-                else:
-                    inst.split_id = str(args[0])
-            if "feature_order" in kwargs:
-                inst.feature_order = tuple(kwargs["feature_order"])
-            if "split_id" in kwargs:
-                inst.split_id = str(kwargs["split_id"])
-            return inst.fit(train_rows)
-
-        self = self_or_cls
-        if len(args) == 2:
-            self.feature_order = tuple(args[0])
-            self.split_id = str(args[1])
-        elif len(args) == 1:
-            if isinstance(args[0], (list, tuple)):
-                self.feature_order = tuple(args[0])
-            else:
-                self.split_id = str(args[0])
-        if "feature_order" in kwargs:
-            self.feature_order = tuple(kwargs["feature_order"])
-        if "split_id" in kwargs:
-            self.split_id = str(kwargs["split_id"])
+        inst = cls()
+        if feature_order is not None:
+            if isinstance(feature_order, str):
+                inst.split_id = feature_order
+            elif isinstance(feature_order, (list, tuple)):
+                inst.feature_order = tuple(feature_order)
+        if split_id:
+            inst.split_id = split_id
+        if "feature_order" in kwargs and kwargs["feature_order"]:
+            inst.feature_order = tuple(kwargs["feature_order"])
+        if "split_id" in kwargs and kwargs["split_id"]:
+            inst.split_id = str(kwargs["split_id"])
 
         medians: Dict[str, float] = {}
         means: Dict[str, float] = {}
         scales: Dict[str, float] = {}
 
-        for feat in self.feature_order:
+        for feat in inst.feature_order:
             raw_vals = []
             for r in train_rows:
                 val = r.get(feat)
@@ -101,10 +91,10 @@ class AnomalyPreprocessor:
                 means[feat] = mean_val
                 scales[feat] = scale_val
 
-        self.feature_medians = medians
-        self.feature_means = means
-        self.feature_scales = scales
-        return self
+        inst.feature_medians = medians
+        inst.feature_means = means
+        inst.feature_scales = scales
+        return inst
 
     def transform_features(self, rows: List[Dict[str, Any]]) -> np.ndarray:
         """Transform input rows to a 2D float32 standardized feature matrix."""

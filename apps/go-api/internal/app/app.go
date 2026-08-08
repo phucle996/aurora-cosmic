@@ -10,10 +10,13 @@ import (
 
 	"go-api/internal/config"
 	apiHttp "go-api/internal/http"
+	"go-api/internal/store"
 )
 
 func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
-	router := apiHttp.NewRouter()
+	chStore := store.NewClickHouseStore("http://clickhouse:8123", "aurora")
+	minioStore := store.NewMinIOStore(cfg.MinIO.Endpoint, cfg.MinIO.Bucket)
+	router := apiHttp.NewRouter(chStore, minioStore)
 	addr := net.JoinHostPort(cfg.Server.Host, fmt.Sprintf("%d", cfg.Server.Port))
 
 	srv := &http.Server{
