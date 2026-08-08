@@ -2,7 +2,7 @@
 
 use chrono::Utc;
 use ndarray::Array2;
-use ort::{session::Session, value::TensorRef};
+use ort::{ep, session::Session, value::TensorRef};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
@@ -218,6 +218,11 @@ fn validate_preprocessing(
     feature_order: &[String],
     config: &PreprocessingConfig,
 ) -> Result<(), RuntimeError> {
+    if !config.feature_order.is_empty() && config.feature_order != feature_order {
+        return Err(RuntimeError::InvalidPackage(
+            "preprocessing feature_order does not match runtime manifest".to_string(),
+        ));
+    }
     for feature in feature_order {
         let median = config.feature_medians.get(feature).ok_or_else(|| {
             RuntimeError::InvalidPackage(format!("missing preprocessing median for '{feature}'"))
@@ -241,6 +246,10 @@ fn ort_error(error: impl std::fmt::Display) -> RuntimeError {
     RuntimeError::Ort(error.to_string())
 }
 
+fn parity_within_tolerance(actual: f64, expected: f64, atol: f64, rtol: f64) -> bool {
+    (actual - expected).abs() <= atol + rtol * expected.abs()
+}
+
 /// A validated ONNX Runtime session. The session is intentionally owned by the
 /// worker and reused for every batch; creating a session per row is prohibitively
 /// expensive and defeats ONNX Runtime graph optimizations.
@@ -253,6 +262,19 @@ pub struct OnnxRuntime {
 
 impl OnnxRuntime {
     pub fn load(package_dir: &Path, intra_threads: usize) -> Result<Self, RuntimeError> {
+        Self::load_with_device(package_dir, intra_threads, "cuda")
+    }
+
+    pub fn load_with_device(
+        package_dir: &Path,
+        intra_threads: usize,
+        device: &str,
+    ) -> Result<Self, RuntimeError> {
+        if device != "cuda" {
+            return Err(RuntimeError::InvalidPackage(
+                "GPU-only inference requires device=cuda; CPU fallback is disabled".to_string(),
+            ));
+        }
         let manifest_bytes = fs::read(package_dir.join("manifest.json"))?;
         let manifest: ModelRuntimeManifest = serde_json::from_slice(&manifest_bytes)?;
         validate_manifest(&manifest)?;
@@ -299,6 +321,13 @@ impl OnnxRuntime {
         let threads = intra_threads.max(1);
         let mut builder = Session::builder().map_err(ort_error)?;
         builder = builder.with_intra_threads(threads).map_err(ort_error)?;
+        builder = builder
+            .with_execution_providers([ep::CUDA::default()
+                .with_device_id(0)
+                .with_conv_algorithm_search(ep::cuda::ConvAlgorithmSearch::Heuristic)
+                .build()
+                .error_on_failure()])
+            .map_err(ort_error)?;
         let session = builder
             .commit_from_memory(&model_bytes)
             .map_err(ort_error)?;
@@ -485,7 +514,7 @@ pub fn validate_runtime_package_parity(
             "parity fixture does not match runtime manifest".to_string(),
         ));
     }
-    let mut onnx_runtime = OnnxRuntime::load(package_dir, 1)?;
+    let mut onnx_runtime = OnnxRuntime::load_with_device(package_dir, 1, "cuda")?;
 
     // 4. Validate preprocessing and numerical scoring on each fixture case
     let mut max_abs_error: f64 = 0.0;
@@ -520,7 +549,7 @@ pub fn validate_runtime_package_parity(
             if rel_err > max_rel_error {
                 max_rel_error = rel_err;
             }
-            if abs_err > atol_limit {
+            if !parity_within_tolerance(actual as f64, expected, atol_limit, rtol_limit) {
                 return Err(RuntimeError::ParityFailed(format!(
                     "PREPROCESSING_PARITY_FAILED on case '{}' feature [{}]: actual={actual}, expected={expected}, abs_err={abs_err:.6e}",
                     case.case_id, i
@@ -545,7 +574,12 @@ pub fn validate_runtime_package_parity(
             let logit_abs_err = (actual_output[0] as f64 - expected_logit).abs();
             max_abs_error = max_abs_error.max(logit_abs_err);
             max_rel_error = max_rel_error.max(logit_abs_err / (expected_logit.abs() + 1e-9));
-            if logit_abs_err > atol_limit {
+            if !parity_within_tolerance(
+                actual_output[0] as f64,
+                expected_logit,
+                atol_limit,
+                rtol_limit,
+            ) {
                 return Err(RuntimeError::ParityFailed(format!(
                     "CANDIDATE_MODEL_PARITY_FAILED on case '{}': actual_logit={}, expected_logit={}, diff={logit_abs_err:.6e}",
                     case.case_id, actual_output[0], expected_logit
@@ -556,7 +590,7 @@ pub fn validate_runtime_package_parity(
             if score_abs_err > max_abs_error {
                 max_abs_error = score_abs_err;
             }
-            if score_abs_err > atol_limit {
+            if !parity_within_tolerance(rust_score, expected_score, atol_limit, rtol_limit) {
                 return Err(RuntimeError::ParityFailed(format!(
                     "CANDIDATE_SCORE_PARITY_FAILED on case '{}': rust_score={rust_score}, expected={expected_score}, diff={score_abs_err:.6e}",
                     case.case_id
@@ -590,7 +624,19 @@ pub fn validate_runtime_package_parity(
                 .map(|(actual, expected)| (*actual as f64 - *expected as f64).abs())
                 .fold(0.0_f64, f64::max);
             max_abs_error = max_abs_error.max(output_max_abs);
-            if output_max_abs > atol_limit {
+            let output_within_tolerance =
+                actual_output
+                    .iter()
+                    .zip(expected_recon_f32.iter())
+                    .all(|(actual, expected)| {
+                        parity_within_tolerance(
+                            *actual as f64,
+                            *expected as f64,
+                            atol_limit,
+                            rtol_limit,
+                        )
+                    });
+            if !output_within_tolerance {
                 return Err(RuntimeError::ParityFailed(format!(
                     "ANOMALY_MODEL_PARITY_FAILED on case '{}': max reconstruction diff={output_max_abs:.6e}",
                     case.case_id
@@ -601,7 +647,7 @@ pub fn validate_runtime_package_parity(
             if mse_abs_err > max_abs_error {
                 max_abs_error = mse_abs_err;
             }
-            if mse_abs_err > atol_limit {
+            if !parity_within_tolerance(rust_mse, expected_mse, atol_limit, rtol_limit) {
                 return Err(RuntimeError::ParityFailed(format!(
                     "ANOMALY_MSE_PARITY_FAILED on case '{}': rust_mse={rust_mse}, expected={expected_mse}, diff={mse_abs_err:.6e}",
                     case.case_id

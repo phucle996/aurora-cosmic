@@ -124,6 +124,7 @@ services:
     image: ghcr.io/phucle996/aurora-rust-inference:latest
     build: ./apps/rust-inference
     container_name: aurora-rust-inference
+    gpus: all
     env_file:
       - ./apps/rust-inference/.env.example
     networks:
@@ -138,6 +139,10 @@ services:
     image: ghcr.io/phucle996/aurora-go-api:latest
     build: ./apps/go-api
     container_name: aurora-go-api
+    restart: unless-stopped
+    cpus: "0.50"
+    mem_limit: 256m
+    memswap_limit: 256m
     ports:
       - "${AURORA_API_PORT:-8080}:8080"
     env_file:
@@ -149,6 +154,12 @@ services:
         condition: service_healthy
       clickhouse:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
 
   dashboard:
     image: ghcr.io/phucle996/aurora-dashboard:latest

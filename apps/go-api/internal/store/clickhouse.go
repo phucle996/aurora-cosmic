@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -20,7 +21,10 @@ type CandidateRecord struct {
 	CandidateScore  float64 `json:"candidate_score"`
 	Threshold       float64 `json:"decision_threshold"`
 	AboveThreshold  bool    `json:"above_threshold"`
-	ModelVersion    string  `json:"model_version"`
+	ModelVersion    string  `json:"model_version,omitempty"`
+	RegisteredModel string  `json:"registered_model_id,omitempty"`
+	SnapshotID      string  `json:"gold_snapshot_id,omitempty"`
+	ValidationID    string  `json:"runtime_validation_id,omitempty"`
 	RuntimePkgID    string  `json:"runtime_package_id"`
 }
 
@@ -33,7 +37,10 @@ type AnomalyRecord struct {
 	ReconstructionMSE float64 `json:"reconstruction_mse"`
 	Threshold         float64 `json:"decision_threshold"`
 	AboveThreshold    bool    `json:"above_threshold"`
-	ModelVersion      string  `json:"model_version"`
+	ModelVersion      string  `json:"model_version,omitempty"`
+	RegisteredModel   string  `json:"registered_model_id,omitempty"`
+	SnapshotID        string  `json:"gold_snapshot_id,omitempty"`
+	ValidationID      string  `json:"runtime_validation_id,omitempty"`
 	RuntimePkgID      string  `json:"runtime_package_id"`
 }
 
@@ -61,6 +68,30 @@ type LightcurveData struct {
 type clickHouseJSONResponse[T any] struct {
 	Data []T `json:"data"`
 	Rows int `json:"rows"`
+}
+
+type PageRequest struct {
+	Limit  int
+	Offset int
+}
+
+type Page[T any] struct {
+	Items   []T  `json:"items"`
+	Count   int  `json:"count"`
+	Limit   int  `json:"limit"`
+	Offset  int  `json:"offset"`
+	HasMore bool `json:"has_more"`
+}
+
+// AnalyticsStore is the query boundary consumed by HTTP handlers. Keeping
+// this interface here prevents the transport layer from depending on a
+// concrete database client and makes in-memory contract tests straightforward.
+type AnalyticsStore interface {
+	Ping(context.Context) error
+	QueryCandidates(context.Context, int, string, PageRequest) (Page[CandidateRecord], error)
+	QueryAnomalies(context.Context, int, string, PageRequest) (Page[AnomalyRecord], error)
+	QueryTargets(context.Context, int, PageRequest) (Page[TargetRecord], error)
+	QueryLightcurve(context.Context, int64, PageRequest) (*LightcurveData, error)
 }
 
 // ClickHouseStore queries analytical metadata stored in ClickHouse.
@@ -93,81 +124,83 @@ func NewClickHouseStore(endpoint, database string) *ClickHouseStore {
 	}
 }
 
+func (s *ClickHouseStore) Ping(ctx context.Context) error {
+	_, err := s.executeSQL(ctx, "SELECT 1 FORMAT JSON")
+	return err
+}
+
 // QueryCandidates fetches candidate prediction records filtered by sector from ClickHouse.
-func (s *ClickHouseStore) QueryCandidates(ctx context.Context, sector int) ([]CandidateRecord, error) {
-	query := "SELECT prediction_id, source_product_id, tic_id, sector, raw_logit, candidate_score, decision_threshold, above_threshold, model_version, runtime_package_id FROM candidate_predictions"
+func (s *ClickHouseStore) QueryCandidates(ctx context.Context, sector int, snapshotID string, page PageRequest) (Page[CandidateRecord], error) {
+	query := "SELECT prediction_id, source_product_id, tic_id, sector, raw_logit, candidate_score, decision_threshold, above_threshold, model_version, registered_model_id, gold_snapshot_id, runtime_validation_id, runtime_package_id FROM candidate_predictions"
+	where := make([]string, 0, 2)
 	if sector > 0 {
-		query += fmt.Sprintf(" WHERE sector = %d", sector)
+		where = append(where, fmt.Sprintf("sector = %d", sector))
 	}
-	query += " ORDER BY candidate_score DESC LIMIT 1000 FORMAT JSON"
+	if snapshotID != "" {
+		where = append(where, fmt.Sprintf("gold_snapshot_id = '%s'", escapeSQLString(snapshotID)))
+	}
+	query += whereClause(where) + fmt.Sprintf(" ORDER BY candidate_score DESC LIMIT %d OFFSET %d FORMAT JSON", page.Limit, page.Offset)
 
 	body, err := s.executeSQL(ctx, query)
 	if err != nil {
-		return nil, err
+		return Page[CandidateRecord]{}, err
 	}
 
 	var resp clickHouseJSONResponse[CandidateRecord]
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse ClickHouse JSON response: %w", err)
+		return Page[CandidateRecord]{}, fmt.Errorf("failed to parse ClickHouse JSON response: %w", err)
 	}
-
-	if resp.Data == nil {
-		return []CandidateRecord{}, nil
-	}
-	return resp.Data, nil
+	return pageResult(resp.Data, page), nil
 }
 
 // QueryAnomalies fetches anomaly detection records filtered by sector from ClickHouse.
-func (s *ClickHouseStore) QueryAnomalies(ctx context.Context, sector int) ([]AnomalyRecord, error) {
-	query := "SELECT prediction_id, source_product_id, tic_id, sector, reconstruction_mse, decision_threshold, above_threshold, model_version, runtime_package_id FROM anomaly_predictions"
+func (s *ClickHouseStore) QueryAnomalies(ctx context.Context, sector int, snapshotID string, page PageRequest) (Page[AnomalyRecord], error) {
+	query := "SELECT prediction_id, source_product_id, tic_id, sector, reconstruction_mse, decision_threshold, above_threshold, model_version, registered_model_id, gold_snapshot_id, runtime_validation_id, runtime_package_id FROM anomaly_predictions"
+	where := make([]string, 0, 2)
 	if sector > 0 {
-		query += fmt.Sprintf(" WHERE sector = %d", sector)
+		where = append(where, fmt.Sprintf("sector = %d", sector))
 	}
-	query += " ORDER BY reconstruction_mse DESC LIMIT 1000 FORMAT JSON"
+	if snapshotID != "" {
+		where = append(where, fmt.Sprintf("gold_snapshot_id = '%s'", escapeSQLString(snapshotID)))
+	}
+	query += whereClause(where) + fmt.Sprintf(" ORDER BY reconstruction_mse DESC LIMIT %d OFFSET %d FORMAT JSON", page.Limit, page.Offset)
 
 	body, err := s.executeSQL(ctx, query)
 	if err != nil {
-		return nil, err
+		return Page[AnomalyRecord]{}, err
 	}
 
 	var resp clickHouseJSONResponse[AnomalyRecord]
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse ClickHouse JSON response: %w", err)
+		return Page[AnomalyRecord]{}, fmt.Errorf("failed to parse ClickHouse JSON response: %w", err)
 	}
-
-	if resp.Data == nil {
-		return []AnomalyRecord{}, nil
-	}
-	return resp.Data, nil
+	return pageResult(resp.Data, page), nil
 }
 
 // QueryTargets fetches stellar targets filtered by sector from ClickHouse.
-func (s *ClickHouseStore) QueryTargets(ctx context.Context, sector int) ([]TargetRecord, error) {
+func (s *ClickHouseStore) QueryTargets(ctx context.Context, sector int, page PageRequest) (Page[TargetRecord], error) {
 	query := "SELECT tic_id, tess_mag, ra, dec, effective_t, surface_grav, radius, sector, matched_toi, disposition FROM targets"
+	where := make([]string, 0, 1)
 	if sector > 0 {
-		query += fmt.Sprintf(" WHERE sector = %d", sector)
+		where = append(where, fmt.Sprintf("sector = %d", sector))
 	}
-	query += " ORDER BY tic_id ASC LIMIT 1000 FORMAT JSON"
+	query += whereClause(where) + fmt.Sprintf(" ORDER BY tic_id ASC LIMIT %d OFFSET %d FORMAT JSON", page.Limit, page.Offset)
 
 	body, err := s.executeSQL(ctx, query)
 	if err != nil {
-		return nil, err
+		return Page[TargetRecord]{}, err
 	}
 
 	var resp clickHouseJSONResponse[TargetRecord]
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse ClickHouse JSON response: %w", err)
+		return Page[TargetRecord]{}, fmt.Errorf("failed to parse ClickHouse JSON response: %w", err)
 	}
-
-	if resp.Data == nil {
-		return []TargetRecord{}, nil
-	}
-	return resp.Data, nil
+	return pageResult(resp.Data, page), nil
 }
 
 // QueryLightcurve fetches time and normalized flux for a specific TIC from ClickHouse.
-func (s *ClickHouseStore) QueryLightcurve(ctx context.Context, ticID int64) (*LightcurveData, error) {
-	query := fmt.Sprintf("SELECT time, flux FROM lightcurves WHERE tic_id = %d ORDER BY time ASC LIMIT 5000 FORMAT JSON", ticID)
+func (s *ClickHouseStore) QueryLightcurve(ctx context.Context, ticID int64, page PageRequest) (*LightcurveData, error) {
+	query := fmt.Sprintf("SELECT time, flux FROM lightcurves WHERE tic_id = %d ORDER BY time ASC LIMIT %d OFFSET %d FORMAT JSON", ticID, page.Limit, page.Offset)
 	body, err := s.executeSQL(ctx, query)
 	if err != nil {
 		return nil, err
@@ -193,6 +226,24 @@ func (s *ClickHouseStore) QueryLightcurve(ctx context.Context, ticID int64) (*Li
 		lc.Flux[i] = pt.Flux
 	}
 	return lc, nil
+}
+
+func pageResult[T any](items []T, page PageRequest) Page[T] {
+	if items == nil {
+		items = []T{}
+	}
+	return Page[T]{Items: items, Count: len(items), Limit: page.Limit, Offset: page.Offset, HasMore: len(items) == page.Limit}
+}
+
+func whereClause(conditions []string) string {
+	if len(conditions) == 0 {
+		return ""
+	}
+	return " WHERE " + strings.Join(conditions, " AND ")
+}
+
+func escapeSQLString(value string) string {
+	return strings.ReplaceAll(value, "'", "''")
 }
 
 func (s *ClickHouseStore) executeSQL(ctx context.Context, query string) ([]byte, error) {

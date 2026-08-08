@@ -30,10 +30,10 @@ outputs are expected values only and are never used as model outputs.
 `AURORA_INFERENCE_INTRA_THREADS` bounds ONNX intra-op threads. Gold objects are
 rejected above `AURORA_INFERENCE_MAX_GOLD_BYTES` before Parquet decoding.
 
-The service is CPU-capable for inference. Training remains GPU-only in the
-Python ML worker; `AURORA_ML_DEVICE` here selects the inference deployment
-policy and is currently informational until a CUDA ONNX Runtime provider is
-installed in the image.
+Inference is GPU-only: the image includes the ONNX Runtime CUDA execution
+provider, Compose exposes the NVIDIA device, and startup/session creation fails
+if CUDA cannot be registered. Training is also GPU-only in the Python ML
+worker; CPU fallback is disabled for both model paths.
 
 ## Source layout
 

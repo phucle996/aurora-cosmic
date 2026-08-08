@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,11 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
+
+type testObjectStore struct{}
+
+func (testObjectStore) Ping(context.Context) error                        { return nil }
+func (testObjectStore) GetObject(context.Context, string) ([]byte, error) { return nil, nil }
 
 func newTestRouter(t *testing.T) *Router {
 	t.Helper()
@@ -39,7 +45,7 @@ func newTestRouter(t *testing.T) *Router {
 			Request:    req,
 		}, nil
 	})
-	return NewRouter(clickHouse, nil, "http://localhost:8501")
+	return NewRouter(clickHouse, testObjectStore{}, "http://localhost:8501")
 }
 
 func TestRouterEndpoints(t *testing.T) {
@@ -49,8 +55,8 @@ func TestRouterEndpoints(t *testing.T) {
 		"/healthz",
 		"/api/v1/system",
 		"/api/v1/targets",
-		"/api/v1/candidates",
-		"/api/v1/anomalies",
+		"/api/v1/candidates?snapshot_id=gold-v1-test",
+		"/api/v1/anomalies?snapshot_id=gold-v1-test",
 		"/api/v1/lightcurves?tic_id=101",
 	}
 
@@ -71,13 +77,33 @@ func TestRouterEndpoints(t *testing.T) {
 
 func TestAnalyticalEndpointsFailClosedWithoutStore(t *testing.T) {
 	router := NewRouter(nil, nil, "http://localhost:8501")
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/candidates", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/candidates?snapshot_id=gold-v1-test", nil)
 	recorder := httptest.NewRecorder()
 
 	router.ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("candidate endpoint returned HTTP %d, expected %d", recorder.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestReadinessReportsDependencies(t *testing.T) {
+	router := newTestRouter(t)
+	request := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("readyz returned HTTP %d, expected 200", recorder.Code)
+	}
+}
+
+func TestSnapshotIsRequiredForPredictions(t *testing.T) {
+	router := newTestRouter(t)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/anomalies", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("anomaly endpoint returned HTTP %d, expected 400", recorder.Code)
 	}
 }
 

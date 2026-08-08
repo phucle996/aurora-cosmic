@@ -161,8 +161,12 @@ async fn process_message(
     {
         anyhow::bail!("runtime package parity validation does not match job manifest")
     }
-    let mut runtime = OnnxRuntime::load(runtime_tmp.path(), config.ml.intra_threads)
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let mut runtime = OnnxRuntime::load_with_device(
+        runtime_tmp.path(),
+        config.ml.intra_threads,
+        &config.ml.device,
+    )
+    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     if runtime.manifest.runtime_package_id != job.runtime_package_id
         || runtime.manifest.task != job.task
         || runtime.manifest.source_model_id != job.model_id

@@ -6,15 +6,15 @@ import (
 )
 
 func (r *Router) handleTargets(w http.ResponseWriter, req *http.Request) {
-	sectorQuery := req.URL.Query().Get("sector")
-	sectorFilter := 0
-	if sectorQuery != "" {
-		var err error
-		sectorFilter, err = strconv.Atoi(sectorQuery)
-		if err != nil || sectorFilter < 1 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sector must be a positive integer"})
-			return
-		}
+	page, err := parsePage(req)
+	if err != nil {
+		writeBadRequest(w, err.Error())
+		return
+	}
+	sectorFilter, err := parseSector(req)
+	if err != nil {
+		writeBadRequest(w, err.Error())
+		return
 	}
 
 	if r.chStore == nil {
@@ -22,28 +22,34 @@ func (r *Router) handleTargets(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	results, err := r.chStore.QueryTargets(req.Context(), sectorFilter)
+	results, err := r.chStore.QueryTargets(req.Context(), sectorFilter, page)
 	if err != nil {
 		writeServiceUnavailable(w)
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"count":   len(results),
-		"targets": results,
+		"count":   results.Count,
+		"targets": results.Items,
+		"page":    results,
 	})
 }
 
 func (r *Router) handleLightcurves(w http.ResponseWriter, req *http.Request) {
+	page, err := parsePage(req)
+	if err != nil {
+		writeBadRequest(w, err.Error())
+		return
+	}
 	ticStr := req.URL.Query().Get("tic_id")
-	ticID := int64(101)
-	if ticStr != "" {
-		val, err := strconv.ParseInt(ticStr, 10, 64)
-		if err != nil || val < 1 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tic_id must be a positive integer"})
-			return
-		}
-		ticID = val
+	if ticStr == "" {
+		writeBadRequest(w, "tic_id is required")
+		return
+	}
+	ticID, err := strconv.ParseInt(ticStr, 10, 64)
+	if err != nil || ticID < 1 {
+		writeBadRequest(w, "tic_id must be a positive integer")
+		return
 	}
 
 	if r.chStore == nil {
@@ -51,7 +57,7 @@ func (r *Router) handleLightcurves(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	lightcurve, err := r.chStore.QueryLightcurve(req.Context(), ticID)
+	lightcurve, err := r.chStore.QueryLightcurve(req.Context(), ticID, page)
 	if err != nil {
 		writeServiceUnavailable(w)
 		return
@@ -61,5 +67,6 @@ func (r *Router) handleLightcurves(w http.ResponseWriter, req *http.Request) {
 		"tic_id": lightcurve.TICID,
 		"time":   lightcurve.Time,
 		"flux":   lightcurve.Flux,
+		"page":   page,
 	})
 }

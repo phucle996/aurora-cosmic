@@ -13,8 +13,8 @@ This document specifies the production inference workflow, runtime package quali
 2. **Immutable Runtime Package Pinning**:
    * Every inference job explicitly pins an exact `runtime_package_id` and `runtime_manifest_sha256`.
    * A job never mutates or re-resolves a model if the registry champion pointer changes mid-flight.
-3. **Rust CPU Qualification Requirement**:
-   * Inference jobs may only be planned for runtime packages that hold a verified `model-runtime-validation-v1` record with `validation_status = PASS` on the CPU provider.
+3. **Rust CUDA Qualification Requirement**:
+   * Inference jobs are processed by the CUDA-enabled Rust ONNX Runtime worker after a verified `model-runtime-validation-v1` parity pass. CPU fallback is disabled so inference does not compete with ingest/preprocessing CPU capacity.
 4. **Work Granularity**:
    * Exactly one inference job per committed Gold partition artifact.
    * Avoids row-level NATS flooding and provides natural retry isolation.

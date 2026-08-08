@@ -45,12 +45,16 @@ ClickHouse HTTP access uses `AURORA_CLICKHOUSE_USER` and `AURORA_CLICKHOUSE_PASS
 
 The analytical endpoints return `503 Service Unavailable` when ClickHouse is unreachable. They never return fabricated candidate, anomaly, target, or lightcurve records.
 
+`GET /healthz` is process liveness. `GET /readyz` performs bounded MinIO and
+ClickHouse checks and returns `503` until both dependencies are ready. Candidate
+and anomaly endpoints require `snapshot_id`; collection responses are bounded
+by `limit`/`offset` pagination.
+
 ## 6. GPU & Device Selection
 
-`AURORA_ML_DEVICE` supports:
-* `auto` (default): Detects CUDA availability automatically; falls back to CPU if unavailable.
-* `cpu`: Forces CPU execution.
-* `cuda`: Forces CUDA execution; fails at startup if CUDA is unavailable.
+`python-ml-worker` and `rust-inference` require `AURORA_ML_DEVICE=cuda`.
+Training and ONNX inference fail fast when CUDA is unavailable; CPU fallback is
+disabled.
 
 ## 7. Stage 5 Light Curve Feature Configuration
 
@@ -83,4 +87,3 @@ The analytical endpoints return `503 Service Unavailable` when ClickHouse is unr
 | `AURORA_TIC_SOURCE` | `local` | Source for TIC catalog snapshots (`local` or URI) |
 | `AURORA_TOI_SOURCE` | `local` | Source for TOI catalog snapshots (`local` or URI) |
 | `AURORA_TCE_SOURCE` | `local` | Source for TCE catalog snapshots (`local` or URI) |
-

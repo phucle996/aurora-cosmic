@@ -20,7 +20,7 @@ hex = "0.4"
 thiserror = "1.0"
 
 # Runtime execution and data access.
-ort = { version = "2.0.0-rc.13", default-features = false, features = ["std", "ndarray", "download-binaries", "tls-rustls"] }
+ort = { version = "2.0.0-rc.13", default-features = false, features = ["std", "ndarray", "cuda", "download-binaries", "tls-rustls"] }
 ndarray = "0.17.2"
 async-nats = "0.36"
 aws-sdk-s3 = { version = "1", features = ["behavior-version-latest"] }

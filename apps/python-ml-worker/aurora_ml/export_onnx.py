@@ -181,7 +181,9 @@ class RuntimeExporter:
             decision_threshold = float(th_data.get("decision_threshold", eval_data.get("decision_threshold", 0.5)))
         else:
             decision_threshold = float(eval_data.get("decision_threshold", 0.5))
-            threshold_bytes = json.dumps({"decision_threshold": decision_threshold}, sort_keys=True).encode("utf-8")
+            threshold_bytes = json.dumps(
+                {"decision_threshold": decision_threshold}, sort_keys=True, indent=2
+            ).encode("utf-8")
             threshold_sha = hashlib.sha256(threshold_bytes).hexdigest()
 
         # 2. Rebuild PyTorch model on CPU
@@ -393,7 +395,9 @@ class RuntimeExporter:
             decision_threshold = float(th_data.get("decision_threshold", eval_data.get("decision_threshold", 0.05)))
         else:
             decision_threshold = float(eval_data.get("decision_threshold", 0.05))
-            threshold_bytes = json.dumps({"decision_threshold": decision_threshold}, sort_keys=True).encode("utf-8")
+            threshold_bytes = json.dumps(
+                {"decision_threshold": decision_threshold}, sort_keys=True, indent=2
+            ).encode("utf-8")
             threshold_sha = hashlib.sha256(threshold_bytes).hexdigest()
 
         # 2. Rebuild PyTorch Autoencoder on CPU

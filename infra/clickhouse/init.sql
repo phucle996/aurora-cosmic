@@ -14,6 +14,9 @@ CREATE TABLE IF NOT EXISTS aurora.candidate_predictions (
     decision_threshold Float64,
     above_threshold Bool,
     model_version LowCardinality(String),
+    registered_model_id String DEFAULT '',
+    gold_snapshot_id String DEFAULT '',
+    runtime_validation_id String DEFAULT '',
     runtime_package_id String,
     predicted_at DateTime DEFAULT now()
 )
@@ -30,12 +33,24 @@ CREATE TABLE IF NOT EXISTS aurora.anomaly_predictions (
     decision_threshold Float64,
     above_threshold Bool,
     model_version LowCardinality(String),
+    registered_model_id String DEFAULT '',
+    gold_snapshot_id String DEFAULT '',
+    runtime_validation_id String DEFAULT '',
     runtime_package_id String,
     predicted_at DateTime DEFAULT now()
 )
 ENGINE = ReplacingMergeTree(predicted_at)
 PARTITION BY sector
 ORDER BY (sector, prediction_id);
+
+-- Additive compatibility migration for databases initialized before the
+-- prediction-v1 lineage fields were introduced. Safe to run repeatedly.
+ALTER TABLE aurora.candidate_predictions ADD COLUMN IF NOT EXISTS registered_model_id String DEFAULT '' AFTER model_version;
+ALTER TABLE aurora.candidate_predictions ADD COLUMN IF NOT EXISTS gold_snapshot_id String DEFAULT '' AFTER registered_model_id;
+ALTER TABLE aurora.candidate_predictions ADD COLUMN IF NOT EXISTS runtime_validation_id String DEFAULT '' AFTER gold_snapshot_id;
+ALTER TABLE aurora.anomaly_predictions ADD COLUMN IF NOT EXISTS registered_model_id String DEFAULT '' AFTER model_version;
+ALTER TABLE aurora.anomaly_predictions ADD COLUMN IF NOT EXISTS gold_snapshot_id String DEFAULT '' AFTER registered_model_id;
+ALTER TABLE aurora.anomaly_predictions ADD COLUMN IF NOT EXISTS runtime_validation_id String DEFAULT '' AFTER gold_snapshot_id;
 
 CREATE TABLE IF NOT EXISTS aurora.targets (
     tic_id Int64,

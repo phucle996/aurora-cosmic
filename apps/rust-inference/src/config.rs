@@ -43,9 +43,9 @@ pub struct Config {
 impl Config {
     pub fn from_env() -> Result<Self, String> {
         let device = require_env("AURORA_ML_DEVICE")?.to_lowercase();
-        if !["auto", "cpu", "cuda"].contains(&device.as_str()) {
+        if device != "cuda" {
             return Err(format!(
-                "Invalid AURORA_ML_DEVICE: '{}'. Must be 'auto', 'cpu', or 'cuda'",
+                "Invalid AURORA_ML_DEVICE: '{}'. Rust inference requires 'cuda'; CPU fallback is disabled",
                 device
             ));
         }

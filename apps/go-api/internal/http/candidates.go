@@ -1,36 +1,39 @@
 package http
 
-import (
-	"net/http"
-	"strconv"
-)
+import "net/http"
 
 func (r *Router) handleCandidates(w http.ResponseWriter, req *http.Request) {
-	sectorQuery := req.URL.Query().Get("sector")
-	sectorFilter := 0
-	if sectorQuery != "" {
-		var err error
-		sectorFilter, err = strconv.Atoi(sectorQuery)
-		if err != nil || sectorFilter < 1 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sector must be a positive integer"})
-			return
-		}
+	page, err := parsePage(req)
+	if err != nil {
+		writeBadRequest(w, err.Error())
+		return
 	}
-
+	sectorFilter, err := parseSector(req)
+	if err != nil {
+		writeBadRequest(w, err.Error())
+		return
+	}
+	snapshotID, err := parseSnapshotID(req, true)
+	if err != nil {
+		writeBadRequest(w, err.Error())
+		return
+	}
 	if r.chStore == nil {
 		writeServiceUnavailable(w)
 		return
 	}
 
-	results, err := r.chStore.QueryCandidates(req.Context(), sectorFilter)
+	results, err := r.chStore.QueryCandidates(req.Context(), sectorFilter, snapshotID, page)
 	if err != nil {
 		writeServiceUnavailable(w)
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"task":       "candidate_vetting",
-		"count":      len(results),
-		"candidates": results,
+		"task":        "candidate_vetting",
+		"count":       results.Count,
+		"candidates":  results.Items,
+		"page":        results,
+		"snapshot_id": snapshotID,
 	})
 }

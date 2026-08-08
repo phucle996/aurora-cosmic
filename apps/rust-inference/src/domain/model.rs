@@ -49,6 +49,10 @@ fn default_producer() -> String {
 #[serde(deny_unknown_fields)]
 pub struct PreprocessingConfig {
     #[serde(default)]
+    pub schema_version: i64,
+    #[serde(default)]
+    pub feature_order: Vec<String>,
+    #[serde(default)]
     pub preprocessing_version: String,
     #[serde(default)]
     pub split_id: String,
