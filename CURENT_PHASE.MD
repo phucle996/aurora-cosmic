@@ -1,155 +1,254 @@
 ````md
-# CHECKLIST_PHASE_6_2.md
+# CHECKLIST_PHASE_6_3.md
 
 # Stage 6 — Machine Learning Training, Evaluation & Model Registry
-## Phase 6.2 — Candidate Vetting Model Training
+## Phase 6.3 — Astronomical Anomaly Detection Training
 
 Status: TODO
 
 Goal:
 
-> Train the first reproducible AURORA exoplanet-candidate vetting model from
-> one explicit immutable Gold snapshot and one explicit immutable ML split.
+> Train the first reproducible AURORA astronomical anomaly-detection model
+> from one explicit immutable Gold anomaly snapshot.
 >
-> Phase 6.2 introduces:
+> V1 deliberately uses:
 >
-> - train-only preprocessing,
-> - candidate tabular model V1,
-> - deterministic training configuration,
-> - training-run manifests,
-> - ML-training recovery checkpoints,
-> - durable native model artifacts,
-> - development validation metrics.
+>     Gold light-curve anomaly scalar features
+>             ->
+>     compact tabular autoencoder
 >
-> The model answers:
+> rather than:
 >
->     "How strong is the evidence that this Gold candidate resembles the
->      POSITIVE catalog-derived training class?"
+>     raw FITS
+>     full Silver time-series tensors
+>     giant FFI tensors
+>
+> The model learns the structure of the observed feature distribution and
+> produces reconstruction-error evidence that can later be used to rank
+> unusual astronomical observations.
+>
+> Phase 6.3 introduces:
+>
+> - anomaly-specific ML dataset view,
+> - deterministic target-group TRAIN / VALIDATION split,
+> - train-only anomaly preprocessing,
+> - small tabular autoencoder,
+> - deterministic anomaly-score definition,
+> - immutable anomaly training runs,
+> - ML-training checkpoint recovery,
+> - development reconstruction metrics.
 >
 > It does NOT:
 >
-> - scientifically confirm a planet,
-> - query live TOI/TCE catalogs,
-> - train from Silver or Bronze,
-> - use UNRESOLVED rows as negatives,
-> - use the future golden test for tuning,
-> - promote itself to champion,
-> - export ONNX yet.
->
-> Canonical training input:
->
->     Gold snapshot ID
->          +
->     ML split ID
->
-> not:
->
->     ClickHouse latest rows
->     Silver scans
->     Bronze FITS
->     live catalogs.
+> - claim astrophysical ground truth,
+> - use TOI/TCE labels as anomaly supervision,
+> - define the final anomaly threshold,
+> - evaluate the frozen golden test,
+> - create a champion model,
+> - export ONNX,
+> - persist anomaly predictions,
+> - train directly from Bronze/Silver.
 
 ---
 
-# 1. Phase Input
+# 1. V1 Scope Decision
+
+Freeze the mandatory V1 learned anomaly model as:
+
+```text
+anomaly-lightcurve-autoencoder-v1
+````
+
+Input source:
+
+```text
+Gold anomaly snapshot
+    |
+    v
+anomaly/lightcurve component
+```
+
+TPF/FFI remain:
+
+```text
+deterministic anomaly/vetting evidence
+```
+
+but do NOT require separate learned TPF/FFI models in V1.
+
+---
+
+# 2. Why Light-Curve Autoencoder First
+
+Current Stage 5 Gold already contains compact LC evidence such as:
+
+```text
+time coverage
+
+cadence statistics
+
+flux variability
+
+robust scatter
+
+amplitude
+
+skewness
+
+kurtosis
+```
+
+This is sufficient to validate the entire:
+
+```text
+Gold
+ ->
+training
+ ->
+evaluation
+ ->
+registry
+ ->
+ONNX
+ ->
+Rust
+```
+
+lifecycle without reopening the raw-array boundary.
+
+---
+
+# 3. Do Not Force TPF/FFI Models Yet
+
+Do NOT create mandatory:
+
+```text
+anomaly-tpf-autoencoder-v1
+
+anomaly-ffi-autoencoder-v1
+```
+
+only to increase model count.
+
+A future model may use those evidence families after:
+
+```text
+dataset size
+scientific value
+runtime need
+```
+
+justify them.
+
+---
+
+# 4. Canonical Input
 
 Required:
 
 ```text
-gold_snapshot_id
+explicit COMMITTED anomaly Gold snapshot
 +
-split_id
+explicit anomaly split ID
 +
-candidate-ml-view-v1
-+
-candidate-group-split-v1
+anomaly-lightcurve-ml-view-v1
 +
 explicit training configuration
 +
-explicit training_seed
-````
-
----
-
-# 2. Canonical Flow
-
-Freeze:
-
-```text
-Committed Gold
-      |
-      v
-candidate-ml-view-v1
-      |
-      v
-immutable split manifest
-      |
-      +---------------------+
-      |                     |
-      v                     v
-    TRAIN                VALIDATION
-      |                     |
-      v                     |
-fit preprocessing           |
-      |                     |
-      v                     |
-train model                 |
-      |                     |
-      +----------+----------+
-                 |
-                 v
-       development validation
-                 |
-                 v
-       immutable training run
+explicit training seed
 ```
 
 ---
 
-# 3. Gold-Only Training
-
-Normal training reads:
+# 5. Canonical Flow
 
 ```text
-gold/snapshots/<gold-snapshot-id>/
+Committed Gold anomaly snapshot
+             |
+             v
+ anomaly/lightcurve Gold table
+             |
+             v
+ anomaly-lightcurve-ml-view-v1
+             |
+             v
+ deterministic group split
+        +----------+
+        |          |
+        v          v
+      TRAIN    VALIDATION
+        |          |
+        v          |
+ fit preprocessing |
+        |          |
+        v          |
+   autoencoder     |
+        |          |
+        +-----+----+
+              |
+              v
+ development reconstruction
+       error distribution
+              |
+              v
+ immutable training run
 ```
 
-and:
+---
+
+# 6. Gold-Only Requirement
+
+Normal Phase 6.3 reads:
 
 ```text
-manifests/ml-splits/<split-id>.json
+gold/
+manifests/ml-splits/
 ```
 
 Expected:
 
 ```text
 Bronze reads = 0
+
 Silver reads = 0
 ```
 
 ---
 
-# 4. ClickHouse Is Not Training Truth
+# 7. RAW_DELETED Compatibility
 
-Do NOT train with:
+This remains valid:
+
+```text
+Bronze = RAW_DELETED
+
+Silver = durable
+
+Gold = committed
+```
+
+Then:
+
+```text
+anomaly training succeeds
+```
+
+No source-product restoration.
+
+---
+
+# 8. ClickHouse Independence
+
+Do NOT train canonical anomaly model from:
 
 ```sql
 SELECT *
-FROM candidate_features_v1
-WHERE snapshot_id = ...
+FROM anomaly_lightcurve_v1
 ```
 
-as the canonical V1 training path.
+ClickHouse may be used for exploration only.
 
-ClickHouse remains useful for:
-
-```text
-exploration
-diagnostics
-analytics
-```
-
-Canonical training data remains:
+Canonical training source remains:
 
 ```text
 Gold Parquet
@@ -157,816 +256,737 @@ Gold Parquet
 
 ---
 
-# 5. ClickHouse Loss Must Not Break Training
+# 9. ClickHouse Loss Test
 
 Mandatory:
 
 ```text
 ClickHouse unavailable
-        |
-        X
-        |
-Gold + split manifest
-        |
-        v
-candidate training succeeds
+         |
+         X
+         |
+Gold + anomaly split
+         |
+         v
+anomaly training succeeds
 ```
 
 ---
 
-# 6. No Catalog Network
+# 10. No Live Catalog Calls
 
-Phase 6.2 performs:
+Do not query:
 
 ```text
-TIC live calls = 0
-TOI live calls = 0
-TCE live calls = 0
+TIC
+
+TOI
+
+TCE
 ```
 
-Labels are already frozen in Gold.
+during anomaly model training.
 
 ---
 
-# 7. No NATS Requirement
+# 11. No Label Supervision
 
-Candidate training is a batch operation.
+The V1 anomaly autoencoder is unsupervised.
 
-Do not require:
+Do NOT use:
 
 ```text
-JetStream
+POSITIVE
+
+NEGATIVE
+
+UNRESOLVED
+
+EXCLUDED
+
+TOI disposition
+
+TCE disposition
 ```
 
-for model correctness.
-
-No training event is needed.
+to define the training loss.
 
 ---
 
-# 8. Python Ownership
+# 12. Important Separation
 
-Candidate training remains in:
+Freeze:
 
 ```text
-apps/python-ml-worker/
+candidate model
+    =
+catalog-supervised classifier
 ```
 
-Primary existing ownership:
+```text
+anomaly model
+    =
+unsupervised reconstruction model
+```
+
+Do not make anomaly training secretly another planet classifier.
+
+---
+
+# 13. Python Ownership
+
+Use existing:
 
 ```text
-aurora_ml/transit/
+aurora_ml/anomaly/
 ├── model.py
 └── train.py
 ```
 
-Use these files.
+Responsibilities:
+
+```text
+anomaly/model.py
+    autoencoder architecture
+
+anomaly/train.py
+    anomaly preprocessing
+    training
+    reconstruction scoring
+    validation
+    run orchestration
+```
 
 ---
 
-# 9. Module Responsibilities
+# 14. Reuse Existing Split Infrastructure
 
-Recommended:
-
-```text
-transit/model.py
-    candidate neural-network definition
-
-transit/train.py
-    preprocessing fit
-    training loop
-    validation
-    training-run orchestration
-```
-
-Add only one new module if justified:
+Reuse:
 
 ```text
-training_checkpoint.py
+aurora_ml/splits.py
 ```
 
 for:
 
 ```text
-checkpoints/ml-training/
+canonical group keys
+
+SHA256 group assignment
+
+split manifest persistence
+
+split validation
+```
+
+Do not create a second independent splitter.
+
+---
+
+# 15. Anomaly Dataset View
+
+Introduce:
+
+```text
+anomaly-lightcurve-ml-view-v1
 ```
 
 ---
 
-# 10. Do Not Build a Training Framework
+# 16. Dataset View Contract
 
-Do NOT create:
+Add:
 
 ```text
-trainer_factory.py
-experiment_manager.py
-model_strategy.py
-training_engine.py
-ml_platform/
+contracts/data/ml-anomaly-view-v1.md
 ```
 
-One candidate trainer is enough.
-
----
-
-# 11. Candidate Model V1
-
-Freeze primary V1 model:
+Document:
 
 ```text
-candidate-tabular-mlp-v1
-```
+source Gold component
 
-Input:
+row identity
 
-```text
-fixed ordered numeric feature vector
-```
+feature list
 
-Output:
+feature order
 
-```text
-one binary logit
+group identity
+
+nullable semantics
+
+eligibility policy
 ```
 
 ---
 
-# 12. Why Tabular V1
+# 17. Reuse `ml-split-v1`
 
-Current Gold already contains compact scientific evidence:
+Use the existing durable:
 
 ```text
-LC statistics
-BLS evidence
-TPF evidence
-TIC stellar context
+contracts/data/ml-split-v1.md
 ```
 
-Therefore V1 should train directly from:
+for anomaly split manifests if its schema is already generic as intended.
+
+Do NOT create another split schema merely because the task differs.
+
+The anomaly split is distinguished by:
+
+```text
+dataset_view_version
+split_policy_version
+gold_snapshot_id
+```
+
+---
+
+# 18. Anomaly Split Policy
+
+Introduce:
+
+```text
+anomaly-group-split-v1
+```
+
+---
+
+# 19. Group Leakage Rule
+
+Same target-level invariant applies:
+
+```text
+same TIC
+    ->
+same split
+```
+
+even though training is unsupervised.
+
+This prevents the model from seeing one observation of a target during
+training and an almost-identical observation of that target during validation.
+
+---
+
+# 20. Group Key
+
+Use the existing V1 grouping semantics:
+
+```text
+tic:<tic-id>
+```
+
+when TIC exists.
+
+Fallback:
+
+```text
+source:<source-product-id>
+```
+
+when TIC is unavailable.
+
+---
+
+# 21. Do Not Group By Sector Alone
+
+Wrong:
+
+```text
+group_key = sector
+```
+
+Sector is observational context, not target identity.
+
+---
+
+# 22. Do Not Group By `sample_id` Alone
+
+One TIC may have multiple samples/sectors.
+
+Use target identity first.
+
+---
+
+# 23. TRAIN / VALIDATION Only
+
+Phase 6.3 development split uses:
+
+```text
+TRAIN
+
+VALIDATION
+```
+
+Do NOT define:
+
+```text
+GOLDEN_TEST
+
+RECENT_HOLDOUT
+```
+
+here.
+
+Phase 6.4 owns final evaluation sets.
+
+---
+
+# 24. Default Split Ratio
+
+Reuse Phase 6.1 V1 group policy where practical:
+
+```text
+TRAIN      80%
+
+VALIDATION 20%
+```
+
+at group level.
+
+---
+
+# 25. Stable Cumulative Membership
+
+For same:
+
+```text
+group key
+split seed
+split policy
+```
+
+membership remains stable across cumulative Gold snapshots.
+
+---
+
+# 26. Anomaly Split CLI
+
+Extend existing split command cleanly:
+
+```bash
+python -m aurora_ml.main ml-split \
+    --task anomaly-lightcurve \
+    --snapshot-id <gold-anomaly-snapshot-id> \
+    --seed 42
+```
+
+or an equivalent existing CLI shape.
+
+Do NOT create an unrelated second splitting program.
+
+---
+
+# 27. Split Manifest Storage
+
+Reuse:
+
+```text
+manifests/ml-splits/<split-id>.json
+```
+
+---
+
+# 28. Anomaly Split Identity
+
+Must depend on:
+
+```text
+Gold snapshot ID
+
+anomaly-lightcurve-ml-view-v1
+
+anomaly-group-split-v1
+
+split seed
+
+canonical group assignments
+```
+
+---
+
+# 29. Split Assignment Must Not Depend on Model Score
+
+Do NOT use:
+
+```text
+reconstruction error
+
+feature extremeness
+
+known anomaly status
+```
+
+when assigning TRAIN/VALIDATION groups.
+
+---
+
+# 30. No "Clean" Cohort Filtering From Labels
+
+Do NOT define TRAIN as:
+
+```text
+all rows not marked planet
+
+all rows without TOI
+
+all rows labelled negative
+```
+
+That would make external catalog state influence the supposedly unsupervised
+anomaly model.
+
+---
+
+# 31. V1 Eligibility
+
+A Gold LC anomaly row is eligible when:
+
+```text
+row identity valid
+
+Gold contract valid
+
+all required anomaly-view inputs structurally valid
+```
+
+Optional nullable inputs do not automatically remove the row.
+
+---
+
+# 32. No Candidate Label Filtering
+
+Rows remain eligible regardless of:
+
+```text
+TOI state
+
+candidate training label
+```
+
+if such information is available elsewhere.
+
+Anomaly learning must remain label-independent.
+
+---
+
+# 33. Gold Component
+
+Use:
+
+```text
+gold-anomaly-v1
+    ->
+lightcurve component
+```
+
+Do not train anomaly V1 from:
 
 ```text
 gold-candidate-v1
 ```
 
-Do NOT reintroduce raw time-series dependencies just to train a CNN.
+just because its rows also contain LC features.
 
 ---
 
-# 13. CNN Is Not V1 Critical Path
+# 34. Why Separate Gold Component
 
-Do NOT make Phase 6.2 depend on:
+The anomaly dataset should represent the broader LC population.
 
-```text
-1D LC CNN
-TPF CNN
-```
+Candidate Gold may already have candidate-oriented joins/selection semantics.
 
-A future challenger may derive tensor datasets explicitly.
-
-For V1:
+Keep anomaly training attached to:
 
 ```text
-Gold scalar features
-    ->
-tabular model
+Gold anomaly lightcurve table
 ```
 
 ---
 
-# 14. Optional Baseline
+# 35. Anomaly V1 Feature Philosophy
 
-A simple:
+Prefer generic observation/variability statistics.
+
+Recommended categories:
 
 ```text
-logistic regression
+TIME COVERAGE
+
+CADENCE / GAP STRUCTURE
+
+ROBUST FLUX VARIABILITY
+
+DISTRIBUTION SHAPE
 ```
-
-may be used manually as a diagnostic baseline.
-
-It is NOT required for Phase 6.2 completion.
-
-Do not introduce another full framework merely for a baseline.
 
 ---
 
-# 15. PyTorch
+# 36. Recommended Model Inputs
 
-Use the existing Python ML stack.
+Use actual existing contract names corresponding to:
+
+```text
+n_points
+
+time_span
+
+median_cadence
+
+max_gap
+
+flux_mean
+
+flux_median
+
+flux_std
+
+flux_mad
+
+flux_amplitude
+
+flux_rms
+
+flux_skewness
+
+flux_kurtosis
+```
+
+Only include fields that exist in the frozen Gold V1 contract.
+
+---
+
+# 37. BLS Features in Anomaly V1
 
 Recommended:
 
 ```text
-PyTorch
+exclude BLS-specific candidate features
 ```
 
-for:
+from mandatory `anomaly-lightcurve-ml-view-v1`.
+
+Reason:
 
 ```text
-candidate-tabular-mlp-v1
+anomaly model should first learn generic LC statistical structure
 ```
 
-because later:
+rather than primarily learning:
 
 ```text
-PyTorch
-    ->
-ONNX
-    ->
-Rust ONNX Runtime
-```
-
-is straightforward.
-
----
-
-# 16. Candidate MLP Architecture
-
-Recommended V1:
-
-```text
-input
-  |
-Linear(input_dim, 64)
-  |
-ReLU
-  |
-Linear(64, 32)
-  |
-ReLU
-  |
-Linear(32, 1)
-  |
-logit
-```
-
-Keep it small.
-
----
-
-# 17. No Huge Network
-
-Do NOT use:
-
-```text
-512 -> 512 -> 512 -> ...
-```
-
-for a small tabular dataset.
-
-The model should remain:
-
-```text
-small
-CPU-friendly
-ONNX-friendly
+transit-search strength
 ```
 
 ---
 
-# 18. Dropout
+# 38. If BLS Is Included
 
-Recommended V1:
-
-```text
-no dropout
-```
-
-This keeps:
+Only include BLS fields if the actual implementation deliberately freezes them
+into:
 
 ```text
-training
-export
-runtime parity
+anomaly-lightcurve-ml-view-v1
 ```
 
-simple.
+and documents the scientific reason.
 
-Regularization can come from:
-
-```text
-weight decay
-early stopping
-```
+Do not add them implicitly.
 
 ---
 
-# 19. Activation
+# 39. Identity Fields Are Not Features
 
-Freeze:
-
-```text
-ReLU
-```
-
-for V1.
-
-Do not dynamically switch activation from config without changing model
-semantics/version.
-
----
-
-# 20. Output
-
-Model produces:
+Do NOT feed:
 
 ```text
-one raw logit
-```
+source_product_id
 
-Do NOT put:
-
-```text
-Sigmoid
-```
-
-inside the training model if using:
-
-```text
-BCEWithLogitsLoss
-```
-
-Probability:
-
-```text
-sigmoid(logit)
-```
-
-is derived for metrics/inference.
-
----
-
-# 21. Candidate Model Version
-
-Persist:
-
-```text
-candidate-tabular-mlp-v1
-```
-
-Any architecture-changing modification requires:
-
-```text
-candidate-tabular-mlp-v2
-```
-
-Examples:
-
-```text
-hidden-layer dimensions
-activation
-output semantics
-```
-
----
-
-# 22. Feature Input Contract
-
-Use the exact ordered feature list from:
-
-```text
-candidate-ml-view-v1
-```
-
-Do NOT create a second independent feature list in:
-
-```text
-transit/train.py
-```
-
----
-
-# 23. Feature Order Is Frozen
-
-Given:
-
-```text
-ml-dataset-view-v1
-```
-
-training uses exactly:
-
-```text
-feature_names[0]
-feature_names[1]
-...
-feature_names[N-1]
-```
-
-in that order.
-
----
-
-# 24. No Alphabetical Reordering
-
-Forbidden:
-
-```python
-sorted(feature_names)
-```
-
-unless the contract itself defines sorted order.
-
-Model runtime order is semantic.
-
----
-
-# 25. Leakage Guard
-
-Before training assert that features do NOT contain:
-
-```text
-training_label
+lineage_id
 
 tic_id
-
-source_product_id
 
 sample_id
 
 sector
-
-matched_toi_id
-
-toi_disposition
-
-label_snapshot_id
-
-label_policy_version
 ```
 
-or other fields not classified as:
+into the autoencoder.
+
+---
+
+# 40. Catalog Fields Are Not Features
+
+Do NOT feed:
 
 ```text
-MODEL_INPUT
+TOI ID
+
+TCE ID
+
+training label
+
+catalog disposition
+```
+
+into anomaly V1.
+
+---
+
+# 41. Feature Order
+
+Freeze exact ordered numeric vector in:
+
+```text
+ml-anomaly-view-v1.md
 ```
 
 ---
 
-# 26. Supervised Population
+# 42. Feature Order Is Runtime-Semantic
 
-Candidate supervised training rows:
-
-```text
-POSITIVE
-NEGATIVE
-```
-
-only.
-
----
-
-# 27. Unresolved Rows
-
-Mandatory:
+The same order must later be used by:
 
 ```text
-UNRESOLVED
-    ->
-not used in training loss
-```
+Python training
 
-Do not map to:
+ONNX export
 
-```text
-NEGATIVE
+Rust inference
 ```
 
 ---
 
-# 28. Excluded Rows
+# 43. Anomaly View Fingerprint
+
+Compute deterministic:
 
 ```text
-EXCLUDED
-```
-
-do not participate in supervised training.
-
----
-
-# 29. Label Encoding
-
-Freeze:
-
-```text
-NEGATIVE = 0
-POSITIVE = 1
-```
-
-Persist this mapping in training metadata.
-
----
-
-# 30. Split Manifest Is Authoritative
-
-Training receives:
-
-```text
-split_id
-```
-
-and reconstructs memberships from its immutable group assignments.
-
-Do NOT rerun random splitting.
-
----
-
-# 31. Never Random-Split During Training
-
-Forbidden inside `train.py`:
-
-```python
-train_test_split(...)
-```
-
-Phase 6.1 already froze membership.
-
----
-
-# 32. Same TIC Leakage Protection
-
-Before training assert again:
-
-```text
-TRAIN TIC
-INTERSECT
-VALIDATION TIC
-=
-empty
-```
-
-Defense in depth is worthwhile.
-
----
-
-# 33. Split Compatibility
-
-Verify split manifest references the same:
-
-```text
-gold_snapshot_id
-gold_manifest_sha256
-dataset_view_version
-view_fingerprint
-```
-
-as current training input.
-
----
-
-# 34. Wrong Gold Snapshot
-
-If:
-
-```text
-split.gold_snapshot_id != requested_gold_snapshot_id
-```
-
-fail:
-
-```text
-SPLIT_GOLD_MISMATCH
+SHA256(
+    anomaly-lightcurve-ml-view-v1
+    +
+    exact ordered feature list
+    +
+    eligibility semantics
+    +
+    group semantics
+)
 ```
 
 ---
 
-# 35. Gold Manifest SHA Mismatch
+# 44. Feature Change
 
-If current Gold manifest SHA differs from the split manifest:
+Adding/removing/reordering model inputs requires:
 
 ```text
-fail
+anomaly-lightcurve-ml-view-v2
 ```
 
-Do not train against a different dataset under the same command.
+if the durable model input contract changes.
 
 ---
 
-# 36. Dataset View Mismatch
+# 45. No Feature Selection From Reconstruction Results
 
-If split expects:
+Do not train once, inspect anomaly score, then silently drop features while
+keeping the same V1 view.
 
-```text
-candidate-ml-view-v1
-```
-
-but trainer code requests another view:
-
-```text
-fail
-```
+Feature semantics are versioned.
 
 ---
 
-# 37. Feature Order Mismatch
-
-If:
-
-```text
-split feature_names
-!=
-current view feature_names
-```
-
-fail before training.
-
----
-
-# 38. Train-Only Preprocessing
-
-Mandatory rule:
-
-```text
-fit preprocessing
-    using TRAIN only
-```
-
-Validation may only call:
-
-```text
-transform
-```
-
----
-
-# 39. Forbidden Preprocessing Leakage
-
-Do NOT:
-
-```text
-Gold all rows
-    |
-    v
-fit scaler/imputer
-    |
-    v
-split
-```
-
-and do not:
-
-```text
-TRAIN + VALIDATION
-    |
-    v
-fit preprocessing
-```
-
----
-
-# 40. Preprocessing Version
+# 46. Anomaly Preprocessing Version
 
 Introduce:
 
 ```text
-candidate-preprocess-v1
-```
-
-This freezes:
-
-```text
-nullable numeric handling
-
-boolean encoding
-
-standardization
-
-constant-feature policy
-
-feature order
+anomaly-lightcurve-preprocess-v1
 ```
 
 ---
 
-# 41. Numeric Nullable Inputs
+# 47. TRAIN-Only Preprocessing
 
-For nullable numeric MODEL_INPUT fields:
+Mandatory:
 
 ```text
-fit median on TRAIN only
+fit preprocessing on TRAIN only
 ```
 
-Then:
+VALIDATION:
 
 ```text
-TRAIN null
-VALIDATION null
-```
-
-both use:
-
-```text
-TRAIN median
+transform only
 ```
 
 ---
 
-# 42. Median Imputation
+# 48. Numeric Missing Values
+
+For nullable numeric features:
+
+```text
+TRAIN median imputation
+```
+
+same principle as candidate training.
+
+---
+
+# 49. TRAIN Median
 
 For feature `f`:
 
 ```text
 median_f =
-median(
-    finite TRAIN values for f
-)
+median(finite TRAIN values)
 ```
 
-Never use validation values.
+Validation never affects this value.
 
 ---
 
-# 43. All-Missing TRAIN Feature
+# 50. All-Missing TRAIN Feature
 
-If a selected feature has:
+If one required model-view feature has:
 
 ```text
 100% missing in TRAIN
 ```
 
-there is no train median.
-
-Recommended V1:
+fail:
 
 ```text
-fail with ALL_MISSING_TRAIN_FEATURE
+ALL_MISSING_TRAIN_FEATURE
 ```
 
-Do NOT invent zero silently.
+Do not use validation to rescue it.
 
 ---
 
-# 44. Validation-Only Values
+# 51. Standardization
 
-If:
-
-```text
-TRAIN feature all missing
-VALIDATION feature populated
-```
-
-still fail.
-
-Validation must not determine preprocessing parameters.
-
----
-
-# 45. Boolean Inputs
-
-If a MODEL_INPUT boolean is non-null:
-
-```text
-false -> 0.0
-true  -> 1.0
-```
-
----
-
-# 46. Nullable Boolean
-
-Preferred V1:
-
-```text
-do not include nullable booleans
-```
-
-unless the preprocessing contract explicitly defines them.
-
-Use existing availability flags that are non-null when possible.
-
----
-
-# 47. Categorical Features
-
-Recommended V1 candidate view:
-
-```text
-numeric + boolean features only
-```
-
-Avoid categorical one-hot encoding until there is a concrete scientific need.
-
----
-
-# 48. Standardization
-
-After TRAIN median imputation compute:
+After imputation:
 
 ```text
 mean_f
 std_f
 ```
 
-on TRAIN only.
+fit on TRAIN only.
 
 Transform:
 
 ```text
-z = (x - mean_f) / std_f
+z = (x - mean_f) / scale_f
 ```
 
 ---
 
-# 49. Constant Feature
+# 52. Constant Feature
 
 If:
 
@@ -974,33 +994,49 @@ If:
 std_f == 0
 ```
 
-use deterministic denominator:
+use:
 
 ```text
-scale_f = 1.0
+scale_f = 1
 ```
 
-so transformed values become:
-
-```text
-0
-```
-
-for that constant TRAIN value.
-
-Record diagnostic warning.
+and record diagnostic.
 
 ---
 
-# 50. Near-Zero Scale
+# 53. Validation Must Not Influence Scaling
 
-Use an explicit small numerical tolerance only if required.
-
-Do not have environment-dependent divide-by-nearly-zero behavior.
+Mandatory regression test.
 
 ---
 
-# 51. Preprocessing Artifact
+# 54. No Robust Scaler V1
+
+Use standardization for V1.
+
+Do not introduce several selectable scaler types.
+
+If scaling semantics change:
+
+```text
+anomaly-lightcurve-preprocess-v2
+```
+
+---
+
+# 55. No Categorical Encoding
+
+Anomaly LC V1 input should be:
+
+```text
+numeric fixed-length vector
+```
+
+No one-hot sector/TIC/catalog values.
+
+---
+
+# 56. Preprocessing Artifact
 
 Persist:
 
@@ -1017,395 +1053,295 @@ preprocessing_version
 
 feature_names
 
-label_encoding
-
-numeric_imputation
+imputation medians
 
 means
 
 scales
-
-boolean_encoding
-
-created_from_train_rows
 
 split_id
 ```
 
 ---
 
-# 52. Preprocessing Values Are Model Artifacts
+# 57. No Label Encoding In Anomaly Artifact
 
-Do NOT write learned preprocessing values back into:
+Unlike candidate model, anomaly preprocessing does NOT need:
 
 ```text
-Gold
+POSITIVE -> 1
+NEGATIVE -> 0
 ```
 
-Gold remains unchanged.
+because the model is unsupervised.
 
 ---
 
-# 53. No Missing Indicator V1
+# 58. Score Definition Version
 
-Recommended V1:
-
-```text
-no automatic <feature>__missing columns
-```
-
-Keep runtime vector small.
-
-If later added:
+Introduce:
 
 ```text
-candidate-preprocess-v2
+reconstruction-mse-v1
 ```
 
 ---
 
-# 54. Train/Validation Tensor Construction
+# 59. Anomaly Score
 
-Correct:
+For transformed input:
 
 ```text
-Gold rows
-   |
-   v
-split membership
-   |
-   +--> TRAIN -> fit + transform -> tensor
-   |
-   +--> VALIDATION -> transform only -> tensor
+x
+```
+
+and reconstruction:
+
+```text
+x_hat
+```
+
+define:
+
+```text
+anomaly_score =
+mean(
+    (x - x_hat)^2
+)
+```
+
+over the exact ordered model feature vector.
+
+---
+
+# 60. Score Space
+
+Important:
+
+```text
+anomaly score is computed in standardized feature space
+```
+
+not directly in mixed-unit Gold feature space.
+
+---
+
+# 61. Why Standardized Score
+
+Otherwise features with larger numerical scales could dominate reconstruction
+error for purely unit-related reasons.
+
+---
+
+# 62. Score Is Evidence
+
+Freeze terminology:
+
+```text
+higher score
+    =
+larger reconstruction error
+```
+
+It means:
+
+```text
+more unusual relative to learned TRAIN feature structure
+```
+
+It does NOT mean:
+
+```text
+scientifically confirmed anomaly
 ```
 
 ---
 
-# 55. Tensor Type
+# 63. No Threshold Yet
+
+Do NOT define:
+
+```text
+score > X = anomaly
+```
+
+in Phase 6.3.
+
+Phase 6.4 evaluates/finalizes threshold semantics if needed.
+
+---
+
+# 64. No Percentile Threshold Yet
+
+Do not freeze:
+
+```text
+top 1%
+95th percentile
+3 sigma
+```
+
+as production behavior here.
+
+You may report score distribution diagnostics only.
+
+---
+
+# 65. Autoencoder Version
+
+Freeze:
+
+```text
+anomaly-lightcurve-autoencoder-v1
+```
+
+---
+
+# 66. V1 Architecture
+
+Recommended:
+
+```text
+input_dim
+   |
+Linear(input_dim, 32)
+   |
+ReLU
+   |
+Linear(32, 8)
+   |
+ReLU
+   |
+Linear(8, 32)
+   |
+ReLU
+   |
+Linear(32, input_dim)
+   |
+reconstruction
+```
+
+---
+
+# 67. Latent Representation
+
+V1 latent dimension:
+
+```text
+8
+```
+
+Do not expose latent dimension as a casually mutable runtime parameter while
+keeping the same model version.
+
+---
+
+# 68. Small Model Requirement
+
+The model must remain:
+
+```text
+CPU-friendly
+
+4 GB VRAM friendly
+
+ONNX-friendly
+
+easy to reproduce
+```
+
+---
+
+# 69. No Dropout V1
+
+Recommended:
+
+```text
+no dropout
+```
+
+for simpler deterministic behavior/runtime parity.
+
+---
+
+# 70. No BatchNorm V1
+
+Recommended:
+
+```text
+no BatchNorm
+```
+
+This avoids additional running-state semantics and simplifies tiny-dataset
+training.
+
+---
+
+# 71. Activation
 
 Use:
 
 ```text
-float32
+ReLU
 ```
 
-for model input tensors.
-
-Scientific Gold computation may be float64, but neural-network inference uses
-an explicit float32 vector.
+for V1.
 
 ---
 
-# 56. Label Tensor
+# 72. Output Activation
 
 Use:
 
 ```text
-float32 0/1
+none
 ```
 
-compatible with:
+on reconstruction output.
 
-```text
-BCEWithLogitsLoss
-```
+The network reconstructs standardized real-valued inputs.
 
 ---
 
-# 57. Input Dimension
-
-Validate:
-
-```text
-input_dim == len(feature_names)
-```
-
-for:
-
-```text
-model
-preprocessing
-TRAIN tensor
-VALIDATION tensor
-```
-
----
-
-# 58. No Giant Tensor Requirement
-
-Candidate Gold is scalar/tabular.
-
-Whole TRAIN dataset may fit in RAM for project scale.
-
-However code should not depend on millions of rows fitting into one GPU tensor.
-
----
-
-# 59. DataLoader
-
-Use a simple PyTorch:
-
-```text
-TensorDataset
-+
-DataLoader
-```
-
-or equivalent.
-
----
-
-# 60. Batch Size
-
-Recommended V1 default:
-
-```text
-64
-```
-
-Treat batch size as training configuration.
-
----
-
-# 61. Shuffle
-
-TRAIN DataLoader:
-
-```text
-shuffle=true
-```
-
-with deterministic seeded generator.
-
-VALIDATION:
-
-```text
-shuffle=false
-```
-
----
-
-# 62. Training Seed
-
-Require explicit:
-
-```text
-training_seed
-```
-
-Recommended development default:
-
-```text
-42
-```
-
-but persist actual value.
-
----
-
-# 63. Split Seed != Training Seed
-
-Maintain distinction:
-
-```text
-split_seed
-    controls dataset membership
-
-training_seed
-    controls model optimization randomness
-```
-
----
-
-# 64. Random Seeds
-
-Set training seed for:
-
-```text
-Python random
-
-NumPy
-
-PyTorch
-```
-
-where used.
-
----
-
-# 65. CPU Determinism
-
-Required CI/reference mode:
-
-```text
-device=cpu
-```
-
-Training should be reproducible within the pinned environment.
-
----
-
-# 66. GPU Optional
-
-Optional:
-
-```text
-device=cuda
-```
-
-may be supported.
-
-But:
-
-```text
-CPU correctness is mandatory.
-```
-
----
-
-# 67. 4 GB VRAM Constraint
-
-The tabular MLP must comfortably fit in:
-
-```text
-4 GB VRAM
-```
-
-No GPU memory optimization framework is necessary.
-
----
-
-# 68. Device Is Recorded
-
-Training run manifest records:
-
-```text
-requested_device
-
-actual_device
-```
-
-Example:
-
-```text
-cpu
-cuda
-```
-
----
-
-# 69. CPU Fallback
-
-If:
-
-```text
-device=auto
-```
-
-and CUDA unavailable:
-
-```text
-use CPU
-```
-
-Do not fail training merely because GPU is missing.
-
----
-
-# 70. Explicit CUDA Request
-
-If user/config explicitly requests:
-
-```text
-device=cuda
-```
-
-but CUDA is unavailable:
-
-```text
-fail clearly
-```
-
-Do not silently ignore an explicit requirement.
-
----
-
-# 71. Loss Function
+# 73. Loss
 
 Use:
 
 ```text
-BCEWithLogitsLoss
+MSELoss
 ```
 
----
-
-# 72. Class Imbalance
-
-Do not oversample/undersample in V1.
-
-Use optional loss weighting.
-
-Recommended policy:
+between:
 
 ```text
-balanced-bce-v1
+reconstruction
 ```
 
----
-
-# 73. Positive Weight
-
-For TRAIN only:
+and:
 
 ```text
-pos_weight =
-n_negative_train
-/
-n_positive_train
+standardized input
 ```
-
-Require both classes to exist.
 
 ---
 
-# 74. No Validation-Based Class Weight
+# 74. No Classification Loss
 
-Never include validation counts when computing:
+Do NOT use:
 
 ```text
-pos_weight
+BCE
+
+cross entropy
+
+TOI labels
 ```
+
+for anomaly model training.
 
 ---
 
-# 75. Persist Class Weight
-
-Training run metadata records:
-
-```text
-class_weight_policy
-pos_weight
-train_positive_count
-train_negative_count
-```
-
----
-
-# 76. No SMOTE
-
-Do not add:
-
-```text
-SMOTE
-synthetic minority sampling
-```
-
-to V1.
-
----
-
-# 77. Optimizer
+# 75. Optimizer
 
 Recommended:
 
@@ -1415,287 +1351,407 @@ AdamW
 
 ---
 
-# 78. Default Learning Rate
+# 76. Learning Rate
 
-Recommended:
+Recommended default:
 
 ```text
 1e-3
 ```
 
-Persist in training config.
+Persist actual value.
 
 ---
 
-# 79. Weight Decay
+# 77. Weight Decay
 
 Recommended:
 
 ```text
-1e-4
+1e-5
+```
+
+Persist actual value.
+
+---
+
+# 78. Batch Size
+
+Recommended default:
+
+```text
+64
+```
+
+---
+
+# 79. Maximum Epochs
+
+Recommended:
+
+```text
+150
+```
+
+as a safety ceiling.
+
+---
+
+# 80. Early Stopping
+
+Use:
+
+```text
+VALIDATION reconstruction loss
+```
+
+only.
+
+---
+
+# 81. Early-Stopping Patience
+
+Recommended:
+
+```text
+15
+```
+
+---
+
+# 82. Early-Stopping `min_delta`
+
+Use an explicit small value such as:
+
+```text
+1e-5
 ```
 
 Persist it.
 
 ---
 
-# 80. Maximum Epochs
+# 83. Best Model
 
-Recommended:
+Persist:
 
 ```text
-100
+best validation reconstruction-loss state
 ```
 
-This is a safety ceiling, not a required number of epochs.
+not blindly the final epoch.
 
 ---
 
-# 81. Early Stopping
-
-Implement:
-
-```text
-early stopping
-```
-
-using:
-
-```text
-VALIDATION loss
-```
-
-not golden test.
-
----
-
-# 82. Early-Stopping Patience
-
-Recommended:
-
-```text
-10 epochs
-```
-
-Persist actual setting.
-
----
-
-# 83. Minimum Improvement
-
-Use explicit:
-
-```text
-min_delta
-```
-
-Example:
-
-```text
-1e-5
-```
-
-to avoid floating noise resetting patience forever.
-
----
-
-# 84. Best Epoch
-
-Track:
-
-```text
-best_validation_loss
-
-best_epoch
-```
-
----
-
-# 85. Final Native Model
-
-Durable training artifact should contain:
-
-```text
-best validation-loss state_dict
-```
-
-not automatically the final last epoch.
-
----
-
-# 86. No Golden Test For Early Stopping
+# 84. No Golden Test For Early Stopping
 
 Mandatory:
 
 ```text
-golden-test rows
-    ->
-never loaded in Phase 6.2
+GOLDEN TEST
+```
+
+is not loaded in Phase 6.3.
+
+---
+
+# 85. No Recent Holdout
+
+Same for:
+
+```text
+RECENT HOLDOUT
 ```
 
 ---
 
-# 87. No Recent Holdout
+# 86. DataLoader
 
-Same:
+TRAIN:
 
 ```text
-recent holdout
+shuffle=true
 ```
 
-belongs to Phase 6.4.
+using deterministic seeded generator.
+
+VALIDATION:
+
+```text
+shuffle=false
+```
 
 ---
 
-# 88. Development Validation Metrics
+# 87. Training Seed
 
-Phase 6.2 may report:
+Require explicit:
 
 ```text
-validation_loss
+training_seed
+```
 
+---
+
+# 88. Seed Coverage
+
+Set deterministic seeds for used:
+
+```text
+Python random
+
+NumPy
+
+PyTorch
+```
+
+---
+
+# 89. Split Seed Is Different
+
+Freeze:
+
+```text
+split_seed
+    =
+group membership
+```
+
+```text
+training_seed
+    =
+optimization randomness
+```
+
+---
+
+# 90. CPU Reference Mode
+
+Normal automated validation should use:
+
+```text
+device=cpu
+```
+
+---
+
+# 91. GPU Optional
+
+Support:
+
+```text
+device=auto
+
+device=cuda
+```
+
+only if existing training-device logic already supports this cleanly.
+
+---
+
+# 92. CPU Fallback
+
+For:
+
+```text
+device=auto
+```
+
+CUDA absence:
+
+```text
+use CPU
+```
+
+---
+
+# 93. Explicit CUDA Failure
+
+For:
+
+```text
+device=cuda
+```
+
+with no CUDA:
+
+```text
+fail clearly
+```
+
+---
+
+# 94. No GPU Correctness Dependency
+
+The model must not require GPU to:
+
+```text
+train
+
+evaluate validation reconstruction
+
+serialize
+```
+
+---
+
+# 95. Input Tensor
+
+Use:
+
+```text
+float32
+```
+
+shape:
+
+```text
+[N, input_dim]
+```
+
+---
+
+# 96. Output Tensor
+
+Freeze:
+
+```text
+[N, input_dim]
+```
+
+reconstruction shape.
+
+---
+
+# 97. Score Shape
+
+Per-row anomaly score:
+
+```text
+[N]
+```
+
+---
+
+# 98. Finite Tensor Invariant
+
+After preprocessing:
+
+```text
+NaN = none
+
++Inf = none
+
+-Inf = none
+```
+
+---
+
+# 99. No Whole Historical Dataset Requirement
+
+For current project scale the scalar dataset may fit in memory.
+
+Still avoid coupling correctness to loading arbitrary future history into GPU
+memory at once.
+
+---
+
+# 100. Development Metrics
+
+Phase 6.3 should record:
+
+```text
+best_train_reconstruction_loss
+
+validation_reconstruction_loss
+
+validation_score_mean
+
+validation_score_median
+
+validation_score_p95
+
+validation_score_max
+```
+
+---
+
+# 101. Optional Latent Diagnostics
+
+Do NOT persist giant latent-vector datasets.
+
+At most record small diagnostic statistics if actually useful.
+
+Not required.
+
+---
+
+# 102. No Accuracy
+
+Do NOT report:
+
+```text
+accuracy
+```
+
+for an unsupervised anomaly model without ground-truth anomaly labels.
+
+---
+
+# 103. No PR-AUC Claim
+
+Do NOT report:
+
+```text
 PR-AUC
 
 ROC-AUC
 ```
 
-and diagnostic:
+as model quality unless Phase 6.4 explicitly introduces a valid labeled or
+synthetic evaluation cohort.
+
+---
+
+# 104. No False Scientific Benchmark
+
+Validation reconstruction loss is:
 
 ```text
-precision@0.5
+development reconstruction metric
+```
 
-recall@0.5
+not:
 
-F1@0.5
-
-confusion matrix @ 0.5
+```text
+astronomical anomaly detection accuracy
 ```
 
 ---
 
-# 89. Primary Development Metric
+# 105. Score Distribution Only
 
-Prefer:
-
-```text
-PR-AUC
-```
-
-for imbalanced candidate data.
-
-Do not present accuracy as the primary success metric.
-
----
-
-# 90. Threshold 0.5 Is Diagnostic Only
-
-Phase 6.2 must NOT freeze:
+Phase 6.3 can inspect:
 
 ```text
-production decision threshold = 0.5
+mean
+
+median
+
+p95
+
+max
 ```
 
-A threshold is selected/evaluated later in Phase 6.4.
+of validation scores.
+
+Do not convert them into a final binary decision.
 
 ---
 
-# 91. Do Not Optimize Threshold Here
+# 106. Training Spec Fingerprint
 
-No validation threshold search is required in Phase 6.2.
-
-Keep outputs:
-
-```text
-probabilities
-continuous ranking metrics
-```
-
----
-
-# 92. ROC-AUC Edge Case
-
-If VALIDATION accidentally has one class only, Phase 6.1 should already have
-blocked the split.
-
-Training should still assert class coverage.
-
----
-
-# 93. PR-AUC Definition
-
-Use one explicit implementation from:
-
-```text
-scikit-learn
-```
-
-or the existing metric library.
-
-Document exact metric semantics.
-
----
-
-# 94. Dependency Discipline
-
-If using scikit-learn for metrics:
-
-```text
-declare it in pyproject.toml
-```
-
-Do not rely on undeclared environment packages.
-
----
-
-# 95. Training Configuration
-
-Create one explicit configuration object containing:
-
-```text
-model_version
-
-preprocessing_version
-
-training_seed
-
-batch_size
-
-learning_rate
-
-weight_decay
-
-max_epochs
-
-early_stopping_patience
-
-early_stopping_min_delta
-
-class_weight_policy
-
-device
-```
-
----
-
-# 96. Scientific/Model Config vs Operational Config
-
-Training fingerprint should include model-affecting settings.
-
-Do NOT include:
-
-```text
-log level
-
-MinIO host
-
-temporary directory
-```
-
----
-
-# 97. Training Spec Fingerprint
-
-Compute deterministic:
+Compute:
 
 ```text
 training_spec_fingerprint =
@@ -1704,11 +1760,13 @@ SHA256(
     +
     split_id
     +
-    dataset_view_fingerprint
+    anomaly view fingerprint
     +
-    model_version
+    anomaly-lightcurve-autoencoder-v1
     +
-    preprocessing_version
+    anomaly-lightcurve-preprocess-v1
+    +
+    reconstruction-mse-v1
     +
     training_seed
     +
@@ -1718,73 +1776,50 @@ SHA256(
 
 ---
 
-# 98. Training Spec Fingerprint Is Not Run ID
+# 107. Operational Config Exclusion
 
-Freeze distinction:
+Do not include:
 
 ```text
-training_spec_fingerprint
-    =
-what we intended to train
+MinIO hostname
 
-training_run_id
-    =
-one concrete execution attempt
+log level
+
+temp directory
 ```
+
+in training-spec fingerprint.
 
 ---
 
-# 99. Training Run ID
+# 108. Training Run ID
 
-Use a unique stable identifier for one execution.
-
-Example format:
+Create one unique execution identity:
 
 ```text
-candidate-run-<timestamp>-<short-random>
+anomaly-run-...
 ```
 
-or equivalent.
-
-It need not be scientific/deterministic.
-
----
-
-# 100. Why Run ID Is Not Deterministic
-
-Two executions of the same training specification may legitimately exist:
-
-```text
-same Gold
-same split
-same config
-same seed
-```
-
-but they are still distinct recorded runs.
-
-Their:
+Distinct from:
 
 ```text
 training_spec_fingerprint
 ```
 
-is the same.
-
 ---
 
-# 101. Training Run Storage
+# 109. Training Run Path
 
-Introduce:
+Use:
 
 ```text
 training-runs/
-└── candidate/
+└── anomaly/
     └── <training-run-id>/
-        ├── manifest.json
         ├── model.pt
         ├── preprocessing.json
-        └── metrics.json
+        ├── metrics.json
+        └── manifest.json
 ```
 
 Optional:
@@ -1793,78 +1828,27 @@ Optional:
 history.json
 ```
 
-only if useful.
+only if actually useful.
 
 ---
 
-# 102. Do Not Put Run Artifacts Under Gold
+# 110. Native Model
 
-Wrong:
-
-```text
-gold/snapshots/.../model.pt
-```
-
-Gold remains immutable scientific data.
-
----
-
-# 103. Do Not Register Champion Yet
-
-Phase 6.2 does NOT write:
-
-```text
-models/candidate/champion.json
-```
-
-Registry/promotion is Phase 6.5.
-
----
-
-# 104. Training Run != Registry Model
-
-Freeze:
-
-```text
-training-runs/
-    experimental execution artifacts
-
-models/
-    immutable registry model packages
-```
-
-Phase 6.5 will promote/package eligible training outputs.
-
----
-
-# 105. Native Model Artifact
-
-Save:
+Persist:
 
 ```text
 state_dict
 ```
 
-plus architecture version/config.
-
-Do not rely on serializing an arbitrary live Python class object as the only
-model representation.
-
----
-
-# 106. Native Model Filename
-
-Use:
+plus enough architecture/version metadata to reconstruct:
 
 ```text
-model.pt
+anomaly-lightcurve-autoencoder-v1
 ```
-
-or one explicit equivalent.
 
 ---
 
-# 107. Native Model SHA256
+# 111. Model SHA256
 
 Compute:
 
@@ -1872,11 +1856,9 @@ Compute:
 model_sha256
 ```
 
-for the durable native model file.
-
 ---
 
-# 108. Preprocessing SHA256
+# 112. Preprocessing SHA256
 
 Compute:
 
@@ -1886,33 +1868,55 @@ preprocessing_sha256
 
 ---
 
-# 109. Metrics SHA256
+# 113. Metrics SHA256
 
-Optional but recommended:
+Recommended:
 
 ```text
 metrics_sha256
 ```
 
-for artifact integrity.
-
 ---
 
-# 110. Training Run Manifest
+# 114. Reuse `training-run-v1`
 
-Create:
+Phase 6.2 already introduced:
 
 ```text
 contracts/data/training-run-v1.md
 ```
 
-for the immutable training-run manifest.
+Reuse it for:
+
+```text
+task=astronomical_anomaly_detection
+```
+
+Do NOT create another training-run schema solely for anomaly models.
 
 ---
 
-# 111. Training Run Manifest Fields
+# 115. Training Run Task
 
-Required conceptual fields:
+Use:
+
+```text
+astronomical_anomaly_detection
+```
+
+or one equivalent stable task name.
+
+Do NOT call it:
+
+```text
+alien_detection
+```
+
+---
+
+# 116. Anomaly Training Run Manifest
+
+Persist:
 
 ```text
 schema_version
@@ -1924,6 +1928,8 @@ training_spec_fingerprint
 task
 
 model_version
+
+score_definition_version
 
 gold_snapshot_id
 
@@ -1939,23 +1945,15 @@ dataset_view_fingerprint
 
 feature_names
 
-label_encoding
-
 preprocessing_version
 
 training_seed
 
 hyperparameters
 
-class_weight_policy
-
 train_row_count
 
 validation_row_count
-
-train_class_counts
-
-validation_class_counts
 
 best_epoch
 
@@ -1980,135 +1978,52 @@ completed_at
 
 ---
 
-# 112. Task
+# 117. No Label Snapshot Requirement In Model Semantics
 
-Use explicit:
-
-```text
-candidate_vetting
-```
-
-Do not call it:
+The anomaly model is not supervised by:
 
 ```text
-planet_confirmation
+candidate-label snapshot
 ```
+
+Do not make label policy a model-training dependency.
+
+Gold snapshot may still reference labels globally; anomaly model does not use
+them.
 
 ---
 
-# 113. Model Semantics
+# 118. Manifest Written Last
 
-Document:
-
-```text
-candidate-tabular-mlp-v1
-```
-
-as:
+Required:
 
 ```text
-catalog-supervised candidate vetting classifier
-```
-
-not a scientific confirmation instrument.
-
----
-
-# 114. Runtime Versions
-
-Record useful reproducibility information:
-
-```text
-Python version
-
-PyTorch version
-
-NumPy version
-
-scikit-learn version if used
-```
-
-Optional:
-
-```text
-CUDA runtime
-```
-
-when applicable.
-
----
-
-# 115. Git Revision
-
-If repository Git revision is available, record:
-
-```text
-git_commit
-```
-
-as audit metadata.
-
-Do not fail training solely because `.git` metadata is unavailable in a
-packaged environment.
-
----
-
-# 116. Training History
-
-If stored, keep compact:
-
-```text
-epoch
-
-train_loss
-
-validation_loss
-```
-
-Optional:
-
-```text
-validation_pr_auc
-```
-
-Do not store every batch loss.
-
----
-
-# 117. Training Run Manifest Written Last
-
-Required order:
-
-```text
-train
-  |
-  v
-best native model
-  |
-  v
-preprocessing artifact
-  |
-  v
-metrics artifact
-  |
-  v
+train model
+    |
+    v
+model.pt
+    |
+    v
+preprocessing.json
+    |
+    v
+metrics.json
+    |
+    v
 verify artifacts
-  |
-  v
-manifest.json
+    |
+    v
+training run manifest
 ```
-
-The immutable manifest commits the training run.
 
 ---
 
-# 118. Partial Training Run
+# 119. Partial Run
 
-If:
+Without valid:
 
 ```text
-model.pt exists
-manifest missing
+manifest.json
 ```
 
 the training run is:
@@ -2119,18 +2034,11 @@ NOT COMMITTED
 
 ---
 
-# 119. Training Run Immutability
+# 120. Immutable Completed Run
 
-After:
-
-```text
-manifest.json
-```
-
-exists:
+After manifest commit:
 
 ```text
-do not modify
 model.pt
 
 preprocessing.json
@@ -2140,132 +2048,42 @@ metrics.json
 manifest.json
 ```
 
----
-
-# 120. Rerun Means New Run
-
-A new independent training execution should normally create:
-
-```text
-new training_run_id
-```
-
-even when:
-
-```text
-training_spec_fingerprint
-```
-
-is identical.
+are immutable.
 
 ---
 
-# 121. Training Checkpoint Begins Here
+# 121. No Registry Package Yet
 
-Introduce:
+Do NOT write:
 
 ```text
-checkpoints/ml-training/
+models/anomaly/<model-id>/
 ```
 
-Now it is justified.
+in Phase 6.3.
+
+Phase 6.5 owns registry model packages.
 
 ---
 
-# 122. Checkpoint Layout
+# 122. ML-Training Checkpoint
 
-Recommended:
+Reuse Phase 6.2 checkpoint semantics.
+
+Path:
 
 ```text
 checkpoints/
 └── ml-training/
-    └── candidate/
+    └── anomaly/
         └── <training-run-id>.json
 ```
 
 ---
 
-# 123. Checkpoint Ownership
+# 123. Checkpoint States
 
-Owned by:
-
-```text
-Python candidate trainer
-```
-
-Go/Rust do not write this checkpoint.
-
----
-
-# 124. Checkpoint Purpose
-
-Freeze:
-
-```text
-training checkpoint
-    =
-run-level recovery state
-```
-
-Not:
-
-```text
-model registry
-dataset truth
-distributed lock
-```
-
----
-
-# 125. V1 Does Not Require Mid-Epoch Resume
-
-Important simplification:
-
-```text
-Phase 6.2 checkpoint
-    does NOT promise optimizer-state / gradient resume
-```
-
-If training crashes mid-training:
-
-```text
-restart training deterministically from epoch 0
-```
-
-using the same:
-
-```text
-Gold
-split
-config
-training seed
-```
-
----
-
-# 126. Why No Optimizer Resume
-
-For the small V1 tabular model:
-
-```text
-retraining is cheap
-```
-
-Avoid adding:
-
-```text
-optimizer checkpoint files
-epoch-by-epoch snapshots
-distributed resume logic
-```
-
-prematurely.
-
----
-
-# 127. Training Checkpoint States
-
-Use:
+Reuse:
 
 ```text
 PLANNED
@@ -2288,387 +2106,128 @@ FAILED
 
 ---
 
-# 128. PLANNED
+# 124. Do Not Invent Different State Machine
 
-Means:
+Candidate and anomaly training run recovery have the same run-level semantics.
+
+Reuse the explicit implementation where appropriate.
+
+---
+
+# 125. Checkpoint Is Recovery State
+
+It is NOT:
 
 ```text
-Gold/split/config validated
-training not yet completed
+model registry
+
+split truth
+
+Gold truth
+
+distributed lock
 ```
 
 ---
 
-# 129. TRAINING
+# 126. V1 Resume Semantics
 
-Means:
+No optimizer-state resume required.
+
+Crash during:
 
 ```text
-training execution started
+TRAINING
 ```
 
-It does not mean model weights are durable.
-
----
-
-# 130. ARTIFACT_STORED
-
-Means:
+may restart training from:
 
 ```text
-model.pt
-preprocessing.json
-metrics.json
+epoch 0
 ```
 
-exist and verify.
-
-Training run manifest may not yet be committed.
-
----
-
-# 131. COMPLETED
-
-Means:
+using same:
 
 ```text
-immutable training-run manifest exists
-+
-all referenced artifacts verify
+Gold
+split
+preprocessing fit policy
+training seed
+configuration
 ```
 
 ---
 
-# 132. FAILED
+# 127. Why Restart Is Acceptable
 
-Means:
+The V1 autoencoder is intentionally small.
 
-```text
-latest attempt failed
-```
-
-A failed checkpoint does not make a partial run canonical.
+Do not introduce remote epoch checkpoint complexity without measured need.
 
 ---
 
-# 133. Checkpoint Fields
-
-Conceptual:
-
-```text
-schema_version
-
-training_run_id
-
-training_spec_fingerprint
-
-state
-
-attempts
-
-gold_snapshot_id
-
-split_id
-
-last_error
-
-model_key
-
-preprocessing_key
-
-metrics_key
-
-created_at
-
-updated_at
-```
-
----
-
-# 134. Checkpoint Is Not Proof
+# 128. ARTIFACT_STORED Recovery
 
 If:
+
+```text
+model
+
+preprocessing
+
+metrics
+```
+
+exist and verify:
+
+```text
+commit run manifest
+```
+
+without retraining.
+
+---
+
+# 129. Manifest Repairs Checkpoint
+
+Valid committed run manifest + missing/stale checkpoint:
+
+```text
+repair checkpoint -> COMPLETED
+```
+
+---
+
+# 130. Checkpoint Is Not Proof
 
 ```text
 checkpoint=COMPLETED
 ```
 
-but:
+with missing/corrupt run manifest:
 
 ```text
-training run manifest missing
-```
-
-checkpoint is stale.
-
-Artifact truth wins.
-
----
-
-# 135. Valid Manifest + Missing Checkpoint
-
-If committed training-run manifest is valid:
-
-```text
-reconstruct COMPLETED checkpoint
-```
-
-Do not retrain.
-
----
-
-# 136. ARTIFACT_STORED + Missing Manifest
-
-If model/preprocessing/metrics all verify:
-
-```text
-write deterministic run manifest
-```
-
-then:
-
-```text
-COMPLETED
-```
-
-No retraining.
-
----
-
-# 137. TRAINING + No Final Artifacts
-
-On restart:
-
-```text
-rerun training from epoch 0
-```
-
-with same exact run specification and seed.
-
----
-
-# 138. TRAINING + Partial Artifacts
-
-If only some final artifacts exist:
-
-```text
-do not trust them independently
-```
-
-Recommended V1:
-
-```text
-restart training
-```
-
-and replace only uncommitted same-run temporary/final artifacts after
-explicit validation.
-
----
-
-# 139. Pre-Commit Artifact Rewrite
-
-Before run manifest commit, the same training run may rewrite its own
-incomplete artifacts during recovery.
-
-After manifest commit:
-
-```text
-immutable
+not trusted
 ```
 
 ---
 
-# 140. Completed Artifact Conflict
+# 131. Training CLI
 
-If committed manifest says:
-
-```text
-model_sha256=A
-```
-
-but object is:
-
-```text
-B
-```
-
-return:
-
-```text
-TRAINING_ARTIFACT_INTEGRITY_ERROR
-```
-
-Do not silently retrain under the same committed run ID.
-
----
-
-# 141. Checkpoint Write Before Training
-
-Required:
-
-```text
-write PLANNED
-```
-
-before expensive training begins.
-
----
-
-# 142. Checkpoint Failure Before Training
-
-If checkpoint cannot be persisted:
-
-```text
-fail
-```
-
-Do not start an uncontrolled run.
-
----
-
-# 143. Transition To TRAINING
-
-After all input/config validation succeeds:
-
-```text
-checkpoint -> TRAINING
-```
-
-then begin optimization.
-
----
-
-# 144. Artifact Commit Ordering
-
-After model selection:
-
-```text
-write model.pt
-verify
-
-write preprocessing.json
-verify
-
-write metrics.json
-verify
-
-checkpoint ARTIFACT_STORED
-
-write manifest.json
-verify
-
-checkpoint COMPLETED
-```
-
----
-
-# 145. Checkpoint Failure After Manifest
-
-If training-run manifest is already committed but:
-
-```text
-COMPLETED checkpoint write fails
-```
-
-run is still valid.
-
-Restart:
-
-```text
-manifest -> repair checkpoint
-```
-
----
-
-# 146. Validation Metrics Artifact
-
-`metrics.json` should contain development metrics only.
-
-Recommended:
-
-```text
-train_loss_best_epoch
-
-validation_loss
-
-validation_pr_auc
-
-validation_roc_auc
-
-validation_precision_at_0_5
-
-validation_recall_at_0_5
-
-validation_f1_at_0_5
-
-validation_confusion_matrix_at_0_5
-```
-
----
-
-# 147. Metrics Must Be Clearly Labeled
-
-Do not store:
-
-```text
-pr_auc
-```
-
-without context.
-
-Use:
-
-```text
-validation_pr_auc
-```
-
-because Phase 6.4 later adds final evaluation metrics.
-
----
-
-# 148. No Test Metrics
-
-Phase 6.2 `metrics.json` must NOT contain:
-
-```text
-golden_test_*
-
-recent_holdout_*
-```
-
----
-
-# 149. No Promotion Decision
-
-Do not write:
-
-```text
-promotion_pass=true
-```
-
-in Phase 6.2.
-
-Promotion is Phase 6.5 after Phase 6.4 evaluation.
-
----
-
-# 150. Training Configuration CLI
-
-Add one clear command:
+Add:
 
 ```bash
-python -m aurora_ml.main train-candidate \
-    --snapshot-id <gold-snapshot-id> \
-    --split-id <split-id> \
+python -m aurora_ml.main train-anomaly \
+    --snapshot-id <gold-anomaly-snapshot-id> \
+    --split-id <anomaly-split-id> \
     --training-seed 42
 ```
 
 ---
 
-# 151. Optional Device CLI
+# 132. Optional Device
 
-Support:
+Support existing style:
 
 ```text
 --device cpu
@@ -2678,496 +2237,436 @@ Support:
 --device cuda
 ```
 
-Recommended default:
-
-```text
-cpu
-```
-
-for V1 reproducibility.
-
 ---
 
-# 152. Optional Hyperparameters
-
-Avoid exposing every architecture detail.
-
-Useful explicit options may include:
-
-```text
---learning-rate
---batch-size
---max-epochs
---patience
-```
-
-Model architecture remains tied to:
-
-```text
-candidate-tabular-mlp-v1
-```
-
----
-
-# 153. CLI Output
+# 133. CLI Output
 
 Example:
 
 ```text
-training_run_id:        candidate-run-...
-training_spec:          ...
-gold_snapshot_id:       ...
-split_id:               ...
+training_run_id:          anomaly-run-...
+training_spec:            ...
+gold_snapshot_id:         ...
+split_id:                 ...
 
-model:                  candidate-tabular-mlp-v1
-preprocessing:          candidate-preprocess-v1
-features:               18
+model:                    anomaly-lightcurve-autoencoder-v1
+preprocessing:            anomaly-lightcurve-preprocess-v1
+score_definition:         reconstruction-mse-v1
+
+features:                 ...
 
 TRAIN:
-  rows:                 ...
-  positive:             ...
-  negative:             ...
+  groups:                 ...
+  rows:                   ...
 
 VALIDATION:
-  rows:                 ...
-  positive:             ...
-  negative:             ...
+  groups:                 ...
+  rows:                   ...
 
-best_epoch:             ...
-validation_loss:        ...
-validation_pr_auc:      ...
-validation_roc_auc:     ...
+best_epoch:               ...
+validation_loss:          ...
+validation_score_mean:    ...
+validation_score_median:  ...
+validation_score_p95:     ...
 
-state:                  COMPLETED
+state:                    COMPLETED
 ```
 
 ---
 
-# 154. No Planet Verdict In CLI
+# 134. No "Detected N Anomalies"
 
 Do not output:
 
 ```text
-planet confirmed
+detected 42 anomalies
 ```
 
-Training metrics describe classifier behavior only.
+without a frozen threshold/evaluation policy.
 
----
-
-# 155. Feature Null Summary Before Training
-
-Log/report:
+Use:
 
 ```text
-missing fraction per model input
+score distribution
 ```
 
-for:
+only.
+
+---
+
+# 135. No Prediction Persistence
+
+Do NOT create:
 
 ```text
-TRAIN
-
-VALIDATION
+predictions/
 ```
 
-before preprocessing.
+during Phase 6.3.
 
 ---
 
-# 156. Train Median Testability
+# 136. No Row-Level Scores In MinIO Yet
 
-Preprocessing fit should be a pure/testable function such as:
+Validation scores may remain:
 
-```python
-fit_candidate_preprocessing(train_rows, feature_names)
+```text
+in memory
 ```
+
+for metric calculation.
+
+Do not commit them as production anomaly results.
 
 ---
 
-# 157. Transform Function
+# 137. Why No Scores Yet
+
+Durable prediction schema belongs to the inference/prediction serving stage.
+
+Training-run metrics are enough here.
+
+---
+
+# 138. Pure Preprocessing Fit
 
 Preferred:
 
 ```python
-transform_candidate_rows(rows, preprocessing)
+fit_anomaly_preprocessing(
+    train_rows,
+    feature_names,
+)
 ```
 
-The transform function must NOT refit anything.
+No MinIO I/O inside the math.
 
 ---
 
-# 158. Model Construction Function
+# 139. Pure Transform
 
 Preferred:
 
 ```python
-build_candidate_model(input_dim)
+transform_anomaly_rows(
+    rows,
+    preprocessing,
+)
 ```
 
-or equivalent using:
-
-```text
-candidate-tabular-mlp-v1
-```
+Must never refit.
 
 ---
 
-# 159. Training Loop Function
+# 140. Pure Score Function
 
-Keep independently testable:
+Preferred:
 
 ```python
-train_candidate_model(...)
+reconstruction_mse(
+    input_tensor,
+    reconstructed_tensor,
+)
 ```
 
-Do not mix MinIO I/O into every optimization step.
+This definition must later be reused for ONNX/Rust parity.
 
 ---
 
-# 160. Orchestration Boundary
+# 141. Model Builder
 
-Higher-level function may:
+Preferred:
+
+```python
+build_anomaly_model(input_dim)
+```
+
+returning:
 
 ```text
-load Gold
-load split
-validate
+anomaly-lightcurve-autoencoder-v1
+```
+
+---
+
+# 142. Training Loop
+
+Preferred:
+
+```python
+train_anomaly_model(...)
+```
+
+No MinIO operation inside batch optimization.
+
+---
+
+# 143. Orchestrator
+
+Higher-level `train.py` may:
+
+```text
+validate Gold/split
+
+load rows
+
 fit preprocessing
+
+construct tensors
+
 train
-evaluate validation
+
+validate reconstruction
+
 write artifacts
+
 update checkpoint
 ```
 
-Scientific/data math remains testable separately.
-
 ---
 
-# 161. No Generic Repository Layer
+# 144. No Generic Trainer Factory
 
-Do not create a database-style repository abstraction for four MinIO objects.
+Do not make candidate/anomaly training share a giant polymorphic framework.
 
-Use existing storage primitives.
-
----
-
-# 162. No Global `utils.py`
-
-Keep:
+Small low-level helpers may be reused only where semantics are truly identical:
 
 ```text
-seed setup
-preprocessing
-candidate training
+artifact hashing
+
+checkpoint object I/O
+
+seed initialization
 ```
 
-under their responsible module.
-
 ---
 
-# 163. Numerical Stability
+# 145. Candidate/Anomaly Preprocessing
 
-Before tensor conversion verify transformed values are finite.
-
-After preprocessing:
+Do NOT automatically force them into one ambiguous:
 
 ```text
-NaN = 0 expected
-Inf = 0 expected
+preprocess_ml()
 ```
 
-for candidate model inputs.
+Their version identities are different:
+
+```text
+candidate-preprocess-v1
+
+anomaly-lightcurve-preprocess-v1
+```
 
 ---
 
-# 164. Preprocessing Integrity
+# 146. No Global `utils.py`
 
-Assert:
+Keep anomaly math in:
 
 ```text
-len(medians)
-==
-len(means)
-==
-len(scales)
+anomaly/train.py
+
+anomaly/model.py
+```
+
+or existing clear ownership modules.
+
+---
+
+# 147. Model Input Integrity
+
+Before training:
+
+```text
+input_dim
 ==
 len(feature_names)
 ```
 
 ---
 
-# 165. Model Input Integrity
+# 148. Reconstruction Integrity
 
-Every batch must have shape:
+For every batch:
 
 ```text
-[N, input_dim]
+reconstruction.shape
+==
+input.shape
 ```
 
 ---
 
-# 166. Output Integrity
+# 149. Score Integrity
 
-Model output expected:
-
-```text
-[N]
-```
-
-or:
+Every validation row gets exactly:
 
 ```text
-[N, 1]
-```
-
-Choose one and freeze the convention.
-
-Recommended:
-
-```text
-[N]
-```
-
-after squeezing only the last singleton dimension.
-
----
-
-# 167. Probability Range
-
-For metrics:
-
-```text
-probability = sigmoid(logit)
-```
-
-Verify:
-
-```text
-0 <= probability <= 1
+one finite reconstruction score
 ```
 
 ---
 
-# 168. No Prediction Persistence Yet
+# 150. No Negative Score
 
-Do NOT store validation predictions under:
+MSE score must satisfy:
 
 ```text
-predictions/
+score >= 0
 ```
 
-in Phase 6.2.
-
-Metrics can be calculated in memory.
+within numerical tolerance.
 
 ---
 
-# 169. Optional Validation Prediction Debugging
+# 151. Model Output Is Reconstruction
 
-If tests need predictions, use:
+Do not make V1 ONNX-facing semantics:
 
 ```text
-temporary/local test output
+single anomaly probability
 ```
 
-not durable production prediction artifacts.
+The model reconstructs input.
 
----
-
-# 170. No Threshold Artifact Yet
-
-Do not persist a production:
+Later runtime computes:
 
 ```text
-decision_threshold
-```
-
-in preprocessing or training-run manifest.
-
-Phase 6.4 owns threshold evaluation/freeze.
-
----
-
-# 171. Reproducibility Scope
-
-CPU test environment should verify:
-
-```text
-same Gold
-same split
-same training configuration
-same training seed
-same package versions
-```
-
-produces reproducible:
-
-```text
-preprocessing parameters
-
-training history / best epoch
-
-validation metrics
-
-native model logical behavior
+reconstruction-mse-v1
 ```
 
 ---
 
-# 172. Bitwise Weight Equality
+# 152. Why No Probability
 
-If PyTorch version/environment guarantees identical CPU result, exact
-state-dict hashes may match.
+Unsupervised reconstruction error is not inherently calibrated to:
 
-Do not make the entire architecture depend on cross-device bitwise equality.
+```text
+P(anomaly)
+```
+
+Do not mislabel it.
 
 ---
 
-# 173. GPU Numeric Variation
+# 153. Unit Test — Dataset View Feature List
 
-GPU runs may differ slightly.
-
-Record:
+Verify exact:
 
 ```text
-device
-
-runtime versions
-
-model SHA
+anomaly-lightcurve-ml-view-v1
 ```
 
-and evaluate within numerical tolerance.
+feature order.
 
 ---
 
-# 174. Training Spec vs Result
+# 154. Unit Test — Identity Exclusion
 
-Same:
-
-```text
-training_spec_fingerprint
-```
-
-may theoretically produce different native model bytes on different
-hardware/runtime implementations.
-
-That is why:
+Verify no:
 
 ```text
-run ID
-model SHA
-runtime metadata
+tic_id
+
+sector
+
+source_product_id
+
+sample_id
 ```
 
-are all preserved.
+appears in model tensor.
 
 ---
 
-# 175. Unit Test — MLP Shape
+# 155. Unit Test — Label Independence
 
-Input:
-
-```text
-batch=4
-features=10
-```
+Provide same LC Gold features with different external candidate label metadata.
 
 Expected:
 
 ```text
-output shape = [4]
+same anomaly input vector
 ```
 
 ---
 
-# 176. Unit Test — MLP Finite Output
+# 156. Unit Test — BLS Exclusion
 
-Random deterministic finite tensor:
+If V1 contract excludes BLS:
 
 ```text
-output logits finite
+bls_period
+
+bls_depth
+
+bls_power
 ```
+
+must not appear in anomaly feature vector.
 
 ---
 
-# 177. Unit Test — Feature Order
+# 157. Unit Test — Group Key TIC
 
-Build known row.
-
-Verify tensor value positions exactly match:
-
-```text
-candidate-ml-view-v1 feature order
-```
+Same as Phase 6.1 target grouping.
 
 ---
 
-# 178. Unit Test — Label Encoding
-
-Verify:
+# 158. Unit Test — Multi-Sector TIC
 
 ```text
-NEGATIVE -> 0.0
-POSITIVE -> 1.0
+TIC 123 sector 10
+TIC 123 sector 11
 ```
 
-No unresolved encoding.
+must stay in the same anomaly split.
 
 ---
 
-# 179. Unit Test — UNRESOLVED Exclusion
+# 159. Unit Test — Split Determinism
 
-Mandatory.
+Same:
+
+```text
+Gold
+view
+policy
+seed
+```
+
+produces same assignments.
 
 ---
 
-# 180. Unit Test — EXCLUDED Exclusion
+# 160. Unit Test — Cumulative Membership
 
-Mandatory.
-
----
-
-# 181. Unit Test — Train Median
-
-TRAIN:
-
-```text
-feature = [1, null, 3]
-```
-
-Expected median:
-
-```text
-2
-```
+Existing groups retain split membership across cumulative anomaly Gold snapshots.
 
 ---
 
-# 182. Unit Test — Validation Does Not Influence Median
+# 161. Unit Test — No Label Influence On Split
 
-TRAIN:
-
-```text
-[1, 3]
-```
-
-VALIDATION:
-
-```text
-[100000]
-```
-
-Expected TRAIN median:
-
-```text
-2
-```
+Changing candidate label metadata does not move the TIC between TRAIN and
+VALIDATION.
 
 ---
 
-# 183. Unit Test — All Missing TRAIN
+# 162. Unit Test — Train Median
+
+Known TRAIN values.
+
+Verify exact imputation median.
+
+---
+
+# 163. Unit Test — Validation Median Leakage
+
+Extreme validation values must not affect TRAIN median.
+
+---
+
+# 164. Unit Test — All Missing TRAIN
 
 Expected:
 
@@ -3177,9 +2676,7 @@ ALL_MISSING_TRAIN_FEATURE
 
 ---
 
-# 184. Unit Test — Standardization
-
-Known TRAIN values.
+# 165. Unit Test — Standardization
 
 Verify:
 
@@ -3189,140 +2686,202 @@ scale
 transformed values
 ```
 
----
-
-# 185. Unit Test — Validation Does Not Influence Mean/Std
-
-Use extreme validation values.
-
-Expected preprocessing parameters unchanged.
+from TRAIN only.
 
 ---
 
-# 186. Unit Test — Constant Feature
+# 166. Unit Test — Validation Scale Leakage
 
-TRAIN:
+Validation changes must not affect preprocessing parameters.
 
-```text
-[5, 5, 5]
-```
+---
+
+# 167. Unit Test — Constant Feature
 
 Expected:
 
 ```text
-mean = 5
-scale = 1
-transformed = 0
+scale=1
 ```
+
+policy.
 
 ---
 
-# 187. Unit Test — Boolean Encoding
-
-Verify:
-
-```text
-false -> 0
-true -> 1
-```
-
----
-
-# 188. Unit Test — Preprocessing Finite Output
-
-After imputation/scaling:
-
-```text
-no NaN
-no Inf
-```
-
----
-
-# 189. Unit Test — Preprocessing Serialization
+# 168. Unit Test — Preprocessing Serialization
 
 Round-trip:
 
 ```text
 feature order
 
-median
+medians
 
-mean
+means
 
-scale
+scales
 
-boolean policy
+preprocessing version
 
-label encoding
-```
-
-must remain exact.
-
----
-
-# 190. Unit Test — Preprocessing Version
-
-Artifact contains:
-
-```text
-candidate-preprocess-v1
+split ID
 ```
 
 ---
 
-# 191. Unit Test — Train-Only Class Weight
+# 169. Unit Test — No Label Encoding
 
-TRAIN:
+Anomaly preprocessing artifact should not contain candidate binary label
+mapping unless a shared serialization contract requires an explicitly unused
+field.
+
+Preferred:
 
 ```text
-negative=90
-positive=10
+no label encoding field
+```
+
+---
+
+# 170. Unit Test — Finite Preprocessing
+
+After transform:
+
+```text
+no NaN
+
+no Inf
+```
+
+---
+
+# 171. Unit Test — Autoencoder Shape
+
+Input:
+
+```text
+[4, input_dim]
+```
+
+Expected reconstruction:
+
+```text
+[4, input_dim]
+```
+
+---
+
+# 172. Unit Test — Finite Reconstruction
+
+Deterministic finite input:
+
+```text
+finite output
+```
+
+---
+
+# 173. Unit Test — Score Exactness
+
+Example:
+
+```text
+x     = [0, 2]
+x_hat = [0, 0]
 ```
 
 Expected:
 
 ```text
-pos_weight=9
+score = (0^2 + 2^2) / 2 = 2
 ```
-
-Validation class count must not affect it.
 
 ---
 
-# 192. Unit Test — Class Weight Invalid
+# 174. Unit Test — Score Nonnegative
 
-If TRAIN lacks one class:
-
-```text
-fail
-```
-
-Phase 6.1 should prevent this, but trainer checks again.
+Mandatory.
 
 ---
 
-# 193. Unit Test — Deterministic DataLoader
+# 175. Unit Test — Score Per Row
 
-Same:
+Batch score shape:
 
 ```text
-training_seed
+[N]
 ```
-
-produces same TRAIN batch ordering in CPU tests.
 
 ---
 
-# 194. Unit Test — Training Seed Change
+# 176. Unit Test — Score Version
 
-Changing:
+Training metadata records:
 
 ```text
-training_seed
+reconstruction-mse-v1
 ```
 
-must change:
+---
+
+# 177. Unit Test — Model Version
+
+Artifact records:
+
+```text
+anomaly-lightcurve-autoencoder-v1
+```
+
+---
+
+# 178. Unit Test — Preprocessing Version
+
+Artifact records:
+
+```text
+anomaly-lightcurve-preprocess-v1
+```
+
+---
+
+# 179. Unit Test — Loss Improvement
+
+Train on a tiny structured synthetic inlier dataset.
+
+Expected:
+
+```text
+reconstruction loss decreases
+```
+
+---
+
+# 180. Unit Test — Early Stopping
+
+Controlled no-improvement case respects:
+
+```text
+patience
+min_delta
+```
+
+---
+
+# 181. Unit Test — Best Epoch Restore
+
+Final persisted model corresponds to best validation reconstruction loss.
+
+---
+
+# 182. Unit Test — Training Seed
+
+Same seed/config in CPU test produces reproducible training behavior within
+frozen tolerance.
+
+---
+
+# 183. Unit Test — Seed Change
+
+Changing training seed changes:
 
 ```text
 training_spec_fingerprint
@@ -3330,348 +2889,255 @@ training_spec_fingerprint
 
 ---
 
-# 195. Unit Test — Split Seed Does Not Become Training Seed
+# 184. Unit Test — Hyperparameter Change
 
-Trainer uses split membership as stored.
-
-It does not reinterpret:
-
-```text
-split_seed
-```
-
-as PyTorch initialization seed.
-
----
-
-# 196. Unit Test — Training Spec Stability
-
-Same canonical config:
-
-```text
-same training_spec_fingerprint
-```
-
----
-
-# 197. Unit Test — Hyperparameter Change
-
-Change:
+Changing:
 
 ```text
 learning_rate
 ```
 
-Expected:
+changes training-spec fingerprint.
+
+---
+
+# 185. Unit Test — Score Definition Change
+
+Simulated:
 
 ```text
-training_spec_fingerprint changes
+reconstruction-mae-v2
 ```
 
----
+must change training specification/model runtime semantics.
 
-# 198. Unit Test — Model Version Change
-
-Expected fingerprint change.
+Do not silently change score formula under V1.
 
 ---
 
-# 199. Unit Test — Preprocessing Version Change
-
-Expected fingerprint change.
-
----
-
-# 200. Unit Test — Log Level Independence
+# 186. Unit Test — Operational Config Independence
 
 Changing:
 
 ```text
 log level
+
+MinIO endpoint
 ```
 
-must NOT change training-spec fingerprint.
+does not change training-spec fingerprint.
 
 ---
 
-# 201. Unit Test — MinIO Endpoint Independence
+# 187. Unit Test — No Labels In Loss
 
-Operational hostname must not change training-spec fingerprint.
+Inject arbitrary candidate labels.
 
----
-
-# 202. Unit Test — Loss Decreases
-
-Use a tiny linearly separable synthetic training fixture.
-
-Expected training:
-
-```text
-loss improves
-```
-
-without requiring unrealistic perfect performance.
+Loss must remain identical for the same numeric batch/model state.
 
 ---
 
-# 203. Unit Test — Early Stopping
+# 188. Unit Test — Validation Score Summary
 
-Synthetic/controlled history should stop after:
-
-```text
-patience
-```
-
-without improvement.
-
----
-
-# 204. Unit Test — Best Epoch Restore
-
-Ensure final:
-
-```text
-model.pt
-```
-
-contains the best validation-loss state, not necessarily final epoch.
-
----
-
-# 205. Unit Test — Metric Computation
-
-Known labels/probabilities.
+Known score vector.
 
 Verify:
 
 ```text
-PR-AUC
+mean
 
-ROC-AUC
+median
 
-precision
+p95
 
-recall
-
-F1
-
-confusion matrix
+max
 ```
 
 ---
 
-# 206. Unit Test — Threshold Is Diagnostic
+# 189. Unit Test — No Threshold
 
-Verify validation metric code may calculate at:
+Ensure training artifacts do NOT contain:
 
 ```text
-0.5
+anomaly_threshold
 ```
-
-but training artifact does not mark it as a production threshold.
 
 ---
 
-# 207. Unit Test — No Golden Test Read
+# 190. Synthetic Outlier Mechanical Test
 
-Training loader should recognize only:
+Train a tiny autoencoder on simple clustered synthetic TRAIN data.
+
+Compare:
 
 ```text
-TRAIN
-VALIDATION
+normal-like validation point
+
+extreme synthetic point
 ```
 
-from Phase 6.1 development split.
-
----
-
-# 208. Unit Test — Split Gold Mismatch
-
-Wrong Gold snapshot:
+Expected:
 
 ```text
-SPLIT_GOLD_MISMATCH
+extreme point generally receives higher reconstruction error
 ```
 
----
+Use this only as a mechanical sanity test.
 
-# 209. Unit Test — Gold Manifest SHA Mismatch
-
-Expected failure.
+Do NOT claim astronomical benchmark performance from it.
 
 ---
 
-# 210. Unit Test — View Fingerprint Mismatch
+# 191. No Synthetic Outliers In Training
 
-Expected failure.
+The mechanical outlier fixture is evaluation/test-only.
 
----
-
-# 211. Unit Test — Feature Order Mismatch
-
-Expected failure before preprocessing/model creation.
+Do not inject it into TRAIN.
 
 ---
 
-# 212. Unit Test — Same TIC Disjointness
+# 192. Unit Test — Training Run Manifest
 
-Trainer preflight revalidates:
+Round-trip anomaly run through:
 
 ```text
-TRAIN TIC ∩ VALIDATION TIC = empty
+training-run-v1
 ```
 
 ---
 
-# 213. Unit Test — Training Run Manifest
+# 193. Unit Test — Task Field
 
-Round-trip all important fields.
-
----
-
-# 214. Unit Test — Training Run Manifest Version
-
-Unknown schema version must fail clearly.
-
----
-
-# 215. Unit Test — Model SHA
-
-Verify stored:
+Expected:
 
 ```text
-model_sha256
+task=astronomical_anomaly_detection
 ```
 
-matches bytes.
+---
+
+# 194. Unit Test — No Label Policy Dependency
+
+Anomaly run manifest should not imply candidate-label policy is part of
+anomaly loss semantics.
 
 ---
 
-# 216. Unit Test — Preprocessing SHA
+# 195. Unit Test — Artifact SHA
 
-Same.
-
----
-
-# 217. Unit Test — Artifact Verification
-
-Corrupt:
+Verify:
 
 ```text
-model.pt
-```
+model SHA
 
-Expected integrity failure.
+preprocessing SHA
+
+metrics SHA
+```
 
 ---
 
-# 218. Unit Test — Checkpoint Serialization
+# 196. Unit Test — Checkpoint Serialization
 
-Round-trip:
+Reuse:
 
 ```text
 PLANNED
+
 TRAINING
+
 ARTIFACT_STORED
+
 COMPLETED
+
 FAILED
 ```
 
 ---
 
-# 219. Unit Test — Checkpoint Unknown Version
+# 197. Unit Test — Checkpoint Recovery
 
-Expected clear failure.
+Valid run manifest repairs stale/missing checkpoint.
 
 ---
 
-# 220. Unit Test — COMPLETED Is Not Proof
+# 198. Unit Test — Checkpoint Not Proof
 
-Checkpoint says:
-
-```text
-COMPLETED
-```
-
-manifest absent:
+`COMPLETED` checkpoint with missing run manifest:
 
 ```text
-do not accept completed run
+not trusted
 ```
 
 ---
 
-# 221. Unit Test — Manifest Repairs Checkpoint
+# 199. Integration — Stage 5 Anomaly Gold
 
-Valid immutable run manifest + missing checkpoint:
+Use a committed:
 
 ```text
-repair -> COMPLETED
+gold-anomaly-v1
+```
+
+fixture.
+
+Build:
+
+```text
+anomaly-lightcurve-ml-view-v1
 ```
 
 ---
 
-# 222. Unit Test — ARTIFACT_STORED Recovery
+# 200. Integration — Anomaly Split
 
-Valid:
-
-```text
-model
-preprocessing
-metrics
-```
-
-manifest absent.
-
-Expected:
+Create/reuse deterministic:
 
 ```text
-commit manifest
-COMPLETED
+anomaly-group-split-v1
 ```
 
-without retraining.
+split manifest.
+
+Verify target disjointness.
 
 ---
 
-# 223. Unit Test — TRAINING Recovery
+# 201. Integration — Train Anomaly
 
-No final valid artifact:
-
-```text
-restart training from epoch 0
-```
-
----
-
-# 224. Integration — Stage 6.1 Split
-
-Use:
+Flow:
 
 ```text
-committed candidate Gold
-+
-immutable ml-split-v1
-```
-
-Train one tiny candidate model.
-
-Expected:
-
-```text
-COMPLETED training run
+Gold anomaly snapshot
+      |
+      v
+anomaly split
+      |
+      v
+TRAIN-only preprocessing
+      |
+      v
+autoencoder
+      |
+      v
+validation reconstruction
+      |
+      v
+COMPLETED run
 ```
 
 ---
 
-# 225. Integration — Gold-Only Reads
+# 202. Integration — Gold-Only Access
 
 Instrument storage.
 
-During complete candidate training:
+During entire training:
 
 ```text
 Bronze reads = 0
+
 Silver reads = 0
 ```
 
@@ -3679,69 +3145,58 @@ Mandatory.
 
 ---
 
-# 226. Integration — ClickHouse Offline
+# 203. Integration — ClickHouse Offline
 
 Stop ClickHouse.
-
-Candidate training must succeed.
-
----
-
-# 227. Integration — NATS Offline
-
-Stop NATS.
-
-Candidate training must succeed.
-
----
-
-# 228. Integration — No External Network
-
-Disable internet.
-
-Training must succeed.
-
----
-
-# 229. Integration — CPU Only
-
-Hide CUDA.
 
 Training succeeds.
 
 ---
 
-# 230. Integration — Optional CUDA
+# 204. Integration — NATS Offline
 
-If CUDA exists locally:
+Stop NATS.
 
-```text
-small manual test
-```
-
-may verify candidate model fits within available VRAM.
-
-Do not require CUDA in CI.
+Training succeeds.
 
 ---
 
-# 231. Integration — RAW_DELETED Provenance
+# 205. Integration — No Network
 
-Use Gold derived from:
+Disable external network.
 
-```text
-Bronze RAW_DELETED
-```
-
-Training must be identical in architecture to any other Gold snapshot.
-
-No raw recovery.
+Training succeeds.
 
 ---
 
-# 232. Integration — Validation Leakage Test
+# 206. Integration — CPU Only
 
-Change only VALIDATION values drastically.
+CUDA hidden/unavailable.
+
+Training succeeds.
+
+---
+
+# 207. Integration — RAW_DELETED Provenance
+
+Use Gold derived from Stage 4 state where Bronze has been safely evicted.
+
+Training succeeds with no special-case code.
+
+---
+
+# 208. Integration — Candidate Label Change
+
+Create equivalent anomaly Gold numeric features with different candidate label
+state elsewhere.
+
+Expected anomaly model input data unchanged.
+
+---
+
+# 209. Integration — Validation Leakage
+
+Change validation feature distribution drastically.
 
 Expected:
 
@@ -3749,47 +3204,26 @@ Expected:
 TRAIN preprocessing parameters unchanged
 ```
 
-Model optimization may change because validation/early stopping changes, which
-is expected.
+Training best epoch may change because validation loss changes; that is valid.
 
 ---
 
-# 233. Integration — Unresolved Rows
+# 210. Integration — Same Training Specification
 
-Add many:
-
-```text
-UNRESOLVED
-```
-
-Gold rows.
-
-Expected:
-
-```text
-TRAIN row count unchanged
-VALIDATION supervised row count unchanged
-```
-
-for the same Phase 6.1 split inputs.
-
----
-
-# 234. Integration — Natural Class Distribution
-
-Verify no duplicate source IDs are introduced by candidate training.
-
----
-
-# 235. Integration — Same Training Specification
-
-Run two independent CPU training runs with:
+Two independent CPU runs with:
 
 ```text
 same Gold
+
 same split
+
+same view
+
+same model/preprocessing versions
+
+same hyperparameters
+
 same training seed
-same runtime
 ```
 
 Expected:
@@ -3798,48 +3232,49 @@ Expected:
 same training_spec_fingerprint
 ```
 
-and reproducible metrics within frozen tolerance.
+and reproducible behavior within documented tolerance.
 
 ---
 
-# 236. Integration — Different Training Seed
+# 211. Integration — Different Training Seed
 
 Expected:
 
 ```text
 same split
-different training_spec_fingerprint
-different training run
+
+different training spec fingerprint
 ```
 
-No dataset membership change.
+No membership change.
 
 ---
 
-# 237. Integration — Different Split
+# 212. Integration — Cumulative Gold
 
-Expected:
+Train against:
 
 ```text
-new split_id
-new training_spec_fingerprint
+Gold anomaly snapshot A
 ```
 
----
-
-# 238. Integration — Different Gold Snapshot
-
-Expected:
+then:
 
 ```text
-new training specification
+Gold anomaly snapshot B
 ```
 
-No accidental use of old split.
+Existing groups keep deterministic split membership.
+
+Training specification changes because:
+
+```text
+gold_snapshot_id changes
+```
 
 ---
 
-# 239. Crash Test — Before Training
+# 213. Crash Test — PLANNED
 
 Crash after:
 
@@ -3849,79 +3284,71 @@ PLANNED
 
 Restart.
 
-Expected:
-
-```text
-start training normally
-```
+Expected normal training.
 
 ---
 
-# 240. Crash Test — During Training
+# 214. Crash Test — TRAINING
 
-Kill process while state:
-
-```text
-TRAINING
-```
+Kill during optimization.
 
 Restart same run.
 
 Expected:
 
 ```text
-retrain from epoch 0
+restart from epoch 0
 ```
 
 No optimizer-state resume required.
 
 ---
 
-# 241. Crash Test — Model Written Before Preprocessing
+# 215. Crash Test — Model Written Only
 
-Run remains uncommitted.
-
-Restart safely retrains/rebuilds final artifact set.
-
----
-
-# 242. Crash Test — All Artifacts Before ARTIFACT_STORED
-
-Restart:
+Partial artifact set:
 
 ```text
-verify artifact set
+run remains uncommitted
 ```
 
-If exact and valid, recovery may progress without retraining.
+V1 may restart training.
 
 ---
 
-# 243. Crash Test — ARTIFACT_STORED Before Manifest
+# 216. Crash Test — All Artifacts Before Checkpoint
 
-Mandatory.
+If final exact artifact set exists and verifies:
 
-Restart:
+```text
+recover without unnecessary retraining
+```
+
+where implementation can prove completeness.
+
+---
+
+# 217. Crash Test — ARTIFACT_STORED Before Manifest
+
+Mandatory:
 
 ```text
 verify artifacts
 
-write manifest
+commit manifest
 
 COMPLETED
 ```
 
 ---
 
-# 244. Crash Test — Manifest Before COMPLETED
+# 218. Crash Test — Manifest Before COMPLETED
 
-Mandatory.
-
-Restart:
+Mandatory:
 
 ```text
-verify manifest/artifacts
-
+manifest truth
+    ->
 repair checkpoint
 ```
 
@@ -3929,12 +3356,13 @@ No retraining.
 
 ---
 
-# 245. MinIO Failure During Model Upload
+# 219. MinIO Model Upload Failure
 
 Expected:
 
 ```text
-no committed training run
+no committed anomaly training run
+
 checkpoint FAILED
 ```
 
@@ -3942,90 +3370,91 @@ Gold/split unchanged.
 
 ---
 
-# 246. MinIO Failure During Manifest PUT
+# 220. MinIO Manifest Failure
 
 Artifacts may exist.
 
-Run remains:
+Without manifest:
 
 ```text
-uncommitted
+run uncommitted
 ```
 
-Recovery must be possible.
+Recovery is possible.
 
 ---
 
-# 247. Model Artifact Corruption
+# 221. Committed Model Corruption
 
-After committed run, corrupt model.
+Modify:
+
+```text
+model.pt
+```
+
+after committed manifest.
 
 Expected:
 
 ```text
-integrity failure
+TRAINING_ARTIFACT_INTEGRITY_ERROR
 ```
 
-Do not silently regenerate under same committed run ID.
+No silent same-ID repair.
 
 ---
 
-# 248. Preprocessing Artifact Corruption
+# 222. Preprocessing Corruption
 
-Same rule.
-
----
-
-# 249. Training Run Manifest Corruption
-
-Checksum/parse failure means the run is not trusted.
-
-Do not substitute checkpoint state as truth.
+Same behavior.
 
 ---
 
-# 250. No Gold Mutation Test
+# 223. Metrics Corruption
 
-Record Gold artifact hashes before training.
-
-After training:
-
-```text
-all unchanged
-```
+Same behavior.
 
 ---
 
-# 251. No Split Mutation Test
+# 224. No Gold Mutation
 
-Record split manifest SHA before training.
+Record Gold hashes before training.
 
 After:
 
 ```text
-unchanged
+all identical
 ```
 
 ---
 
-# 252. Training Output Scope
+# 225. No Split Mutation
 
-Phase 6.2 may write only:
+Split manifest SHA remains unchanged.
+
+---
+
+# 226. Output Mutation Scope
+
+Phase 6.3 may write:
 
 ```text
-checkpoints/ml-training/
+manifests/ml-splits/
+    # only new anomaly split manifests
 
-training-runs/candidate/
+checkpoints/ml-training/anomaly/
+
+training-runs/anomaly/
 ```
 
-plus logs/temp files.
-
-Do NOT write:
+It must NOT mutate:
 
 ```text
-Gold
+Bronze
 
 Silver
+
+Gold
 
 catalogs
 
@@ -4033,76 +3462,50 @@ labels
 
 lineage
 
+feature-engineering checkpoints
+
 lifecycle checkpoints
 ```
 
 ---
 
-# 253. No Registry Model Yet
+# 227. No Candidate Training Mutation
 
-Do not create final:
-
-```text
-models/candidate/<model-id>/
-```
-
-in Phase 6.2.
-
-Phase 6.5 owns model registry packaging/promotion.
-
----
-
-# 254. No Champion Pointer
-
-No:
+Do not modify committed:
 
 ```text
-models/candidate/champion.json
+training-runs/candidate/
 ```
 
 ---
 
-# 255. No Challenger Pointer
+# 228. No Model Registry Yet
 
-No mutable:
-
-```text
-challenger.json
-```
-
-required.
-
-Training runs themselves are candidate experiments.
-
----
-
-# 256. No Promotion Metrics
-
-Do not decide:
+Do not create:
 
 ```text
-this model is better than champion
-```
-
-yet.
-
----
-
-# 257. No Final Evaluation
-
-Validation metrics are development metrics only.
-
-Phase 6.4 owns:
-
-```text
-golden test
-recent holdout
-threshold selection
+models/anomaly/<model-id>/
 ```
 
 ---
 
-# 258. No ONNX
+# 229. No Champion
+
+Do not create/update:
+
+```text
+models/anomaly/champion.json
+```
+
+---
+
+# 230. No Challenger Promotion
+
+Training run completion does not imply promotion eligibility.
+
+---
+
+# 231. No ONNX Export
 
 Do not call:
 
@@ -4110,11 +3513,13 @@ Do not call:
 export_onnx.py
 ```
 
-yet.
+for final registry/runtime artifact yet.
+
+Phase 6.6 owns ONNX parity.
 
 ---
 
-# 259. No Rust Inference
+# 232. No Rust Inference Changes
 
 Do not modify:
 
@@ -4122,11 +3527,11 @@ Do not modify:
 apps/rust-inference/
 ```
 
-in Phase 6.2.
+in Phase 6.3.
 
 ---
 
-# 260. No Predictions Prefix
+# 233. No Durable Predictions
 
 Do not create:
 
@@ -4134,448 +3539,463 @@ Do not create:
 predictions/
 ```
 
+---
+
+# 234. No Prediction Contract
+
+Do not introduce:
+
+```text
+prediction-v1.md
+```
+
 yet.
 
 ---
 
-# 261. No Prediction NATS Events
+# 235. No Prediction NATS Event
 
 No:
 
 ```text
-aurora.v1.prediction.ready
+aurora.v1.anomaly.prediction.ready
 ```
 
 ---
 
-# 262. No API Changes
+# 236. No API Changes
 
-Go API should not serve this training run yet.
-
----
-
-# 263. No Dashboard Changes
-
-No model metrics UI yet.
+Go API does not serve learned anomaly scores yet.
 
 ---
 
-# 264. Training Run Contract
+# 237. No Dashboard Changes
 
-Add:
-
-```text
-contracts/data/training-run-v1.md
-```
-
-Document:
-
-```text
-immutable run identity
-
-Gold/split provenance
-
-training specification
-
-artifact references
-
-development validation metrics
-
-commit semantics
-```
+Do not wire anomaly model output into React yet.
 
 ---
 
-# 265. Do Not Add Model Manifest Contract Yet
+# 238. No Golden Test
 
-Reserve:
-
-```text
-model-manifest-v1.md
-```
-
-for Phase 6.5 when registry models actually exist.
+Do not create/freeze final benchmark in Phase 6.3.
 
 ---
 
-# 266. Do Not Add Model Runtime Contract Yet
+# 239. No Recent Holdout
 
-Reserve:
-
-```text
-model-runtime-v1.md
-```
-
-for Phase 6.6.
+Deferred to Phase 6.4.
 
 ---
 
-# 267. Training Documentation
+# 240. No Final Threshold
 
-Add:
-
-```text
-docs/ML_TRAINING.md
-```
+Deferred to Phase 6.4.
 
 ---
 
-# 268. ML_TRAINING.md Contents
+# 241. No Promotion Comparison
 
-Document:
-
-```text
-Gold-only input boundary
-
-split-manifest requirement
-
-candidate-tabular-mlp-v1
-
-candidate-preprocess-v1
-
-train-only imputation/scaling
-
-class weighting
-
-training seed
-
-validation-only early stopping
-
-training run artifacts
-
-training checkpoint recovery
-
-no golden-test usage
-```
+Deferred to Phase 6.5.
 
 ---
 
-# 269. Update ML_DATASETS.md
-
-Add cross-reference:
-
-```text
-Phase 6.1 freezes membership.
-Phase 6.2 never re-splits.
-```
-
----
-
-# 270. Update CHECKPOINTS.md
-
-Checkpoint hierarchy now becomes:
-
-```text
-checkpoints/
-├── ingestion/
-├── preprocessing/
-├── feature-engineering/
-├── ml-training/
-└── lifecycle/
-```
-
-Do NOT add:
-
-```text
-inference/
-```
-
-until inference checkpoints are actually implemented.
-
----
-
-# 271. CHECKPOINTS.md ML Section
-
-Document:
-
-```text
-owner:
-    Python candidate/anomaly training
-
-purpose:
-    run-level recovery
-
-not:
-    model registry
-    gradient checkpoint database
-```
-
----
-
-# 272. Update CONFIGURATION.md
-
-Add only implemented candidate training settings.
-
-Examples:
-
-```text
-default training device
-
-default batch size
-
-default learning rate
-
-default max epochs
-
-default patience
-```
-
-Experiment identity values such as:
-
-```text
-training seed
-```
-
-are preferably explicit CLI/config-file inputs rather than hidden environment
-state.
-
----
-
-# 273. Python README
+# 242. Documentation
 
 Update:
 
 ```text
-Gold
-  |
-  v
-group-safe split
-  |
-  v
-TRAIN-only preprocessing
-  |
-  v
-candidate-tabular-mlp-v1
-  |
-  v
-immutable training run
-```
-
----
-
-# 274. STRUCTURE.md
-
-Reflect actual additions such as:
-
-```text
-aurora_ml/training_checkpoint.py
-
-contracts/data/training-run-v1.md
-
 docs/ML_TRAINING.md
 ```
 
-Do not document future Phase 6.5/6.6 files that do not exist.
-
----
-
-# 275. Expected Python Tree
-
-Likely:
+Add:
 
 ```text
-aurora_ml/
-├── analytics.py
-├── catalogs.py
-├── checkpoint.py
-├── config.py
-├── data.py
-├── evaluate.py
-├── evidence.py
-├── export_onnx.py
-├── feature_checkpoint.py
-├── features.py
-├── gold.py
-├── gold_materialize.py
-├── main.py
-├── registry.py
-├── splits.py
-├── training_checkpoint.py
-│
-├── transit/
-│   ├── model.py
-│   └── train.py
-│
-└── anomaly/
-    ├── model.py
-    └── train.py
+anomaly-lightcurve-ml-view-v1
+
+anomaly-group-split-v1
+
+anomaly-lightcurve-preprocess-v1
+
+anomaly-lightcurve-autoencoder-v1
+
+reconstruction-mse-v1
+
+unsupervised training semantics
+
+no threshold yet
 ```
 
-Do not restructure more unless actual code size requires it.
+---
+
+# 243. Keep Documentation Consolidated
+
+Do NOT add:
+
+```text
+docs/ML_ANOMALY.md
+```
+
+unless `ML_TRAINING.md` has genuinely become too large/confusing.
+
+Prefer current ownership structure first.
 
 ---
 
-# 276. Test Placement
+# 244. Update ML_DATASETS.md
 
-Recommended:
+Document:
 
 ```text
-tests/
-├── test_candidate_training.py
-└── test_training_checkpoint.py
+candidate supervised view
+    !=
+anomaly unsupervised view
+```
+
+and anomaly grouping semantics.
+
+---
+
+# 245. Update CHECKPOINTS.md
+
+Confirm:
+
+```text
+checkpoints/ml-training/
+├── candidate/
+└── anomaly/
+```
+
+share run-level checkpoint semantics.
+
+---
+
+# 246. Update CONFIGURATION.md
+
+Document only implemented anomaly training settings.
+
+Potential:
+
+```text
+default anomaly batch size
+
+learning rate
+
+weight decay
+
+epochs
+
+patience
+
+device
+```
+
+Avoid dead options.
+
+---
+
+# 247. Python README
+
+Add:
+
+```text
+Gold anomaly LC
+      |
+      v
+anomaly ML view
+      |
+      v
+target-safe split
+      |
+      v
+TRAIN-only preprocessing
+      |
+      v
+autoencoder
+      |
+      v
+reconstruction-error evidence
+```
+
+---
+
+# 248. Contracts README
+
+Add:
+
+```text
+ml-anomaly-view-v1
+```
+
+and note reuse of:
+
+```text
+ml-split-v1
+
+training-run-v1
+```
+
+---
+
+# 249. STRUCTURE.md
+
+Reflect actual changes only.
+
+Likely no new Python module beyond existing:
+
+```text
+anomaly/model.py
+
+anomaly/train.py
+```
+
+unless implementation genuinely needs one.
+
+---
+
+# 250. Suggested Tests
+
+Extend/create:
+
+```text
+tests/test_anomaly_training.py
 ```
 
 Reuse:
 
 ```text
 test_splits.py
+
+test_training_checkpoint.py
 ```
 
-for split semantics.
+where semantics are shared.
 
 ---
 
-# 277. Test Fixture Size
+# 251. Do Not Duplicate Checkpoint Tests Excessively
 
-Use tiny deterministic training fixtures.
+Candidate/anomaly checkpoint state machine is the same.
 
-Do not require thousands of real TESS rows in normal unit tests.
-
----
-
-# 278. Synthetic Classification Fixture
-
-Useful fixture:
-
-```text
-two or more numeric features
-clear positive/negative separation
-multiple TIC groups
-```
-
-Purpose:
-
-```text
-training loop correctness
-```
-
-not scientific benchmark claims.
+Add anomaly-specific path/task assertions rather than copy hundreds of tests.
 
 ---
 
-# 279. Real Gold Integration Fixture
+# 252. CI Fixture Scale
 
-Also test against a tiny actual:
+Use tiny deterministic Gold anomaly fixture.
 
-```text
-gold-candidate-v1
-```
+No real NASA access.
 
-produced by Stage 5.
-
-This catches schema/role integration problems.
+No giant tensors.
 
 ---
 
-# 280. Training Runtime Sanity
+# 253. CI Epoch Count
 
-Tiny CI training should finish quickly.
-
-Do not run:
+Tests may use:
 
 ```text
-100 epochs
+max_epochs=3..10
 ```
 
-when early-stop/unit config can validate logic in a few epochs.
+to prove behavior quickly.
 
-Tests may override:
-
-```text
-max_epochs=5
-```
-
-without changing production defaults.
+Production defaults may remain larger.
 
 ---
 
-# 281. No Performance Benchmark Requirement
+# 254. Model Quality Is Not Frozen Yet
 
-Formal model-quality claims require Phase 6.4.
-
-Phase 6.2 proves:
+Phase 6.3 validates:
 
 ```text
-correct training lifecycle
+training correctness
+
+data leakage boundaries
+
+score definition
+
 reproducibility
-leakage protection
-durable artifacts
+
+durable run lifecycle
+```
+
+not final scientific model quality.
+
+---
+
+# 255. Phase 6.4 Handoff
+
+Phase 6.4 receives committed:
+
+```text
+candidate training runs
+
+anomaly training runs
+```
+
+and introduces:
+
+```text
+fixed golden test
+
+recent holdout
+
+candidate final metrics
+
+anomaly synthetic/holdout evaluation
+
+threshold evaluation
 ```
 
 ---
 
-# 282. Core Invariants
+# 256. Anomaly Evaluation Handoff
+
+Phase 6.4 can later evaluate:
+
+```text
+clean/reference holdout
+
+synthetic injected outliers
+
+score stability
+
+false-alert behavior
+
+score distribution drift
+```
+
+without changing the Phase 6.3 training semantics.
+
+---
+
+# 257. Runtime Handoff
+
+Later Phase 6.6 will need exact:
+
+```text
+feature order
+
+TRAIN medians
+
+TRAIN means
+
+TRAIN scales
+
+autoencoder architecture
+
+reconstruction-mse-v1
+```
+
+Therefore all are durable now.
+
+---
+
+# 258. Future TPF Model
+
+If later desired:
+
+```text
+anomaly-tpf-autoencoder-v1
+```
+
+must have its own:
+
+```text
+dataset view
+
+feature order
+
+preprocessing version
+
+model version
+```
+
+Do not piggyback silently on LC model semantics.
+
+---
+
+# 259. Future FFI Model
+
+Same rule.
+
+Never feed full-frame FFI tensors merely because GPU exists.
+
+---
+
+# 260. Core Invariants
 
 Invariant 1:
 
 ```text
-Candidate training consumes an explicit COMMITTED Gold snapshot.
+Phase 6.3 consumes an explicit COMMITTED Gold anomaly snapshot.
 ```
 
 Invariant 2:
 
 ```text
-Candidate training consumes an explicit immutable split manifest.
+Phase 6.3 performs zero Bronze reads.
 ```
 
 Invariant 3:
 
 ```text
-Phase 6.2 performs zero Bronze reads.
+Phase 6.3 performs zero Silver reads.
 ```
 
 Invariant 4:
 
 ```text
-Phase 6.2 performs zero Silver reads.
+ClickHouse is not required for anomaly training correctness.
 ```
 
 Invariant 5:
 
 ```text
-ClickHouse is not required for training correctness.
+No live catalog state is consulted.
 ```
 
 Invariant 6:
 
 ```text
-Live TIC/TOI/TCE state is never queried during training.
+Anomaly model V1 is unsupervised.
 ```
 
 Invariant 7:
 
 ```text
-Only POSITIVE and NEGATIVE rows enter supervised candidate loss.
+Candidate labels never enter anomaly loss.
 ```
 
 Invariant 8:
 
 ```text
-UNRESOLVED is never converted to NEGATIVE.
+Same TIC never crosses TRAIN / VALIDATION.
 ```
 
 Invariant 9:
 
 ```text
-Training never re-splits Gold rows.
+Anomaly split assignment is deterministic at target-group level.
 ```
 
 Invariant 10:
 
 ```text
-Same-TIC group separation is revalidated before training.
+Anomaly V1 trains from Gold LC scalar evidence, not raw arrays.
 ```
 
 Invariant 11:
 
 ```text
-Only explicit MODEL_INPUT columns enter the tensor.
+Identity/catalog fields are not anomaly model inputs.
 ```
 
 Invariant 12:
 
 ```text
-Feature order is exact and immutable for the model.
+Feature order is explicit and versioned.
 ```
 
 Invariant 13:
@@ -4593,335 +4013,358 @@ Scaling is fit on TRAIN only.
 Invariant 15:
 
 ```text
-Validation rows never influence preprocessing parameters.
+Validation never influences preprocessing parameters.
 ```
 
 Invariant 16:
 
 ```text
-Class weight is calculated from TRAIN only.
+Anomaly score is reconstruction MSE in standardized feature space.
 ```
 
 Invariant 17:
 
 ```text
-No oversampling/undersampling modifies the canonical training population.
+Anomaly score is not a calibrated probability.
 ```
 
 Invariant 18:
 
 ```text
-candidate-tabular-mlp-v1 is small and CPU-correct.
+Phase 6.3 does not freeze an anomaly threshold.
 ```
 
 Invariant 19:
 
 ```text
-Golden test is not accessed in Phase 6.2.
+Golden test is not accessed.
 ```
 
 Invariant 20:
 
 ```text
-Development validation metrics are not final evaluation metrics.
+Recent holdout is not accessed.
 ```
 
 Invariant 21:
 
 ```text
-Training runs are immutable after manifest commit.
+Training-run artifacts are immutable after manifest commit.
 ```
 
 Invariant 22:
 
 ```text
-Training checkpoints are recovery state, not registry truth.
+ML-training checkpoint is recovery state, not model registry truth.
 ```
 
 Invariant 23:
 
 ```text
-V1 training recovery is run-level; optimizer-state resume is not required.
+CPU correctness is mandatory.
 ```
 
 Invariant 24:
 
 ```text
-Phase 6.2 does not promote a model.
+GPU remains optional.
 ```
 
 Invariant 25:
 
 ```text
-Phase 6.2 does not export ONNX.
+TPF/FFI learned anomaly models are not mandatory V1 scope.
 ```
 
 Invariant 26:
 
 ```text
-AURORA model output is candidate-vetting evidence, not planet confirmation.
+Phase 6.3 does not promote/export/serve the model.
+```
+
+Invariant 27:
+
+```text
+A high reconstruction error is anomaly evidence, not scientific confirmation.
 ```
 
 ---
 
 # Definition of Done
 
-Phase 6.2 is COMPLETE when:
+Phase 6.3 is COMPLETE when:
 
-* [ ] Candidate training accepts explicit `gold_snapshot_id`.
-* [ ] Candidate training accepts explicit `split_id`.
-* [ ] Candidate training accepts explicit `training_seed`.
-* [ ] Gold snapshot must be COMMITTED.
-* [ ] Gold manifest integrity is validated.
-* [ ] Split manifest integrity is validated.
-* [ ] Split Gold snapshot ID must match requested Gold.
-* [ ] Split Gold manifest SHA must match.
-* [ ] Dataset-view version must match.
-* [ ] Dataset-view fingerprint must match.
-* [ ] Feature order must match.
-* [ ] TRAIN/VALIDATION TIC disjointness is revalidated.
-* [ ] No random row split occurs in training code.
-* [ ] Candidate training reads zero Bronze objects.
-* [ ] Candidate training reads zero Silver objects.
-* [ ] Candidate training requires no ClickHouse.
-* [ ] Candidate training requires no NATS.
-* [ ] Candidate training requires no Go API.
-* [ ] Candidate training requires no dashboard.
-* [ ] Candidate training performs no live TIC query.
-* [ ] Candidate training performs no live TOI query.
-* [ ] Candidate training performs no live TCE query.
-* [ ] Candidate model uses `candidate-ml-view-v1`.
-* [ ] Only MODEL_INPUT fields are selected.
-* [ ] `training_label` is excluded from model input.
-* [ ] `tic_id` is excluded from model input.
-* [ ] `source_product_id` is excluded from model input.
-* [ ] `sample_id` is excluded from model input.
-* [ ] `sector` is excluded from V1 model input.
-* [ ] TOI audit fields are excluded from model input.
-* [ ] Label snapshot/policy fields are excluded from model input.
-* [ ] Exact feature order is preserved.
-* [ ] `NEGATIVE=0` is frozen.
-* [ ] `POSITIVE=1` is frozen.
-* [ ] `UNRESOLVED` rows are excluded from supervised loss.
-* [ ] `EXCLUDED` rows are excluded from supervised loss.
-* [ ] `UNRESOLVED` is never interpreted as negative.
-* [ ] `candidate-preprocess-v1` exists.
-* [ ] Numeric nullable fields use TRAIN median imputation.
-* [ ] Validation values do not influence medians.
-* [ ] All-missing TRAIN feature fails clearly.
-* [ ] Standardization uses TRAIN only.
-* [ ] Validation values do not influence means/scales.
-* [ ] Constant-feature scale policy is deterministic.
-* [ ] Boolean encoding is explicit.
-* [ ] No training-oriented mutation of Gold occurs.
-* [ ] No missing-indicator expansion exists in V1 unless explicitly versioned.
-* [ ] No categorical encoder is introduced without contract support.
-* [ ] Preprocessing artifact contains exact feature order.
-* [ ] Preprocessing artifact contains medians.
-* [ ] Preprocessing artifact contains means.
-* [ ] Preprocessing artifact contains scales.
-* [ ] Preprocessing artifact contains label encoding.
-* [ ] Preprocessing artifact contains preprocessing version.
-* [ ] Preprocessing artifact references split ID.
-* [ ] Transformed TRAIN tensor contains no NaN/Inf.
-* [ ] Transformed VALIDATION tensor contains no NaN/Inf.
-* [ ] Model input tensors use float32.
-* [ ] Label tensors use float32 binary encoding.
-* [ ] `candidate-tabular-mlp-v1` exists.
-* [ ] Candidate model architecture is versioned.
-* [ ] Input dimension matches feature count.
-* [ ] Model produces one binary logit per row.
-* [ ] `BCEWithLogitsLoss` is used.
-* [ ] No duplicate Sigmoid is applied inside loss path.
-* [ ] TRAIN DataLoader uses deterministic seeded shuffle.
-* [ ] VALIDATION DataLoader does not shuffle.
-* [ ] Training seed initializes relevant Python/NumPy/PyTorch randomness.
-* [ ] Split seed is not conflated with training seed.
-* [ ] CPU training works.
-* [ ] CUDA is optional.
-* [ ] `device=auto` supports CPU fallback.
-* [ ] Explicit unavailable CUDA request fails clearly.
-* [ ] Model comfortably fits 4 GB VRAM.
-* [ ] No distributed-training framework is introduced.
-* [ ] `balanced-bce-v1` or chosen explicit class-weight policy exists.
-* [ ] Class weighting uses TRAIN counts only.
-* [ ] No validation counts affect class weighting.
-* [ ] No SMOTE exists.
-* [ ] No oversampling exists.
-* [ ] No undersampling exists.
-* [ ] Optimizer is explicit.
-* [ ] Learning rate is explicit.
-* [ ] Weight decay is explicit.
-* [ ] Maximum epoch count is bounded.
-* [ ] Early stopping exists.
-* [ ] Early stopping uses VALIDATION only.
-* [ ] Early stopping never uses golden test.
-* [ ] Best epoch is recorded.
-* [ ] Best validation-loss state is restored/stored.
-* [ ] Development validation loss is recorded.
-* [ ] Development validation PR-AUC is recorded.
-* [ ] Development validation ROC-AUC is recorded.
-* [ ] Diagnostic precision/recall/F1 are clearly threshold-labelled.
-* [ ] Threshold 0.5 is not treated as production threshold.
-* [ ] Golden test is not loaded.
-* [ ] Recent holdout is not loaded.
-* [ ] Accuracy is not presented as the sole/primary model metric.
-* [ ] Training configuration is canonicalized.
-* [ ] Deterministic training-spec fingerprint exists.
-* [ ] Gold snapshot ID participates in training-spec fingerprint.
-* [ ] Split ID participates in training-spec fingerprint.
-* [ ] Dataset-view fingerprint participates in training-spec fingerprint.
-* [ ] Model version participates in training-spec fingerprint.
-* [ ] Preprocessing version participates in training-spec fingerprint.
-* [ ] Training seed participates in training-spec fingerprint.
-* [ ] Model-affecting hyperparameters participate in fingerprint.
-* [ ] Log level does not affect training-spec fingerprint.
-* [ ] MinIO hostname does not affect training-spec fingerprint.
-* [ ] Training run ID is distinguished from training-spec fingerprint.
-* [ ] Each concrete execution has a training run ID.
-* [ ] `training-runs/candidate/<training-run-id>/` exists.
-* [ ] Native `model.pt` is persisted.
-* [ ] Native model SHA256 is persisted.
-* [ ] `preprocessing.json` is persisted.
-* [ ] Preprocessing SHA256 is persisted.
-* [ ] `metrics.json` is persisted.
-* [ ] Development metrics are clearly labelled as validation metrics.
-* [ ] No golden-test metrics exist in Phase 6.2 artifacts.
-* [ ] Training run manifest is persisted.
-* [ ] Training run manifest is written after final artifacts verify.
-* [ ] Training run manifest is immutable.
-* [ ] Training run manifest references exact Gold snapshot.
-* [ ] Training run manifest references Gold manifest SHA.
-* [ ] Training run manifest references exact split.
-* [ ] Training run manifest references split manifest SHA.
-* [ ] Training run manifest records dataset-view version/fingerprint.
-* [ ] Training run manifest records exact feature order.
-* [ ] Training run manifest records model version.
-* [ ] Training run manifest records preprocessing version.
-* [ ] Training run manifest records training seed.
-* [ ] Training run manifest records hyperparameters.
-* [ ] Training run manifest records TRAIN/VALIDATION counts.
-* [ ] Training run manifest records class counts.
-* [ ] Training run manifest records best epoch.
-* [ ] Training run manifest records device/runtime versions.
-* [ ] `contracts/data/training-run-v1.md` exists.
-* [ ] `checkpoints/ml-training/candidate/` exists.
-* [ ] Python owns ML-training checkpoint writes.
-* [ ] ML-training checkpoint has schema version.
-* [ ] `PLANNED` state exists.
-* [ ] `TRAINING` state exists.
-* [ ] `ARTIFACT_STORED` state exists.
-* [ ] `COMPLETED` state exists.
-* [ ] `FAILED` state exists.
-* [ ] Checkpoint is written before expensive training begins.
-* [ ] Checkpoint failure before training stops the run.
-* [ ] V1 does not require mid-epoch optimizer resume.
-* [ ] TRAINING crash can restart from epoch 0.
-* [ ] ARTIFACT_STORED recovery can commit manifest without retraining.
-* [ ] Valid manifest can repair missing/stale COMPLETED checkpoint.
-* [ ] Checkpoint COMPLETED without valid manifest is not trusted.
-* [ ] Committed model corruption is detected.
-* [ ] Committed preprocessing corruption is detected.
-* [ ] Committed run artifacts are not silently overwritten.
-* [ ] Gold artifacts remain unchanged during training.
-* [ ] Split manifest remains unchanged during training.
-* [ ] Synthetic training-loop test passes.
-* [ ] MLP shape tests pass.
-* [ ] Label encoding tests pass.
-* [ ] UNRESOLVED exclusion test passes.
-* [ ] TRAIN median test passes.
-* [ ] validation-does-not-affect-median test passes.
-* [ ] TRAIN-only standardization test passes.
-* [ ] validation-does-not-affect-scaling test passes.
-* [ ] constant-feature test passes.
-* [ ] preprocessing serialization test passes.
-* [ ] preprocessing finite-output test passes.
-* [ ] class-weight TRAIN-only test passes.
-* [ ] deterministic DataLoader test passes.
-* [ ] training-spec fingerprint stability test passes.
-* [ ] hyperparameter fingerprint-change test passes.
-* [ ] training-seed fingerprint-change test passes.
-* [ ] loss-improvement test passes.
-* [ ] early-stopping test passes.
-* [ ] best-epoch restore test passes.
-* [ ] PR-AUC metric test passes.
-* [ ] ROC-AUC metric test passes.
-* [ ] split/Gold compatibility tests pass.
-* [ ] same-TIC leakage preflight test passes.
-* [ ] training-run manifest round-trip test passes.
-* [ ] artifact checksum tests pass.
-* [ ] checkpoint serialization tests pass.
-* [ ] checkpoint recovery tests pass.
-* [ ] Stage 5 candidate Gold integration test passes.
-* [ ] Stage 6.1 split integration test passes.
-* [ ] Gold-only storage access integration test passes.
-* [ ] ClickHouse-offline training test passes.
-* [ ] NATS-offline training test passes.
-* [ ] network-offline training test passes.
-* [ ] CPU-only training test passes.
-* [ ] RAW_DELETED-derived Gold training test passes.
-* [ ] crash-after-PLANNED recovery passes.
-* [ ] crash-during-TRAINING recovery passes.
-* [ ] crash-after-artifacts-before-manifest recovery passes.
-* [ ] crash-after-manifest-before-COMPLETED recovery passes.
-* [ ] MinIO model-upload failure is safe.
-* [ ] MinIO manifest failure leaves run uncommitted.
-* [ ] No model registry package is created yet.
-* [ ] No champion pointer exists.
-* [ ] No challenger promotion occurs.
-* [ ] No production threshold is frozen.
-* [ ] No ONNX artifact exists.
-* [ ] Rust inference remains unchanged.
-* [ ] No prediction storage exists.
-* [ ] No prediction NATS event exists.
-* [ ] No Go API ML change exists.
-* [ ] No dashboard ML change exists.
-* [ ] `docs/ML_TRAINING.md` exists.
-* [ ] `docs/ML_DATASETS.md` reflects split -> training boundary.
-* [ ] `docs/CHECKPOINTS.md` includes ML-training ownership/state semantics.
-* [ ] `docs/CONFIGURATION.md` documents implemented candidate training settings.
-* [ ] Python README documents candidate training flow.
-* [ ] Contracts README includes `training-run-v1`.
-* [ ] STRUCTURE.md reflects actual added files.
-* [ ] Existing Stage 5 and Phase 6.1 tests still pass.
-* [ ] Repository is ready for Phase 6.3.
+* [x] V1 mandatory anomaly task is explicitly light-curve scalar anomaly detection.
+* [x] `anomaly-lightcurve-autoencoder-v1` is defined.
+* [x] No mandatory TPF autoencoder is introduced.
+* [x] No mandatory FFI autoencoder is introduced.
+* [x] Anomaly training accepts explicit Gold anomaly snapshot ID.
+* [x] Anomaly training accepts explicit anomaly split ID.
+* [x] Anomaly training accepts explicit training seed.
+* [x] Gold snapshot must be COMMITTED.
+* [x] Gold anomaly schema is validated.
+* [x] Gold artifact integrity is validated.
+* [x] Only the Gold anomaly lightcurve component is used for V1 learned anomaly training.
+* [x] Phase 6.3 reads zero Bronze objects.
+* [x] Phase 6.3 reads zero Silver objects.
+* [x] Phase 6.3 works after Bronze `RAW_DELETED`.
+* [x] ClickHouse is not required.
+* [x] NATS is not required.
+* [x] Go API is not required.
+* [x] Dashboard is not required.
+* [x] External network is not required.
+* [x] No live TIC call occurs.
+* [x] No live TOI call occurs.
+* [x] No live TCE call occurs.
+* [x] Candidate label values are not used for anomaly training.
+* [x] TOI/TCE disposition is not used for anomaly training.
+* [x] `anomaly-lightcurve-ml-view-v1` exists.
+* [x] `contracts/data/ml-anomaly-view-v1.md` exists.
+* [x] Anomaly ML view has explicit ordered numeric feature list.
+* [x] Generic LC statistics are preferred over label/catalog metadata.
+* [x] Identity fields are excluded from anomaly tensor.
+* [x] TIC ID is excluded from anomaly tensor.
+* [x] Sector is excluded from anomaly tensor.
+* [x] Source product ID is excluded from anomaly tensor.
+* [x] Candidate label is excluded from anomaly tensor.
+* [x] TOI/TCE identifiers are excluded from anomaly tensor.
+* [x] BLS fields follow the explicitly frozen V1 anomaly-view policy.
+* [x] Anomaly view fingerprint is deterministic.
+* [x] Feature change/reorder changes view identity.
+* [x] Existing `ml-split-v1` is reused for anomaly split manifests where compatible.
+* [x] `anomaly-group-split-v1` exists.
+* [x] Anomaly grouping uses TIC when available.
+* [x] Missing TIC uses stable source-product fallback.
+* [x] Same TIC across sectors remains in one split.
+* [x] Anomaly split uses TRAIN / VALIDATION only.
+* [x] Golden test is not defined in Phase 6.3.
+* [x] Recent holdout is not defined in Phase 6.3.
+* [x] Group assignments use deterministic SHA-based semantics.
+* [x] Input ordering does not affect anomaly split.
+* [x] Cumulative Gold preserves existing group membership.
+* [x] Candidate label changes do not change anomaly group assignment.
+* [x] Anomaly split manifest is immutable.
+* [x] Anomaly split manifest is stored under `manifests/ml-splits/`.
+* [x] `anomaly-lightcurve-preprocess-v1` exists.
+* [x] Numeric missing values use TRAIN median imputation.
+* [x] Validation values do not influence medians.
+* [x] All-missing TRAIN feature fails clearly.
+* [x] Standardization parameters use TRAIN only.
+* [x] Validation values do not influence mean/scale.
+* [x] Constant-feature scale policy is deterministic.
+* [x] No categorical encoder is introduced for V1.
+* [x] Preprocessing artifact preserves exact feature order.
+* [x] Preprocessing artifact preserves medians.
+* [x] Preprocessing artifact preserves means.
+* [x] Preprocessing artifact preserves scales.
+* [x] Preprocessing artifact references exact split ID.
+* [x] Preprocessing artifact is immutable after run commit.
+* [x] Transformed tensors contain no NaN/Inf.
+* [x] Model input tensors use float32.
+* [x] `anomaly-lightcurve-autoencoder-v1` architecture is implemented in `anomaly/model.py`.
+* [x] Autoencoder input dimension equals feature count.
+* [x] Autoencoder reconstruction dimension equals feature count.
+* [x] Architecture uses small bounded layers.
+* [x] V1 architecture uses explicit ReLU semantics.
+* [x] No mandatory Dropout exists.
+* [x] No mandatory BatchNorm exists.
+* [x] `MSELoss` is used.
+* [x] Candidate classification losses are not used.
+* [x] AdamW or chosen explicit optimizer is documented.
+* [x] Learning rate is explicit.
+* [x] Weight decay is explicit.
+* [x] Batch size is explicit.
+* [x] Maximum epochs are bounded.
+* [x] Early stopping exists.
+* [x] Early stopping uses VALIDATION reconstruction loss.
+* [x] Golden test never affects early stopping.
+* [x] Best epoch is recorded.
+* [x] Best validation reconstruction state is stored.
+* [x] CPU training works.
+* [x] GPU is optional.
+* [x] `device=auto` falls back to CPU.
+* [x] Explicit unavailable CUDA request fails clearly.
+* [x] Model comfortably fits 4 GB VRAM.
+* [x] Training seed initializes relevant randomness.
+* [x] Split seed and training seed remain distinct.
+* [x] TRAIN DataLoader shuffling is deterministic.
+* [x] VALIDATION DataLoader does not shuffle.
+* [x] `reconstruction-mse-v1` exists.
+* [x] Score is computed in standardized feature space.
+* [x] Score formula is exactly documented.
+* [x] One finite score is computed per validation row.
+* [x] Score is always nonnegative within numerical tolerance.
+* [x] Score is not called a probability.
+* [x] Score is not called scientific ground truth.
+* [x] No final anomaly threshold is defined.
+* [x] No percentile threshold is frozen.
+* [x] Validation reconstruction loss is recorded.
+* [x] Validation anomaly-score mean is recorded.
+* [x] Validation anomaly-score median is recorded.
+* [x] Validation anomaly-score p95 is recorded.
+* [x] Validation anomaly-score max is recorded.
+* [x] Accuracy is not reported as anomaly quality.
+* [x] PR-AUC/ROC-AUC are not falsely reported without a valid labeled evaluation set.
+* [x] Training-spec fingerprint is deterministic.
+* [x] Gold snapshot ID participates in training-spec fingerprint.
+* [x] Split ID participates in training-spec fingerprint.
+* [x] Anomaly view fingerprint participates in training-spec fingerprint.
+* [x] Model version participates in training-spec fingerprint.
+* [x] Preprocessing version participates in training-spec fingerprint.
+* [x] Score-definition version participates in training-spec fingerprint.
+* [x] Training seed participates in training-spec fingerprint.
+* [x] Model-affecting hyperparameters participate in training-spec fingerprint.
+* [x] Operational log/storage settings do not affect training-spec fingerprint.
+* [x] Concrete anomaly training run gets unique training-run ID.
+* [x] Training-run ID is distinct from training-spec fingerprint.
+* [x] `training-runs/anomaly/<training-run-id>/` exists.
+* [x] Native `model.pt` is written.
+* [x] Model SHA256 is persisted.
+* [x] `preprocessing.json` is written.
+* [x] Preprocessing SHA256 is persisted.
+* [x] `metrics.json` is written.
+* [x] Metrics are clearly development reconstruction metrics.
+* [x] Training-run manifest uses `training-run-v1`.
+* [x] Training run task is explicitly astronomical anomaly detection.
+* [x] Training-run manifest references exact Gold snapshot.
+* [x] Training-run manifest references Gold manifest SHA.
+* [x] Training-run manifest references exact split.
+* [x] Training-run manifest references split manifest SHA.
+* [x] Training-run manifest references anomaly-view version/fingerprint.
+* [x] Training-run manifest records feature order.
+* [x] Training-run manifest records model version.
+* [x] Training-run manifest records preprocessing version.
+* [x] Training-run manifest records score-definition version.
+* [x] Training-run manifest records training seed.
+* [x] Training-run manifest records hyperparameters.
+* [x] Training-run manifest records TRAIN/VALIDATION counts.
+* [x] Training-run manifest records best epoch.
+* [x] Training-run manifest records runtime/device information.
+* [x] Training-run manifest is written last.
+* [x] Training-run manifest is immutable.
+* [x] Partial artifact directory without manifest is not a committed run.
+* [x] `checkpoints/ml-training/anomaly/` exists.
+* [x] Anomaly training reuses ML-training checkpoint state semantics.
+* [x] `PLANNED` works.
+* [x] `TRAINING` works.
+* [x] `ARTIFACT_STORED` works.
+* [x] `COMPLETED` works.
+* [x] `FAILED` works.
+* [x] Training checkpoint is written before expensive training.
+* [x] Checkpoint failure before training stops the run.
+* [x] Mid-training crash may restart from epoch zero.
+* [x] V1 does not require optimizer-state resume.
+* [x] ARTIFACT_STORED recovery commits manifest without retraining.
+* [x] Valid run manifest repairs missing/stale checkpoint.
+* [x] COMPLETED checkpoint without valid run manifest is not trusted.
+* [x] Committed model corruption is detected.
+* [x] Committed preprocessing corruption is detected.
+* [x] Committed metrics corruption is detected.
+* [x] Gold is never mutated.
+* [x] Split manifest is never mutated.
+* [x] Candidate training runs are never mutated.
+* [x] Dataset-view feature-list test passes.
+* [x] Identity-feature exclusion tests pass.
+* [x] Candidate-label independence test passes.
+* [x] Multi-sector target split test passes.
+* [x] Split determinism test passes.
+* [x] Cumulative membership test passes.
+* [x] TRAIN median test passes.
+* [x] Validation median-leakage test passes.
+* [x] TRAIN-only scaling test passes.
+* [x] Validation scaling-leakage test passes.
+* [x] Constant-feature test passes.
+* [x] Preprocessing serialization test passes.
+* [x] Finite preprocessing test passes.
+* [x] Autoencoder shape test passes.
+* [x] Autoencoder finite-output test passes.
+* [x] Reconstruction MSE exactness test passes.
+* [x] Score nonnegative test passes.
+* [x] Score-shape test passes.
+* [x] Loss-improvement test passes.
+* [x] Early-stopping test passes.
+* [x] Best-epoch restore test passes.
+* [x] Training-seed reproducibility test passes.
+* [x] Training-spec fingerprint tests pass.
+* [x] No-label-in-loss test passes.
+* [x] Validation score-summary test passes.
+* [x] No-threshold-artifact test passes.
+* [x] Synthetic outlier mechanical sanity test passes without being presented as science accuracy.
+* [x] Training-run manifest tests pass.
+* [x] Artifact checksum tests pass.
+* [x] Checkpoint serialization/recovery tests pass.
+* [x] Stage 5 anomaly Gold integration test passes.
+* [x] Anomaly deterministic split integration test passes.
+* [x] Gold-only access integration test passes.
+* [x] ClickHouse-offline training test passes.
+* [x] NATS-offline training test passes.
+* [x] network-offline training test passes.
+* [x] CPU-only training test passes.
+* [x] RAW_DELETED-derived Gold training test passes.
+* [x] crash-after-PLANNED recovery passes.
+* [x] crash-during-TRAINING recovery passes.
+* [x] crash-after-artifacts-before-manifest recovery passes.
+* [x] crash-after-manifest-before-COMPLETED recovery passes.
+* [x] MinIO artifact failure is safe.
+* [x] MinIO manifest failure leaves run uncommitted.
+* [x] `train-anomaly` CLI command exists or equivalent clean command.
+* [x] CLI does not report a binary anomaly count without a threshold.
+* [x] No final anomaly predictions are persisted.
+* [x] No `predictions/` objects are created.
+* [x] No registry model is created.
+* [x] No champion pointer is changed.
+* [x] No challenger is promoted.
+* [x] No ONNX is exported.
+* [x] Rust inference remains unchanged.
+* [x] No prediction NATS event exists.
+* [x] No Go API ML change exists.
+* [x] No dashboard ML change exists.
+* [x] `docs/ML_TRAINING.md` documents anomaly training semantics.
+* [x] `docs/ML_DATASETS.md` distinguishes candidate and anomaly views.
+* [x] `docs/CHECKPOINTS.md` documents candidate/anomaly ML-training ownership.
+* [x] `docs/CONFIGURATION.md` documents only implemented anomaly settings.
+* [x] Python README documents anomaly-training flow.
+* [x] Contracts README documents `ml-anomaly-view-v1`.
+* [x] STRUCTURE.md matches actual files.
+* [x] Existing Stage 5, Phase 6.1 and Phase 6.2 tests remain green.
+* [x] Repository is ready for Phase 6.4.
 
 ---
 
 # Out of Scope
 
-Do NOT implement in Phase 6.2:
+Do NOT implement in Phase 6.3:
 
-* 1D light-curve CNN as critical path
+* full light-curve tensor autoencoder
+* 1D convolutional anomaly model
 * TPF CNN
-* raw Silver tensor training
-* anomaly model training
-* golden test creation
+* FFI CNN
+* giant FFI tensors
+* Silver-array training
+* Bronze/FITS training
+* label-supervised anomaly classifier
+* TOI-driven anomaly cohort filtering
+* TCE-driven anomaly cohort filtering
+* anomaly probability calibration
+* final anomaly threshold
+* percentile alert threshold
 * golden test evaluation
-* recent holdout
-* production threshold selection
-* hyperparameter sweep
-* Optuna
-* Ray Tune
-* distributed training
-* SMOTE
-* row-level random split
-* label-derived feature selection
-* optimizer-state resume framework
-* epoch-by-epoch remote checkpointing
-* model registry promotion
-* champion pointer
-* challenger promotion decision
+* recent holdout evaluation
+* scientific false-alert benchmark
+* production anomaly score persistence
+* prediction schema
+* candidate-vetting final evaluation
+* model comparison
+* champion/challenger promotion
+* model registry packaging
 * rollback
-* model-manifest-v1
-* model-runtime-v1
 * ONNX export
 * Rust inference parity
-* prediction storage
+* inference checkpoint
 * prediction NATS events
-* Go API inference endpoints
-* dashboard prediction UI
-* scientific planet confirmation
+* Go API anomaly prediction endpoints
+* React anomaly prediction UI
+* scientific anomaly confirmation
 
 ---
 
@@ -4934,7 +4377,9 @@ Phase 6.1  ML Dataset View & Deterministic Group Split        [DONE]
 
 Phase 6.2  Candidate Vetting Model Training                   [DONE]
 
-Phase 6.3  Astronomical Anomaly Detection Training
+Phase 6.3  Astronomical Anomaly Detection Training            [DONE]
+
+Phase 6.4  Evaluation — Golden Test & Recent Holdout
 ```
 
 ```

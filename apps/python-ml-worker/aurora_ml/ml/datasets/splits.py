@@ -1,6 +1,7 @@
-"""ML Dataset View, Feature Role Isolation & Group-Safe Split Manager (Phase 6.1).
+"""ML Dataset View, Feature Role Isolation & Group-Safe Split Manager (Phase 6.1 & 6.3).
 
-Implements candidate-ml-view-v1 and candidate-group-split-v1.
+Implements candidate-ml-view-v1, candidate-group-split-v1,
+anomalyy-lightcurve-ml-view-v1, and anomaly-group-split-v1.
 """
 
 from dataclasses import asdict, dataclass, field
@@ -46,6 +47,24 @@ CANDIDATE_MODEL_INPUT_FEATURES: Tuple[str, ...] = (
     "transit_deficit_centroid_col",
     "transit_deficit_centroid_row",
     "transit_deficit_sum",
+)
+
+# Frozen List of 14 ANOMALY MODEL_INPUT Features in Deterministic Order
+ANOMALY_MODEL_INPUT_FEATURES: Tuple[str, ...] = (
+    "n_points",
+    "time_span",
+    "median_cadence",
+    "max_gap",
+    "flux_mean",
+    "flux_median",
+    "flux_std",
+    "flux_mad",
+    "flux_robust_sigma",
+    "flux_amplitude",
+    "flux_rms",
+    "flux_skewness",
+    "flux_kurtosis",
+    "median_flux_err",
 )
 
 # Strict Leakage Prevention Exclusion List
@@ -385,6 +404,168 @@ def create_deterministic_group_split(
         train_negative_count=t_neg,
         val_positive_count=v_pos,
         val_negative_count=v_neg,
+        feature_names=view.feature_names,
+        assignments=assignments,
+        created_at=created_at,
+    )
+
+
+@dataclass(frozen=True)
+class AnomalyMlView:
+    """Anomaly light-curve ML dataset view (anomaly-lightcurve-ml-view-v1)."""
+
+    gold_snapshot_id: str
+    gold_manifest_sha256: str
+    view_fingerprint: str
+    dataset_view_version: str = "anomaly-lightcurve-ml-view-v1"
+    feature_names: Tuple[str, ...] = ANOMALY_MODEL_INPUT_FEATURES
+    total_row_count: int = 0
+    rows: List[Dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "dataset_view_version": self.dataset_view_version,
+            "gold_snapshot_id": self.gold_snapshot_id,
+            "gold_manifest_sha256": self.gold_manifest_sha256,
+            "view_fingerprint": self.view_fingerprint,
+            "feature_names": list(self.feature_names),
+            "total_row_count": self.total_row_count,
+        }
+
+
+def build_anomaly_ml_view(
+    manifest: GoldSnapshotManifest,
+    anomaly_rows: List[Dict[str, Any]],
+) -> AnomalyMlView:
+    """Build anomaly light-curve ML dataset view from committed Gold snapshot manifest & rows."""
+    product_ids = []
+    for row in anomaly_rows:
+        pid = row.get("source_product_id")
+        if not pid:
+            raise MlDatasetError("Gold anomaly row missing required 'source_product_id'")
+        product_ids.append(str(pid))
+
+    manifest_sha = hashlib.sha256(
+        json.dumps(manifest.to_dict(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+    v_fingerprint = derive_view_fingerprint(
+        view_version="anomaly-lightcurve-ml-view-v1",
+        snapshot_id=manifest.snapshot_id,
+        manifest_sha256=manifest_sha,
+        feature_names=ANOMALY_MODEL_INPUT_FEATURES,
+        product_ids=product_ids,
+    )
+
+    return AnomalyMlView(
+        gold_snapshot_id=manifest.snapshot_id,
+        gold_manifest_sha256=manifest_sha,
+        view_fingerprint=v_fingerprint,
+        dataset_view_version="anomaly-lightcurve-ml-view-v1",
+        feature_names=ANOMALY_MODEL_INPUT_FEATURES,
+        total_row_count=len(anomaly_rows),
+        rows=anomaly_rows,
+    )
+
+
+def create_anomaly_group_split(
+    view: AnomalyMlView,
+    seed: int = 42,
+    split_policy_version: str = "anomaly-group-split-v1",
+    train_ratio: float = 0.8,
+) -> CandidateGroupSplit:
+    """Create unsupervised group-safe deterministic split for anomaly dataset.
+
+    All rows of the same TIC are assigned to the same split partition.
+    No label supervision is required or used.
+    Reuses CandidateGroupSplit schema with anomaly-group-split-v1 policy.
+    """
+    if not view.rows:
+        raise MlDatasetError("EMPTY_ANOMALY_ROWS: No rows in anomaly ML view")
+
+    # Group rows by astronomical target identity (TIC-based)
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for r in view.rows:
+        gk = derive_group_key(r)
+        groups.setdefault(gk, []).append(r)
+
+    if len(groups) < 2:
+        raise MlDatasetError("INSUFFICIENT_GROUPS: Anomaly dataset requires at least 2 distinct target groups")
+
+    sorted_group_keys = sorted(groups.keys())
+    assignments: List[GroupAssignmentRecord] = []
+
+    t_g_count, v_g_count = 0, 0
+    t_r_count, v_r_count = 0, 0
+
+    threshold_bucket = int(train_ratio * 10000)
+
+    for gk in sorted_group_keys:
+        g_rows = groups[gk]
+
+        seed_payload = f"{split_policy_version}:{seed}:{gk}"
+        digest = hashlib.sha256(seed_payload.encode("utf-8")).hexdigest()
+        bucket = int(digest[:8], 16) % 10000
+
+        split_label = "TRAIN" if bucket < threshold_bucket else "VALIDATION"
+
+        if split_label == "TRAIN":
+            t_g_count += 1
+            t_r_count += len(g_rows)
+        else:
+            v_g_count += 1
+            v_r_count += len(g_rows)
+
+        assignments.append(
+            GroupAssignmentRecord(
+                group_key=gk,
+                split=split_label,
+                row_count=len(g_rows),
+                # Unsupervised: no labels — store zeros
+                positive_count=0,
+                negative_count=0,
+            )
+        )
+
+    if t_g_count == 0:
+        raise MlSplitError("EMPTY_TRAIN_SPLIT: Anomaly group split produced zero TRAIN groups")
+    if v_g_count == 0:
+        raise MlSplitError("EMPTY_VAL_SPLIT: Anomaly group split produced zero VALIDATION groups")
+
+    fingerprint_payload = {
+        "dataset_view_version": view.dataset_view_version,
+        "feature_names": list(view.feature_names),
+        "gold_manifest_sha256": view.gold_manifest_sha256,
+        "gold_snapshot_id": view.gold_snapshot_id,
+        "split_assignments": [a.to_dict() for a in assignments],
+        "split_policy_version": split_policy_version,
+        "split_seed": seed,
+    }
+    canonical_json = json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":"))
+    split_fp = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+    split_id = f"split-anom-v1-{split_fp[:16]}"
+
+    created_at = datetime.now(timezone.utc).isoformat()
+
+    return CandidateGroupSplit(
+        split_id=split_id,
+        split_fingerprint=split_fp,
+        gold_snapshot_id=view.gold_snapshot_id,
+        gold_manifest_sha256=view.gold_manifest_sha256,
+        dataset_view_version=view.dataset_view_version,
+        split_policy_version=split_policy_version,
+        split_seed=seed,
+        eligible_row_count=len(view.rows),
+        eligible_group_count=len(groups),
+        train_group_count=t_g_count,
+        validation_group_count=v_g_count,
+        train_row_count=t_r_count,
+        validation_row_count=v_r_count,
+        # Unsupervised: no label counts
+        train_positive_count=0,
+        train_negative_count=0,
+        val_positive_count=0,
+        val_negative_count=0,
         feature_names=view.feature_names,
         assignments=assignments,
         created_at=created_at,
