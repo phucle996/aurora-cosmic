@@ -1,9 +1,12 @@
 package storage
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 
 	"go-ingester/internal/model"
 
@@ -88,4 +91,109 @@ func (c *MinIOClient) GetObject(ctx context.Context, bucket, objectKey string) (
 		return nil, fmt.Errorf("get object %s/%s: %w", bucket, objectKey, err)
 	}
 	return obj, nil
+}
+
+// ListObjectsWithPrefix lists all objects under a prefix.
+func (c *MinIOClient) ListObjectsWithPrefix(ctx context.Context, bucket, prefix string) ([]model.ObjectInfo, error) {
+	var result []model.ObjectInfo
+	for obj := range c.client.ListObjects(ctx, bucket, minio.ListObjectsOptions{
+		Prefix:    prefix,
+		Recursive: true,
+	}) {
+		if obj.Err != nil {
+			return nil, fmt.Errorf("list objects %s/%s: %w", bucket, prefix, obj.Err)
+		}
+		result = append(result, model.ObjectInfo{
+			Key:          obj.Key,
+			Size:         obj.Size,
+			ETag:         obj.ETag,
+			LastModified: obj.LastModified,
+		})
+	}
+	return result, nil
+}
+
+// ListBronzeUsage calculates total byte usage under bronze/ prefix.
+func (c *MinIOClient) ListBronzeUsage(ctx context.Context, bucket string) (totalBytes int64, objectCount int, err error) {
+	for obj := range c.client.ListObjects(ctx, bucket, minio.ListObjectsOptions{
+		Prefix:    "bronze/",
+		Recursive: true,
+	}) {
+		if obj.Err != nil {
+			return 0, 0, fmt.Errorf("list bronze objects: %w", obj.Err)
+		}
+		totalBytes += obj.Size
+		objectCount++
+	}
+	return totalBytes, objectCount, nil
+}
+
+// ListLineageKeys lists all lineage record object keys under a prefix.
+func (c *MinIOClient) ListLineageKeys(ctx context.Context, bucket, prefix string) ([]string, error) {
+	var keys []string
+	for obj := range c.client.ListObjects(ctx, bucket, minio.ListObjectsOptions{
+		Prefix:    prefix,
+		Recursive: true,
+	}) {
+		if obj.Err != nil {
+			return nil, fmt.Errorf("list lineage records: %w", obj.Err)
+		}
+		if strings.HasSuffix(obj.Key, ".json") {
+			keys = append(keys, obj.Key)
+		}
+	}
+	return keys, nil
+}
+
+// DeleteObject removes an object from MinIO.
+func (c *MinIOClient) DeleteObject(ctx context.Context, bucket, objectKey string) error {
+	err := c.client.RemoveObject(ctx, bucket, objectKey, minio.RemoveObjectOptions{})
+	if err != nil {
+		return fmt.Errorf("delete object %s/%s: %w", bucket, objectKey, err)
+	}
+	return nil
+}
+
+// GetJSONObject fetches an object and JSON-decodes it into dst. Returns (false, nil) if not found.
+func (c *MinIOClient) GetJSONObject(ctx context.Context, bucket, objectKey string, dst any) (bool, error) {
+	obj, err := c.client.GetObject(ctx, bucket, objectKey, minio.GetObjectOptions{})
+	if err != nil {
+		errResp := minio.ToErrorResponse(err)
+		if errResp.Code == "NoSuchKey" || errResp.Code == "NotFound" {
+			return false, nil
+		}
+		return false, fmt.Errorf("get json object %s/%s: %w", bucket, objectKey, err)
+	}
+	defer obj.Close()
+
+	data, err := io.ReadAll(obj)
+	if err != nil {
+		errResp := minio.ToErrorResponse(err)
+		if errResp.Code == "NoSuchKey" || errResp.Code == "NotFound" {
+			return false, nil
+		}
+		return false, fmt.Errorf("read json object %s/%s: %w", bucket, objectKey, err)
+	}
+
+	if err := json.Unmarshal(data, dst); err != nil {
+		return false, fmt.Errorf("unmarshal json object %s/%s: %w", bucket, objectKey, err)
+	}
+	return true, nil
+}
+
+// PutJSONObject serializes src to JSON and stores it in MinIO.
+func (c *MinIOClient) PutJSONObject(ctx context.Context, bucket, objectKey string, src any) error {
+	data, err := json.Marshal(src)
+	if err != nil {
+		return fmt.Errorf("marshal json for %s/%s: %w", bucket, objectKey, err)
+	}
+	reader := bytes.NewReader(data)
+	opts := minio.PutObjectOptions{
+		ContentType: "application/json",
+	}
+	_, err = c.client.PutObject(ctx, bucket, objectKey, reader, int64(len(data)), opts)
+	if err != nil {
+		return fmt.Errorf("put json object %s/%s: %w", bucket, objectKey, err)
+	}
+	return nil
 }

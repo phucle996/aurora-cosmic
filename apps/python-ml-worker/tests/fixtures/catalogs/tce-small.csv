@@ -1,0 +1,2 @@
+tce_id,tic_id,sector,catalog_period,catalog_epoch,catalog_duration,detection_statistic,tce_disposition_raw
+tce-12345678-s0001-01,12345678,1,3.5,1.0,0.2,25.4,MATCHED

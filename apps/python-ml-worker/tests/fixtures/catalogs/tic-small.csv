@@ -1,0 +1,3 @@
+tic_id,ra_deg,dec_deg,tmag,teff,stellar_radius,stellar_mass,logg
+12345678,285.5,45.2,11.5,5780.0,1.02,1.01,4.43
+99999999,100.2,-20.1,14.2,4200.0,0.65,0.62,4.65

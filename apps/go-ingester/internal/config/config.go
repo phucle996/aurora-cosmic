@@ -26,9 +26,9 @@ type IngestConfig struct {
 }
 
 type BronzeConfig struct {
-	MaxBytes      int64
-	HighWatermark float64
-	LowWatermark  float64
+	MaxBytes           int64
+	HighWatermarkBytes int64
+	LowWatermarkBytes  int64
 }
 
 type MASTConfig struct {
@@ -85,17 +85,12 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
-	maxBytes, err := requireEnvInt64("AURORA_BRONZE_MAX_BYTES")
+	highWMBytes, err := optionalEnvInt64("AURORA_BRONZE_HIGH_WATERMARK_BYTES", 48318382080) // 45 GiB
 	if err != nil {
 		return nil, err
 	}
 
-	highWM, err := requireEnvFloat("AURORA_BRONZE_HIGH_WATERMARK")
-	if err != nil {
-		return nil, err
-	}
-
-	lowWM, err := requireEnvFloat("AURORA_BRONZE_LOW_WATERMARK")
+	lowWMBytes, err := optionalEnvInt64("AURORA_BRONZE_LOW_WATERMARK_BYTES", 32212254720) // 30 GiB
 	if err != nil {
 		return nil, err
 	}
@@ -121,9 +116,9 @@ func Load() (*Config, error) {
 			Concurrency: concurrency,
 		},
 		Bronze: BronzeConfig{
-			MaxBytes:      maxBytes,
-			HighWatermark: highWM,
-			LowWatermark:  lowWM,
+			MaxBytes:           optionalEnvInt64OrDefault("AURORA_BRONZE_MAX_BYTES", 53687091200),  // 50 GiB
+			HighWatermarkBytes: highWMBytes,
+			LowWatermarkBytes:  lowWMBytes,
 		},
 		MAST: MASTConfig{
 			APIURL:   mastURL,
@@ -149,8 +144,19 @@ func (c *Config) Validate() error {
 	if c.Ingest.Concurrency < 1 {
 		return fmt.Errorf("AURORA_INGEST_CONCURRENCY must be >= 1, got %d", c.Ingest.Concurrency)
 	}
-	if c.Bronze.LowWatermark <= 0 || c.Bronze.LowWatermark >= c.Bronze.HighWatermark || c.Bronze.HighWatermark > 1.0 {
-		return fmt.Errorf("invalid watermarks: low (%f) must be > 0 and < high (%f) <= 1.0", c.Bronze.LowWatermark, c.Bronze.HighWatermark)
+	if c.Bronze.MaxBytes <= 0 {
+		return fmt.Errorf("AURORA_BRONZE_MAX_BYTES must be > 0")
+	}
+	if c.Bronze.LowWatermarkBytes <= 0 {
+		return fmt.Errorf("AURORA_BRONZE_LOW_WATERMARK_BYTES must be > 0")
+	}
+	if c.Bronze.LowWatermarkBytes >= c.Bronze.HighWatermarkBytes {
+		return fmt.Errorf("AURORA_BRONZE_LOW_WATERMARK_BYTES (%d) must be < AURORA_BRONZE_HIGH_WATERMARK_BYTES (%d)",
+			c.Bronze.LowWatermarkBytes, c.Bronze.HighWatermarkBytes)
+	}
+	if c.Bronze.HighWatermarkBytes >= c.Bronze.MaxBytes {
+		return fmt.Errorf("AURORA_BRONZE_HIGH_WATERMARK_BYTES (%d) must be < AURORA_BRONZE_MAX_BYTES (%d)",
+			c.Bronze.HighWatermarkBytes, c.Bronze.MaxBytes)
 	}
 	return nil
 }
@@ -204,6 +210,32 @@ func requireEnvFloat(key string) (float64, error) {
 		return 0, fmt.Errorf("invalid float value for '%s'", key)
 	}
 	return f, nil
+}
+
+// optionalEnvInt64 returns the env var parsed as int64 or the given default.
+func optionalEnvInt64(key string, defaultVal int64) (int64, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultVal, nil
+	}
+	i, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return defaultVal, fmt.Errorf("invalid int64 value for '%s'", key)
+	}
+	return i, nil
+}
+
+// optionalEnvInt64OrDefault reads an env var as int64 with a default — never errors.
+func optionalEnvInt64OrDefault(key string, defaultVal int64) int64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultVal
+	}
+	i, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return defaultVal
+	}
+	return i
 }
 
 // optionalEnv returns the env var value or the given default when unset.

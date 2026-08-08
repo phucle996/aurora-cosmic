@@ -54,6 +54,12 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "cleanup":
+		if err := runCleanup(ctx, cfg, log, os.Args[2:]); err != nil {
+			log.Error("cleanup command failed", slog.Any("error", err))
+			os.Exit(1)
+		}
+
 	default:
 		// Legacy runner
 		if err := app.Run(ctx, cfg, log); err != nil {
@@ -69,4 +75,5 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  plan     -- discover and create ingestion manifest")
 	fmt.Fprintln(os.Stderr, "  ingest   -- stream products from manifest into MinIO Bronze")
 	fmt.Fprintln(os.Stderr, "  status   -- display progress status of the current ingestion run")
+	fmt.Fprintln(os.Stderr, "  cleanup  -- enforce Bronze rolling window (--dry-run, --json)")
 }

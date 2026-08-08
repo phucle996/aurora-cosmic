@@ -1,4 +1,4 @@
-.PHONY: help config-check repo-check infra-up infra-down infra-restart infra-logs infra-ps infra-reset build build-go build-rust build-python up down restart ps logs test test-go e2e-ingestion e2e-ingestion-live test-rust test-python fmt fmt-go fmt-rust fmt-python lint lint-go lint-rust lint-python smoke clean
+.PHONY: help config-check repo-check infra-up infra-down infra-restart infra-logs infra-ps infra-reset build build-go build-rust build-python up down restart ps logs test test-go e2e-ingestion e2e-ingestion-live e2e-preprocessing e2e-stage4 test-rust test-python fmt fmt-go fmt-rust fmt-python lint lint-go lint-rust lint-python smoke clean
 
 help:
 	@echo "AURORA Cosmic Data Platform - Makefile Targets:"
@@ -181,6 +181,14 @@ e2e-ingestion-live:
 e2e-preprocessing:
 	@echo "Running offline Stage 3 Rust Preprocessing E2E validation script..."
 	@./tests/e2e/stage3-preprocessing.sh
+
+e2e-stage4:
+	@echo "Running offline Stage 4 Recovery & Lifecycle E2E validation script..."
+	@./tests/e2e/stage4-recovery-lifecycle.sh
+
+e2e-stage5:
+	@echo "Running Stage 5 Gold & Scientific Analytics E2E validation script..."
+	@./tests/e2e/stage5-gold-analytics.sh
 
 test-rust:
 	@echo "Running Rust tests..."

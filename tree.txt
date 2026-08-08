@@ -9,8 +9,11 @@
 │   │   │   ├── icons.svg
 │   │   │   └── index.html
 │   │   ├── Dockerfile
+│   │   ├── .env.example
+│   │   ├── .gitignore
 │   │   ├── index.html
 │   │   ├── nginx.conf
+│   │   ├── .oxlintrc.json
 │   │   ├── package.json
 │   │   ├── package-lock.json
 │   │   ├── public
@@ -58,6 +61,7 @@
 │   │   │   └── aurora-api
 │   │   │       └── main.go
 │   │   ├── Dockerfile
+│   │   ├── .env.example
 │   │   ├── go.mod
 │   │   ├── internal
 │   │   │   ├── app
@@ -82,12 +86,14 @@
 │   ├── go-ingester
 │   │   ├── cmd
 │   │   │   └── aurora-ingester
+│   │   │       ├── cmd_cleanup.go
 │   │   │       ├── cmd_ingest.go
 │   │   │       ├── cmd_plan.go
 │   │   │       ├── cmd_status.go
 │   │   │       ├── main.go
 │   │   │       └── output.go
 │   │   ├── Dockerfile
+│   │   ├── .env.example
 │   │   ├── go.mod
 │   │   ├── go.sum
 │   │   ├── infra
@@ -118,6 +124,9 @@
 │   │   │       │   ├── pipeline.go
 │   │   │       │   ├── product.go
 │   │   │       │   └── recovery.go
+│   │   │       ├── lifecycle
+│   │   │       │   ├── manager.go
+│   │   │       │   └── manager_test.go
 │   │   │       └── plan
 │   │   │           ├── select.go
 │   │   │           └── write.go
@@ -139,12 +148,18 @@
 │   │   │   ├── anomaly
 │   │   │   │   ├── model.py
 │   │   │   │   └── train.py
+│   │   │   ├── analytics.py
+│   │   │   ├── catalogs.py
 │   │   │   ├── checkpoint.py
 │   │   │   ├── config.py
 │   │   │   ├── data.py
 │   │   │   ├── evaluate.py
+│   │   │   ├── evidence.py
 │   │   │   ├── export_onnx.py
+│   │   │   ├── feature_checkpoint.py
 │   │   │   ├── features.py
+│   │   │   ├── gold.py
+│   │   │   ├── gold_materialize.py
 │   │   │   ├── __init__.py
 │   │   │   ├── main.py
 │   │   │   ├── registry.py
@@ -152,6 +167,7 @@
 │   │   │       ├── model.py
 │   │   │       └── train.py
 │   │   ├── Dockerfile
+│   │   ├── .env.example
 │   │   ├── pkg
 │   │   │   └── logger
 │   │   │       ├── __init__.py
@@ -159,11 +175,19 @@
 │   │   ├── pyproject.toml
 │   │   ├── README.md
 │   │   └── tests
+│   │       ├── test_analytics.py
+│   │       ├── test_catalogs.py
 │   │       ├── test_config.py
+│   │       ├── test_evidence.py
+│   │       ├── test_features.py
+│   │       ├── test_gold.py
+│   │       ├── test_gold_materialize.py
+│   │       ├── test_stage5_e2e.py
 │   │       └── test_training.py
 │   ├── rust-inference
 │   │   ├── Cargo.toml
 │   │   ├── Dockerfile
+│   │   ├── .env.example
 │   │   ├── README.md
 │   │   ├── src
 │   │   │   ├── app.rs
@@ -181,6 +205,7 @@
 │       ├── Cargo.lock
 │       ├── Cargo.toml
 │       ├── Dockerfile
+│       ├── .env.example
 │       ├── README.md
 │       └── src
 │           ├── app.rs
@@ -195,6 +220,7 @@
 │           ├── infra
 │           │   ├── minio.rs
 │           │   └── mod.rs
+│           ├── lineage.rs
 │           ├── logger.rs
 │           ├── main.rs
 │           ├── output
@@ -212,6 +238,7 @@
 │           │   ├── failure_tests.rs
 │           │   ├── fits_tests.rs
 │           │   ├── flow_tests.rs
+│           │   ├── lineage_tests.rs
 │           │   ├── mod.rs
 │           │   ├── pipeline_image_tests.rs
 │           │   ├── pipeline_lc_tests.rs
@@ -224,9 +251,21 @@
 │               ├── publisher.rs
 │               └── recovery.rs
 ├── ARCH.MD
-├── CHECKLIST_PHASE_4_4.md
 ├── contracts
 │   ├── data
+│   │   ├── analytics-query-index-v1.md
+│   │   ├── candidate-label-v1.md
+│   │   ├── catalog-snapshot-v1.md
+│   │   ├── catalog-tce-v1.md
+│   │   ├── catalog-tic-v1.md
+│   │   ├── catalog-toi-v1.md
+│   │   ├── gold-anomaly-v1.md
+│   │   ├── gold-candidate-v1.md
+│   │   ├── gold-ffi-evidence-v1.md
+│   │   ├── gold-lightcurve-features-v1.md
+│   │   ├── gold-snapshot-v1.md
+│   │   ├── gold-tpf-vetting-v1.md
+│   │   ├── lineage-v1.md
 │   │   ├── silver-ffi-v1.md
 │   │   ├── silver-lightcurve-v1.md
 │   │   └── silver-target-pixel-v1.md
@@ -234,12 +273,28 @@
 │   │   └── bronze-object-ready.schema.json
 │   └── README.md
 ├── docker-compose.yml
+├── .dockerignore
 ├── docs
+│   ├── ANALYTICS.md
+│   ├── CATALOGS.md
 │   ├── CHECKPOINTS.md
 │   ├── CONFIGURATION.md
+│   ├── GOLD.md
+│   ├── LABELS.md
+│   ├── LINEAGE.md
 │   ├── STAGE2_VALIDATION.md
-│   └── STAGE3_VALIDATION.md
+│   ├── STAGE3_VALIDATION.md
+│   ├── STAGE4_VALIDATION.md
+│   └── STAGE5_VALIDATION.md
+├── .editorconfig
+├── .github
+│   └── workflows
+│       ├── ci.yml
+│       └── release.yml
+├── .gitignore
 ├── infra
+│   ├── clickhouse
+│   │   └── init.sql
 │   ├── minio
 │   │   └── init.sh
 │   └── nats
@@ -253,8 +308,10 @@
 ├── STRUCTURE.MD
 ├── tests
 │   ├── e2e
-│   │   └── stage3-preprocessing.sh
+│   │   ├── stage3-preprocessing.sh
+│   │   ├── stage4-recovery-lifecycle.sh
+│   │   └── stage5-gold-analytics.sh
 │   └── fixtures
 └── tree.txt
 
-78 directories, 180 files
+81 directories, 205 files

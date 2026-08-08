@@ -97,3 +97,23 @@ FAILED
 5. **Crash after Silver upload before ACK does NOT trigger scientific reprocessing.**
 6. **Processor versions maintain isolated checkpoint identities.**
 7. **Bronze source objects are never deleted during Phase 4.1.**
+
+---
+
+## 6. Stage 5 Feature Engineering Recovery Checkpoints
+
+Stage 5 Gold dataset materialization in Python ML Worker maintains recovery checkpoints stored in MinIO:
+
+- **Path**: `checkpoints/feature-engineering/snapshots/<snapshot-id>.json`
+- **Owner**: `python-ml-worker`
+
+### Checkpoint States
+
+| State | Meaning | Recovery Behavior |
+| :--- | :--- | :--- |
+| `PLANNED` | Snapshot plan validated; materialization initiated. | Verify partition progress or start materializing. |
+| `MATERIALIZING` | Sector Parquet partitions are being generated and uploaded. | Stat existing sector Parquet files; reuse valid partitions and build remaining sectors. |
+| `DATA_STORED` | All sector Parquet partitions uploaded & verified; manifest pending. | Stat all Parquet files; write `manifest.json` and promote to `COMMITTED` without recomputing features. |
+| `COMMITTED` | Snapshot `manifest.json` written & verified. | Fast-path no-op. Snapshot materialization complete. |
+| `FAILED` | Previous materialization attempt encountered an error. | Resume materialization from existing verified sector partitions. |
+

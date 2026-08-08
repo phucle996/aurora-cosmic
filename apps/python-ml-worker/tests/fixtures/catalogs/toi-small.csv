@@ -1,0 +1,4 @@
+toi_id,tic_id,catalog_period,catalog_epoch,catalog_duration,catalog_depth,toi_disposition_raw
+123.01,12345678,3.5,1.0,0.2,0.01,KP
+123.02,12345678,7.0,2.5,0.3,0.005,PC
+999.01,99999999,1.2,0.5,0.1,0.02,FALSE POSITIVE

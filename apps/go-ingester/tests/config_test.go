@@ -22,7 +22,11 @@ func setDummyEnv() {
 func TestConfigValidation(t *testing.T) {
 	cfg := &config.Config{
 		Ingest: config.IngestConfig{Concurrency: 4},
-		Bronze: config.BronzeConfig{LowWatermark: 0.60, HighWatermark: 0.90},
+		Bronze: config.BronzeConfig{
+			MaxBytes:           53687091200,
+			HighWatermarkBytes: 48318382080,
+			LowWatermarkBytes:  32212254720,
+		},
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("expected valid config, got error: %v", err)
@@ -30,7 +34,11 @@ func TestConfigValidation(t *testing.T) {
 
 	cfgInvalidConcurrency := &config.Config{
 		Ingest: config.IngestConfig{Concurrency: 0},
-		Bronze: config.BronzeConfig{LowWatermark: 0.60, HighWatermark: 0.90},
+		Bronze: config.BronzeConfig{
+			MaxBytes:           53687091200,
+			HighWatermarkBytes: 48318382080,
+			LowWatermarkBytes:  32212254720,
+		},
 	}
 	if err := cfgInvalidConcurrency.Validate(); err == nil {
 		t.Fatal("expected error for invalid concurrency 0, got nil")
@@ -38,7 +46,11 @@ func TestConfigValidation(t *testing.T) {
 
 	cfgInvalidWatermarks := &config.Config{
 		Ingest: config.IngestConfig{Concurrency: 4},
-		Bronze: config.BronzeConfig{LowWatermark: 0.95, HighWatermark: 0.90},
+		Bronze: config.BronzeConfig{
+			MaxBytes:           53687091200,
+			HighWatermarkBytes: 48318382080,
+			LowWatermarkBytes:  50000000000,
+		},
 	}
 	if err := cfgInvalidWatermarks.Validate(); err == nil {
 		t.Fatal("expected error when low watermark > high watermark, got nil")

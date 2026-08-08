@@ -41,3 +41,38 @@ Each sub-project owns its `.env.example` in its application directory:
 * `auto` (default): Detects CUDA availability automatically; falls back to CPU if unavailable.
 * `cpu`: Forces CPU execution.
 * `cuda`: Forces CUDA execution; fails at startup if CUDA is unavailable.
+
+## 6. Stage 5 Light Curve Feature Configuration
+
+`python-ml-worker` supports the following scientific feature environment variables:
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `AURORA_LC_FEATURE_VERSION` | `lc-features-v1` | Light Curve feature schema version |
+| `AURORA_LC_BLS_MIN_PERIOD_DAYS` | `0.5` | Minimum BLS period search limit (days) |
+| `AURORA_LC_BLS_MAX_PERIOD_DAYS` | `20.0` | Maximum BLS period search limit (days) |
+| `AURORA_LC_MIN_POINTS` | `100` | Minimum required light curve cadence rows for BLS |
+
+## 7. Stage 5 TPF & FFI Evidence Configuration
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `AURORA_TPF_FEATURE_VERSION` | `tpf-vetting-v1` | TPF vetting evidence schema version |
+| `AURORA_TPF_TRANSIT_WINDOW_FACTOR` | `1.0` | In-transit window width multiplier (`factor * duration / 2`) |
+| `AURORA_TPF_OUT_GUARD_FACTOR` | `2.0` | Out-of-transit guard zone multiplier |
+| `AURORA_TPF_MIN_IN_TRANSIT_CADENCES` | `3` | Minimum required cadences inside transit window |
+| `AURORA_FFI_FEATURE_VERSION` | `ffi-evidence-v1` | FFI evidence schema version |
+
+## 8. Stage 5 Catalog & Label Configuration
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `AURORA_TOI_PERIOD_REL_TOLERANCE` | `0.05` | Maximum relative period tolerance for TOI candidate matching |
+| `AURORA_LABEL_POLICY_VERSION` | `candidate-label-policy-v1` | Versioned policy mapping catalog status to ML label |
+| `AURORA_TOI_MATCH_VERSION` | `toi-match-v1` | Versioned TOI ephemeris matching algorithm |
+| `AURORA_TIC_SOURCE` | `local` | Source for TIC catalog snapshots (`local` or URI) |
+| `AURORA_TOI_SOURCE` | `local` | Source for TOI catalog snapshots (`local` or URI) |
+| `AURORA_TCE_SOURCE` | `local` | Source for TCE catalog snapshots (`local` or URI) |
+
+
+

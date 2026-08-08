@@ -100,6 +100,10 @@ aurora-cosmic/
 │   │   │   ├── checkpoint.py
 │   │   │   │
 │   │   │   ├── features.py
+│   │   │   ├── evidence.py
+│   │   │   ├── catalogs.py
+│   │   │   ├── gold_materialize.py
+│   │   │   ├── analytics.py
 │   │   │   │
 │   │   │   ├── transit/
 │   │   │   │   ├── model.py
@@ -114,6 +118,14 @@ aurora-cosmic/
 │   │   │   └── export_onnx.py
 │   │   │
 │   │   ├── tests/
+│   │   │   ├── test_analytics.py
+│   │   │   ├── test_catalogs.py
+│   │   │   ├── test_config.py
+│   │   │   ├── test_evidence.py
+│   │   │   ├── test_features.py
+│   │   │   ├── test_gold.py
+│   │   │   ├── test_gold_materialize.py
+│   │   │   ├── test_stage5_e2e.py
 │   │   │   └── test_training.py
 │   │   │
 │   │   └── README.md
@@ -238,14 +250,21 @@ aurora-cosmic/
 │   │   └── sample-event.json
 │   │
 │   └── e2e/
-│       └── pipeline.sh
+│       ├── stage3-preprocessing.sh
+│       ├── stage4-recovery-lifecycle.sh
+│       └── stage5-gold-analytics.sh
 │
 │
 ├── docs/
-│   ├── DATA.md
-│   ├── EVENTS.md
+│   ├── ANALYTICS.md
 │   ├── CHECKPOINTS.md
-│   └── ML.md
+│   ├── CONFIGURATION.md
+│   ├── GOLD.md
+│   ├── LINEAGE.md
+│   ├── STAGE2_VALIDATION.md
+│   ├── STAGE3_VALIDATION.md
+│   ├── STAGE4_VALIDATION.md
+│   └── STAGE5_VALIDATION.md
 │
 │
 └── .github/

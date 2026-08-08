@@ -16,7 +16,7 @@ STAGE 2: Data Source & Go Ingestion (NASA MAST -> Go -> MinIO Bronze + NATS)
 STAGE 3: Rust Preprocessing Pipeline (NATS -> Rust -> MinIO Silver) [DONE]
    │
    ▼
-STAGE 4: Checkpoint, Recovery & Rolling Lifecycle (Idempotency + Rolling ~50 GiB)
+STAGE 4: Checkpoint, Recovery & Rolling Lifecycle (Idempotency + Rolling ~50 GiB) [DONE]
    │
    ▼
 STAGE 5: Gold Dataset & Scientific Analytics (Silver -> Gold Parquet + Catalogs/Labels)
@@ -44,12 +44,12 @@ STAGE 8: Observability, Benchmark & System Hardening (Prometheus/Grafana -> Stre
 | **Stage 1** | Foundation & Infrastructure [DONE] | 5 | Monorepo skeleton, Docker Compose runtime, Makefile, Service stubs |
 | **Stage 2** | Data Source & Go Ingestion | 6 | Ingestion FITS stream sang MinIO Bronze, NATS ingestion events |
 | **Stage 3** | Rust Preprocessing Pipeline [DONE] | 6 | Bounded Tokio consumer, FITS decode, LC/TPF/FFI preprocessing, MinIO Silver Parquet |
-| **Stage 4** | Checkpoint, Recovery & Rolling Lifecycle | 5 | State checkpoints, idempotency, rolling Bronze window ~50 GiB |
-| **Stage 5** | Gold Dataset & Scientific Analytics | 5 | Feature engineering, catalog/labels integration, Gold snapshots |
+| **Stage 4** | Checkpoint, Recovery & Rolling Lifecycle [DONE] | 6 | State checkpoints, idempotency, rolling Bronze window ~50 GiB |
+| **Stage 5** | Gold Dataset & Scientific Analytics [DONE] | 7 | Feature engineering, catalog/labels integration, Gold snapshots, analytical query index |
 | **Stage 6** | ML Platform & Model Evolution | 6 | Candidate & anomaly models, ONNX export, Champion/Challenger |
 | **Stage 7** | Rust Inference, Go API & Dashboard | 5 | Rust ONNX serving, Go Query API, Interactive Scientific Dashboard |
 | **Stage 8** | Observability, Benchmark & Hardening | 6 | Prometheus/Grafana metrics, system benchmarks, end-to-end resilience |
-| **Tổng** | **8 Stages** | **44 Phases** | **Full Production-Grade Data & ML Pipeline** |
+| **Tổng** | **8 Stages** | **46 Phases** | **Full Production-Grade Data & ML Pipeline** |
 
 ---
 
@@ -133,47 +133,56 @@ Stage 3 [DONE]
 
 ---
 
-### Stage 4 — Recovery, Idempotency & Rolling Lifecycle
+### Stage 4 — Recovery, Idempotency & Rolling Lifecycle [DONE]
 
 Mục tiêu: Đảm bảo khả năng phục hồi lỗi liên dịch vụ (cross-service idempotency, preprocessor checkpoint, NATS redelivery), quản lý vết dữ liệu (lineage tracking) và vòng đời bộ nhớ đệm Bronze (~50 GiB rolling window).
 
 ```text
-Stage 4
-├── Phase 4.1: Preprocessor Checkpoint & Processing State
-├── Phase 4.2: Cross-Service Idempotency & Reconciliation
-├── Phase 4.3: Redelivery, Retry & Poison-Message Policy
-├── Phase 4.4: Lineage Commit & Eviction Eligibility
-├── Phase 4.5: Rolling Bronze Window & Safe Eviction
-└── Phase 4.6: End-to-End Recovery & Lifecycle Validation
+Stage 4 [DONE]
+├── Phase 4.1: Preprocessor Checkpoint & Processing State        [DONE]
+├── Phase 4.2: Cross-Service Idempotency & Reconciliation        [DONE]
+├── Phase 4.3: Redelivery, Retry & Poison-Message Policy         [DONE]
+├── Phase 4.4: Lineage Commit & Eviction Eligibility             [DONE]
+├── Phase 4.5: Rolling Bronze Window & Safe Eviction             [DONE]
+└── Phase 4.6: End-to-End Recovery & Lifecycle Validation        [DONE]
 ```
 
 * **Phase 4.1 — Preprocessor Checkpoint & Processing State [DONE]**: Quản lý state xử lý bền vững tại `checkpoints/preprocessing/` (`PROCESSING` -> `SILVER_STORED` -> `COMPLETED` / `FAILED`). Phục hồi mượt mà sau sự cố crash giữa bước Silver write và NATS ACK.
-* **Phase 4.2 — Cross-Service Idempotency & Reconciliation**: Xây dựng các quy tắc đối soát dữ liệu (reconciliation rules) giữa Go Ingestion state, MinIO Bronze, NATS JetStream và Rust Processing state mà không cần giao dịch phân tán (distributed transactions).
-* **Phase 4.3 — Redelivery, Retry & Poison-Message Policy**: Đóng băng chính sách xử lý lỗi: retry tự động với lỗi hạ tầng tạm thời, gửi `TERM` cho poison message, và ghi nhận trạng thái `REJECTED` cho dữ liệu lỗi khoa học vĩnh viễn.
-* **Phase 4.4 — Lineage Commit & Eviction Eligibility**: Đảm bảo hợp đồng vết dữ liệu (`source_product_id` -> Bronze -> Processor Version -> Silver). Một file Bronze thô chỉ được đánh dấu `EVICTABLE` sau khi Lineage đã được commit đầy đủ.
-* **Phase 4.5 — Rolling Bronze Window & Safe Eviction**: Tự động dọn dẹp các file FITS thô `EVICTABLE` cũ nhất khi dung lượng Bronze chạm High Watermark (~45 GiB) về mức Low Watermark (~30 GiB). Tuyệt đối không xóa Manifest, Checkpoint, Lineage, Silver hay Gold Artifacts.
-* **Phase 4.6 — End-to-End Recovery & Lifecycle Validation**: Kiểm thử ma trận phục hồi sự cố (MinIO/NATS/Go/Rust crash & restart) và nghiệm thu chính sách xóa an toàn đệm Bronze.
+* **Phase 4.2 — Cross-Service Idempotency & Reconciliation [DONE]**: Xây dựng các quy tắc đối soát dữ liệu (reconciliation rules) giữa Go Ingestion state, MinIO Bronze, NATS JetStream và Rust Processing state mà không cần giao dịch phân tán (distributed transactions).
+* **Phase 4.3 — Redelivery, Retry & Poison-Message Policy [DONE]**: Đóng băng chính sách xử lý lỗi: retry tự động với lỗi hạ tầng tạm thời, gửi `TERM` cho poison message, và ghi nhận trạng thái `REJECTED` cho dữ liệu lỗi khoa học vĩnh viễn.
+* **Phase 4.4 — Lineage Commit & Eviction Eligibility [DONE]**: Đảm bảo hợp đồng vết dữ liệu (`source_product_id` -> Bronze -> Processor Version -> Silver). Một file Bronze thô chỉ được đánh dấu `EVICTABLE` sau khi Lineage đã được commit đầy đủ.
+* **Phase 4.5 — Rolling Bronze Window & Safe Eviction [DONE]**: Tự động dọn dẹp các file FITS thô `EVICTABLE` cũ nhất khi dung lượng Bronze chạm High Watermark (~45 GiB) về mức Low Watermark (~30 GiB). Tuyệt đối không xóa Manifest, Checkpoint, Lineage, Silver hay Gold Artifacts.
+* **Phase 4.6 — End-to-End Recovery & Lifecycle Validation [DONE]**: Kiểm thử ma trận phục hồi sự cố (MinIO/NATS/Go/Rust crash & restart) và nghiệm thu chính sách xóa an toàn đệm Bronze.
 
 ---
 
-### Stage 5 — Gold Dataset & Scientific Analytics
+### Stage 5 — Gold Dataset & Scientific Analytics [DONE]
 
-Mục tiêu: Tích hợp dữ liệu danh mục khoa học (TIC Catalog, Simbad labels), tổng hợp Silver Parquet thành Gold Dataset sẵn sàng huấn luyện ML.
+Mục tiêu: Tích hợp dữ liệu danh mục khoa học (TIC Catalog, TOI, TCE), trích xuất đặc trưng khoa học (Feature Engineering) từ dữ liệu Silver, tạo bản đóng băng Gold Dataset bất biến (Immutable Snapshots) và thiết lập chỉ mục truy vấn phân tích (ClickHouse Analytical Index).
+
+> ⚠️ **Quy tắc bất biến tuyệt đối (Strict Stage 5 Invariant):**
+> **Stage 5 CHỈ ĐỌC dữ liệu từ Silver (`silver/`), Lineage (`lineage/`) và Catalog/Labels versioned.**
+> Tuyệt đối **KHÔNG đọc trực tiếp đệm Bronze (`bronze/` FITS files)**. 
+> Stage 5 phải vận hành 100% thành công ngay cả khi dữ liệu Bronze thô đã bị xóa (`RAW_DELETED`).
 
 ```text
 Stage 5
-├── Phase 5.1: Gold Aggregator Service
-├── Phase 5.2: Catalog & Label Integration
-├── Phase 5.3: Feature Engineering Pipeline
-├── Phase 5.4: Gold Snapshot & Versioning
-└── Phase 5.5: Dataset Validation & Quality Gates
+├── Phase 5.1: Gold Dataset Contract & Snapshot Identity          [DONE]
+├── Phase 5.2: Light Curve Scientific Feature Engineering        [DONE]
+├── Phase 5.3: TPF / FFI Vetting Evidence Features               [DONE]
+├── Phase 5.4: TIC / TOI / TCE Enrichment & Label Versioning     [DONE]
+├── Phase 5.5: Gold Materialization & Feature Checkpoint         [DONE]
+├── Phase 5.6: Analytical Tables & Query Index                   [DONE]
+└── Phase 5.7: End-to-End Gold & Scientific Analytics Validation [DONE]
 ```
 
-* **Phase 5.1 — Gold Aggregator Service**: Gom nhóm dữ liệu chuỗi thời gian Silver theo TIC ID và Sector.
-* **Phase 5.2 — Catalog & Label Integration**: Gắn nhãn khoa học (Planet candidate, Eclipsing Binary, Stellar flare, Noise/Artifact).
-* **Phase 5.3 — Feature Engineering Pipeline**: Trích xuất đặc trưng chuỗi thời gian (Period, Transit depth, Duration, Standard deviation, Skewness).
-* **Phase 5.4 — Gold Snapshot & Versioning**: Tạo bản đóng đóng băng Gold Dataset phiên bản hóa (`gold/v1.0/...`).
-* **Phase 5.5 — Dataset Validation & Quality Gates**: Kiểm tra tỷ lệ missing values, data drift và tính toàn vẹn nhãn.
+* **Phase 5.1 — Gold Dataset Contract & Snapshot Identity [DONE]**: Định nghĩa hợp đồng dữ liệu Gold snapshot bất biến (`contracts/data/gold-snapshot-v1.md`). Quy định cấu trúc snapshot `gold/snapshots/gold-v1/<snapshot-id>/` với metadata phiên bản (`feature_versions`, `catalog_snapshots`, `label_snapshots`, `inputs`) và hàm băm SHA-256 chuẩn xác.
+* **Phase 5.2 — Light Curve Scientific Feature Engineering [DONE]**: Python worker (`python-ml-worker`) đọc Silver Light Curve và trích xuất các đặc trưng khoa học (basic statistics, variability metrics, Astropy BLS period/power/depth/duration, shape skewness/kurtosis) độc lập với đệm Bronze. Hợp đồng `contracts/data/gold-lightcurve-features-v1.md`.
+* **Phase 5.3 — TPF / FFI Vetting Evidence Features [DONE]**: Trích xuất các bằng chứng kỹ thuật không gian (evidence features) từ Silver TPF (`tpf-vetting-v1`: temporal MAD, transit deficit centroid) và Silver FFI (`ffi-evidence-v1`: detector context, cutout deviations) phục vụ candidate vetting và anomaly detection độc lập với đệm Bronze. Hợp đồng `contracts/data/gold-tpf-vetting-v1.md` & `gold-ffi-evidence-v1.md`.
+* **Phase 5.4 — TIC / TOI / TCE Enrichment & Label Versioning [DONE]**: Tích hợp danh mục khoa học NASA (TIC, TOI, TCE) dạng snapshot bất biến (`catalogs/tess/tic/`, `toi/`, `tce/`), thực hiện ghép nối chu kỳ transit (`toi-match-v1`) và gán nhãn huấn luyện bảo thủ (`candidate-label-policy-v1`), đảm bảo không làm thay đổi các đặc trưng số liệu tín hiệu khoa học và tuyệt đối ngăn ngừa rò rỉ nhãn (label leakage). Hợp đồng `contracts/data/catalog-*.md` & `candidate-label-v1.md`.
+* **Phase 5.5 — Gold Materialization & Feature Checkpoint [DONE]**: Vật thể hóa tập dữ liệu Gold Parquet theo cấu trúc phân vùng bất biến (`gold/snapshots/<snapshot-id>/data/candidate/sector=XXXX/part-00000.parquet`), nén PyArrow ZSTD, sắp xếp dòng deterministic, theo dõi tiến trình qua `checkpoints/feature-engineering/`, áp dụng thứ tự commit manifest cuối cùng và cập nhật cờ `--set-current` sản xuất. Hợp đồng `contracts/data/gold-candidate-v1.md` & `gold-anomaly-v1.md`.
+* **Phase 5.6 — Analytical Tables & Query Index [DONE]**: Thiết lập lớp chỉ mục truy vấn phân tích ClickHouse (`aurora` database) chiếu dữ liệu snapshot Gold bất biến sang các bảng MergeTree (`gold_snapshots_v1`, `candidate_features_v1`, `anomaly_*_v1`) phân vùng theo `snapshot_id`, đảm bảo nguyên tắc phân lập snapshot (`WHERE snapshot_id = ...`), hỗ trợ quy trình reindex (`analytics-load --snapshot-id <id> [--rebuild]`) và đối soát dòng/chỉ số thống kê 100% trước khi ghi trạng thái `READY`. Hợp đồng `contracts/data/analytics-query-index-v1.md`.
+* **Phase 5.7 — End-to-End Gold & Scientific Analytics Validation [DONE]**: Kiểm thử toàn bộ luồng từ Silver -> Python Feature Builder -> Catalog Labels -> Gold Snapshot -> Analytics Query (`tests/e2e/stage5-gold-analytics.sh`, `test_stage5_e2e.py`). Khẳng định quy trình chạy thành công 100% và tuân thủ 12 cờ bất biến kiến trúc ngay cả khi đệm Bronze đã bị xóa (`RAW_DELETED`). Báo cáo nghiệm thu `docs/STAGE5_VALIDATION.md`.
 
 ---
 
