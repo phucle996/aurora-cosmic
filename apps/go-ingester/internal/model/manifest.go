@@ -55,6 +55,27 @@ type Manifest struct {
 	Statistics    Statistics        `json:"statistics"`
 }
 
+// Products returns the manifest's products in deterministic storage order:
+// sample target-pixel, sample light-curve, then FFI products. It centralizes
+// the flattening logic so CLI setup and the ingest use case cannot drift.
+func (m *Manifest) Products() []ManifestProduct {
+	if m == nil {
+		return nil
+	}
+
+	products := make([]ManifestProduct, 0, len(m.Samples)*2+len(m.FFIs))
+	for _, sample := range m.Samples {
+		if sample.TargetPixel != nil {
+			products = append(products, *sample.TargetPixel)
+		}
+		if sample.LightCurve != nil {
+			products = append(products, *sample.LightCurve)
+		}
+	}
+	products = append(products, m.FFIs...)
+	return products
+}
+
 // SelectOptions defines constraints applied during product selection and manifest generation.
 type SelectOptions struct {
 	IncludeTPF    bool

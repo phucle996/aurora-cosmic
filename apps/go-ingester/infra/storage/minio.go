@@ -86,6 +86,17 @@ func (c *MinIOClient) StatObject(ctx context.Context, bucket, objectKey string) 
 
 // GetObject retrieves object stream from MinIO.
 func (c *MinIOClient) GetObject(ctx context.Context, bucket, objectKey string) (io.ReadCloser, error) {
+	// minio-go's GetObject is lazy: a missing key often surfaces only on the
+	// first Read. Resolve existence here so checkpoint callers can distinguish a
+	// normal first-run miss from an unavailable storage service.
+	_, exists, err := c.StatObject(ctx, bucket, objectKey)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, model.ErrObjectNotFound
+	}
+
 	obj, err := c.client.GetObject(ctx, bucket, objectKey, minio.GetObjectOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("get object %s/%s: %w", bucket, objectKey, err)

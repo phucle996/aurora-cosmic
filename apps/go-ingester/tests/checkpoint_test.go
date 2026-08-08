@@ -2,7 +2,9 @@ package tests
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +18,22 @@ import (
 	"go-ingester/internal/pipeline/checkpoint"
 	"go-ingester/internal/pipeline/ingest"
 )
+
+type checkpointStorageFailure struct {
+	*mockStorageClient
+}
+
+func (s *checkpointStorageFailure) GetObject(context.Context, string, string) (io.ReadCloser, error) {
+	return nil, errors.New("minio unavailable")
+}
+
+func TestCheckpointStorePropagatesStorageErrors(t *testing.T) {
+	store := checkpoint.NewStore(&checkpointStorageFailure{mockStorageClient: newMockStorageClient()}, "aurora")
+	_, _, err := store.LoadCurrent(context.Background())
+	if err == nil {
+		t.Fatal("expected storage error to be propagated")
+	}
+}
 
 func TestCheckpointStateTransitions(t *testing.T) {
 	mockStorage := newMockStorageClient()

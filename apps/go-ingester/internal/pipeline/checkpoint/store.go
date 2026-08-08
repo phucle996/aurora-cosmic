@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -97,12 +98,18 @@ func (s *Store) LoadCurrent(ctx context.Context) (*model.Checkpoint, bool, error
 func (s *Store) fetchJSON(ctx context.Context, key string) ([]byte, bool, error) {
 	rc, err := s.client.GetObject(ctx, s.bucket, key)
 	if err != nil {
-		return nil, false, nil
+		if errors.Is(err, model.ErrObjectNotFound) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("get json object %s: %w", key, err)
 	}
 	defer rc.Close()
 
 	data, err := io.ReadAll(rc)
 	if err != nil {
+		if errors.Is(err, model.ErrObjectNotFound) {
+			return nil, false, nil
+		}
 		return nil, false, fmt.Errorf("read json object %s: %w", key, err)
 	}
 	return data, true, nil

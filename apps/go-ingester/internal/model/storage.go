@@ -2,11 +2,17 @@ package model
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"time"
 )
+
+// ErrObjectNotFound is returned by storage adapters when an object is absent.
+// Callers can distinguish a normal first-run checkpoint miss from an actual
+// storage/network failure instead of silently starting a new run.
+var ErrObjectNotFound = errors.New("storage object not found")
 
 // ObjectInfo metadata for a stored object in MinIO Bronze.
 type ObjectInfo struct {

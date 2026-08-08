@@ -71,7 +71,16 @@ func (p *Pipeline) ingestProduct(ctx context.Context, prod model.ManifestProduct
 	}
 
 	// Stream product from MAST API.
-	stream, streamSize, err := p.mastClient.OpenProduct(ctx, prod.DataURI)
+	if p.sourceReader == nil {
+		return model.ProductResult{
+			SourceProductID: prod.SourceProductID,
+			ObjectKey:       objectKey,
+			Status:          model.StatusFailed,
+			Error:           fmt.Errorf("source reader is not configured"),
+		}
+	}
+
+	stream, streamSize, err := p.sourceReader.OpenProduct(ctx, prod.DataURI)
 	if err != nil {
 		return model.ProductResult{
 			SourceProductID: prod.SourceProductID,

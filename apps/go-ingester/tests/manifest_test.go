@@ -213,3 +213,28 @@ func TestStatisticsCorrect(t *testing.T) {
 
 	_ = os.Remove(outPath)
 }
+
+func TestManifestProductsFlattensDeterministically(t *testing.T) {
+	m := &model.Manifest{
+		Samples: []model.Sample{{
+			TargetPixel: &model.ManifestProduct{SourceProductID: "tp"},
+			LightCurve:  &model.ManifestProduct{SourceProductID: "lc"},
+		}},
+		FFIs: []model.ManifestProduct{{SourceProductID: "ffi"}},
+	}
+
+	products := m.Products()
+	if len(products) != 3 {
+		t.Fatalf("expected 3 products, got %d", len(products))
+	}
+	for i, want := range []string{"tp", "lc", "ffi"} {
+		if products[i].SourceProductID != want {
+			t.Errorf("product[%d] = %q, want %q", i, products[i].SourceProductID, want)
+		}
+	}
+
+	products[0].SourceProductID = "mutated-copy"
+	if m.Samples[0].TargetPixel.SourceProductID != "tp" {
+		t.Fatal("Products should return value copies, not mutate the manifest")
+	}
+}

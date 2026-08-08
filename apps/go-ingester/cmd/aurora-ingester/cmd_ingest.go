@@ -88,18 +88,7 @@ func runIngest(ctx context.Context, cfg *config.Config, log *slog.Logger, args [
 
 		if cpManager == nil {
 			runID := fmt.Sprintf("ingest-%s", uuid.NewString()[:8])
-			var allProducts []model.ManifestProduct
-			for _, s := range m.Samples {
-				if s.TargetPixel != nil {
-					allProducts = append(allProducts, *s.TargetPixel)
-				}
-				if s.LightCurve != nil {
-					allProducts = append(allProducts, *s.LightCurve)
-				}
-			}
-			allProducts = append(allProducts, m.FFIs...)
-
-			initCp := model.CreateNewInitialCheckpoint(runID, *manifestPath, manifestHash, allProducts)
+			initCp := model.CreateNewInitialCheckpoint(runID, *manifestPath, manifestHash, m.Products())
 			cpManager = checkpoint.NewManager(cpStore, initCp)
 			log.Info("checkpoint: created fresh ingestion run", slog.String("run_id", runID))
 		}

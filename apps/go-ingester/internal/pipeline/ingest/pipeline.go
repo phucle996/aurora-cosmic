@@ -3,19 +3,26 @@ package ingest
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"go-ingester/infra/mast"
 	"go-ingester/internal/model"
 	"go-ingester/internal/pipeline/checkpoint"
 )
 
+// SourceReader is the application-facing contract for streaming a source
+// product. The ingestion core deliberately does not depend on a concrete MAST
+// client so it can be tested and reused with another catalog/source adapter.
+type SourceReader interface {
+	OpenProduct(ctx context.Context, dataURI string) (io.ReadCloser, int64, error)
+}
+
 // Pipeline manages the bounded concurrent streaming of FITS files into MinIO and event publishing with Checkpoint persistence.
 type Pipeline struct {
-	mastClient         *mast.Client
+	sourceReader       SourceReader
 	minioClient        model.Client
 	publisher          model.Publisher
 	cpManager          *checkpoint.Manager
@@ -27,7 +34,7 @@ type Pipeline struct {
 }
 
 // NewPipeline constructs an ingestion Pipeline.
-func NewPipeline(mastClient *mast.Client, minioClient model.Client, publisher model.Publisher, cpManager *checkpoint.Manager, bucket string, concurrency int, log *slog.Logger) *Pipeline {
+func NewPipeline(sourceReader SourceReader, minioClient model.Client, publisher model.Publisher, cpManager *checkpoint.Manager, bucket string, concurrency int, log *slog.Logger) *Pipeline {
 	if concurrency <= 0 {
 		concurrency = 4
 	}
@@ -35,7 +42,7 @@ func NewPipeline(mastClient *mast.Client, minioClient model.Client, publisher mo
 		log = slog.Default()
 	}
 	return &Pipeline{
-		mastClient:         mastClient,
+		sourceReader:       sourceReader,
 		minioClient:        minioClient,
 		publisher:          publisher,
 		cpManager:          cpManager,
@@ -72,16 +79,7 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun
 	}
 
 	// 1. Collect all products from manifest.
-	var allProducts []model.ManifestProduct
-	for _, s := range m.Samples {
-		if s.TargetPixel != nil {
-			allProducts = append(allProducts, *s.TargetPixel)
-		}
-		if s.LightCurve != nil {
-			allProducts = append(allProducts, *s.LightCurve)
-		}
-	}
-	allProducts = append(allProducts, m.FFIs...)
+	allProducts := m.Products()
 
 	if len(allProducts) == 0 {
 		return &model.Summary{Elapsed: time.Since(startTime)}, nil, nil

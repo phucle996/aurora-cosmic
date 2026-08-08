@@ -3,7 +3,6 @@ package tests
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -66,7 +65,7 @@ func (m *mockStorageClient) GetObject(ctx context.Context, bucket, objectKey str
 	defer m.mu.Unlock()
 	data, ok := m.content[objectKey]
 	if !ok {
-		return nil, fmt.Errorf("mock: object %s not found", objectKey)
+		return nil, model.ErrObjectNotFound
 	}
 	return io.NopCloser(bytes.NewReader(data)), nil
 }

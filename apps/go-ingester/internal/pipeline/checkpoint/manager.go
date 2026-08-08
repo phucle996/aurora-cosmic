@@ -102,9 +102,25 @@ func (m *Manager) Flush(ctx context.Context) error {
 	return m.store.Save(ctx, m.cp)
 }
 
-// GetCheckpoint returns the underlying Checkpoint pointer.
-func (m *Manager) GetCheckpoint() *model.Checkpoint {
+// GetCheckpoint returns an immutable snapshot of the active checkpoint. The
+// manager never exposes its internal map/pointers to callers, preventing a
+// read-only status endpoint or test from racing with worker updates.
+func (m *Manager) GetCheckpoint() model.Checkpoint {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.cp
+
+	if m.cp == nil {
+		return model.Checkpoint{}
+	}
+	cp := *m.cp
+	cp.Products = make(map[string]*model.ProductCheckpoint, len(m.cp.Products))
+	for id, product := range m.cp.Products {
+		if product == nil {
+			cp.Products[id] = nil
+			continue
+		}
+		productCopy := *product
+		cp.Products[id] = &productCopy
+	}
+	return cp
 }
