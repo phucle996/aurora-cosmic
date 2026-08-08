@@ -20,6 +20,25 @@ type SourceReader interface {
 	OpenProduct(ctx context.Context, dataURI string) (io.ReadCloser, int64, error)
 }
 
+// ProgressEvent is emitted once for every manifest product when it reaches a
+// terminal state. It is intentionally transport-agnostic so CLI, JSON logs,
+// or a future metrics exporter can render the same progress data.
+type ProgressEvent struct {
+	Result            model.ProductResult
+	CompletedProducts int64
+	TotalProducts     int
+	CompletedBytes    int64
+	TotalBytes        int64
+	Elapsed           time.Duration
+	ThroughputBps     float64
+	ActiveWorkers     int
+	ConfiguredWorkers int
+}
+
+// ProgressReporter receives ingestion progress updates. Implementations should
+// return quickly; a slow reporter back-pressures workers by design.
+type ProgressReporter func(ProgressEvent)
+
 // Pipeline manages the bounded concurrent streaming of FITS files into MinIO and event publishing with Checkpoint persistence.
 type Pipeline struct {
 	sourceReader       SourceReader
@@ -30,6 +49,7 @@ type Pipeline struct {
 	concurrency        int
 	checkpointInterval time.Duration
 	maxRunBytes        int64
+	progress           ProgressReporter
 	log                *slog.Logger
 }
 
@@ -71,6 +91,11 @@ func (p *Pipeline) SetCheckpointInterval(interval time.Duration) {
 	}
 }
 
+// SetProgressReporter attaches an optional per-product progress callback.
+func (p *Pipeline) SetProgressReporter(reporter ProgressReporter) {
+	p.progress = reporter
+}
+
 // IngestManifest processes all products in the manifest using bounded worker goroutines.
 func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun bool) (*model.Summary, []model.ProductResult, error) {
 	startTime := time.Now()
@@ -108,11 +133,46 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun
 	}
 
 	plannedProducts := len(allProducts)
+	var totalBytes int64
+	for _, prod := range allProducts {
+		if prod.SizeBytes > 0 {
+			totalBytes += prod.SizeBytes
+			if totalBytes < 0 { // defensive overflow guard for malformed manifests
+				totalBytes = 0
+				break
+			}
+		}
+	}
 	resultsChan := make(chan model.ProductResult, plannedProducts)
 	// Compact pending products in place so the recovery pass does not retain a
 	// second full ManifestProduct slice for large manifests.
 	pendingCount := 0
 	var storedBytesCounter int64
+	var completedCounter atomic.Int64
+	var activeWorkers atomic.Int64
+	reportProgress := func(res model.ProductResult) {
+		completed := completedCounter.Add(1)
+		if p.progress == nil {
+			return
+		}
+		elapsed := time.Since(startTime)
+		storedBytes := atomic.LoadInt64(&storedBytesCounter)
+		throughput := float64(0)
+		if elapsed > 0 {
+			throughput = float64(storedBytes) / elapsed.Seconds()
+		}
+		p.progress(ProgressEvent{
+			Result:            res,
+			CompletedProducts: completed,
+			TotalProducts:     plannedProducts,
+			CompletedBytes:    storedBytes,
+			TotalBytes:        totalBytes,
+			Elapsed:           elapsed,
+			ThroughputBps:     throughput,
+			ActiveWorkers:     int(activeWorkers.Load()),
+			ConfiguredWorkers: p.concurrency,
+		})
+	}
 
 	// 2. Checkpoint recovery & filtering before queueing downloads.
 	for _, prod := range allProducts {
@@ -125,6 +185,7 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun
 						atomic.AddInt64(&storedBytesCounter, res.SizeBytes)
 					}
 					resultsChan <- res
+					reportProgress(res)
 					continue
 				}
 			}
@@ -184,22 +245,26 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun
 		go func() {
 			defer wg.Done()
 			for prod := range jobs {
+				activeWorkers.Add(1)
+				var res model.ProductResult
 				select {
 				case <-ctx.Done():
-					resultsChan <- model.ProductResult{
+					res = model.ProductResult{
 						SourceProductID: prod.SourceProductID,
 						Status:          model.StatusFailed,
 						Error:           ctx.Err(),
 					}
-					continue
 				default:
+					break
 				}
 
-				if p.cpManager != nil {
-					p.cpManager.UpdateProductState(prod.SourceProductID, model.StateDownloading, 0, "", nil)
+				if res.Status == "" {
+					if p.cpManager != nil {
+						p.cpManager.UpdateProductState(prod.SourceProductID, model.StateDownloading, 0, "", nil)
+					}
+					res = p.ingestProduct(ctx, prod, dryRun)
 				}
-
-				res := p.ingestProduct(ctx, prod, dryRun)
+				activeWorkers.Add(-1)
 				if res.Status == model.StatusStored || res.Status == model.StatusPublished || res.Status == model.StatusStoredEventFailed {
 					atomic.AddInt64(&storedBytesCounter, res.SizeBytes)
 				}
@@ -218,6 +283,7 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun
 				}
 
 				resultsChan <- res
+				reportProgress(res)
 			}
 		}()
 	}

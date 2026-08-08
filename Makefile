@@ -1,4 +1,12 @@
-.PHONY: help config-check repo-check infra-up infra-down infra-restart infra-logs infra-ps infra-reset build build-go build-rust build-python build-dashboard up down restart ps logs test test-go e2e-ingestion e2e-ingestion-live e2e-preprocessing e2e-stage4 test-rust test-python fmt fmt-go fmt-rust fmt-python lint lint-go lint-rust lint-python lint-dashboard smoke clean
+.PHONY: help config-check repo-check infra-up infra-down infra-restart infra-logs infra-ps infra-reset build build-go build-rust build-python build-dashboard up download down restart ps logs test test-go e2e-ingestion e2e-ingestion-live e2e-preprocessing e2e-stage4 test-rust test-python fmt fmt-go fmt-rust fmt-python lint lint-go lint-rust lint-python lint-dashboard smoke clean
+
+# Safe defaults for an explicit download request. Override on the command line:
+# make download DOWNLOAD_SECTOR=42 DOWNLOAD_LIMIT=100 DOWNLOAD_CONCURRENCY=16
+DOWNLOAD_DIR ?= tmp/aurora-download
+DOWNLOAD_MANIFEST ?= $(DOWNLOAD_DIR)/manifest.json
+DOWNLOAD_SECTOR ?= 42
+DOWNLOAD_LIMIT ?= 5
+DOWNLOAD_CONCURRENCY ?= 8
 
 help:
 	@echo "AURORA Cosmic Data Platform - Makefile Targets:"
@@ -13,6 +21,7 @@ help:
 	@echo ""
 	@echo "Application Lifecycle:"
 	@echo "  up             - Start complete platform stack using Docker Compose"
+	@echo "  download       - Discover a small manifest and download it through Docker"
 	@echo "  down           - Stop complete platform stack (preserves volumes)"
 	@echo "  restart        - Restart complete platform stack"
 	@echo "  ps             - View status of all platform services"
@@ -85,7 +94,16 @@ infra-reset:
 # Full Application Stack Lifecycle
 # ------------------------------------------------------------------------------
 up:
-	docker compose up -d
+	docker compose up -d --build
+
+download: up
+	@mkdir -p "$(DOWNLOAD_DIR)"
+	@echo "Creating download manifest: sector=$(DOWNLOAD_SECTOR), limit=$(DOWNLOAD_LIMIT)"
+	docker compose run --rm --no-deps -v "$(CURDIR)/$(DOWNLOAD_DIR):/data" go-ingester \
+		plan --sector "$(DOWNLOAD_SECTOR)" --limit "$(DOWNLOAD_LIMIT)" --output /data/manifest.json
+	@echo "Starting download with $(DOWNLOAD_CONCURRENCY) workers"
+	docker compose run --rm --no-deps -v "$(CURDIR)/$(DOWNLOAD_DIR):/data" go-ingester \
+		ingest --manifest /data/manifest.json --concurrency "$(DOWNLOAD_CONCURRENCY)"
 
 down:
 	docker compose down
