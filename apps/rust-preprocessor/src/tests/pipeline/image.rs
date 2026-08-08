@@ -175,6 +175,44 @@ fn test_tpf_temporal_variation_preserved() {
 }
 
 #[test]
+fn test_tpf_global_median_normalization() {
+    let raw = RawTargetPixel {
+        time: vec![1.0, 2.0],
+        quality: vec![0, 0],
+        flux: vec![vec![vec![10.0, 20.0]], vec![vec![10.0, 20.0]]],
+        rows: 1,
+        cols: 2,
+        tic_id: Some(123456789),
+    };
+    let event = make_tpf_event();
+    let mut cfg = default_image_config();
+    cfg.tpf_normalization = "global-median".to_string();
+
+    let res = preprocess_target_pixel(raw, &event, &cfg).unwrap();
+    // Global median is 15: values become -1/3 and +1/3.
+    assert!((res.flux[0][0][0] + (1.0 / 3.0)).abs() < 1e-6);
+    assert!((res.flux[0][0][1] - (1.0 / 3.0)).abs() < 1e-6);
+}
+
+#[test]
+fn test_tpf_none_normalization_preserves_flux() {
+    let raw = RawTargetPixel {
+        time: vec![1.0],
+        quality: vec![0],
+        flux: vec![vec![vec![10.0]]],
+        rows: 1,
+        cols: 1,
+        tic_id: Some(123456789),
+    };
+    let event = make_tpf_event();
+    let mut cfg = default_image_config();
+    cfg.tpf_normalization = "none".to_string();
+
+    let res = preprocess_target_pixel(raw, &event, &cfg).unwrap();
+    assert_eq!(res.flux[0][0][0], 10.0);
+}
+
+#[test]
 fn test_tpf_determinism() {
     let raw1 = RawTargetPixel {
         time: vec![1.0, 2.0],

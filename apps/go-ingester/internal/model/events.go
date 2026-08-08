@@ -14,6 +14,7 @@ const (
 	SubjectBronzeFFI         = "aurora.v1.bronze.ffi.ready"
 
 	StreamBronze = "AURORA_BRONZE"
+	StreamSilver = "AURORA_SILVER"
 )
 
 // BronzeObjectReady represents the event payload defined in bronze-object-ready.schema.json.

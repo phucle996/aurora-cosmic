@@ -82,15 +82,15 @@ impl MinioClient {
         let size_bytes = resp.content_length().unwrap_or(0).unsigned_abs();
         let all_metadata: HashMap<String, String> = resp
             .metadata()
-            .map(|m| {
-                m.iter()
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect()
-            })
+            .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
             .unwrap_or_default();
         let sha256 = all_metadata.get("sha256").cloned();
 
-        Ok(StoredObjectStat { size_bytes, sha256, metadata: all_metadata })
+        Ok(StoredObjectStat {
+            size_bytes,
+            sha256,
+            metadata: all_metadata,
+        })
     }
 
     /// Verify that the object exists and its size matches the event claim.
@@ -152,15 +152,15 @@ impl MinioClient {
         let mut total_bytes: u64 = 0;
 
         while let Some(chunk_res) = response.body.next().await {
-            let chunk = chunk_res
-                .with_context(|| format!("Stream read error for {bucket}/{key}"))?;
+            let chunk =
+                chunk_res.with_context(|| format!("Stream read error for {bucket}/{key}"))?;
 
             hasher.update(&chunk);
             total_bytes += chunk.len() as u64;
 
-            file.write_all(&chunk)
-                .await
-                .with_context(|| format!("Failed writing chunk to temp file {}", temp_path.display()))?;
+            file.write_all(&chunk).await.with_context(|| {
+                format!("Failed writing chunk to temp file {}", temp_path.display())
+            })?;
         }
 
         file.flush()
@@ -258,7 +258,20 @@ impl MinioClient {
             .await
         {
             Ok(resp) => resp,
-            Err(_) => return Ok(None),
+            Err(error) => {
+                // Only a genuine NoSuchKey is a cache miss. Authentication,
+                // network, timeout, and permission failures must propagate so
+                // recovery cannot mistake an outage for missing state.
+                if error
+                    .as_service_error()
+                    .is_some_and(|service_error| service_error.is_no_such_key())
+                {
+                    return Ok(None);
+                }
+                return Err(anyhow::anyhow!(
+                    "MinIO JSON GET failed for {bucket}/{key}: {error}"
+                ));
+            }
         };
 
         let bytes = response

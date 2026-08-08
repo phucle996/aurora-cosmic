@@ -123,9 +123,11 @@ func TestPipelinePublishOrdering(t *testing.T) {
 					Kind:            model.KindTargetPixel,
 					Filename:        "order_tp.fits",
 					DataURI:         ts.URL + "/order_tp.fits",
-					SizeBytes:       int64(len(fitsData)),
-					Sector:          1,
-					TICID:           100,
+					// Discovery may not know the remote object size. The event must
+					// carry the measured size from the streamed download instead.
+					SizeBytes: 0,
+					Sector:    1,
+					TICID:     100,
 				},
 			},
 		},
@@ -154,6 +156,9 @@ func TestPipelinePublishOrdering(t *testing.T) {
 	evt := mockPub.published[0]
 	if evt.ObjectKey != key {
 		t.Errorf("published event key %s != expected %s", evt.ObjectKey, key)
+	}
+	if evt.SizeBytes != int64(len(fitsData)) {
+		t.Errorf("published event size %d != measured size %d", evt.SizeBytes, len(fitsData))
 	}
 }
 

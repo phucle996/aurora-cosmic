@@ -76,7 +76,12 @@ func (p *Pipeline) publishOnly(ctx context.Context, prod model.ManifestProduct, 
 	}
 
 	eventID := uuid.NewString()
-	evt, err := model.BuildBronzeEvent(eventID, p.bucket, prod, objectKey, sha256Hex)
+	// The manifest size is an estimate for some catalog products (notably MAST
+	// discovery responses). Publish the measured size from the bytes actually
+	// stored so downstream integrity checks can validate the object correctly.
+	eventProd := prod
+	eventProd.SizeBytes = size
+	evt, err := model.BuildBronzeEvent(eventID, p.bucket, eventProd, objectKey, sha256Hex)
 	if err != nil {
 		return model.ProductResult{
 			SourceProductID: prod.SourceProductID,

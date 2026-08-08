@@ -17,7 +17,10 @@ type NATSPublisher struct {
 	js nats.JetStreamContext
 }
 
-// NewNATSPublisher connects to NATS and ensures the AURORA_BRONZE stream exists.
+// NewNATSPublisher connects to NATS and ensures the Bronze and Silver event
+// streams exist before the first product is published. Keeping both streams
+// bootstrapped here makes a fresh Compose deployment safe regardless of which
+// worker starts first.
 func NewNATSPublisher(url string, timeout time.Duration) (*NATSPublisher, error) {
 	if url == "" {
 		url = nats.DefaultURL
@@ -34,20 +37,29 @@ func NewNATSPublisher(url string, timeout time.Duration) (*NATSPublisher, error)
 		return nil, fmt.Errorf("nats jetstream context: %w", err)
 	}
 
-	streamConfig := &nats.StreamConfig{
-		Name:       model.StreamBronze,
-		Subjects:   []string{"aurora.v1.bronze.>"},
-		Storage:    nats.FileStorage,
-		Retention:  nats.LimitsPolicy,
-		Duplicates: 24 * time.Hour,
+	streams := []nats.StreamConfig{
+		{
+			Name:       model.StreamBronze,
+			Subjects:   []string{"aurora.v1.bronze.>"},
+			Storage:    nats.FileStorage,
+			Retention:  nats.LimitsPolicy,
+			Duplicates: 24 * time.Hour,
+		},
+		{
+			Name:       model.StreamSilver,
+			Subjects:   []string{"aurora.v1.silver.>"},
+			Storage:    nats.FileStorage,
+			Retention:  nats.LimitsPolicy,
+			Duplicates: 24 * time.Hour,
+		},
 	}
-
-	_, err = js.AddStream(streamConfig)
-	if err != nil {
-		_, err = js.UpdateStream(streamConfig)
-		if err != nil {
-			nc.Close()
-			return nil, fmt.Errorf("nats ensure stream %s: %w", model.StreamBronze, err)
+	for _, streamConfig := range streams {
+		config := streamConfig
+		if _, err = js.AddStream(&config); err != nil {
+			if _, err = js.UpdateStream(&config); err != nil {
+				nc.Close()
+				return nil, fmt.Errorf("nats ensure stream %s: %w", config.Name, err)
+			}
 		}
 	}
 

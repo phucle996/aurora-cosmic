@@ -116,6 +116,11 @@ pub fn preprocess_target_pixel(
 
     // 2. Compute reference median per pixel position across retained cadences
     let mut pixel_medians = vec![vec![0.0f32; raw.cols]; raw.rows];
+    let mut global_pixels = if config.tpf_normalization == "global-median" {
+        Some(Vec::new())
+    } else {
+        None
+    };
     let mut total_pixels = 0usize;
     let mut finite_count = 0usize;
 
@@ -132,23 +137,25 @@ pub fn preprocess_target_pixel(
                     if p.is_finite() {
                         finite_count += 1;
                         pixel_series.push(p);
+                        if let Some(ref mut values) = global_pixels {
+                            values.push(p);
+                        }
                     }
                 }
             }
 
             pixel_medians[r][c] = if !pixel_series.is_empty() {
-                pixel_series.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-                let mid = pixel_series.len() / 2;
-                if pixel_series.len() % 2 == 0 {
-                    (pixel_series[mid - 1] + pixel_series[mid]) / 2.0
-                } else {
-                    pixel_series[mid]
-                }
+                median_f32(&mut pixel_series)
             } else {
                 0.0
             };
         }
     }
+
+    let global_median = global_pixels
+        .as_mut()
+        .map(|values| median_f32(values))
+        .unwrap_or(0.0);
 
     // 3. Normalize per-pixel temporal flux
     let mut norm_flux = Vec::with_capacity(output_cadences);
@@ -166,9 +173,18 @@ pub fn preprocess_target_pixel(
                     0.0
                 };
 
-                let ref_med = pixel_medians[r][c];
-                let norm = if p.is_finite() && ref_med.is_finite() && ref_med > 0.0 {
-                    (p / ref_med) - 1.0
+                let reference = match config.tpf_normalization.as_str() {
+                    "global-median" => global_median,
+                    "temporal-median" => pixel_medians[r][c],
+                    "none" => 1.0,
+                    _ => unreachable!("normalization mode validated during config loading"),
+                };
+                let norm = if !p.is_finite() {
+                    0.0
+                } else if config.tpf_normalization == "none" {
+                    p
+                } else if reference.is_finite() && reference > 0.0 {
+                    (p / reference) - 1.0
                 } else {
                     // Safe handling for invalid/zero reference: preserve neutral baseline
                     0.0
@@ -216,6 +232,19 @@ pub fn preprocess_target_pixel(
             finite_pixel_fraction,
         },
     })
+}
+
+fn median_f32(values: &mut [f32]) -> f32 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let mid = values.len() / 2;
+    if values.len() % 2 == 0 {
+        (values[mid - 1] + values[mid]) / 2.0
+    } else {
+        values[mid]
+    }
 }
 
 /// Preprocess a raw Full Frame Image into ProcessedFfi containing statistics and optional cutouts.

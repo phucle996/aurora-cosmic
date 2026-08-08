@@ -14,7 +14,9 @@ pub use pool::{parse_duration, run_pool};
 pub use publisher::{build_silver_event, publish_silver_event};
 pub use recovery::evaluate_recovery;
 
-use crate::checkpoint::{build_checkpoint_object_key, PreprocessingCheckpoint, ProcessingState, RecoveryAction};
+use crate::checkpoint::{
+    build_checkpoint_object_key, PreprocessingCheckpoint, ProcessingState, RecoveryAction,
+};
 use crate::config::{ImageConfig, LightCurveConfig};
 use crate::event::{BronzeObjectReady, ProductKind};
 use crate::failure::{classify_pipeline_error, ErrorKind, FailureClass, ProcessingFailure};
@@ -120,7 +122,13 @@ pub async fn process_message(
                     processor_version,
                 );
                 if let Err(e) = publish_silver_event(&jetstream, &silver_event).await {
-                    tracing::warn!(event_id = %event_id, error = %e, "Failed to publish Silver event during fast-recovery");
+                    tracing::warn!(
+                        event_id = %event_id,
+                        error = %e,
+                        "Failed to publish Silver event during fast-recovery; NAKing Bronze message"
+                    );
+                    let _ = msg.ack_with(AckKind::Nak(None)).await;
+                    return;
                 }
                 if let Err(e) = msg.ack().await {
                     tracing::error!(event_id = %event_id, error = %e, "Failed to ACK message during fast-recovery");
@@ -142,8 +150,17 @@ pub async fn process_message(
         if let Some(ref mut cp) = checkpoint_opt {
             cp.mark_completed();
             let checkpoint_key = build_checkpoint_object_key(&cp.checkpoint_id);
-            if let Err(e) = cp.save(&minio, &cp.bronze_bucket.clone(), &checkpoint_key).await {
-                tracing::warn!(event_id = %event_id, error = %e, "Failed saving promoted COMPLETED checkpoint");
+            if let Err(e) = cp
+                .save(&minio, &cp.bronze_bucket.clone(), &checkpoint_key)
+                .await
+            {
+                tracing::warn!(
+                    event_id = %event_id,
+                    error = %e,
+                    "Failed saving promoted COMPLETED checkpoint; NAKing Bronze message"
+                );
+                let _ = msg.ack_with(AckKind::Nak(None)).await;
+                return;
             }
             if let (Some(ref s_bucket), Some(ref s_key), Some(ref s_sha), Some(s_size)) = (
                 &cp.silver_bucket,
@@ -160,7 +177,15 @@ pub async fn process_message(
                     cp.silver_schema_version.as_deref().unwrap_or("v1"),
                     processor_version,
                 );
-                let _ = publish_silver_event(&jetstream, &silver_event).await;
+                if let Err(e) = publish_silver_event(&jetstream, &silver_event).await {
+                    tracing::warn!(
+                        event_id = %event_id,
+                        error = %e,
+                        "Failed to publish Silver event during promoted recovery; NAKing Bronze message"
+                    );
+                    let _ = msg.ack_with(AckKind::Nak(None)).await;
+                    return;
+                }
                 if let Err(e) = msg.ack().await {
                     tracing::error!(event_id = %event_id, error = %e, "Failed to ACK message during promoted recovery");
                 }
@@ -181,7 +206,10 @@ pub async fn process_message(
     };
 
     let checkpoint_key = build_checkpoint_object_key(&checkpoint.checkpoint_id);
-    if let Err(e) = checkpoint.save(&minio, &event.bucket, &checkpoint_key).await {
+    if let Err(e) = checkpoint
+        .save(&minio, &event.bucket, &checkpoint_key)
+        .await
+    {
         tracing::warn!(event_id = %event_id, error = %e, "Failed to save initial PROCESSING checkpoint");
     }
 
@@ -202,9 +230,16 @@ pub async fn process_message(
         Err(err) => {
             let failure = classify_pipeline_error(&err);
             handle_failure(
-                &minio, &mut checkpoint, &event.bucket, &checkpoint_key,
-                &msg, failure, event_id.clone(), delivery_attempt,
-            ).await;
+                &minio,
+                &mut checkpoint,
+                &event.bucket,
+                &checkpoint_key,
+                &msg,
+                failure,
+                event_id.clone(),
+                delivery_attempt,
+            )
+            .await;
             return;
         }
     };
@@ -222,16 +257,26 @@ pub async fn process_message(
     {
         let failure = ProcessingFailure::retryable(ErrorKind::SilverWriteFailed, e.to_string());
         handle_failure(
-            &minio, &mut checkpoint, &event.bucket, &checkpoint_key,
-            &msg, failure, event_id.clone(), delivery_attempt,
-        ).await;
+            &minio,
+            &mut checkpoint,
+            &event.bucket,
+            &checkpoint_key,
+            &msg,
+            failure,
+            event_id.clone(),
+            delivery_attempt,
+        )
+        .await;
         return;
     }
 
     // Update Checkpoint: SILVER_STORED -> COMPLETED
     checkpoint.mark_silver_stored(&artifact);
     checkpoint.mark_completed();
-    if let Err(e) = checkpoint.save(&minio, &event.bucket, &checkpoint_key).await {
+    if let Err(e) = checkpoint
+        .save(&minio, &event.bucket, &checkpoint_key)
+        .await
+    {
         tracing::warn!(
             event_id = %event_id,
             error = %e,
@@ -327,7 +372,13 @@ pub async fn process_message(
         processor_version,
     );
     if let Err(e) = publish_silver_event(&jetstream, &silver_event).await {
-        tracing::warn!(event_id = %event_id, error = %e, "Failed to publish Silver event");
+        tracing::warn!(
+            event_id = %event_id,
+            error = %e,
+            "Failed to publish Silver event; NAKing Bronze message"
+        );
+        let _ = msg.ack_with(AckKind::Nak(None)).await;
+        return;
     }
 
     // Step 8: Final ACK

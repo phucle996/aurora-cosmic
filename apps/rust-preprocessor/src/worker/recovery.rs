@@ -17,10 +17,11 @@ pub async fn evaluate_recovery(
     let checkpoint_id = derive_checkpoint_id(&event.source_product_id, processor_version);
     let checkpoint_key = build_checkpoint_object_key(&checkpoint_id);
 
-    let checkpoint = match PreprocessingCheckpoint::load(minio, &event.bucket, &checkpoint_key).await? {
-        Some(cp) => cp,
-        None => return Ok((RecoveryAction::Process, None)),
-    };
+    let checkpoint =
+        match PreprocessingCheckpoint::load(minio, &event.bucket, &checkpoint_key).await? {
+            Some(cp) => cp,
+            None => return Ok((RecoveryAction::Process, None)),
+        };
 
     // Bronze checksum mismatch check
     if checkpoint.bronze_sha256 != event.sha256 {

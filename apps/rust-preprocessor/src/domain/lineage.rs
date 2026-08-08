@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 
 use crate::checkpoint::PreprocessingCheckpoint;
 use crate::event::{BronzeObjectReady, ProductKind};
-use crate::failure::{ErrorKind, FailureClass, ProcessingFailure};
+use crate::failure::{ErrorKind, ProcessingFailure};
 use crate::infra::MinioClient;
 use crate::output::silver::SilverArtifact;
 

@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use tokio::signal;
@@ -29,6 +30,25 @@ pub async fn run(config: Config) -> Result<()> {
 
     let jetstream = async_nats::jetstream::new(nats_client.clone());
 
+    // The preprocessor is the producer of Silver events. Ensure its output
+    // stream exists independently of the ingester's lifecycle so a fresh
+    // deployment cannot create durable Parquet artifacts and then loop on
+    // NAKs because the downstream event stream is missing.
+    jetstream
+        .get_or_create_stream(async_nats::jetstream::stream::Config {
+            name: "AURORA_SILVER".to_string(),
+            subjects: vec!["aurora.v1.silver.>".to_string()],
+            storage: async_nats::jetstream::stream::StorageType::File,
+            retention: async_nats::jetstream::stream::RetentionPolicy::Limits,
+            duplicate_window: Duration::from_secs(24 * 60 * 60),
+            description: Some("Durable Silver preprocessing output events".to_string()),
+            ..Default::default()
+        })
+        .await
+        .context("Failed to ensure AURORA_SILVER JetStream")?;
+
+    tracing::info!(stream = "AURORA_SILVER", "Silver event stream ready");
+
     // 2. Initialize MinIO Infrastructure Client
     tracing::info!(
         minio_endpoint = %config.minio.endpoint,
@@ -37,8 +57,21 @@ pub async fn run(config: Config) -> Result<()> {
     );
 
     let minio = Arc::new(
-        MinioClient::new(&config.minio).context("Failed to initialize MinIO infrastructure client")?,
+        MinioClient::new(&config.minio)
+            .context("Failed to initialize MinIO infrastructure client")?,
     );
+
+    // Both Bronze staging and Silver Parquet serialization use this directory.
+    // Create it explicitly so a fresh container does not NAK every message on
+    // its first tempfile allocation.
+    tokio::fs::create_dir_all(&config.consumer.tmp_dir)
+        .await
+        .with_context(|| {
+            format!(
+                "Failed to create preprocessing temp directory {}",
+                config.consumer.tmp_dir.display()
+            )
+        })?;
 
     // 3. Shared cancellation token for graceful shutdown
     let cancel = CancellationToken::new();

@@ -90,9 +90,7 @@ pub fn preprocess_lc(
     // 3. Filter points by Quality Flag & Non-finite values
     let mut filtered_time = Vec::with_capacity(input_points);
     let mut filtered_flux = Vec::with_capacity(input_points);
-    let mut filtered_err = raw_err
-        .as_ref()
-        .map(|_| Vec::with_capacity(input_points));
+    let mut filtered_err = raw_err.as_ref().map(|_| Vec::with_capacity(input_points));
     let mut filtered_qual = Vec::with_capacity(input_points);
 
     let mut quality_removed = 0usize;
@@ -206,9 +204,13 @@ pub fn preprocess_lc(
             }
             if !clip_indices.is_empty() {
                 outlier_removed = clip_indices.len();
-                let keep_mask: Vec<bool> = (0..norm_flux.len())
-                    .map(|i| !clip_indices.contains(&i))
-                    .collect();
+                // Mark removals once instead of doing a linear contains()
+                // scan for every point (which becomes O(n²) on long TESS
+                // light curves).
+                let mut keep_mask = vec![true; norm_flux.len()];
+                for index in clip_indices {
+                    keep_mask[index] = false;
+                }
 
                 sorted_time = sorted_time
                     .into_iter()
@@ -299,6 +301,7 @@ fn calculate_std_dev(values: &[f32]) -> f32 {
     }
     let sum: f32 = values.iter().sum();
     let mean = sum / values.len() as f32;
-    let variance: f32 = values.iter().map(|&x| (x - mean).powi(2)).sum::<f32>() / values.len() as f32;
+    let variance: f32 =
+        values.iter().map(|&x| (x - mean).powi(2)).sum::<f32>() / values.len() as f32;
     variance.sqrt()
 }

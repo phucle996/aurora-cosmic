@@ -132,10 +132,23 @@ impl Config {
         let tpf_normalization = env::var("AURORA_TPF_NORMALIZATION")
             .unwrap_or_else(|_| "temporal-median".to_string())
             .to_lowercase();
+        if !matches!(
+            tpf_normalization.as_str(),
+            "temporal-median" | "global-median" | "none"
+        ) {
+            return Err(format!(
+                "Invalid AURORA_TPF_NORMALIZATION '{tpf_normalization}' (allowed: 'temporal-median', 'global-median', 'none')"
+            ));
+        }
 
         let ffi_normalization = env::var("AURORA_FFI_NORMALIZATION")
             .unwrap_or_else(|_| "median".to_string())
             .to_lowercase();
+        if !matches!(ffi_normalization.as_str(), "median" | "none") {
+            return Err(format!(
+                "Invalid AURORA_FFI_NORMALIZATION '{ffi_normalization}' (allowed: 'median', 'none')"
+            ));
+        }
 
         let ffi_cutout_size: usize = env::var("AURORA_FFI_CUTOUT_SIZE")
             .ok()
@@ -234,10 +247,8 @@ fn parse_backoff_env() -> Vec<u64> {
     env::var("AURORA_PREPROCESS_RETRY_BACKOFF")
         .ok()
         .and_then(|v| {
-            let parsed: Option<Vec<u64>> = v
-                .split(',')
-                .map(|s| s.trim().parse::<u64>().ok())
-                .collect();
+            let parsed: Option<Vec<u64>> =
+                v.split(',').map(|s| s.trim().parse::<u64>().ok()).collect();
             parsed
         })
         .unwrap_or_else(|| vec![5, 30, 120, 600])

@@ -43,15 +43,18 @@ pub async fn execute_item_pipeline(
         let decoded = fits::decode(&temp_fits_path, &event_clone)?;
         match decoded {
             DecodedProduct::LightCurve(raw_lc) => {
-                let processed = pipeline::lightcurve::preprocess_lc(raw_lc, &event_clone, &lc_config)?;
+                let processed =
+                    pipeline::lightcurve::preprocess_lc(raw_lc, &event_clone, &lc_config)?;
                 silver::serialize_lightcurve(&processed, &event_clone, &tmp_dir_clone)
             }
             DecodedProduct::TargetPixel(raw_tpf) => {
-                let processed = pipeline::image::preprocess_target_pixel(raw_tpf, &event_clone, &img_config)?;
+                let processed =
+                    pipeline::image::preprocess_target_pixel(raw_tpf, &event_clone, &img_config)?;
                 silver::serialize_target_pixel(&processed, &event_clone, &tmp_dir_clone)
             }
             DecodedProduct::Ffi(raw_ffi) => {
-                let processed = pipeline::image::preprocess_ffi(raw_ffi, &event_clone, &img_config, None)?;
+                let processed =
+                    pipeline::image::preprocess_ffi(raw_ffi, &event_clone, &img_config, None)?;
                 silver::serialize_ffi(&processed, &event_clone, &tmp_dir_clone)
             }
         }
