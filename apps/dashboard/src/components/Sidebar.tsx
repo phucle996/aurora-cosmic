@@ -1,6 +1,7 @@
 import {
   Activity,
   AlertTriangle,
+  BrainCircuit,
   Database,
   LayoutDashboard,
   Server,
@@ -29,6 +30,7 @@ const menuItems = [
   { path: '/candidates', label: 'ML Transit Candidates', icon: Sparkles },
   { path: '/anomalies', label: 'Anomaly Engine', icon: AlertTriangle },
   { path: '/system', label: 'System Topology', icon: Server },
+  { path: '/models', label: 'Models & Inference', icon: BrainCircuit },
 ];
 
 export default function Sidebar(): JSX.Element {

@@ -7,24 +7,36 @@ import (
 	"net/http"
 	"time"
 
+	"go-api/internal/inference"
+	"go-api/internal/monitoring"
 	"go-api/internal/store"
 )
 
 // Router registers and manages all HTTP REST endpoints for the AURORA API Gateway.
 type Router struct {
-	mux           *http.ServeMux
-	chStore       store.AnalyticsStore
-	minioStore    store.ObjectStore
-	allowedOrigin string
+	mux              *http.ServeMux
+	chStore          store.AnalyticsStore
+	minioStore       store.ObjectStore
+	dispatcher       inference.Dispatcher
+	monitoringClient monitoring.Querier
+	allowedOrigin    string
 }
 
-func NewRouter(chStore store.AnalyticsStore, minioStore store.ObjectStore, allowedOrigin string) *Router {
+func NewRouter(chStore store.AnalyticsStore, minioStore store.ObjectStore, allowedOrigin string, extras ...any) *Router {
 	mux := http.NewServeMux()
 	r := &Router{
 		mux:           mux,
 		chStore:       chStore,
 		minioStore:    minioStore,
 		allowedOrigin: allowedOrigin,
+	}
+	for _, extra := range extras {
+		switch value := extra.(type) {
+		case inference.Dispatcher:
+			r.dispatcher = value
+		case monitoring.Querier:
+			r.monitoringClient = value
+		}
 	}
 	r.registerRoutes()
 	return r
@@ -34,7 +46,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Header.Get("Origin") == r.allowedOrigin {
 		w.Header().Set("Access-Control-Allow-Origin", r.allowedOrigin)
 		w.Header().Set("Vary", "Origin")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 	}
 
@@ -50,10 +62,14 @@ func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("GET /healthz", handleHealthz)
 	r.mux.HandleFunc("GET /readyz", r.handleReady)
 	r.mux.HandleFunc("GET /api/v1/system", r.handleSystemHealth)
+	r.mux.HandleFunc("GET /api/v1/monitoring", r.handleMonitoring)
 	r.mux.HandleFunc("GET /api/v1/targets", r.handleTargets)
 	r.mux.HandleFunc("GET /api/v1/candidates", r.handleCandidates)
 	r.mux.HandleFunc("GET /api/v1/anomalies", r.handleAnomalies)
 	r.mux.HandleFunc("GET /api/v1/lightcurves", r.handleLightcurves)
+	r.mux.HandleFunc("GET /api/v1/models", r.handleModels)
+	r.mux.HandleFunc("GET /api/v1/inference/jobs", r.handleInferenceJobs)
+	r.mux.HandleFunc("POST /api/v1/inference/jobs/{job_id}/retry", r.handleRetryInferenceJob)
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {

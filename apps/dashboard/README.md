@@ -33,6 +33,7 @@ npm run lint
 npm run build
 ```
 
-`VITE_AURORA_API_URL` is reserved for the API client layer. The current shell
-does not fabricate backend data; feature pages should consume versioned Go API
-contracts as they are wired in.
+`VITE_AURORA_API_URL` configures the same-origin API client (`/api` by default).
+The Models & Inference page consumes `/v1/models` and `/v1/inference/jobs`; it
+only dispatches immutable, pre-planned manifests to the GPU worker through the
+Go API control plane.

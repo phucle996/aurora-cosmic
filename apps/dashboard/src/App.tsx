@@ -11,6 +11,7 @@ import CandidatesPage from '@/pages/candidates/page';
 import OverviewPage from '@/pages/overview/page';
 import SystemHealthPage from '@/pages/system/page';
 import TargetsPage from '@/pages/targets/page';
+import ModelsPage from '@/pages/models/page';
 
 export default function App(): JSX.Element {
   return (
@@ -29,6 +30,7 @@ export default function App(): JSX.Element {
                     <Route path="/candidates" element={<CandidatesPage />} />
                     <Route path="/anomalies" element={<AnomaliesPage />} />
                     <Route path="/system" element={<SystemHealthPage />} />
+                    <Route path="/models" element={<ModelsPage />} />
                   </Routes>
                 </main>
               </SidebarInset>

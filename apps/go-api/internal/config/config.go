@@ -18,8 +18,18 @@ type ServerConfig struct {
 }
 
 type MinIOConfig struct {
-	Endpoint string
-	Bucket   string
+	Endpoint  string
+	Bucket    string
+	AccessKey string
+	SecretKey string
+}
+
+type NATSConfig struct {
+	URL string
+}
+
+type PrometheusConfig struct {
+	URL string
 }
 
 type ClickHouseConfig struct {
@@ -34,6 +44,8 @@ type Config struct {
 	Server            ServerConfig
 	MinIO             MinIOConfig
 	ClickHouse        ClickHouseConfig
+	NATS              NATSConfig
+	Prometheus        PrometheusConfig
 	CORSAllowedOrigin string
 }
 
@@ -66,6 +78,14 @@ func Load() (*Config, error) {
 	minioBucket, err := requireEnv("MINIO_BUCKET")
 	if err != nil {
 		return nil, err
+	}
+	minioAccessKey := os.Getenv("MINIO_ACCESS_KEY")
+	if minioAccessKey == "" {
+		minioAccessKey = "minioadmin"
+	}
+	minioSecretKey := os.Getenv("MINIO_SECRET_KEY")
+	if minioSecretKey == "" {
+		minioSecretKey = "minioadmin"
 	}
 
 	clickHouseEndpoint, err := requireEnv("AURORA_CLICKHOUSE_ENDPOINT")
@@ -103,8 +123,10 @@ func Load() (*Config, error) {
 			Port: port,
 		},
 		MinIO: MinIOConfig{
-			Endpoint: minioEndpoint,
-			Bucket:   minioBucket,
+			Endpoint:  minioEndpoint,
+			Bucket:    minioBucket,
+			AccessKey: minioAccessKey,
+			SecretKey: minioSecretKey,
 		},
 		ClickHouse: ClickHouseConfig{
 			Endpoint: clickHouseEndpoint,
@@ -112,6 +134,8 @@ func Load() (*Config, error) {
 			User:     clickHouseUser,
 			Password: clickHousePassword,
 		},
+		NATS:              NATSConfig{URL: getenvOrDefault("NATS_URL", "nats://nats:4222")},
+		Prometheus:        PrometheusConfig{URL: getenvOrDefault("PROMETHEUS_URL", "http://prometheus:9090")},
 		CORSAllowedOrigin: corsAllowedOrigin,
 	}
 
@@ -120,6 +144,13 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func getenvOrDefault(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
 }
 
 func (c *Config) Validate() error {

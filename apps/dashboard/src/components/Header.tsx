@@ -23,6 +23,7 @@ const pageNames: Record<string, string> = {
   '/candidates': 'Candidates',
   '/anomalies': 'Anomalies',
   '/system': 'System health',
+  '/models': 'Models & inference',
 };
 
 export default function Header(): JSX.Element {

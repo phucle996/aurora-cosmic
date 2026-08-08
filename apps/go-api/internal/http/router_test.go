@@ -21,6 +21,10 @@ type testObjectStore struct{}
 
 func (testObjectStore) Ping(context.Context) error                        { return nil }
 func (testObjectStore) GetObject(context.Context, string) ([]byte, error) { return nil, nil }
+func (testObjectStore) ListObjects(context.Context, string) ([]store.ObjectInfo, error) {
+	return nil, nil
+}
+func (testObjectStore) PutObject(context.Context, string, []byte, string) error { return nil }
 
 func newTestRouter(t *testing.T) *Router {
 	t.Helper()

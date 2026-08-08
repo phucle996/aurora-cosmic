@@ -154,6 +154,8 @@ services:
         condition: service_healthy
       clickhouse:
         condition: service_healthy
+      nats:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null || exit 1"]
       interval: 10s
@@ -207,6 +209,28 @@ services:
       timeout: 5s
       retries: 5
 
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: aurora-cadvisor
+    restart: unless-stopped
+    privileged: true
+    cpus: "0.25"
+    mem_limit: 256m
+    memswap_limit: 256m
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=10s
+    ports:
+      - "${CADVISOR_PORT:-8085}:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    networks:
+      - aurora-net
+
   prometheus:
     image: prom/prometheus:v2.51.0
     container_name: aurora-prometheus
@@ -217,6 +241,9 @@ services:
       - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     networks:
       - aurora-net
+    depends_on:
+      cadvisor:
+        condition: service_started
 
   grafana:
     image: grafana/grafana:10.4.1
