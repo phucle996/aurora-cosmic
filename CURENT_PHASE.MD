@@ -1,3885 +1,4687 @@
-````md id="phase-6-4"
-# CHECKLIST_PHASE_6_4.md
+````md id="phase-6-5"
+# CHECKLIST_PHASE_6_5.md
 
 # Stage 6 — Machine Learning Training, Evaluation & Model Registry
-## Phase 6.4 — Evaluation: Golden Test & Recent Holdout
+## Phase 6.5 — Model Registry: Champion / Challenger, Promotion & Rollback
 
 Status: TODO
 
 Goal:
 
-> Evaluate completed candidate-vetting and anomaly-detection training runs on
-> data that was never used to fit:
+> Turn completed training runs and completed Phase 6.4 evaluation runs into
+> immutable registry model packages, then manage which evaluated model is the
+> current AURORA champion.
 >
-> - model weights,
-> - preprocessing parameters,
-> - early stopping,
-> - decision thresholds.
+> Phase 6.5 introduces:
 >
-> Phase 6.4 introduces:
+> - immutable registered model packages,
+> - deterministic model package identity,
+> - explicit challenger semantics,
+> - candidate-vetting promotion policy,
+> - anomaly-detection promotion policy,
+> - immutable promotion/rollback decision records,
+> - one small mutable champion pointer per task,
+> - safe bootstrap of the first champion,
+> - promotion comparison against the current champion,
+> - explicit rollback to a previously selected champion.
 >
-> - immutable Golden Test cohorts,
-> - rolling Recent Holdout cohorts,
-> - strict group-contamination checks,
-> - validation-only threshold selection,
-> - final candidate Golden Test metrics,
-> - recent-distribution evaluation,
-> - anomaly reconstruction threshold semantics,
-> - deterministic synthetic anomaly sanity evaluation,
-> - immutable evaluation-run artifacts.
+> The registry must preserve:
 >
-> The central rule is:
+>     Gold snapshot
+>         ->
+>     split
+>         ->
+>     training run
+>         ->
+>     evaluation run
+>         ->
+>     registered model
+>         ->
+>     promotion decision
+>         ->
+>     champion pointer
 >
->     TRAIN / VALIDATION
->         may influence the model.
+> Important:
 >
->     GOLDEN TEST
->         must never influence the model.
+>     "Champion" in Phase 6.5 means:
 >
->     RECENT HOLDOUT
->         must never influence the model being evaluated.
+>         evaluation-selected registry champion.
 >
-> AURORA must never retrofit a "golden test" from targets that the model has
-> already seen during TRAIN or VALIDATION.
+> It does NOT yet mean:
+>
+>         successfully exported ONNX,
+>         Rust-runtime validated,
+>         deployed to production inference.
+>
+> Runtime packaging/parity belongs to Phase 6.6.
+>
+> Do NOT export ONNX yet.
+> Do NOT modify Rust inference yet.
+> Do NOT retrain during promotion.
+> Do NOT overwrite old models during rollback.
 
 ---
 
-# 1. Important Correction From Phase 6.1
+# 1. Registry Input Boundary
 
-Phase 6.1 development splits currently contain:
+A model may enter the registry only from a valid:
 
 ```text
-TRAIN
-VALIDATION
+COMPLETED training run
 ````
 
-and may have assigned all currently supervised target groups.
+under:
 
-Therefore Phase 6.4 MUST NOT do this:
-
-```text
-existing TRAIN / VALIDATION universe
-          |
-          v
-pick some rows afterwards
-          |
-          v
-call them GOLDEN TEST
+```text id="reg01"
+training-runs/candidate/<training-run-id>/
 ```
 
-That is invalid.
+or:
 
----
-
-# 2. Golden Test Must Be Truly Unseen
-
-For one training run define:
-
-```text
-development_exposed_groups =
-    TRAIN groups
-    UNION
-    VALIDATION groups
-```
-
-A valid Golden Test group must satisfy:
-
-```text
-golden_group
-NOT IN
-development_exposed_groups
-```
-
-Mandatory.
-
----
-
-# 3. Valid First Golden-Test Source
-
-Recommended V1:
-
-```text
-training Gold snapshot A
-        |
-        v
-train + validation
-        |
-        v
-completed training run
-
-later / independent committed Gold snapshot B
-        |
-        v
-eligible groups not exposed in A split
-        |
-        v
-freeze GOLDEN TEST
-```
-
-Snapshot B may be cumulative.
-
-Training groups appearing again in B are filtered out.
-
----
-
-# 4. Do Not Require Bronze/Silver
-
-Evaluation consumes:
-
-```text
-Gold
-training-run artifacts
-split manifests
-evaluation cohort manifests
-```
-
-Expected:
-
-```text
-Bronze reads = 0
-
-Silver reads = 0
+```text id="reg02"
+training-runs/anomaly/<training-run-id>/
 ```
 
 ---
 
-# 5. RAW_DELETED Remains Valid
+# 2. Promotion Input Boundary
 
-This remains valid:
+A registered model may become champion only with a valid:
 
-```text
-Bronze = RAW_DELETED
-        |
-        X
-        |
-Gold
+```text id="reg03"
+COMPLETED Phase 6.4 evaluation run
+```
+
+that evaluates the exact training/model artifacts being promoted.
+
+---
+
+# 3. Registry Does Not Train
+
+Phase 6.5 must never call:
+
+```text id="reg04"
+optimizer.step()
+```
+
+or:
+
+```text id="reg05"
+fit preprocessing
+```
+
+Registry operations consume immutable completed artifacts.
+
+---
+
+# 4. Registry Does Not Evaluate Science Again
+
+Promotion must consume:
+
+```text id="reg06"
+model-evaluation-v1
+```
+
+artifacts.
+
+Do NOT rerun:
+
+```text id="reg07"
+Golden Test
+
+Recent Holdout
+```
+
+inside registry comparison logic.
+
+---
+
+# 5. Canonical Registry Storage
+
+Use existing permanent:
+
+```text id="reg08"
+models/
+```
+
+prefix.
+
+Recommended layout:
+
+```text id="reg09"
+models/
+├── candidate/
+│   ├── <model-id>/
+│   │   ├── manifest.json
+│   │   ├── model.pt
+│   │   └── preprocessing.json
+│   │
+│   ├── decisions/
+│   │   └── <decision-id>.json
+│   │
+│   └── champion.json
+│
+└── anomaly/
+    ├── <model-id>/
+    │   ├── manifest.json
+    │   ├── model.pt
+    │   └── preprocessing.json
+    │
+    ├── decisions/
+    │   └── <decision-id>.json
+    │
+    └── champion.json
+```
+
+---
+
+# 6. Threshold Is Not Copied Into Model Package
+
+Important separation:
+
+```text id="reg10"
+model package
+    =
+trained model
++
+TRAIN-fitted preprocessing
+```
+
+The Phase 6.4 threshold belongs to:
+
+```text id="reg11"
+evaluation / selection evidence
+```
+
+and is referenced by the champion selection.
+
+---
+
+# 7. Why Threshold Is Separate
+
+The same trained model may later be:
+
+```text id="reg12"
+re-evaluated
+
+compared on a new Golden cohort
+
+compared under a new evaluation policy
+```
+
+without changing:
+
+```text id="reg13"
+model.pt
+
+preprocessing.json
+
+model_id
+```
+
+---
+
+# 8. Phase 6.6 Runtime Package
+
+Later Phase 6.6 will combine:
+
+```text id="reg14"
+champion model
++
+champion preprocessing
++
+champion evaluation threshold
++
+ONNX
+```
+
+into a separate immutable runtime package.
+
+Do NOT mutate the Phase 6.5 model package to add ONNX later.
+
+---
+
+# 9. Model Package Is Immutable
+
+Once:
+
+```text id="reg15"
+models/<task>/<model-id>/manifest.json
+```
+
+is committed:
+
+```text id="reg16"
+model.pt
+
+preprocessing.json
+
+manifest.json
+```
+
+must never change.
+
+---
+
+# 10. Model Package Source
+
+Registry copies exact verified bytes from:
+
+```text id="reg17"
+training-runs/<task>/<training-run-id>/model.pt
+```
+
+and:
+
+```text id="reg18"
+training-runs/<task>/<training-run-id>/preprocessing.json
+```
+
+---
+
+# 11. Why Copy Into Registry
+
+Registry model packages should remain self-contained for future:
+
+```text id="reg19"
+rollback
+
+runtime export
+
+integrity verification
+```
+
+without treating temporary training-run layout as the serving package.
+
+---
+
+# 12. Do Not Copy Development Metrics Into Runtime Package
+
+Do not duplicate:
+
+```text id="reg20"
+metrics.json
+```
+
+just to make the model directory larger.
+
+Registry manifest references:
+
+```text id="reg21"
 training run
-evaluation
 ```
 
-No raw restoration.
+and promotion decisions reference:
 
----
-
-# 6. ClickHouse Is Optional
-
-Canonical evaluation must NOT depend on:
-
-```text
-ClickHouse
-```
-
-It may be used for exploratory inspection only.
-
-Required evaluation path:
-
-```text
-Gold Parquet
-    +
-immutable manifests
+```text id="reg22"
+evaluation run
 ```
 
 ---
 
-# 7. No Live Catalog Queries
+# 13. Model Manifest Contract
 
-Do NOT query:
+Create:
 
-```text
-TIC
-TOI
-TCE
-```
-
-during evaluation.
-
-Candidate labels are pinned by the exact Gold snapshot used for the cohort.
-
----
-
-# 8. No NATS Requirement
-
-Phase 6.4 is an explicit batch evaluation workflow.
-
-Do not add:
-
-```text
-evaluation-ready NATS events
+```text id="reg23"
+contracts/data/model-manifest-v1.md
 ```
 
 ---
 
-# 9. Evaluation Families
+# 14. Model Manifest Meaning
 
-Phase 6.4 evaluates:
+`model-manifest-v1` describes:
 
-```text
+```text id="reg24"
+one immutable trained model package
+```
+
+It does NOT describe:
+
+```text id="reg25"
+champion mutable state
+
+ONNX runtime package
+
+prediction output
+```
+
+---
+
+# 15. Registry Tasks
+
+V1 task families:
+
+```text id="reg26"
 candidate_vetting
 
 astronomical_anomaly_detection
 ```
 
-with task-specific policies.
+Registry path names may remain compact:
 
-Do not force one metric set onto both tasks.
+```text id="reg27"
+candidate
 
----
-
-# 10. Evaluation Cohort Artifact
-
-Introduce immutable evaluation cohorts.
-
-Recommended storage:
-
-```text
-evaluations/
-└── cohorts/
-    ├── candidate/
-    │   ├── golden/
-    │   └── recent/
-    │
-    └── anomaly/
-        ├── golden/
-        └── recent/
+anomaly
 ```
 
 ---
 
-# 11. Golden Cohort Path
+# 16. Candidate Registered Model
 
-Recommended:
+Expected model version:
 
-```text
-evaluations/cohorts/candidate/golden/<cohort-id>/manifest.json
+```text id="reg28"
+candidate-tabular-mlp-v1
 ```
 
-and:
+with preprocessing:
 
-```text
-evaluations/cohorts/anomaly/golden/<cohort-id>/manifest.json
-```
-
----
-
-# 12. Recent Cohort Path
-
-Recommended:
-
-```text
-evaluations/cohorts/candidate/recent/<cohort-id>/manifest.json
-```
-
-and:
-
-```text
-evaluations/cohorts/anomaly/recent/<cohort-id>/manifest.json
+```text id="reg29"
+candidate-preprocess-v1
 ```
 
 ---
 
-# 13. Cohort Contract
+# 17. Anomaly Registered Model
 
-Create:
+Expected model version:
 
-```text
-contracts/data/ml-evaluation-cohort-v1.md
+```text id="reg30"
+anomaly-lightcurve-autoencoder-v1
 ```
 
-One generic immutable cohort contract is sufficient.
+with preprocessing:
 
----
-
-# 14. Cohort Kinds
-
-V1:
-
-```text
-GOLDEN_TEST
-
-RECENT_HOLDOUT
-```
-
-Do not confuse them with:
-
-```text
-TRAIN
-VALIDATION
+```text id="reg31"
+anomaly-lightcurve-preprocess-v1
 ```
 
 ---
 
-# 15. Cohort Manifest Fields
+# 18. Unknown Model Version
 
-Conceptual:
+Do not register an unsupported:
 
-```text
-schema_version
+```text id="reg32"
+model_version
+```
 
-cohort_id
+without explicit registry compatibility.
 
-cohort_fingerprint
+Fail clearly.
 
-task
+---
 
-cohort_kind
+# 19. Training Run Verification
 
-source_gold_snapshot_id
+Before registration verify:
 
-source_gold_manifest_sha256
+```text id="reg33"
+training run manifest exists
+
+manifest schema supported
+
+state logically COMPLETED
+
+model object exists
+
+model SHA matches
+
+preprocessing object exists
+
+preprocessing SHA matches
+```
+
+---
+
+# 20. Gold Provenance Verification
+
+Registry should also validate manifest-level references:
+
+```text id="reg34"
+gold_snapshot_id
+
+gold_manifest_sha256
+
+split_id
+
+split_manifest_sha256
 
 dataset_view_version
 
 dataset_view_fingerprint
-
-selection_policy_version
-
-excluded_group_cohort_ids
-
-group_count
-
-row_count
-
-group_keys
-
-created_at
-
-producer
-```
-
-Candidate cohort may also record:
-
-```text
-positive_count
-negative_count
 ```
 
 ---
 
-# 16. Cohort Manifest Stores Groups
+# 21. No Gold Feature Re-read Required
 
-Prefer storing:
+Registration does NOT need to read every Gold row again.
 
-```text
-group_keys
-```
+The completed training-run provenance is sufficient after integrity validation.
 
-instead of copying all Gold feature vectors.
+---
 
-Rows are reconstructed from:
+# 22. No Bronze Read
 
-```text
-exact Gold snapshot
-+
-dataset view
-+
-group keys
+Expected:
+
+```text id="reg35"
+Bronze reads = 0
 ```
 
 ---
 
-# 17. Canonical Group Ordering
+# 23. No Silver Read
 
-Sort:
+Expected:
 
-```text
-group_keys ASC
-```
-
-before:
-
-```text
-fingerprinting
-writing
+```text id="reg36"
+Silver reads = 0
 ```
 
 ---
 
-# 18. Cohort Identity
+# 24. No ClickHouse Requirement
+
+Registry must work when:
+
+```text id="reg37"
+ClickHouse unavailable
+```
+
+---
+
+# 25. No External Catalog Requirement
+
+No:
+
+```text id="reg38"
+TIC
+
+TOI
+
+TCE
+```
+
+network access.
+
+---
+
+# 26. No NATS Requirement
+
+Promotion/rollback are explicit registry operations.
+
+Do not add registry events in Phase 6.5.
+
+---
+
+# 27. Model Package Fingerprint
 
 Compute deterministic:
 
-```text
-cohort_fingerprint =
+```text id="reg39"
+model_fingerprint =
 SHA256(
-    cohort kind
-    +
     task
     +
-    source Gold snapshot
+    training_run_id
     +
-    source Gold manifest SHA
+    training_run_manifest_sha256
     +
-    dataset view
+    model_version
     +
-    selection policy
+    model_sha256
     +
-    canonical group keys
+    preprocessing_version
+    +
+    preprocessing_sha256
+    +
+    dataset_view_version
+    +
+    dataset_view_fingerprint
+    +
+    exact feature order
 )
 ```
 
+using canonical serialization.
+
 ---
 
-# 19. Cohort ID
+# 28. Model ID
 
-Example:
+Recommended:
 
-```text
-golden-v1-<sha-prefix>
-
-recent-v1-<sha-prefix>
+```text id="reg40"
+model-v1-<sha-prefix>
 ```
 
-Persist full fingerprint.
+Persist full:
+
+```text id="reg41"
+model_fingerprint
+```
+
+inside manifest.
 
 ---
 
-# 20. Cohort ID Ignores Clock
+# 29. Model ID Is Deterministic
+
+Same exact:
+
+```text id="reg42"
+training artifact
+
+preprocessing artifact
+
+provenance
+
+feature contract
+```
+
+produces the same:
+
+```text id="reg43"
+model_id
+```
+
+---
+
+# 30. Model ID Does Not Depend On Evaluation
+
+Important:
+
+```text id="reg44"
+evaluation_run_id
+```
+
+does NOT participate in model identity.
+
+A model may be evaluated multiple times without changing model bytes or
+registry model ID.
+
+---
+
+# 31. Model ID Does Not Depend On Time
 
 Do NOT include:
 
-```text
-created_at
+```text id="reg45"
+registered_at
 
 hostname
 
 random UUID
 ```
 
-in cohort identity.
+in fingerprint.
 
 ---
 
-# 21. Cohort Is Immutable
+# 32. Model ID Does Not Depend On Device Metadata
 
-Once:
+Training runtime/device information is preserved in the source training run.
 
-```text
-manifest.json
-```
-
-is committed:
-
-```text
-do not add groups
-
-do not remove groups
-
-do not relabel using today's catalog
-
-do not change source Gold snapshot
-```
-
----
-
-# 22. Label Changes Require New Cohort
-
-If a future label snapshot changes Gold labels:
-
-```text
-Golden cohort V1 remains unchanged
-```
-
-A deliberately updated benchmark becomes:
-
-```text
-Golden cohort V2
-```
-
-Do not silently relabel V1.
-
----
-
-# 23. Golden Benchmark Permanence
-
-A frozen Golden Test is intended for repeated comparable evaluation.
-
-Therefore future training splits should avoid its target groups.
-
----
-
-# 24. Future Split Reservation
-
-After Golden Test exists:
-
-```text
-future TRAIN / VALIDATION
-```
-
-should exclude:
-
-```text
-frozen golden group keys
-```
-
-to preserve benchmark integrity.
-
----
-
-# 25. Do Not Silently Change `ml-split-v1`
-
-If the existing:
-
-```text
-ml-split-v1
-```
-
-contract cannot record reserved benchmark cohorts cleanly:
-
-```text
-introduce ml-split-v2
-```
-
-with:
-
-```text
-reserved_cohort_ids
-```
-
-or equivalent explicit exclusion provenance.
-
-Do NOT silently change frozen V1 semantics.
-
----
-
-# 26. Split Reservation Rule
-
-Future split manifest should be able to answer:
-
-```text
-Which frozen benchmark cohorts were excluded from training?
-```
-
-This is essential once a Golden Test exists.
-
----
-
-# 27. Existing V1 Training Runs Remain Valid
-
-Do not rewrite old:
-
-```text
-ml-split-v1
-```
-
-manifests.
-
-For those runs, Golden Test eligibility is proven by:
-
-```text
-golden groups
-INTERSECT
-development groups
-=
-empty
-```
-
----
-
-# 28. Candidate Golden Selection Policy
-
-Introduce:
-
-```text
-candidate-golden-unseen-v1
-```
-
----
-
-# 29. Candidate Golden Source
-
-Input:
-
-```text
-completed candidate training run
-+
-explicit committed candidate Gold snapshot
-```
-
-The source snapshot may be newer/cumulative.
-
----
-
-# 30. Candidate Golden Eligible Labels
-
-Only:
-
-```text
-POSITIVE
-
-NEGATIVE
-```
-
-may participate in supervised final metrics.
-
----
-
-# 31. Candidate Golden Excludes Development Groups
-
-Mandatory:
-
-```text
-candidate golden group
-NOT IN
-training split TRAIN groups
-
-candidate golden group
-NOT IN
-training split VALIDATION groups
-```
-
----
-
-# 32. Previously Unresolved Target
-
-A target that existed in older Gold as:
-
-```text
-UNRESOLVED
-```
-
-but was never part of:
-
-```text
-TRAIN
-VALIDATION
-```
-
-may later become eligible Golden Test data after a versioned label update.
-
-This is valid because its features were not used for model fitting or
-validation.
-
----
-
-# 33. Partially Exposed Target
-
-If one row from TIC 123 was in TRAIN:
-
-```text
-all future rows for TIC 123
-```
-
-are contaminated for that training run's Golden Test.
-
-Exclude the entire group.
-
----
-
-# 34. Golden Test Uses All Selected Group Rows
-
-Once a group qualifies:
-
-```text
-include all supervised eligible rows
-```
-
-for that group from the frozen source Gold snapshot.
-
-Do not cherry-pick easiest rows.
-
----
-
-# 35. No Golden Class Balancing
-
-Do NOT:
-
-```text
-oversample positives
-
-undersample negatives
-```
-
-in Golden Test.
-
-Preserve natural frozen cohort distribution.
-
----
-
-# 36. Golden Class Coverage
-
-Candidate Golden Test requires:
-
-```text
->= 1 positive group/row
-
->= 1 negative group/row
-```
-
-for functional binary metrics.
-
-Prefer more data in real evaluation.
-
----
-
-# 37. Tiny Golden Warning
-
-If Golden Test is very small:
-
-```text
-evaluation remains reproducible
-```
-
-but documentation must state:
-
-```text
-high statistical uncertainty
-```
-
-Do not make strong scientific claims.
-
----
-
-# 38. Candidate Golden Freeze Command
-
-Recommended:
-
-```bash
-python -m aurora_ml.main evaluation-cohort \
-    --task candidate \
-    --kind golden \
-    --training-run-id <run-id> \
-    --snapshot-id <evaluation-gold-id>
-```
-
----
-
-# 39. Candidate Recent Holdout Policy
-
-Introduce:
-
-```text
-candidate-recent-sector-v1
-```
-
----
-
-# 40. Recent Holdout Meaning
-
-Recent Holdout should represent:
-
-```text
-newer observation context
-+
-target groups unseen by the model
-```
-
-not merely another random sample.
-
----
-
-# 41. Training Sector Cutoff
-
-Derive:
-
-```text
-training_max_sector
-```
-
-from the exact candidate Gold snapshot used by the training run.
-
----
-
-# 42. Candidate Recent Eligibility
-
-Recommended V1:
-
-```text
-training_label in {POSITIVE, NEGATIVE}
-
-sector > training_max_sector
-
-group_key not in TRAIN
-
-group_key not in VALIDATION
-
-group_key not in GOLDEN TEST
-```
-
----
-
-# 43. Existing TIC In New Sector
-
-If TIC 123 appeared in training and later appears in sector 50:
-
-```text
-exclude TIC 123
-```
-
-from Recent Holdout.
-
-New observation does not erase target leakage.
-
----
-
-# 44. Recent Holdout Uses Explicit Gold Snapshot
-
-User/evaluator provides:
-
-```text
-recent_gold_snapshot_id
-```
-
-Do not query:
-
-```text
-whatever Gold is latest today
-```
-
-without pinning exact ID.
-
----
-
-# 45. Recent Cohort Is Immutable Per Snapshot
-
-Each recent evaluation cohort is immutable.
-
-Example:
-
-```text
-recent-A from Gold snapshot 50
-
-recent-B from Gold snapshot 55
-```
-
-Both may coexist.
-
----
-
-# 46. Recent Is Rolling Conceptually
-
-Unlike Golden Test:
-
-```text
-Recent Holdout may evolve
-```
-
-as new Gold snapshots arrive.
-
-But each individual recent cohort remains immutable.
-
----
-
-# 47. Recent Holdout May Later Become Training Data
-
-A recent cohort used to evaluate model A may later be included in training
-model B.
-
-That is allowed.
-
-But:
-
-```text
-model B
-```
-
-must NOT claim that same cohort as unseen Recent Holdout.
-
-Evaluator contamination checks must reject it.
-
----
-
-# 48. Candidate Recent Class Coverage
-
-For official supervised metrics, prefer both:
-
-```text
-POSITIVE
-NEGATIVE
-```
-
-If only one class exists:
-
-```text
-evaluation status =
-INSUFFICIENT_CLASS_COVERAGE
-```
-
-Do not fabricate ROC/PR metrics.
-
----
-
-# 49. Candidate Training Run Input
-
-Evaluation starts from an immutable completed:
-
-```text
-training-runs/candidate/<run-id>/manifest.json
-```
-
----
-
-# 50. Verify Candidate Training Run
-
-Before evaluation verify:
-
-```text
-manifest valid
-
-model.pt checksum valid
-
-preprocessing.json checksum valid
-
-metrics.json checksum valid
-
-Gold snapshot valid
-
-split manifest valid
-```
-
----
-
-# 51. No Model Retraining
-
-Phase 6.4 must NOT call:
-
-```text
-optimizer.step()
-```
-
-for a completed candidate model.
-
-Evaluation is read-only with respect to training artifacts.
-
----
-
-# 52. Candidate Validation Reconstruction
-
-Phase 6.2 did not need durable row predictions.
-
-Phase 6.4 may reconstruct:
-
-```text
-VALIDATION rows
-```
-
-from:
-
-```text
-training Gold
-+
-split manifest
-```
-
-and run the frozen native model.
-
----
-
-# 53. Candidate Threshold Selection
-
-Introduce:
-
-```text
-candidate-threshold-max-f1-v1
-```
-
-Threshold is selected using:
-
-```text
-VALIDATION only
-```
-
----
-
-# 54. Golden Test Never Selects Threshold
-
-Mandatory:
-
-```text
-Golden Test
-    ->
-metrics only
-```
-
-Never:
-
-```text
-Golden Test
-    ->
-threshold tuning
-```
-
----
-
-# 55. Recent Holdout Never Selects Threshold
-
-Same rule.
-
----
-
-# 56. Candidate Threshold Candidates
-
-Given validation probabilities:
-
-```text
-p_1 ... p_n
-```
-
-construct deterministic candidate thresholds from:
-
-```text
-sorted unique validation probabilities
-```
-
-plus boundary values if needed.
-
----
-
-# 57. Classification Rule
-
-Freeze:
-
-```text
-POSITIVE prediction
-iff
-probability >= threshold
-```
-
----
-
-# 58. Threshold Objective
-
-For each candidate threshold compute:
-
-```text
-F1
-```
-
-on VALIDATION.
-
-Select:
-
-```text
-maximum F1
-```
-
----
-
-# 59. Candidate Threshold Tie Break
-
-If multiple thresholds have same F1 within exact metric semantics:
-
-```text
-1. higher recall
-2. higher precision
-3. lower threshold
-```
-
-This final tie break favors recall for candidate vetting.
-
----
-
-# 60. Threshold Policy Is Versioned
-
-Any change to:
-
-```text
-objective
-
-tie break
-
-classification comparison
-```
-
-requires:
-
-```text
-candidate-threshold-...-v2
-```
-
----
-
-# 61. Threshold Value Is Durable
-
-Persist exact selected:
-
-```text
-decision_threshold
-```
-
-in the Phase 6.4 evaluation artifact.
-
----
-
-# 62. Threshold Is Not Training Artifact
-
-Do NOT mutate:
-
-```text
-training-runs/candidate/<run-id>/
-```
-
-to insert the threshold.
-
-Training run remains immutable.
-
----
-
-# 63. Candidate Golden Ranking Metrics
-
-Compute:
-
-```text
-golden_pr_auc
-
-golden_roc_auc
-```
-
-using continuous candidate probabilities.
-
----
-
-# 64. Candidate Golden Threshold Metrics
-
-At the frozen validation-selected threshold compute:
-
-```text
-golden_precision
-
-golden_recall
-
-golden_f1
-
-golden_confusion_matrix
-```
-
----
-
-# 65. Candidate Accuracy
-
-May optionally report:
-
-```text
-golden_accuracy
-```
-
-as a diagnostic.
-
-Do NOT make it the primary candidate metric.
-
----
-
-# 66. Candidate Primary Metric
-
-Freeze project emphasis:
-
-```text
-PR-AUC
-```
-
-as primary ranking metric.
-
----
-
-# 67. Candidate Recent Metrics
-
-Using the exact same frozen model + preprocessing + threshold:
-
-```text
-recent_pr_auc
-
-recent_roc_auc
-
-recent_precision
-
-recent_recall
-
-recent_f1
-
-recent_confusion_matrix
-```
-
-when class coverage permits.
-
----
-
-# 68. No Recent Recalibration
-
-Do NOT recompute:
-
-```text
-imputation medians
-
-scaler means/stds
-
-decision threshold
-```
-
-from Recent Holdout.
-
----
-
-# 69. No Golden Recalibration
-
-Same rule.
-
----
-
-# 70. Candidate Distribution Comparison
-
-Report useful non-training diagnostics:
-
-```text
-golden row count
-
-recent row count
-
-golden positive fraction
-
-recent positive fraction
-
-missing-feature fractions
-```
-
----
-
-# 71. Candidate Drift Summary
-
-Compute simple metric deltas such as:
-
-```text
-recent_pr_auc - golden_pr_auc
-
-recent_recall - golden_recall
-
-recent_precision - golden_precision
-```
-
-Do not define promotion behavior yet.
-
-Phase 6.5 uses evaluation evidence.
-
----
-
-# 72. Do Not Tune From Drift
-
-A weak Recent Holdout result:
-
-```text
-does not trigger retraining automatically
-```
-
-in Phase 6.4.
-
-It is evaluation evidence only.
-
----
-
-# 73. Candidate Probability Integrity
-
-Verify all:
-
-```text
-0 <= probability <= 1
-```
-
----
-
-# 74. Candidate Feature Runtime Integrity
-
-Evaluation must use:
-
-```text
-exact preprocessing.json
-
-exact feature order
-
-exact native model
-```
-
-from the training run.
-
-Do not recompute preprocessing.
-
----
-
-# 75. Candidate Model Version Check
-
-Expected:
-
-```text
-candidate-tabular-mlp-v1
-```
-
-or another explicitly supported model version.
-
-Unknown model version:
-
-```text
-fail
-```
-
----
-
-# 76. Candidate Preprocessing Version Check
-
-Expected:
-
-```text
-candidate-preprocess-v1
-```
-
-or explicit supported version.
-
----
-
-# 77. Anomaly Golden Evaluation
-
-Anomaly model has no natural POSITIVE/NEGATIVE ground truth.
-
-Therefore Golden Test semantics differ.
-
----
-
-# 78. Anomaly Golden Base Cohort
-
-Freeze an unseen reference cohort from an explicit committed:
-
-```text
-Gold anomaly snapshot
-```
-
-using groups:
-
-```text
-NOT IN TRAIN
-NOT IN VALIDATION
-```
-
-for that training run.
-
----
-
-# 79. Anomaly Golden Selection Policy
-
-Introduce:
-
-```text
-anomaly-golden-unseen-v1
-```
-
----
-
-# 80. Anomaly Golden Labels Are Not Required
-
-Do NOT require:
-
-```text
-TOI label
-
-candidate training label
-```
-
-for anomaly base cohort eligibility.
-
----
-
-# 81. Anomaly Golden Target Leakage
-
-Same invariant:
-
-```text
-Golden anomaly TIC
-NOT IN
-anomaly TRAIN / VALIDATION TICs
-```
-
----
-
-# 82. Anomaly Threshold Policy
-
-Phase 6.3 deliberately created no final threshold.
-
-Introduce:
-
-```text
-anomaly-threshold-validation-p99-v1
-```
-
----
-
-# 83. Anomaly Threshold Source
-
-Compute reconstruction scores for:
-
-```text
-VALIDATION
-```
-
-using frozen:
-
-```text
-anomaly-lightcurve-preprocess-v1
-
-anomaly-lightcurve-autoencoder-v1
-
-reconstruction-mse-v1
-```
-
----
-
-# 84. Anomaly Threshold Formula
-
-Freeze:
-
-```text
-threshold =
-quantile(
-    validation_reconstruction_scores,
-    0.99,
-    method="linear"
-)
-```
-
-using NumPy's explicitly documented linear quantile semantics.
-
----
-
-# 85. Anomaly Alert Rule
-
-Freeze:
-
-```text
-alert
-iff
-anomaly_score >= threshold
-```
-
----
-
-# 86. No Golden Threshold Tuning
-
-Golden reference scores must not influence:
-
-```text
-p99 threshold
-```
-
----
-
-# 87. No Recent Threshold Tuning
-
-Recent scores do not influence threshold either.
-
----
-
-# 88. Anomaly Threshold Is Heuristic
-
-Document clearly:
-
-```text
-p99 reconstruction threshold
-    =
-operational anomaly-evidence threshold
-```
-
-not:
-
-```text
-scientifically validated anomaly boundary
-```
-
----
-
-# 89. Golden Reference Alert Rate
-
-For unmodified Golden reference rows compute:
-
-```text
-golden_reference_alert_rate
-```
-
-using frozen validation threshold.
-
----
+Do not make:
 
-# 90. Golden Score Statistics
-
-Record:
-
-```text
-golden_score_mean
-
-golden_score_median
-
-golden_score_p95
-
-golden_score_p99
-
-golden_score_max
-```
-
----
-
-# 91. Synthetic Evaluation Purpose
-
-AURORA needs a deterministic mechanical test that the autoencoder responds to
-strong out-of-distribution feature perturbations.
-
-This is NOT an astrophysical simulation benchmark.
-
----
-
-# 92. Synthetic Policy
-
-Introduce:
-
-```text
-anomaly-synthetic-standardized-shift-v1
-```
-
----
-
-# 93. Synthetic Inputs Do Not Modify Gold
-
-Synthetic evaluation operates:
-
-```text
-in memory
-```
-
-after the frozen preprocessing transform.
-
-Do NOT write synthetic values into canonical Gold.
-
----
-
-# 94. Synthetic Perturbation Space
-
-Apply perturbation in:
-
-```text
-standardized model-input space
-```
-
-so the shift has clear scale semantics.
-
----
-
-# 95. Deterministic Feature Selection
-
-For each reference row derive:
-
-```text
-feature_index =
-uint64(
-    first 8 bytes of SHA256(source_product_id)
-)
-mod
-input_dim
-```
-
----
-
-# 96. Synthetic Shift
-
-Create:
-
-```text
-x_synthetic = x_reference
-```
-
-then:
-
-```text
-x_synthetic[feature_index] += 6.0
-```
-
-V1 uses one deterministic:
-
-```text
-+6 standard-deviation-unit shift
-```
-
-per row.
-
----
-
-# 97. Why Feature-Agnostic Synthetic Injection
-
-This avoids hard-coding assumptions such as:
-
-```text
-flux_mad is always the injected anomaly
-```
-
-and provides a generic runtime sanity evaluation.
-
----
-
-# 98. Synthetic Policy Version
-
-Changing:
-
-```text
-shift magnitude
-
-number of perturbed features
-
-feature-selection algorithm
-```
-
-requires:
-
-```text
-anomaly-synthetic-standardized-shift-v2
-```
-
----
-
-# 99. Synthetic Detection Rate
-
-Compute:
-
-```text
-golden_synthetic_detection_rate =
-fraction(
-    synthetic_score >= threshold
-)
-```
-
----
-
-# 100. Synthetic Score Statistics
-
-Record:
-
-```text
-golden_synthetic_score_mean
-
-golden_synthetic_score_median
-
-golden_synthetic_score_p95
-```
-
----
-
-# 101. Synthetic Score Separation
-
-Record useful diagnostic:
-
-```text
-golden_synthetic_median_score
--
-golden_reference_median_score
-```
-
-or equivalent clearly defined delta.
-
----
-
-# 102. Synthetic Test Is Mechanical
-
-Do NOT report:
-
-```text
-astronomical anomaly accuracy
-```
-
-from this synthetic perturbation.
-
-Correct wording:
-
-```text
-synthetic perturbation detection rate
-```
-
----
-
-# 103. Anomaly Recent Holdout
-
-Introduce:
-
-```text
-anomaly-recent-sector-v1
-```
-
----
-
-# 104. Anomaly Recent Eligibility
-
-Recommended:
-
-```text
-sector > training_max_sector
-
-group_key not in TRAIN
-
-group_key not in VALIDATION
-
-group_key not in GOLDEN TEST
-```
-
-No label requirement.
-
----
-
-# 105. Anomaly Recent Reference Metrics
-
-Using unchanged frozen model/threshold report:
-
-```text
-recent_reference_alert_rate
-
-recent_score_mean
-
-recent_score_median
-
-recent_score_p95
-
-recent_score_p99
-
-recent_score_max
-```
-
----
-
-# 106. Anomaly Recent Synthetic Test
-
-Apply exact same:
-
-```text
-anomaly-synthetic-standardized-shift-v1
-```
-
-to Recent Holdout.
-
-Report:
-
-```text
-recent_synthetic_detection_rate
-```
-
----
-
-# 107. No Recent Refitting
-
-Do NOT refit autoencoder preprocessing from Recent Holdout.
-
----
-
-# 108. Score Drift
-
-Report:
-
-```text
-recent_reference_alert_rate
--
-golden_reference_alert_rate
-```
-
-and selected score-distribution differences.
-
-Do not automatically change threshold.
-
----
-
-# 109. Evaluation Run
-
-Each complete evaluation execution gets:
-
-```text
-evaluation_run_id
-```
-
----
-
-# 110. Evaluation Specification
-
-Also compute deterministic:
-
-```text
-evaluation_spec_fingerprint
-```
-
----
-
-# 111. Evaluation Run ID vs Spec
-
-Freeze:
-
-```text
-evaluation_spec_fingerprint
-    =
-what was evaluated
-
-evaluation_run_id
-    =
-one concrete execution
-```
-
-Same pattern as training.
-
----
-
-# 112. Candidate Evaluation Spec
-
-Fingerprint includes:
-
-```text
-training_run_id
-
-training-run manifest SHA
-
-model SHA
-
-preprocessing SHA
-
-golden cohort ID
-
-recent cohort ID if present
-
-candidate evaluation policy version
-
-threshold policy version
-```
-
----
-
-# 113. Anomaly Evaluation Spec
-
-Also includes:
-
-```text
-score-definition version
-
-anomaly threshold policy
-
-synthetic perturbation policy
-```
-
----
-
-# 114. Evaluation Run Storage
-
-Recommended:
-
-```text
-evaluations/
-└── runs/
-    ├── candidate/
-    │   └── <evaluation-run-id>/
-    │       ├── threshold.json
-    │       ├── metrics.json
-    │       └── manifest.json
-    │
-    └── anomaly/
-        └── <evaluation-run-id>/
-            ├── threshold.json
-            ├── metrics.json
-            └── manifest.json
-```
-
----
-
-# 115. No Row-Level Prediction Artifact Yet
-
-Do NOT persist:
-
-```text
-one probability/score per Gold row
-```
-
-as production predictions.
-
-Phase 6.4 evaluation needs aggregate metrics only.
-
----
-
-# 116. Threshold Artifact
-
-`threshold.json` should be immutable.
-
-Candidate example fields:
-
-```text
-schema_version
-
-task
-
-threshold_policy_version
-
-threshold
-
-selection_source = VALIDATION
-
-training_run_id
-
-split_id
-
-validation_row_count
-```
-
----
-
-# 117. Candidate Threshold Metadata
-
-Also record:
-
-```text
-validation_f1
-
-validation_precision
-
-validation_recall
-```
-
-at selected threshold.
-
----
-
-# 118. Anomaly Threshold Metadata
-
-Record:
-
-```text
-threshold_policy_version
-
-threshold
-
-quantile = 0.99
-
-quantile_method = linear
-
-selection_source = VALIDATION
-
-validation_score_count
-
-score_definition_version
-```
-
----
-
-# 119. Evaluation Metrics Artifact
-
-Candidate:
-
-```text
-golden_*
-
-recent_*
-```
-
-Anomaly:
-
-```text
-golden_reference_*
-
-golden_synthetic_*
-
-recent_reference_*
-
-recent_synthetic_*
+```text id="reg46"
+CPU vs CUDA label
 ```
 
----
-
-# 120. Evaluation Manifest Contract
-
-Create:
-
-```text
-contracts/data/model-evaluation-v1.md
-```
+itself alter registry identity if resulting registered artifacts/provenance are
+otherwise the exact defined package.
 
 ---
 
-# 121. Evaluation Manifest Fields
+# 33. Model Manifest Fields
 
 Conceptual:
 
-```text
+```text id="reg47"
 schema_version
 
-evaluation_run_id
+model_id
 
-evaluation_spec_fingerprint
+model_fingerprint
 
 task
 
+model_version
+
 training_run_id
+
+training_run_manifest_key
 
 training_run_manifest_sha256
 
-model_version
+gold_snapshot_id
 
-model_sha256
+split_id
+
+dataset_view_version
+
+dataset_view_fingerprint
+
+feature_names
 
 preprocessing_version
 
+model_key
+
+model_sha256
+
+preprocessing_key
+
 preprocessing_sha256
 
-golden_cohort_id
+registered_at
 
-golden_cohort_manifest_sha256
-
-recent_cohort_id
-
-recent_cohort_manifest_sha256
-
-evaluation_policy_version
-
-threshold_policy_version
-
-score_definition_version
-
-synthetic_policy_version
-
-threshold_key
-
-threshold_sha256
-
-metrics_key
-
-metrics_sha256
-
-created_at
-
-completed_at
+producer
 ```
-
-Task-specific optional fields may be null/absent.
 
 ---
 
-# 122. Evaluation Manifest Written Last
+# 34. `registered_at` Is Metadata Only
+
+It must not affect:
+
+```text id="reg48"
+model_fingerprint
+```
+
+---
+
+# 35. Feature Order Is Persisted
+
+Registry model manifest must retain exact:
+
+```text id="reg49"
+feature_names
+```
+
+ordering.
+
+Later ONNX/Rust runtime must use exactly this order.
+
+---
+
+# 36. Candidate Output Semantics
+
+Candidate manifest records output meaning:
+
+```text id="reg50"
+one binary logit
+```
+
+if useful.
+
+Do not call it:
+
+```text id="reg51"
+planet confirmation probability
+```
+
+---
+
+# 37. Anomaly Output Semantics
+
+Anomaly manifest records:
+
+```text id="reg52"
+reconstruction vector
+```
+
+and model family.
+
+The anomaly score remains defined by:
+
+```text id="reg53"
+reconstruction-mse-v1
+```
+
+through evaluation/runtime policy.
+
+---
+
+# 38. Registration Ordering
 
 Required:
 
-```text
-load/verify inputs
+```text id="reg54"
+verify training run
       |
       v
-select threshold using VALIDATION
+compute model ID
       |
       v
-evaluate GOLDEN
+copy model.pt
       |
       v
-evaluate RECENT if provided
+verify copied model
       |
       v
-write threshold.json
+copy preprocessing.json
       |
       v
-write metrics.json
+verify copied preprocessing
       |
       v
-verify
+write model manifest LAST
       |
       v
-write manifest.json
+verify manifest
 ```
 
 ---
 
-# 123. Manifest Is Evaluation Commit Marker
+# 39. Model Manifest Is Package Commit Marker
 
-Without valid:
+If:
 
-```text
-manifest.json
+```text id="reg55"
+model.pt exists
+preprocessing.json exists
+manifest missing
 ```
 
-evaluation run is:
+the registry package is:
 
-```text
+```text id="reg56"
 NOT COMMITTED
 ```
 
 ---
 
-# 124. No Evaluation Checkpoint Hierarchy
+# 40. Existing Exact Package
 
-Do NOT create:
+If deterministic model path already exists and all:
 
-```text
-checkpoints/ml-evaluation/
+```text id="reg57"
+hashes
+
+provenance
+
+feature order
 ```
 
-in V1.
+match:
 
-Evaluation is cheap/rebuildable enough.
+```text id="reg58"
+registration is idempotent no-op
+```
+
+---
+
+# 41. Existing Model Conflict
+
+Same deterministic:
+
+```text id="reg59"
+model_id
+```
+
+but different package content:
+
+```text id="reg60"
+MODEL_REGISTRY_CONFLICT
+```
+
+Never overwrite.
+
+---
+
+# 42. No Registered Model Mutation
+
+A new evaluation does NOT modify:
+
+```text id="reg61"
+models/<task>/<model-id>/manifest.json
+```
+
+---
+
+# 43. No Mutable `status=challenger`
+
+Do NOT write inside model manifest:
+
+```text id="reg62"
+status = challenger
+
+status = champion
+```
+
+because those states change over time.
+
+Model manifest is immutable.
+
+---
+
+# 44. Challenger Semantics
+
+Freeze:
+
+```text id="reg63"
+challenger
+=
+a valid registered model
+that is not the current champion
+and is eligible for comparison
+```
+
+No separate mutable challenger pointer is required.
+
+---
+
+# 45. Multiple Challengers
+
+Many registered models may coexist:
+
+```text id="reg64"
+model-A
+model-B
+model-C
+```
+
+with only one current champion.
+
+This is valid.
+
+---
+
+# 46. Champion Pointer
 
 Use:
 
-```text
-manifest-last immutable run commit
-```
-
----
-
-# 125. Why No Evaluation Checkpoint
-
-If evaluation crashes:
-
-```text
-rerun evaluation
-```
-
-No model optimization state is lost.
-
-Avoid unnecessary checkpoint state.
-
----
-
-# 126. Evaluation Artifact Immutability
-
-After manifest commit:
-
-```text
-threshold.json
-
-metrics.json
-
-manifest.json
-```
-
-are immutable.
-
----
-
-# 127. Evaluation Does Not Mutate Training Run
-
-Record SHA before evaluation.
-
-After evaluation:
-
-```text
-training run artifacts unchanged
-```
-
----
-
-# 128. Evaluation Does Not Mutate Gold
-
-Same invariant.
-
----
-
-# 129. Evaluation Does Not Mutate Split
-
-Same invariant.
-
----
-
-# 130. Evaluation Does Not Mutate Cohorts
-
-Golden/Recent cohort manifests are read-only after freeze.
-
----
-
-# 131. Candidate Evaluation Policy
-
-Introduce:
-
-```text
-candidate-evaluation-v1
-```
-
-It freezes:
-
-```text
-validation-only threshold selection
-
-Golden ranking metrics
-
-Golden threshold metrics
-
-Recent metrics
-
-no benchmark tuning
-```
-
----
-
-# 132. Anomaly Evaluation Policy
-
-Introduce:
-
-```text
-anomaly-evaluation-v1
-```
-
-It freezes:
-
-```text
-validation p99 threshold
-
-Golden reference alert rate
-
-synthetic shift evaluation
-
-Recent reference/synthetic evaluation
-```
-
----
-
-# 133. Candidate Evaluate CLI
-
-Recommended:
-
-```bash
-python -m aurora_ml.main evaluate-candidate \
-    --training-run-id <run-id> \
-    --golden-cohort-id <cohort-id> \
-    --recent-cohort-id <cohort-id>
-```
-
-`--recent-cohort-id` may be optional.
-
----
-
-# 134. Candidate Golden-Only Evaluation
-
-Support:
-
-```bash
-python -m aurora_ml.main evaluate-candidate \
-    --training-run-id <run-id> \
-    --golden-cohort-id <cohort-id>
-```
-
-A recent cohort may not always exist yet.
-
----
-
-# 135. Anomaly Evaluate CLI
-
-Recommended:
-
-```bash
-python -m aurora_ml.main evaluate-anomaly \
-    --training-run-id <run-id> \
-    --golden-cohort-id <cohort-id> \
-    --recent-cohort-id <cohort-id>
-```
-
----
-
-# 136. Cohort Creation Is Separate
-
-Do not have `evaluate-candidate` silently discover:
-
-```text
-latest Gold
-```
-
-and invent benchmark membership.
-
-Freeze cohort first.
-
-Then evaluate.
-
----
-
-# 137. Explicit Benchmark Inputs
-
-Evaluation must log:
-
-```text
-training_run_id
-
-golden_cohort_id
-
-recent_cohort_id
-```
-
----
-
-# 138. Golden Contamination Preflight
-
-Before candidate/anomaly evaluation:
-
-```text
-golden groups
-INTERSECT
-TRAIN groups
-=
-empty
+```text id="reg65"
+models/candidate/champion.json
 ```
 
 and:
 
-```text
-golden groups
-INTERSECT
-VALIDATION groups
-=
-empty
+```text id="reg66"
+models/anomaly/champion.json
 ```
 
 ---
 
-# 139. Recent Contamination Preflight
+# 47. Champion Pointer Is Mutable Convenience State
 
-Require:
+Freeze:
 
-```text
-recent groups
-INTERSECT
-TRAIN groups
-=
-empty
+```text id="reg67"
+registered model packages
+    =
+immutable history
 ```
 
-```text
-recent groups
-INTERSECT
-VALIDATION groups
-=
-empty
-```
-
-```text
-recent groups
-INTERSECT
-GOLDEN groups
-=
-empty
+```text id="reg68"
+champion.json
+    =
+mutable current selection
 ```
 
 ---
 
-# 140. Failure On Contamination
+# 48. Champion Does Not Mean Deployed
 
-If any intersection exists:
+Document prominently:
 
-```text
-EVALUATION_GROUP_LEAKAGE
+```text id="reg69"
+registry champion
+    !=
+runtime-deployed model
 ```
 
-Do not compute/report final metrics.
+Phase 6.6 still needs:
 
----
+```text id="reg70"
+ONNX export
 
-# 141. No Row-Level Leakage Exception
+Python/ONNX parity
 
-Do not say:
-
-```text
-same TIC but different sector is okay
-```
-
-It is not okay.
-
-Target-level grouping remains mandatory.
-
----
-
-# 142. Golden Cohort Reusability
-
-The same Golden cohort may evaluate many models only when each model passes:
-
-```text
-group contamination check
+Rust parity
 ```
 
 ---
 
-# 143. Future Model Contaminating Golden
+# 49. Champion Pointer Must Carry Evaluation Selection
 
-If future model training included a Golden target:
+A champion is not just:
 
-```text
-that model cannot use this Golden benchmark
+```text id="reg71"
+model_id
 ```
 
-Do not hide contamination.
+It also needs the exact Phase 6.4 evaluation that supplied:
 
----
+```text id="reg72"
+threshold
 
-# 144. Preferred Future Behavior
-
-After Golden freeze:
-
-```text
-future ml-split
-```
-
-should explicitly reserve Golden group IDs so this situation does not occur.
-
----
-
-# 145. Candidate Validation Predictions
-
-Recompute from frozen native model.
-
-Do not use:
-
-```text
-old console metrics
-```
-
-as threshold-selection input.
-
----
-
-# 146. Candidate Golden Predictions
-
-Use exact same:
-
-```text
-feature order
-
-preprocessing
-
-model
-```
-
-No cohort-specific transformations.
-
----
-
-# 147. Candidate Recent Predictions
-
-Same exact runtime pipeline.
-
----
-
-# 148. Anomaly Validation Scores
-
-Recompute with:
-
-```text
-exact feature order
-
-exact anomaly preprocessing
-
-exact autoencoder
-
-reconstruction-mse-v1
+promotion evidence
 ```
 
 ---
 
-# 149. No Dataset-Specific Preprocessor
+# 50. Champion Pointer Fields
 
-Forbidden:
+Conceptual:
 
-```text
-Golden scaler
+```text id="reg73"
+schema_version
 
-Recent scaler
-```
+task
 
-There is only:
+model_id
 
-```text
-TRAIN-fitted preprocessing artifact
-```
+model_manifest_key
 
----
+model_manifest_sha256
 
-# 150. Candidate Metrics Library
+evaluation_run_id
 
-Use one explicit implementation such as:
+evaluation_manifest_key
 
-```text
-scikit-learn
-```
+evaluation_manifest_sha256
 
-for:
+threshold_key
 
-```text
-average_precision_score
+threshold_sha256
 
-roc_auc_score
+decision_id
 
-precision_score
+decision_key
 
-recall_score
+previous_model_id
 
-f1_score
-
-confusion_matrix
+updated_at
 ```
 
 ---
 
-# 151. Freeze PR-AUC Meaning
+# 51. Threshold Must Match Evaluation
 
-For AURORA V1:
+Before pointer update verify:
 
-```text
-PR-AUC
-=
-Average Precision
+```text id="reg74"
+threshold.json
 ```
 
-if `average_precision_score` is selected.
+belongs to the exact:
 
-Document this rather than ambiguously calling several different integrations
-"PR-AUC".
+```text id="reg75"
+evaluation_run_id
+```
+
+stored in the pointer.
 
 ---
 
-# 152. ROC-AUC
+# 52. Evaluation Must Match Model
 
-Use continuous probabilities.
+Verify:
 
-Do not compute ROC-AUC from binary predictions.
+```text id="reg76"
+evaluation.training_run_id
+==
+model.training_run_id
+```
+
+and model/preprocessing hashes match the evaluated artifacts.
 
 ---
 
-# 153. Confusion Matrix Order
+# 53. Model Selection Contract
 
-Freeze label order:
+Create:
 
-```text
-NEGATIVE = 0
-POSITIVE = 1
+```text id="reg77"
+contracts/data/model-promotion-v1.md
 ```
 
-Document matrix interpretation.
+Document:
 
----
+```text id="reg78"
+promotion decision record
 
-# 154. Precision Zero-Division
+bootstrap decision
 
-Use an explicit deterministic policy.
+rollback decision
 
-Recommended:
-
-```text
-zero_division=0
-```
-
-for diagnostic threshold metrics.
-
-Document it.
-
----
-
-# 155. Candidate Golden Missing Class
-
-If Golden cohort somehow contains only one class:
-
-```text
-fail benchmark validation
-```
-
-Do not report misleading PR/ROC metrics.
-
----
-
-# 156. Recent Missing Class
-
-Recent Holdout may legitimately be too small.
-
-Set:
-
-```text
-recent_status =
-INSUFFICIENT_CLASS_COVERAGE
-```
-
-and avoid undefined ranking metrics.
-
----
-
-# 157. No NaN Metrics Without Explanation
-
-Undefined metrics should be:
-
-```text
-null + status/reason
-```
-
-rather than unexplained:
-
-```text
-NaN
-```
-
-in durable JSON.
-
----
-
-# 158. Anomaly Quantile Determinism
-
-Test exact:
-
-```text
-np.quantile(
-    scores,
-    0.99,
-    method="linear"
-)
-```
-
-semantics.
-
----
-
-# 159. Anomaly Empty Validation
-
-Fail:
-
-```text
-NO_VALIDATION_SCORES
+champion pointer semantics
 ```
 
 ---
 
-# 160. Anomaly Nonfinite Scores
+# 54. Immutable Decision Records
 
-Any:
+Use:
 
-```text
-NaN
-
-Inf
-```
-
-in reconstruction scores is an evaluation integrity error.
-
----
-
-# 161. Candidate Nonfinite Probabilities
-
-Same rule.
-
----
-
-# 162. Evaluation Run Errors
-
-Keep compact:
-
-```text
-INVALID_TRAINING_RUN
-
-INVALID_EVALUATION_COHORT
-
-EVALUATION_GROUP_LEAKAGE
-
-GOLD_SNAPSHOT_MISMATCH
-
-MODEL_ARTIFACT_INTEGRITY_ERROR
-
-PREPROCESSING_INTEGRITY_ERROR
-
-INSUFFICIENT_CLASS_COVERAGE
-
-NO_VALIDATION_SCORES
-
-NONFINITE_EVALUATION_OUTPUT
-
-EVALUATION_ARTIFACT_CONFLICT
+```text id="reg79"
+models/<task>/decisions/<decision-id>.json
 ```
 
 ---
 
-# 163. Cohort Errors
+# 55. Decision Records Are Append-Only
 
-Useful:
+Never mutate an old:
 
-```text
-NO_UNSEEN_GROUPS
+```text id="reg80"
+decision-id
+```
 
-INSUFFICIENT_GOLDEN_CLASS_COVERAGE
+record.
 
-NO_RECENT_GROUPS
+---
 
-INVALID_RECENT_SECTOR_ORDER
+# 56. Decision Record Meaning
+
+A decision record means:
+
+```text id="reg81"
+policy comparison / explicit selection decision was made
+```
+
+It does NOT by itself prove that:
+
+```text id="reg82"
+champion pointer was successfully updated
+```
+
+The pointer is the current-state truth.
+
+---
+
+# 57. Why Decision Before Pointer
+
+Ordering:
+
+```text id="reg83"
+immutable decision
+      |
+      v
+mutable champion pointer
+```
+
+allows crash-safe recovery.
+
+---
+
+# 58. Decision Actions
+
+V1:
+
+```text id="reg84"
+BOOTSTRAP
+
+PROMOTE
+
+ROLLBACK
 ```
 
 ---
 
-# 164. Golden Cohort Existing Exact Match
+# 59. Decision Outcome
 
-If deterministic cohort already exists and matches:
+Promotion comparison records:
 
-```text
-reuse
+```text id="reg85"
+PASS
+
+FAIL
+```
+
+Rollback/Bootstrap valid operations produce:
+
+```text id="reg86"
+PASS
+```
+
+after preflight succeeds.
+
+---
+
+# 60. Failed Promotion Is Preserved
+
+A challenger that fails promotion policy should still produce an immutable:
+
+```text id="reg87"
+FAIL decision record
+```
+
+for audit.
+
+Champion pointer remains unchanged.
+
+---
+
+# 61. Promotion Decision Fields
+
+Conceptual:
+
+```text id="reg88"
+schema_version
+
+decision_id
+
+decision_fingerprint
+
+task
+
+action
+
+outcome
+
+policy_version
+
+expected_current_model_id
+
+expected_current_decision_id
+
+challenger_model_id
+
+challenger_model_manifest_sha256
+
+challenger_evaluation_run_id
+
+challenger_evaluation_manifest_sha256
+
+incumbent_model_id
+
+incumbent_evaluation_run_id
+
+selected_model_id
+
+selected_evaluation_run_id
+
+metric_comparison
+
+guardrails
+
+reason_codes
+
+created_at
+
+producer
 ```
 
 ---
 
-# 165. Golden Cohort Conflict
+# 62. Rollback Decision Fields
 
-Same deterministic cohort path with incompatible manifest:
+Also include:
 
-```text
-EVALUATION_COHORT_CONFLICT
+```text id="reg89"
+rollback_target_decision_id
+
+rollback_reason
+```
+
+---
+
+# 63. Decision Fingerprint
+
+Compute deterministic SHA256 over:
+
+```text id="reg90"
+task
+
+action
+
+policy version
+
+expected current champion selection
+
+challenger / target model
+
+evaluation IDs
+
+comparison inputs
+
+rollback reason where applicable
+```
+
+Exclude:
+
+```text id="reg91"
+created_at
+```
+
+---
+
+# 64. Decision ID
+
+Example:
+
+```text id="reg92"
+decision-v1-<sha-prefix>
+```
+
+---
+
+# 65. Decision Idempotency
+
+Rerunning the exact same comparison/action should resolve to the same:
+
+```text id="reg93"
+decision_id
+```
+
+---
+
+# 66. Decision Conflict
+
+Same deterministic decision key with different body:
+
+```text id="reg94"
+MODEL_DECISION_CONFLICT
 ```
 
 No overwrite.
 
 ---
 
-# 166. Evaluation Run Is Not Registry Model
+# 67. Registration CLI
 
-Do not create:
+Add:
 
-```text
-models/candidate/<model-id>/
-
-models/anomaly/<model-id>/
+```bash id="reg95"
+python -m aurora_ml.main register-model \
+    --training-run-id <training-run-id>
 ```
 
-yet.
+Task is resolved from the training-run manifest.
 
 ---
 
-# 167. No Champion Pointer
+# 68. Register Output
 
-Do not update:
+Example:
 
-```text
-models/candidate/champion.json
-
-models/anomaly/champion.json
-```
-
-Phase 6.5 owns promotion.
-
----
-
-# 168. Evaluation Does Not Promote
-
-Even excellent Golden metrics:
-
-```text
-do not automatically promote
-```
-
-in Phase 6.4.
-
----
-
-# 169. Evaluation Does Not Retrain
-
-Poor Recent Holdout metrics:
-
-```text
-do not automatically train a new model
+```text id="reg96"
+model_id:            model-v1-...
+task:                candidate_vetting
+model_version:       candidate-tabular-mlp-v1
+training_run_id:     candidate-run-...
+state:               REGISTERED
+champion:            false
 ```
 
 ---
 
-# 170. No ONNX
+# 69. Registration Does Not Promote
 
-Evaluation uses native Phase 6.2/6.3 model.
+Mandatory:
 
-ONNX export/parity remains Phase 6.6.
+```text id="reg97"
+register-model
+```
 
----
+must NOT change:
 
-# 171. No Rust Inference
-
-Do not invoke Rust inference for final parity here.
-
----
-
-# 172. No Prediction Storage
-
-Do not create:
-
-```text
-predictions/
+```text id="reg98"
+champion.json
 ```
 
 ---
 
-# 173. No API Changes
+# 70. Comparison CLI
 
-Go API does not expose final model evaluations yet.
+Useful:
+
+```bash id="reg99"
+python -m aurora_ml.main compare-model \
+    --model-id <challenger-model-id> \
+    --evaluation-run-id <challenger-evaluation-run-id>
+```
+
+This performs a dry comparison against current champion.
+
+No pointer mutation.
 
 ---
 
-# 174. No Dashboard Changes
+# 71. Promotion CLI
 
-React does not display model quality yet.
+Use:
+
+```bash id="reg100"
+python -m aurora_ml.main promote-model \
+    --model-id <challenger-model-id> \
+    --evaluation-run-id <challenger-evaluation-run-id>
+```
 
 ---
 
-# 175. Candidate Cohort Unit Test
+# 72. Optional Incumbent Evaluation Override
 
-Training exposed:
+Support:
 
-```text
-TIC 1
-TIC 2
+```text id="reg101"
+--incumbent-evaluation-run-id <evaluation-run-id>
 ```
 
-evaluation Gold contains:
-
-```text
-TIC 1
-TIC 3
-TIC 4
-```
-
-Expected Golden eligible:
-
-```text
-TIC 3
-TIC 4
-```
-
-Never TIC 1.
+when the current champion has been re-evaluated on the same newer Golden
+cohort as the challenger.
 
 ---
 
-# 176. Multi-Sector Contamination Test
+# 73. Why Incumbent Evaluation Override
 
-Training includes:
+Current champion pointer may reference:
 
-```text
-TIC 123 sector 10
+```text id="reg102"
+Golden cohort V1
 ```
 
-evaluation Gold contains:
+while challenger was evaluated on:
 
-```text
-TIC 123 sector 50
+```text id="reg103"
+Golden cohort V2
+```
+
+For fair comparison:
+
+```text id="reg104"
+re-evaluate incumbent on V2
+```
+
+then pass that evaluation explicitly.
+
+Do not compare incompatible cohorts.
+
+---
+
+# 74. Champion Pointer Is Not Rewritten Just For Re-Evaluation
+
+Re-evaluating the current champion does not by itself change:
+
+```text id="reg105"
+champion.json
+```
+
+Selection state changes only through an explicit selection action.
+
+---
+
+# 75. Promotion Preflight
+
+Before comparison verify:
+
+```text id="reg106"
+challenger model package valid
+
+challenger evaluation valid
+
+evaluation references challenger training/model artifacts
+
+current champion pointer valid
+
+current champion model package valid
+
+incumbent evaluation valid
+
+tasks match
+```
+
+---
+
+# 76. Promotion Requires Registered Challenger
+
+Do NOT promote directly from:
+
+```text id="reg107"
+training-runs/
+```
+
+The challenger must first have a committed:
+
+```text id="reg108"
+model-manifest-v1
+```
+
+---
+
+# 77. Current Champion Integrity
+
+Before replacing champion verify:
+
+```text id="reg109"
+champion pointer
+
+champion model manifest
+
+champion model artifact
+
+champion preprocessing
+
+champion evaluation
+
+champion threshold
+```
+
+are all internally consistent.
+
+---
+
+# 78. Corrupt Current Champion
+
+If current champion artifacts are corrupt:
+
+```text id="reg110"
+do not pretend normal model comparison is valid
+```
+
+Surface:
+
+```text id="reg111"
+CHAMPION_INTEGRITY_ERROR
+```
+
+Operator may use explicit rollback to a known-valid previous champion after
+investigation.
+
+---
+
+# 79. Task Must Match
+
+Candidate model can never become:
+
+```text id="reg112"
+anomaly champion
+```
+
+and anomaly model can never become:
+
+```text id="reg113"
+candidate champion
+```
+
+---
+
+# 80. Evaluation Must Be Completed
+
+Promotion requires:
+
+```text id="reg114"
+valid evaluation manifest
+```
+
+not merely:
+
+```text id="reg115"
+metrics.json
+```
+
+---
+
+# 81. Evaluation Cohort Compatibility
+
+Head-to-head promotion requires the same:
+
+```text id="reg116"
+Golden cohort ID
+```
+
+for challenger and incumbent comparison.
+
+---
+
+# 82. No Different-Golden Comparison
+
+Forbidden:
+
+```text id="reg117"
+challenger on Golden A
+vs
+champion on Golden B
+```
+
+Return:
+
+```text id="reg118"
+INCOMPARABLE_EVALUATIONS
+```
+
+---
+
+# 83. Evaluation Policy Compatibility
+
+V1 comparison also requires same:
+
+```text id="reg119"
+evaluation_policy_version
+
+threshold_policy_version
+```
+
+---
+
+# 84. Candidate View Compatibility
+
+For:
+
+```text id="reg120"
+candidate-promotion-v1
+```
+
+require same:
+
+```text id="reg121"
+dataset_view_version
+
+dataset_view_fingerprint
+```
+
+between challenger and incumbent.
+
+---
+
+# 85. Why Same View In V1
+
+This keeps comparison focused on:
+
+```text id="reg122"
+model/training improvements
+```
+
+rather than silently mixing incompatible feature semantics.
+
+---
+
+# 86. Cross-View Promotion
+
+A future feature-set change may require:
+
+```text id="reg123"
+candidate-promotion-v2
+```
+
+with explicit cross-view comparison semantics.
+
+Do not silently allow it under V1.
+
+---
+
+# 87. Anomaly View Compatibility
+
+For:
+
+```text id="reg124"
+anomaly-promotion-v1
+```
+
+require same:
+
+```text id="reg125"
+anomaly dataset view
+
+score definition
+
+synthetic evaluation policy
+```
+
+---
+
+# 88. Recent Holdout Compatibility
+
+If both evaluations have a Recent Holdout:
+
+```text id="reg126"
+recent_cohort_id must match
+```
+
+---
+
+# 89. One Recent, One Missing
+
+If:
+
+```text id="reg127"
+challenger has Recent
+champion does not
+```
+
+or inverse:
+
+```text id="reg128"
+INCOMPARABLE_RECENT_EVALUATION
+```
+
+for V1 promotion.
+
+---
+
+# 90. Both Without Recent
+
+Promotion may proceed using:
+
+```text id="reg129"
+Golden evidence only
+```
+
+if all other comparability rules pass.
+
+---
+
+# 91. Recent Insufficient Class Coverage
+
+Candidate evaluation may report:
+
+```text id="reg130"
+INSUFFICIENT_CLASS_COVERAGE
+```
+
+for the same Recent cohort.
+
+If both evaluations share that state:
+
+```text id="reg131"
+recent candidate guardrail = NOT_APPLICABLE
+```
+
+and record why.
+
+---
+
+# 92. Promotion Policy: Candidate
+
+Introduce:
+
+```text id="reg132"
+candidate-promotion-v1
+```
+
+---
+
+# 93. Candidate Primary Metric
+
+Use:
+
+```text id="reg133"
+Golden Average Precision
+```
+
+from Phase 6.4.
+
+---
+
+# 94. Candidate Primary Requirement
+
+Freeze:
+
+```text id="reg134"
+challenger.golden_average_precision
+>
+incumbent.golden_average_precision
+```
+
+with numerical comparison epsilon:
+
+```text id="reg135"
+1e-12
+```
+
+---
+
+# 95. Candidate Golden Recall Guardrail
+
+Require:
+
+```text id="reg136"
+challenger.golden_recall
+>=
+incumbent.golden_recall - 0.02
+```
+
+---
+
+# 96. Why Recall Guardrail
+
+A ranking metric improvement should not come with a large drop in:
+
+```text id="reg137"
+candidate recovery / sensitivity
+```
+
+under the validation-selected threshold.
+
+---
+
+# 97. Candidate Recent AP Guardrail
+
+When comparable Recent metrics exist:
+
+```text id="reg138"
+challenger.recent_average_precision
+>=
+incumbent.recent_average_precision - 0.02
+```
+
+---
+
+# 98. Candidate Recent Recall Guardrail
+
+When comparable Recent metrics exist:
+
+```text id="reg139"
+challenger.recent_recall
+>=
+incumbent.recent_recall - 0.03
+```
+
+---
+
+# 99. Candidate Promotion Pass
+
+V1 passes only when:
+
+```text id="reg140"
+Golden AP improves
+AND
+Golden recall guardrail passes
+AND
+all applicable Recent guardrails pass
+```
+
+---
+
+# 100. Candidate Policy Is Project Policy
+
+These tolerances are:
+
+```text id="reg141"
+engineering promotion guardrails
+```
+
+not universal astronomical laws.
+
+Document them exactly.
+
+---
+
+# 101. Candidate Policy Change
+
+Any change to:
+
+```text id="reg142"
+primary metric
+
+comparison direction
+
+recall tolerance
+
+Recent tolerances
+```
+
+requires:
+
+```text id="reg143"
+candidate-promotion-v2
+```
+
+---
+
+# 102. No Accuracy Promotion Criterion
+
+Do not promote primarily because:
+
+```text id="reg144"
+accuracy increased
+```
+
+---
+
+# 103. No Training-Loss Promotion Criterion
+
+Do not promote because:
+
+```text id="reg145"
+training loss is smaller
+```
+
+---
+
+# 104. No Validation-Only Promotion
+
+Do not select champion based only on:
+
+```text id="reg146"
+Phase 6.2 VALIDATION
+```
+
+Champion selection requires Phase 6.4 final evaluation evidence.
+
+---
+
+# 105. Promotion Policy: Anomaly
+
+Introduce:
+
+```text id="reg147"
+anomaly-promotion-v1
+```
+
+---
+
+# 106. Anomaly Comparable Metrics
+
+Use Phase 6.4:
+
+```text id="reg148"
+Golden synthetic detection rate
+
+Golden reference alert rate
+```
+
+plus comparable Recent metrics where available.
+
+---
+
+# 107. Anomaly Synthetic Guardrail
+
+Require:
+
+```text id="reg149"
+challenger.golden_synthetic_detection_rate
+>=
+incumbent.golden_synthetic_detection_rate - 0.02
+```
+
+---
+
+# 108. Anomaly Reference Alert Guardrail
+
+Require:
+
+```text id="reg150"
+challenger.golden_reference_alert_rate
+<=
+incumbent.golden_reference_alert_rate + 0.01
+```
+
+---
+
+# 109. Anomaly Must Improve Something
+
+In addition to guardrails require at least one strict improvement:
+
+```text id="reg151"
+challenger.golden_synthetic_detection_rate
+>
+incumbent.golden_synthetic_detection_rate + 1e-12
+```
+
+OR:
+
+```text id="reg152"
+challenger.golden_reference_alert_rate
+<
+incumbent.golden_reference_alert_rate - 1e-12
+```
+
+---
+
+# 110. Anomaly Recent Synthetic Guardrail
+
+When comparable:
+
+```text id="reg153"
+challenger.recent_synthetic_detection_rate
+>=
+incumbent.recent_synthetic_detection_rate - 0.02
+```
+
+---
+
+# 111. Anomaly Recent Alert Guardrail
+
+When comparable:
+
+```text id="reg154"
+challenger.recent_reference_alert_rate
+<=
+incumbent.recent_reference_alert_rate + 0.01
+```
+
+---
+
+# 112. Anomaly Promotion Pass
+
+V1 passes when:
+
+```text id="reg155"
+Golden synthetic guardrail passes
+AND
+Golden reference-alert guardrail passes
+AND
+at least one Golden metric strictly improves
+AND
+all applicable Recent guardrails pass
+```
+
+---
+
+# 113. Do Not Compare Raw Reconstruction Loss Across Arbitrary Models
+
+Do not make:
+
+```text id="reg156"
+lower validation MSE
+```
+
+the registry promotion metric.
+
+Reconstruction losses may change scale/meaning with:
+
+```text id="reg157"
+feature view
+
+preprocessing
+
+model semantics
+```
+
+Phase 6.4 evaluation metrics are safer.
+
+---
+
+# 114. No "Anomaly Accuracy" Promotion
+
+Do not invent a supervised accuracy criterion for the unsupervised model.
+
+---
+
+# 115. Anomaly Promotion Policy Change
+
+Semantic changes require:
+
+```text id="reg158"
+anomaly-promotion-v2
+```
+
+---
+
+# 116. Promotion Metric Snapshot
+
+Decision record should persist the exact compared values.
+
+Candidate example:
+
+```text id="reg159"
+incumbent_golden_average_precision
+
+challenger_golden_average_precision
+
+incumbent_golden_recall
+
+challenger_golden_recall
+
+incumbent_recent_average_precision
+
+challenger_recent_average_precision
+```
+
+---
+
+# 117. Guardrail Results
+
+Persist explicit:
+
+```text id="reg160"
+primary_metric_pass
+
+golden_recall_guardrail_pass
+
+recent_ap_guardrail_pass
+
+recent_recall_guardrail_pass
+```
+
+or anomaly equivalents.
+
+---
+
+# 118. Human-Readable Reasons
+
+Decision may contain small codes such as:
+
+```text id="reg161"
+PRIMARY_METRIC_NOT_IMPROVED
+
+GOLDEN_RECALL_REGRESSION
+
+RECENT_AP_REGRESSION
+
+RECENT_RECALL_REGRESSION
+```
+
+---
+
+# 119. Candidate Failure Example
+
+If:
+
+```text id="reg162"
+Golden AP improves
+```
+
+but:
+
+```text id="reg163"
+Golden recall drops 10%
+```
+
+promotion:
+
+```text id="reg164"
+FAIL
+```
+
+---
+
+# 120. Anomaly Failure Example
+
+If synthetic detection improves but:
+
+```text id="reg165"
+reference alert rate jumps substantially
+```
+
+promotion:
+
+```text id="reg166"
+FAIL
+```
+
+---
+
+# 121. No Automatic Best-Of-N Search
+
+Registry does not scan every training run and automatically choose the maximum
+metric.
+
+Promotion is explicit.
+
+---
+
+# 122. No Hyperparameter Tuning In Registry
+
+Do not make promotion code start new training runs.
+
+---
+
+# 123. Bootstrap First Champion
+
+When:
+
+```text id="reg167"
+champion.json
+```
+
+does not exist, there is no incumbent for comparison.
+
+---
+
+# 124. Bootstrap Is Explicit
+
+Use:
+
+```bash id="reg168"
+python -m aurora_ml.main promote-model \
+    --model-id <model-id> \
+    --evaluation-run-id <evaluation-run-id> \
+    --bootstrap
+```
+
+---
+
+# 125. Bootstrap Precondition
+
+Require:
+
+```text id="reg169"
+no existing valid champion pointer
+```
+
+If champion already exists:
+
+```text id="reg170"
+BOOTSTRAP_NOT_ALLOWED
+```
+
+---
+
+# 126. Bootstrap Requires Final Evaluation
+
+First champion still requires:
+
+```text id="reg171"
+valid Golden Test evaluation
+```
+
+Do not bootstrap directly from validation metrics.
+
+---
+
+# 127. Bootstrap Does Not Need Incumbent Metrics
+
+There is nothing to compare against.
+
+Therefore:
+
+```text id="reg172"
+candidate-promotion-v1 comparison thresholds
+```
+
+do not apply to the first champion.
+
+---
+
+# 128. No Arbitrary Absolute Accuracy Floor V1
+
+Do not invent a universal:
+
+```text id="reg173"
+must exceed 90%
+```
+
+rule.
+
+Bootstrap requires valid completed evaluation and explicit operator intent.
+
+---
+
+# 129. Bootstrap Decision
+
+Create immutable:
+
+```text id="reg174"
+action=BOOTSTRAP
+
+outcome=PASS
+```
+
+decision record.
+
+---
+
+# 130. Bootstrap Pointer Update
+
+After decision commit:
+
+```text id="reg175"
+champion.json
+```
+
+points to:
+
+```text id="reg176"
+model
+
+evaluation
+
+threshold
+
+bootstrap decision
+```
+
+---
+
+# 131. Promotion Does Not Need `--force`
+
+Do NOT add:
+
+```text id="reg177"
+--force
+```
+
+to bypass comparison guardrails.
+
+If policy is inappropriate:
+
+```text id="reg178"
+version the policy
+```
+
+instead.
+
+---
+
+# 132. Dry-Run Comparison
+
+`compare-model` should show:
+
+```text id="reg179"
+incumbent
+
+challenger
+
+cohort IDs
+
+metric deltas
+
+guardrail results
+
+PASS / FAIL
+```
+
+without modifying champion state.
+
+---
+
+# 133. Promotion Reuses Comparison Logic
+
+`promote-model` must call the same deterministic policy implementation used by
+dry comparison.
+
+Do not maintain two promotion formulas.
+
+---
+
+# 134. PASS Decision Before Pointer Mutation
+
+Required order:
+
+```text id="reg180"
+verify all inputs
+      |
+      v
+compute decision
+      |
+      v
+write immutable decision record
+      |
+      v
+if FAIL -> stop
+      |
+      v
+re-read current champion
+      |
+      v
+verify expected current champion unchanged
+      |
+      v
+update champion pointer
+      |
+      v
+verify pointer
+```
+
+---
+
+# 135. Why Re-read Champion
+
+Another operator may have changed:
+
+```text id="reg181"
+champion.json
+```
+
+between comparison and pointer write.
+
+V1 does not need a distributed lock, but must not knowingly apply a stale
+comparison.
+
+---
+
+# 136. Current Champion Changed
+
+If expected incumbent differs from current pointer:
+
+```text id="reg182"
+CHAMPION_CHANGED
+```
+
+Do not apply stale promotion.
+
+Re-run comparison.
+
+---
+
+# 137. V1 Concurrency Assumption
+
+Freeze operational constraint:
+
+```text id="reg183"
+one intentional registry mutation operation per task at a time
+```
+
+No distributed lock service is introduced.
+
+---
+
+# 138. No Redis/Database Lock
+
+Do NOT add:
+
+```text id="reg184"
+Redis
+
+PostgreSQL
+
+etcd
+```
+
+for registry pointer updates.
+
+---
+
+# 139. Pointer Verification
+
+After PUT verify:
+
+```text id="reg185"
+task
+
+model_id
+
+evaluation_run_id
+
+threshold SHA
+
+decision ID
+```
+
+match intended selection.
+
+---
+
+# 140. Pointer Write Failure
+
+If immutable PASS decision exists but:
+
+```text id="reg186"
+champion pointer PUT fails
+```
+
+model selection was not applied.
+
+Existing champion remains authoritative.
+
+---
+
+# 141. Retry After Pointer Failure
+
+Rerun exact operation.
+
+Expected:
+
+```text id="reg187"
+same decision ID reused
+```
+
+then pointer update retried if current champion is still the expected one.
+
+---
+
+# 142. Crash After Decision Before Pointer
+
+Same recovery behavior.
+
+No need for registry checkpoint.
+
+---
+
+# 143. Crash After Pointer Before Verification
+
+Rerun:
+
+```text id="reg188"
+champion pointer already references intended decision
+```
+
+Then:
+
+```text id="reg189"
+verify and succeed
+```
+
+No duplicate model package.
+
+---
+
+# 144. No Registry Checkpoint Hierarchy
+
+Do NOT create:
+
+```text id="reg190"
+checkpoints/model-registry/
+```
+
+Registry operations are small and recoverable from:
+
+```text id="reg191"
+immutable decisions
+
+mutable champion pointer
+```
+
+---
+
+# 145. Why No Registry Checkpoint
+
+State is already represented cleanly by:
+
+```text id="reg192"
+models/.../manifest.json
+
+models/.../decisions/*.json
+
+models/.../champion.json
+```
+
+Another checkpoint would duplicate truth.
+
+---
+
+# 146. Champion Pointer Missing
+
+If no pointer exists:
+
+```text id="reg193"
+no current champion
+```
+
+This is valid before bootstrap.
+
+Do not infer champion by modification time.
+
+---
+
+# 147. Never Infer Champion From "Newest Model"
+
+Forbidden:
+
+```text id="reg194"
+latest registered model
+=
+champion
+```
+
+Champion exists only through explicit pointer.
+
+---
+
+# 148. Never Infer Champion From Highest Metric Automatically
+
+Same rule.
+
+Promotion is explicit and audited.
+
+---
+
+# 149. Rollback
+
+Rollback changes:
+
+```text id="reg195"
+champion pointer
+```
+
+to a previously selected valid model/evaluation bundle.
+
+It does NOT:
+
+```text id="reg196"
+retrain
+
+rewrite model
+
+restore deleted files from nowhere
+```
+
+---
+
+# 150. Rollback Target
+
+Recommended V1 rollback identifies:
+
+```text id="reg197"
+previous champion decision ID
+```
+
+rather than only:
+
+```text id="reg198"
+model ID
+```
+
+---
+
+# 151. Why Rollback To Decision
+
+A prior champion decision preserves exact:
+
+```text id="reg199"
+model
+
+evaluation
+
+threshold
+```
+
+selection.
+
+Rollback should restore the full selection semantics.
+
+---
+
+# 152. Rollback CLI
+
+Use:
+
+```bash id="reg200"
+python -m aurora_ml.main rollback-model \
+    --task candidate \
+    --to-decision-id <prior-decision-id> \
+    --reason "..."
+```
+
+or:
+
+```text id="reg201"
+--task anomaly
+```
+
+---
+
+# 153. Rollback Reason Required
+
+Require a non-empty:
+
+```text id="reg202"
+reason
+```
+
+for audit.
+
+Examples:
+
+```text id="reg203"
+runtime regression
+
+unexpected Recent degradation
+
+operator recovery after deployment incident
+```
+
+---
+
+# 154. Rollback Target Must Be Historical Champion
+
+V1 target decision must previously have been applied as a champion selection.
+
+Do not call promotion of a never-selected challenger:
+
+```text id="reg204"
+rollback
+```
+
+---
+
+# 155. Never-Promoted Model
+
+To choose a registered model that was never a champion:
+
+```text id="reg205"
+use normal promotion policy
+```
+
+not rollback.
+
+---
+
+# 156. Rollback Integrity Preflight
+
+Verify target:
+
+```text id="reg206"
+decision record valid
+
+model package valid
+
+model SHA valid
+
+preprocessing SHA valid
+
+evaluation run valid
+
+threshold valid
+```
+
+before updating pointer.
+
+---
+
+# 157. Corrupt Rollback Target
+
+If target artifacts are corrupt:
+
+```text id="reg207"
+ROLLBACK_TARGET_INTEGRITY_ERROR
+```
+
+Do not point champion to it.
+
+---
+
+# 158. Cross-Task Rollback
+
+Forbidden:
+
+```text id="reg208"
+candidate champion
+    ->
+anomaly decision
+```
+
+---
+
+# 159. Rollback Decision Record
+
+Create a new immutable record:
+
+```text id="reg209"
+action=ROLLBACK
+
+selected_model_id=<old-model>
+
+rollback_target_decision_id=<old-selection>
+
+expected_current_model_id=<current-model>
+
+rollback_reason=...
+```
+
+---
+
+# 160. Rollback Does Not Reactivate Old Decision Object
+
+Do NOT modify the old promotion record.
+
+A rollback is a new event in history.
+
+---
+
+# 161. Rollback Pointer Update
+
+Ordering:
+
+```text id="reg210"
+verify current champion
+      |
+      v
+verify rollback target
+      |
+      v
+write rollback decision
+      |
+      v
+re-read current champion
+      |
+      v
+update pointer
+      |
+      v
+verify
+```
+
+---
+
+# 162. Rollback Does Not Delete Challenger
+
+The model being rolled back from remains registered.
+
+No history deletion.
+
+---
+
+# 163. Rollback Does Not Delete Evaluation
+
+Same rule.
+
+---
+
+# 164. Roll Forward Later
+
+A previously demoted model may later be reconsidered only through a new:
+
+```text id="reg211"
+promotion comparison
+```
+
+under the current applicable policy/evaluation evidence.
+
+---
+
+# 165. Champion History
+
+Complete selection history can be reconstructed from:
+
+```text id="reg212"
+models/<task>/decisions/
+```
+
+and current:
+
+```text id="reg213"
+champion.json
+```
+
+---
+
+# 166. Do Not Store Mutable History Array In Champion Pointer
+
+Avoid:
+
+```text id="reg214"
+history: [...]
+```
+
+inside `champion.json`.
+
+Pointer should stay compact.
+
+History lives in immutable decision records.
+
+---
+
+# 167. Champion Pointer Previous Model
+
+A compact:
+
+```text id="reg215"
+previous_model_id
+```
+
+is useful for display/debugging.
+
+It is NOT the full history.
+
+---
+
+# 168. Model Listing
+
+Optional CLI:
+
+```bash id="reg216"
+python -m aurora_ml.main model-status \
+    --task candidate
+```
+
+May show:
+
+```text id="reg217"
+current champion
+
+registered model count
+
+recent decision records
+```
+
+---
+
+# 169. Do Not Need Database Listing Index
+
+At project scale:
+
+```text id="reg218"
+MinIO prefix listing
+```
+
+is sufficient.
+
+Do not add a registry database.
+
+---
+
+# 170. Registered Model Is Not Automatically Runtime-Compatible
+
+A Phase 6.5 model may still fail future:
+
+```text id="reg219"
+ONNX export
+
+Rust inference parity
+```
+
+That does not invalidate its training/evaluation history.
+
+---
+
+# 171. Runtime Failure Later
+
+If Phase 6.6 shows a champion cannot pass runtime parity:
+
+```text id="reg220"
+do not silently mutate model package
+```
+
+A later selection/rollback may choose another runtime-compatible model.
+
+---
+
+# 172. Phase 6.6 May Need Registry Champion
+
+Expected future flow:
+
+```text id="reg221"
+champion.json
+      |
+      v
+model package
+      |
+      v
+evaluation threshold
+      |
+      v
+ONNX runtime package
+```
+
+---
+
+# 173. Model Registry Is Native-Model Registry
+
+Phase 6.5 stores canonical trained model representation:
+
+```text id="reg222"
+model.pt
+```
+
+for Python training lineage.
+
+ONNX is a derived runtime representation.
+
+---
+
+# 174. No ONNX File In Model Package
+
+Mandatory in 6.5:
+
+```text id="reg223"
+models/.../<model-id>/
+```
+
+does NOT need:
+
+```text id="reg224"
+model.onnx
+```
+
+---
+
+# 175. No `runtime_ready` Mutable Flag
+
+Do NOT add:
+
+```text id="reg225"
+runtime_ready=false
+```
+
+to immutable model manifest and later mutate it.
+
+Phase 6.6 uses separate runtime artifacts.
+
+---
+
+# 176. No Deployed Flag
+
+Do NOT add:
+
+```text id="reg226"
+deployed=true
+```
+
+to model manifest.
+
+Deployment state belongs elsewhere later.
+
+---
+
+# 177. Model Package Copy Integrity
+
+Copied registry:
+
+```text id="reg227"
+model.pt
+```
+
+must have identical SHA256 to training-run model.
+
+---
+
+# 178. Preprocessing Copy Integrity
+
+Same for:
+
+```text id="reg228"
+preprocessing.json
+```
+
+---
+
+# 179. No Re-serialization Of Preprocessing
+
+Prefer copying exact verified bytes.
+
+Do not parse and rewrite JSON if doing so can change byte SHA without need.
+
+---
+
+# 180. Model Registration Idempotency Test
+
+Register same training run twice.
+
+Expected:
+
+```text id="reg229"
+same model ID
+
+same package
+
+no duplicate mutable state
+```
+
+---
+
+# 181. Different Training Run Test
+
+Different training run with different:
+
+```text id="reg230"
+model bytes
+```
+
+must produce different model ID.
+
+---
+
+# 182. Same Training Run, New Evaluation
+
+Register model before/after another evaluation.
+
+Expected:
+
+```text id="reg231"
+same model ID
+```
+
+Evaluation does not alter model identity.
+
+---
+
+# 183. Feature Order Change Test
+
+Different durable model-input order:
+
+```text id="reg232"
+different model fingerprint
+```
+
+even if raw weight file somehow has same size.
+
+---
+
+# 184. Model Artifact Corruption Test
+
+Corrupt training-run `model.pt`.
+
+Registration must fail.
+
+---
+
+# 185. Preprocessing Corruption Test
+
+Registration must fail.
+
+---
+
+# 186. Training Manifest Corruption Test
+
+Registration must fail.
+
+---
+
+# 187. Partial Model Package Test
+
+Registry model bytes exist but manifest missing.
+
+Expected:
+
+```text id="reg233"
+not registered/committed
+```
+
+Recovery may verify/copy and commit manifest.
+
+---
+
+# 188. Registry Conflict Test
+
+Deterministic model path contains incompatible object.
+
+Expected:
+
+```text id="reg234"
+MODEL_REGISTRY_CONFLICT
+```
+
+---
+
+# 189. Champion Resolution Test
+
+Given valid pointer:
+
+```text id="reg235"
+resolve exact model manifest
+
+resolve exact evaluation manifest
+
+resolve exact threshold
+```
+
+---
+
+# 190. Broken Champion Pointer Test
+
+Pointer references missing model manifest.
+
+Expected:
+
+```text id="reg236"
+CHAMPION_POINTER_INVALID
+```
+
+Do not select newest model instead.
+
+---
+
+# 191. Wrong Champion Model SHA Test
+
+Expected integrity failure.
+
+---
+
+# 192. Wrong Champion Evaluation SHA Test
+
+Expected integrity failure.
+
+---
+
+# 193. Wrong Champion Threshold SHA Test
+
+Expected integrity failure.
+
+---
+
+# 194. Cross-Task Champion Pointer Test
+
+Candidate pointer referencing anomaly model:
+
+```text id="reg237"
+reject
+```
+
+---
+
+# 195. Bootstrap Test
+
+No champion exists.
+
+Valid evaluated model + explicit:
+
+```text id="reg238"
+--bootstrap
 ```
 
 Expected:
 
-```text
-excluded from Golden and Recent
+```text id="reg239"
+BOOTSTRAP PASS decision
+
+champion pointer created
 ```
 
 ---
 
-# 177. Candidate Golden Class Test
-
-Ensure candidate Golden selection contains both labels.
-
----
-
-# 178. Candidate Golden Label Preservation
-
-Labels come exactly from:
-
-```text
-source Gold snapshot
-```
-
-No live relabeling.
-
----
-
-# 179. Cohort Input Order Test
-
-Shuffle Gold rows.
-
-Expected:
-
-```text
-same group list
-
-same cohort ID
-```
-
----
-
-# 180. Cohort Partition Order Test
-
-Shuffle Gold sector read order.
-
-Expected same cohort.
-
----
-
-# 181. Cohort Timestamp Test
-
-Different `created_at`:
-
-```text
-same cohort ID
-```
-
----
-
-# 182. Cohort Gold Change Test
-
-Change source Gold snapshot:
-
-```text
-new cohort identity
-```
-
----
-
-# 183. Cohort Policy Change Test
-
-Change:
-
-```text
-candidate-golden-unseen-v1
-```
-
-to simulated V2:
-
-```text
-new cohort identity
-```
-
----
-
-# 184. Golden Immutability Test
-
-Attempt conflicting write.
+# 196. Bootstrap Without Evaluation
 
 Expected failure.
 
 ---
 
-# 185. Candidate Recent Sector Test
+# 197. Bootstrap With Validation Metrics Only
 
-Training max sector:
+Expected failure.
 
-```text
-42
-```
-
-Recent source contains:
-
-```text
-41
-43
-44
-```
-
-Only:
-
-```text
-43
-44
-```
-
-can qualify before group contamination filtering.
+Golden evaluation is required.
 
 ---
 
-# 186. Recent Existing Target Test
-
-Training TIC 9 appears in sector 44.
+# 198. Bootstrap When Champion Exists
 
 Expected:
 
-```text
-excluded
+```text id="reg240"
+BOOTSTRAP_NOT_ALLOWED
 ```
 
 ---
 
-# 187. Recent Golden Overlap Test
+# 199. Candidate Promotion Primary Pass Test
 
-TIC already in Golden:
+Challenger:
 
-```text
-excluded from Recent
+```text id="reg241"
+higher Golden Average Precision
 ```
 
----
-
-# 188. Candidate Threshold Exact Test
-
-Provide deterministic validation probabilities/labels.
-
-Verify exact:
-
-```text
-selected threshold
-```
-
-under:
-
-```text
-max F1
-higher recall
-higher precision
-lower threshold
-```
-
-tie semantics.
-
----
-
-# 189. Candidate Threshold Uses Validation Only
-
-Perturb Golden labels/probabilities.
+with all guardrails satisfied.
 
 Expected:
 
-```text
-selected threshold unchanged
+```text id="reg242"
+PASS
 ```
 
 ---
 
-# 190. Candidate Threshold Ignores Recent
+# 200. Candidate Equal AP Test
 
-Same regression.
+If challenger AP is equal within policy comparison:
 
----
-
-# 191. Candidate Threshold Classification Test
-
-Verify:
-
-```text
-probability == threshold
+```text id="reg243"
+FAIL
 ```
 
-is classified:
-
-```text
-POSITIVE
-```
-
-because rule is `>=`.
+V1 requires strict improvement.
 
 ---
 
-# 192. Candidate Golden Metric Test
-
-Known probabilities/labels.
-
-Verify:
-
-```text
-average precision
-
-ROC-AUC
-
-precision
-
-recall
-
-F1
-
-confusion matrix
-```
-
----
-
-# 193. Candidate Golden Primary Metric Naming
-
-Ensure durable JSON uses explicit:
-
-```text
-golden_average_precision
-```
-
-or documented equivalent.
-
-Avoid ambiguous unnamed `score`.
-
----
-
-# 194. Candidate Recent Metric Test
-
-Known recent fixture.
-
-Verify same threshold is reused.
-
----
-
-# 195. Candidate No Recent Cohort
-
-Golden-only evaluation must still commit successfully.
-
-Manifest records:
-
-```text
-recent_cohort_id = null
-```
-
-or equivalent.
-
----
-
-# 196. Candidate Recent Single-Class Test
+# 201. Candidate Lower AP Test
 
 Expected:
 
-```text
-INSUFFICIENT_CLASS_COVERAGE
-```
-
-for undefined ranking metrics.
-
-Golden results remain valid.
-
----
-
-# 197. Candidate Preprocessor Immutability Test
-
-Record:
-
-```text
-preprocessing SHA
-```
-
-before/after evaluation.
-
-Unchanged.
-
----
-
-# 198. Candidate Model Immutability Test
-
-Same for:
-
-```text
-model.pt
+```text id="reg244"
+FAIL
+PRIMARY_METRIC_NOT_IMPROVED
 ```
 
 ---
 
-# 199. Anomaly Threshold Exact Test
+# 202. Candidate Recall Regression Test
 
-Known validation scores.
+AP improves but recall drops more than:
 
-Verify exact p99 using:
+```text id="reg245"
+0.02
+```
 
-```text
-method="linear"
+Expected:
+
+```text id="reg246"
+FAIL
 ```
 
 ---
 
-# 200. Anomaly Threshold Uses Validation Only
+# 203. Candidate Recent AP Regression Test
 
-Change Golden reference score distribution.
+Comparable Recent exists and challenger regresses by more than:
 
-Expected threshold unchanged.
-
----
-
-# 201. Anomaly Threshold Uses No Recent Data
-
-Same.
-
----
-
-# 202. Anomaly Alert Boundary Test
-
-Verify:
-
-```text
-score == threshold
+```text id="reg247"
+0.02
 ```
 
-means:
+Expected FAIL.
 
-```text
-alert = true
+---
+
+# 204. Candidate Recent Recall Regression Test
+
+More than:
+
+```text id="reg248"
+0.03
+```
+
+Expected FAIL.
+
+---
+
+# 205. Candidate Recent Not Applicable Test
+
+Both evaluations reference same Recent cohort with insufficient class coverage.
+
+Expected:
+
+```text id="reg249"
+recent guardrail = NOT_APPLICABLE
+```
+
+with reason recorded.
+
+---
+
+# 206. Candidate Different Golden Cohort Test
+
+Expected:
+
+```text id="reg250"
+INCOMPARABLE_EVALUATIONS
 ```
 
 ---
 
-# 203. Synthetic Feature Index Test
+# 207. Candidate Different View Test
 
-Same source product ID + same input dimension:
+Expected:
 
-```text
-same perturbed feature index
-```
-
----
-
-# 204. Synthetic Input Order Independence
-
-Synthetic feature selection must not depend on cohort row order.
-
----
-
-# 205. Synthetic Shift Exactness
-
-Verify:
-
-```text
-exactly one feature += 6.0
+```text id="reg251"
+INCOMPARABLE_MODEL_VIEWS
 ```
 
 under V1.
 
 ---
 
-# 206. Synthetic Gold Immutability Test
+# 208. Candidate Different Threshold Policy Test
 
-Gold values unchanged.
-
----
-
-# 207. Synthetic Preprocessor Immutability Test
-
-No preprocessing refit.
+Expected incomparability.
 
 ---
 
-# 208. Synthetic Score Mechanical Test
+# 209. Candidate One Recent Missing Test
 
-On deterministic small model/fixture, shifted examples should generally have
-higher reconstruction error.
+Expected:
 
-Do not require every single row to increase if model geometry causes an edge
-case.
-
-Use aggregate sanity.
-
----
-
-# 209. Synthetic Detection-Rate Test
-
-Verify:
-
-```text
-fraction(score >= threshold)
+```text id="reg252"
+INCOMPARABLE_RECENT_EVALUATION
 ```
 
-formula.
+---
+
+# 210. Candidate Both Recent Missing Test
+
+Golden-only comparison allowed.
 
 ---
 
-# 210. Anomaly Reference Alert-Rate Test
+# 211. Anomaly Synthetic Improvement Test
 
-Verify same formula on unmodified Golden rows.
+Synthetic detection improves with alert guardrails satisfied.
+
+Expected PASS.
 
 ---
 
-# 211. Anomaly Recent Test
+# 212. Anomaly Alert Improvement Test
 
-Recent rows use exact frozen:
+Reference alert rate decreases while synthetic detection remains within allowed
+guardrail.
 
-```text
-preprocessing
+Expected PASS.
 
+---
+
+# 213. Anomaly No Improvement Test
+
+Both metrics equal within epsilon.
+
+Expected:
+
+```text id="reg253"
+FAIL
+NO_PRIMARY_IMPROVEMENT
+```
+
+---
+
+# 214. Anomaly Synthetic Regression Test
+
+Regression beyond:
+
+```text id="reg254"
+0.02
+```
+
+Expected FAIL.
+
+---
+
+# 215. Anomaly Alert Regression Test
+
+Increase beyond:
+
+```text id="reg255"
+0.01
+```
+
+Expected FAIL.
+
+---
+
+# 216. Anomaly Recent Guardrail Test
+
+Comparable Recent metrics must satisfy V1 tolerances.
+
+---
+
+# 217. Anomaly Different Synthetic Policy Test
+
+Expected:
+
+```text id="reg256"
+INCOMPARABLE_EVALUATIONS
+```
+
+---
+
+# 218. Anomaly Different Score Definition Test
+
+Expected incomparability.
+
+---
+
+# 219. Anomaly Different View Test
+
+Expected incomparability under V1.
+
+---
+
+# 220. Decision Determinism Test
+
+Same exact:
+
+```text id="reg257"
+challenger
+incumbent
+evaluations
+policy
+```
+
+Expected same:
+
+```text id="reg258"
+decision_id
+```
+
+---
+
+# 221. Decision Timestamp Independence
+
+Different:
+
+```text id="reg259"
+created_at
+```
+
+does not change decision ID.
+
+---
+
+# 222. Decision Metric Change Test
+
+Change one compared metric.
+
+Expected new decision fingerprint.
+
+---
+
+# 223. Failed Decision Persistence Test
+
+FAIL decision exists.
+
+Champion pointer unchanged.
+
+---
+
+# 224. Compare Dry-Run Test
+
+`compare-model`:
+
+```text id="reg260"
+does not write champion pointer
+```
+
+If implementation chooses not to persist dry-run decisions, document that.
+
+Preferred:
+
+```text id="reg261"
+dry run computes only
+```
+
+while `promote-model` persists the authoritative decision.
+
+---
+
+# 225. Promotion PASS Pointer Test
+
+After PASS:
+
+```text id="reg262"
+champion points to challenger
+```
+
+and exact challenger evaluation threshold.
+
+---
+
+# 226. Promotion FAIL Pointer Test
+
+After FAIL:
+
+```text id="reg263"
+champion remains incumbent
+```
+
+---
+
+# 227. Promotion Does Not Delete Incumbent
+
+Old champion model package remains.
+
+---
+
+# 228. Promotion Does Not Delete Incumbent Evaluation
+
+Historical evidence remains.
+
+---
+
+# 229. Promotion Crash After Decision
+
+Inject crash after immutable PASS decision, before pointer update.
+
+Restart.
+
+Expected:
+
+```text id="reg264"
+same decision reused
+
+pointer update completes
+```
+
+if incumbent remains unchanged.
+
+---
+
+# 230. Promotion Crash After Pointer PUT
+
+Restart.
+
+Expected:
+
+```text id="reg265"
+pointer already references intended decision
+
+verification succeeds
+```
+
+---
+
+# 231. Stale Promotion Test
+
+Create PASS decision.
+
+Change champion through another valid operation.
+
+Attempt old pointer application.
+
+Expected:
+
+```text id="reg266"
+CHAMPION_CHANGED
+```
+
+---
+
+# 232. No Distributed Lock Test
+
+Registry correctness tests should not require:
+
+```text id="reg267"
+Redis
+
+database lock service
+```
+
+---
+
+# 233. Rollback Previous Champion Test
+
+History:
+
+```text id="reg268"
+A -> B
+```
+
+Rollback to A's historical selection.
+
+Expected:
+
+```text id="reg269"
+new ROLLBACK decision
+
+champion -> A
+```
+
+---
+
+# 234. Rollback Does Not Delete B
+
+B remains registered.
+
+---
+
+# 235. Rollback Uses Prior Threshold
+
+Champion selection after rollback must use the exact:
+
+```text id="reg270"
+evaluation + threshold
+```
+
+from the selected historical champion decision.
+
+---
+
+# 236. Rollback Reason Test
+
+Missing reason:
+
+```text id="reg271"
+reject
+```
+
+---
+
+# 237. Rollback To Never-Champion Model Test
+
+Expected:
+
+```text id="reg272"
+INVALID_ROLLBACK_TARGET
+```
+
+Use promotion instead.
+
+---
+
+# 238. Rollback Corrupt Target Test
+
+Expected:
+
+```text id="reg273"
+ROLLBACK_TARGET_INTEGRITY_ERROR
+```
+
+---
+
+# 239. Rollback Cross-Task Test
+
+Expected failure.
+
+---
+
+# 240. Rollback Crash After Decision
+
+Same recovery semantics as promotion.
+
+---
+
+# 241. Multi-Step History Test
+
+Example:
+
+```text id="reg274"
+A bootstrap champion
+    |
+    v
+B promoted
+    |
+    v
+C promoted
+    |
+    v
+rollback to B
+```
+
+Expected immutable history contains:
+
+```text id="reg275"
+BOOTSTRAP A
+
+PROMOTE B
+
+PROMOTE C
+
+ROLLBACK B
+```
+
+Current pointer:
+
+```text id="reg276"
+B
+```
+
+---
+
+# 242. No History Rewrite
+
+Do not mark old:
+
+```text id="reg277"
+C promotion record
+```
+
+as inactive.
+
+Current pointer defines active selection.
+
+---
+
+# 243. Registry Lineage
+
+For current candidate champion answer:
+
+```text id="reg278"
+Which model is selected?
+```
+
+Then trace:
+
+```text id="reg279"
+champion.json
+      |
+      v
+decision record
+      |
+      +--> model_id
+      |      |
+      |      v
+      |   model manifest
+      |      |
+      |      v
+      |   training run
+      |      |
+      |      v
+      |   Gold + split
+      |
+      +--> evaluation run
+             |
+             +--> Golden cohort
+             |
+             +--> Recent cohort
+             |
+             +--> threshold
+```
+
+---
+
+# 244. Source Provenance Continues
+
+From training Gold the chain continues:
+
+```text id="reg280"
+Gold
+  |
+  v
+Silver
+  |
+  v
+Stage 4 lineage
+  |
+  v
+source product identity
+```
+
+even when Bronze bytes have been evicted.
+
+---
+
+# 245. Candidate Registry Semantics
+
+Document:
+
+```text id="reg281"
+candidate champion
+=
+best currently selected candidate-vetting model
+under candidate-promotion-v1 evidence
+```
+
+Not:
+
+```text id="reg282"
+scientifically confirmed planet detector
+```
+
+---
+
+# 246. Anomaly Registry Semantics
+
+Document:
+
+```text id="reg283"
+anomaly champion
+=
+currently selected reconstruction model
+under anomaly-promotion-v1 evidence
+```
+
+Not:
+
+```text id="reg284"
+proof of astrophysical anomaly
+```
+
+---
+
+# 247. Registry Module Ownership
+
+Existing:
+
+```text id="reg285"
+aurora_ml/registry.py
+```
+
+now owns:
+
+```text id="reg286"
+model registration
+
+model manifest verification
+
+champion resolution
+
+evaluation compatibility checks
+
+promotion comparison
+
+decision materialization
+
+champion pointer update
+
+rollback
+```
+
+---
+
+# 248. Do Not Create `registry/` Package Yet
+
+Keep:
+
+```text id="reg287"
+registry.py
+```
+
+unless the real file becomes too large to maintain.
+
+---
+
+# 249. If Split Becomes Necessary
+
+Only when justified, a minimal future split may be:
+
+```text id="reg288"
+registry.py
+promotion.py
+```
+
+Do not pre-create it now.
+
+---
+
+# 250. Entrypoint Responsibility
+
+`main.py` should only:
+
+```text id="reg289"
+parse command
+
+resolve inputs
+
+call registry functions
+
+format result
+```
+
+Promotion math must not live in CLI parsing code.
+
+---
+
+# 251. No Generic Rules Engine
+
+Do NOT create:
+
+```text id="reg290"
+PolicyEngine
+
+RuleFactory
+
+PromotionStrategyFactory
+```
+
+V1 has two explicit small policies.
+
+---
+
+# 252. Candidate Promotion Function
+
+Prefer explicit function such as:
+
+```text id="reg291"
+evaluate_candidate_promotion(...)
+```
+
+---
+
+# 253. Anomaly Promotion Function
+
+Prefer:
+
+```text id="reg292"
+evaluate_anomaly_promotion(...)
+```
+
+---
+
+# 254. Shared Compatibility Validation
+
+Small shared checks are appropriate for:
+
+```text id="reg293"
+task
+
+Golden cohort
+
+Recent cohort
+
+evaluation manifest integrity
+```
+
+Do not hide task-specific metrics behind excessive abstraction.
+
+---
+
+# 255. No Global `utils.py`
+
+Keep registry fingerprint and selection helpers under registry ownership.
+
+---
+
+# 256. Model Manifest Serialization Test
+
+Round-trip:
+
+```text id="reg294"
+model ID
+
+fingerprint
+
+training run refs
+
+feature order
+
+artifact hashes
+```
+
+---
+
+# 257. Unknown Model Manifest Version Test
+
+Expected clear failure.
+
+---
+
+# 258. Model Manifest Timestamp Test
+
+Different registration timestamps:
+
+```text id="reg295"
+same model ID
+```
+
+---
+
+# 259. Champion Pointer Serialization Test
+
+Round-trip all:
+
+```text id="reg296"
 model
+
+evaluation
+
+threshold
+
+decision
+```
+
+references.
+
+---
+
+# 260. Unknown Champion Pointer Version Test
+
+Fail clearly.
+
+---
+
+# 261. Decision Serialization Test
+
+Round-trip:
+
+```text id="reg297"
+BOOTSTRAP
+
+PROMOTE PASS
+
+PROMOTE FAIL
+
+ROLLBACK
+```
+
+---
+
+# 262. Unknown Decision Version Test
+
+Fail clearly.
+
+---
+
+# 263. Candidate Metric Comparison Exactness Test
+
+Use hard-coded metrics around each guardrail boundary.
+
+Test:
+
+```text id="reg298"
+exact boundary passes
+```
+
+for `>=` constraints.
+
+---
+
+# 264. Candidate AP Strictness Test
+
+Exact equality:
+
+```text id="reg299"
+does not count as improvement
+```
+
+---
+
+# 265. Anomaly Guardrail Boundary Test
+
+Exact:
+
+```text id="reg300"
+incumbent - 0.02
+
+incumbent + 0.01
+```
+
+boundary values should follow documented `>=` / `<=`.
+
+---
+
+# 266. Evaluation Mismatch Test
+
+Evaluation run references a different training run than registered model.
+
+Expected:
+
+```text id="reg301"
+MODEL_EVALUATION_MISMATCH
+```
+
+---
+
+# 267. Threshold Mismatch Test
+
+Evaluation threshold artifact checksum differs.
+
+Expected failure.
+
+---
+
+# 268. Golden Cohort Mismatch Test
+
+Expected incomparability before metric comparison.
+
+---
+
+# 269. Recent Cohort Mismatch Test
+
+Expected incomparability.
+
+---
+
+# 270. Dataset View Mismatch Test
+
+Expected V1 incomparability.
+
+---
+
+# 271. Policy Version Mismatch Test
+
+Expected V1 incomparability.
+
+---
+
+# 272. Candidate Bootstrap Integration
+
+Flow:
+
+```text id="reg302"
+candidate training run
+      |
+      v
+register model
+      |
+      v
+candidate evaluation
+      |
+      v
+bootstrap
+      |
+      v
+candidate champion
+```
+
+---
+
+# 273. Candidate Challenger Integration
+
+Flow:
+
+```text id="reg303"
+candidate challenger training run
+      |
+      v
+register model
+      |
+      v
+evaluate on same Golden
+      |
+      v
+compare
+      |
+      v
+PROMOTE PASS / FAIL
+```
+
+---
+
+# 274. Anomaly Bootstrap Integration
+
+Same workflow for anomaly task.
+
+---
+
+# 275. Anomaly Challenger Integration
+
+Verify task-specific policy.
+
+---
+
+# 276. Candidate Promotion Integration PASS
+
+Use deterministic fixture metrics where challenger passes.
+
+Expected champion changes.
+
+---
+
+# 277. Candidate Promotion Integration FAIL
+
+Use deterministic regression fixture.
+
+Expected champion unchanged.
+
+---
+
+# 278. Anomaly Promotion Integration PASS
+
+Expected champion changes.
+
+---
+
+# 279. Anomaly Promotion Integration FAIL
+
+Expected champion unchanged.
+
+---
+
+# 280. Rollback Integration
+
+Promote two models then rollback.
+
+Verify exact previous:
+
+```text id="reg304"
+model
+
+evaluation
 
 threshold
 ```
 
----
-
-# 212. Candidate Contamination Preflight Test
-
-Manually inject one Golden group into TRAIN.
-
-Expected:
-
-```text
-EVALUATION_GROUP_LEAKAGE
-```
-
-before inference.
+bundle restored.
 
 ---
 
-# 213. Anomaly Contamination Preflight Test
+# 281. Registry Offline Integration
 
-Same.
+Disable external network.
 
----
-
-# 214. Recent Contamination Test
-
-Recent group overlaps Golden.
-
-Expected failure or cohort rejection.
+Registration/promotion/rollback all work.
 
 ---
 
-# 215. Candidate Training Run Integrity Test
+# 282. ClickHouse Offline Integration
 
-Corrupt model artifact.
+Stop ClickHouse.
 
-Evaluation must fail before metric computation.
-
----
-
-# 216. Candidate Preprocessing Integrity Test
-
-Corrupt preprocessing artifact.
-
-Fail.
+Registry works.
 
 ---
 
-# 217. Anomaly Model Integrity Test
+# 283. NATS Offline Integration
 
-Same.
+Stop NATS.
 
----
-
-# 218. Training Run Manifest Corruption
-
-Do not trust evaluation input.
-
-Fail.
+Registry works.
 
 ---
 
-# 219. Split Manifest Corruption
+# 284. Go API Offline Integration
 
-Fail contamination/membership reconstruction.
-
----
-
-# 220. Gold Artifact Corruption
-
-Cohort source Gold invalid:
-
-```text
-evaluation fails
-```
-
-Do not fall back to ClickHouse.
+No effect.
 
 ---
 
-# 221. No Bronze Read Integration
+# 285. Dashboard Offline Integration
+
+No effect.
+
+---
+
+# 286. GPU Unavailable Integration
+
+Registry operations do not require GPU.
+
+---
+
+# 287. RAW_DELETED Provenance Integration
+
+Champion may trace to Gold produced after safe Bronze eviction.
+
+Registry must not care whether Bronze bytes still exist.
+
+---
+
+# 288. Zero Bronze Reads Integration
 
 Instrument storage across:
 
-```text
-cohort creation
+```text id="reg305"
+register
 
-threshold selection
+compare
 
-Golden evaluation
+promote
 
-Recent evaluation
+rollback
 ```
 
 Expected:
 
-```text
+```text id="reg306"
 Bronze reads = 0
 ```
 
 ---
 
-# 222. No Silver Read Integration
+# 289. Zero Silver Reads Integration
 
 Expected:
 
-```text
+```text id="reg307"
 Silver reads = 0
 ```
 
 ---
 
-# 223. ClickHouse Offline Integration
+# 290. No Gold Full-Table Read Integration
 
-Stop ClickHouse.
+Registry should not scan all Gold rows.
 
-Candidate/anomaly evaluation succeeds.
-
----
-
-# 224. NATS Offline Integration
-
-Stop NATS.
-
-Evaluation succeeds.
+It operates from durable training/evaluation provenance.
 
 ---
 
-# 225. External Network Offline Integration
+# 291. No Training Mutation Integration
 
-Disable internet.
+Record training-run hashes before registry operations.
 
-Evaluation succeeds.
+After:
+
+```text id="reg308"
+unchanged
+```
 
 ---
 
-# 226. CPU Evaluation
+# 292. No Evaluation Mutation Integration
+
+Same.
+
+---
+
+# 293. No Gold Mutation Integration
+
+Same.
+
+---
+
+# 294. No Split Mutation Integration
+
+Same.
+
+---
+
+# 295. No Cohort Mutation Integration
+
+Same.
+
+---
+
+# 296. Registry Output Scope
+
+Phase 6.5 may write only:
+
+```text id="reg309"
+models/candidate/
+
+models/anomaly/
+```
+
+including:
+
+```text id="reg310"
+immutable model packages
+
+immutable decision records
+
+mutable champion pointer
+```
+
+---
+
+# 297. No Runtime Package Yet
+
+Do NOT create:
+
+```text id="reg311"
+runtime-models/
+
+runtime-packages/
+```
+
+until Phase 6.6.
+
+---
+
+# 298. No `model.onnx`
 
 Mandatory.
 
-Evaluation must work with:
+---
 
-```text
-CUDA unavailable
+# 299. No Prediction Output
+
+Do NOT write:
+
+```text id="reg312"
+predictions/
 ```
 
 ---
 
-# 227. GPU Optional
+# 300. No Inference Checkpoint
 
-GPU may be used for inference if implementation already supports it cleanly.
+Do NOT create:
 
-Do not require it.
+```text id="reg313"
+checkpoints/inference/
+```
+
+yet.
 
 ---
 
-# 228. Candidate Full Evaluation Integration
+# 301. No Rust Changes
 
-Flow:
+Do not modify:
 
-```text
-completed candidate training run
-        |
-        v
-validation threshold
-        |
-        v
-frozen candidate Golden cohort
-        |
-        v
-Golden metrics
-        |
-        v
-optional Recent cohort
-        |
-        v
-Recent metrics
-        |
-        v
-COMMITTED evaluation run
+```text id="reg314"
+apps/rust-inference/
+```
+
+in Phase 6.5.
+
+---
+
+# 302. No Prediction Event
+
+No:
+
+```text id="reg315"
+aurora.v1.prediction.*
+```
+
+yet.
+
+---
+
+# 303. No API Model Switching
+
+Go API does not resolve champion yet.
+
+---
+
+# 304. No Dashboard Model Controls
+
+React does not get:
+
+```text id="reg316"
+promote
+
+rollback
+```
+
+buttons.
+
+Registry mutations remain explicit operator CLI actions.
+
+---
+
+# 305. No Automated Promotion Daemon
+
+Do not automatically watch new evaluation runs and promote models.
+
+Promotion requires explicit command.
+
+---
+
+# 306. No Scheduled Retraining
+
+Out of scope.
+
+---
+
+# 307. Model Registry Documentation
+
+Create:
+
+```text id="reg317"
+docs/MODEL_REGISTRY.md
 ```
 
 ---
 
-# 229. Anomaly Full Evaluation Integration
+# 308. Registry Documentation Contents
 
-Flow:
+Document:
 
-```text
-completed anomaly training run
-        |
-        v
-validation p99 threshold
-        |
-        v
-frozen unseen anomaly Golden cohort
-        |
-        +--> reference scores
-        |
-        +--> deterministic synthetic shifts
-        |
-        v
-Golden anomaly metrics
-        |
-        v
-optional Recent holdout
-        |
-        v
-COMMITTED evaluation run
+```text id="reg318"
+training run vs registered model
+
+model ID identity
+
+immutable model package
+
+challenger semantics
+
+registry champion semantics
+
+candidate promotion policy
+
+anomaly promotion policy
+
+bootstrap
+
+decision records
+
+rollback
+
+champion pointer
+
+registry champion != deployed runtime
 ```
 
 ---
 
-# 230. Evaluation Determinism
+# 309. Candidate Policy Documentation
 
-Same:
+Include exact:
 
-```text
-training run
-cohorts
-policies
-runtime
-```
+```text id="reg319"
+Golden AP strict improvement
 
-should produce:
+Golden recall tolerance = 0.02
 
-```text
-same threshold
+Recent AP tolerance = 0.02
 
-same logical metrics
-```
-
-within frozen numerical tolerance.
-
----
-
-# 231. Evaluation Spec Stability
-
-Same exact inputs:
-
-```text
-same evaluation_spec_fingerprint
+Recent recall tolerance = 0.03
 ```
 
 ---
 
-# 232. Evaluation Run IDs May Differ
+# 310. Anomaly Policy Documentation
 
-Two executions:
+Include exact:
 
-```text
-evaluation_run_A
-evaluation_run_B
-```
+```text id="reg320"
+Golden synthetic tolerance = 0.02
 
-may have the same:
+Golden reference alert tolerance = 0.01
 
-```text
-evaluation_spec_fingerprint
-```
+at least one Golden metric strictly improves
 
----
+Recent synthetic tolerance = 0.02
 
-# 233. Threshold Policy Change
-
-Simulate candidate threshold V2.
-
-Expected:
-
-```text
-new evaluation spec fingerprint
+Recent reference alert tolerance = 0.01
 ```
 
 ---
 
-# 234. Golden Cohort Change
+# 311. Policy Limitation Documentation
 
-Expected new evaluation specification.
+State clearly:
 
----
-
-# 235. Recent Cohort Change
-
-Expected new evaluation specification.
-
----
-
-# 236. Operational Config Independence
-
-Change:
-
-```text
-log level
-
-MinIO host
+```text id="reg321"
+promotion-v1 requires compatible dataset views
 ```
 
-Expected:
+Cross-view model comparison needs an explicitly versioned future policy.
 
-```text
-same evaluation_spec_fingerprint
+---
+
+# 312. Bootstrap Documentation
+
+State:
+
+```text id="reg322"
+bootstrap does not imply scientific quality threshold
+```
+
+It means:
+
+```text id="reg323"
+first explicitly selected model with valid final evaluation
 ```
 
 ---
 
-# 237. Evaluation Artifact SHA
+# 313. Rollback Documentation
 
-Compute:
+State:
 
-```text
-threshold_sha256
-
-metrics_sha256
+```text id="reg324"
+rollback restores a previously selected model/evaluation/threshold bundle
 ```
 
-and preserve in manifest.
+not merely model bytes.
 
 ---
 
-# 238. Existing Evaluation Artifact Conflict
-
-Do not silently overwrite a committed evaluation run.
-
----
-
-# 239. Partial Evaluation
-
-If:
-
-```text
-threshold.json
-
-metrics.json
-```
-
-exist but:
-
-```text
-manifest missing
-```
-
-run is uncommitted.
-
-Rerunning or creating a new run is acceptable.
-
----
-
-# 240. No Complex Evaluation Recovery
-
-Do not add checkpoint machinery to recover a few metric calculations.
-
----
-
-# 241. Golden Benchmark Documentation
+# 314. Update ML_EVALUATION.md
 
 Add:
 
-```text
-docs/ML_EVALUATION.md
+```text id="reg325"
+Phase 6.4 evaluation artifacts are immutable promotion evidence.
+```
+
+Do not duplicate registry implementation details.
+
+---
+
+# 315. Update ML_TRAINING.md
+
+Add concise flow:
+
+```text id="reg326"
+training run
+    ->
+registry model
+```
+
+after evaluation.
+
+---
+
+# 316. Update CHECKPOINTS.md
+
+Important:
+
+```text id="reg327"
+no model-registry checkpoint
+```
+
+Final implemented hierarchy remains:
+
+```text id="reg328"
+checkpoints/
+├── ingestion/
+├── preprocessing/
+├── feature-engineering/
+├── ml-training/
+└── lifecycle/
 ```
 
 ---
 
-# 242. `ML_EVALUATION.md` Candidate Section
+# 317. Do Not Add Inference Checkpoint Yet
 
-Document:
+That remains Phase 6.6/Stage 7 ownership if needed.
 
-```text
-why old TRAIN/VALIDATION cannot become Golden
+---
 
-unseen target requirement
+# 318. Update CONFIGURATION.md
 
-Golden cohort freezing
+Promotion policy constants should be versioned code/contract semantics.
 
-validation-only threshold selection
+Do NOT expose them casually as:
 
-PR-AUC / Average Precision
+```text id="reg329"
+environment variables
+```
 
-Recent Holdout semantics
+that change policy without version change.
+
+---
+
+# 319. CLI Configuration
+
+Explicit:
+
+```text id="reg330"
+model ID
+
+evaluation run ID
+
+rollback target
+```
+
+belong as command arguments.
+
+---
+
+# 320. Python README
+
+Add:
+
+```text id="reg331"
+completed training
+      |
+      v
+final evaluation
+      |
+      v
+register immutable model
+      |
+      v
+challenger comparison
+      |
+      v
+registry champion
 ```
 
 ---
 
-# 243. `ML_EVALUATION.md` Anomaly Section
+# 321. Contracts README
 
-Document:
+Add:
 
-```text
-validation p99 threshold
+```text id="reg332"
+model-manifest-v1
 
-reconstruction score meaning
-
-reference alert rate
-
-synthetic standardized shift
-
-why synthetic detection is not astronomy ground truth
-
-Recent score drift
+model-promotion-v1
 ```
 
 ---
 
-# 244. Golden Reservation Documentation
+# 322. STRUCTURE.md
 
-Document:
+Reflect actual registry artifacts/contracts.
 
-```text
-Future training should reserve frozen Golden target groups.
-```
-
-If `ml-split-v2` is required, document migration explicitly.
+No future runtime package structure yet.
 
 ---
 
-# 245. Update ML_DATASETS.md
+# 323. Expected Python Tree
 
-Add final dataset boundaries:
+Likely no new Python module:
 
-```text
-TRAIN
-
-VALIDATION
-
-GOLDEN TEST
-
-RECENT HOLDOUT
-```
-
-and their permitted uses.
-
----
-
-# 246. Permitted Use Table
-
-Document equivalent:
-
-```text
-TRAIN:
-    fit weights
-    fit preprocessing
-
-VALIDATION:
-    early stopping
-    threshold selection
-
-GOLDEN TEST:
-    final fixed benchmark only
-
-RECENT HOLDOUT:
-    freshness / temporal generalization evaluation only
-```
-
----
-
-# 247. Golden Test Cannot Tune Features
-
-Do NOT use Golden metrics to decide:
-
-```text
-feature allowlist
-
-model architecture
-
-hyperparameters
-
-preprocessing
-```
-
-then continue reporting the same Golden result as untouched final evaluation.
-
----
-
-# 248. If Golden Influences Development
-
-Once engineers use Golden outcomes to redesign a model:
-
-```text
-Golden V1 is now development-visible
-```
-
-For rigorous final reporting, freeze:
-
-```text
-Golden V2
-```
-
-from previously unseen groups.
-
-Document this limitation.
-
----
-
-# 249. This Is Especially Important For Coursework
-
-Do not repeatedly optimize against the same held-out benchmark while still
-calling it:
-
-```text
-untouched test set
-```
-
-Keep experiment reporting honest.
-
----
-
-# 250. Update ML_TRAINING.md
-
-Cross-reference:
-
-```text
-Phase 6.2/6.3 VALIDATION metrics
-    !=
-Phase 6.4 Golden metrics
-```
-
----
-
-# 251. Update CONFIGURATION.md
-
-Only add real evaluation configuration.
-
-Prefer explicit CLI inputs for:
-
-```text
-cohort IDs
-
-training run IDs
-```
-
-Threshold policy constants should normally be versioned in code/contract, not
-environment variables.
-
----
-
-# 252. No `AURORA_GOLDEN_THRESHOLD`
-
-Do not hide scientific evaluation policy in a mutable deployment environment
-variable.
-
----
-
-# 253. Python Ownership
-
-Evaluation logic belongs in existing:
-
-```text
-aurora_ml/evaluate.py
-```
-
-This file now gets its intended responsibility.
-
----
-
-# 254. Keep `evaluate.py` Focused
-
-Responsibilities:
-
-```text
-cohort validation
-
-contamination checks
-
-threshold selection
-
-candidate metrics
-
-anomaly metrics
-
-evaluation run materialization
-```
-
----
-
-# 255. Split/Cohort Selection Ownership
-
-Group key generation remains in:
-
-```text
-splits.py
-```
-
-Do not duplicate target-group semantics in `evaluate.py`.
-
----
-
-# 256. Candidate Model Inference Ownership
-
-Reuse:
-
-```text
-transit/model.py
-transit/train.py preprocessing definitions/artifacts
-```
-
-Do not rewrite model math.
-
----
-
-# 257. Anomaly Score Ownership
-
-Reuse the exact:
-
-```text
-reconstruction-mse-v1
-```
-
-function or one canonical implementation.
-
-Do not create a second slightly different MSE formula in evaluation code.
-
----
-
-# 258. No Global `utils.py`
-
-Keep threshold/metric code under evaluation ownership.
-
----
-
-# 259. Expected Python Tree
-
-Likely unchanged structurally:
-
-```text
+```text id="reg333"
 aurora_ml/
 ├── evaluate.py
-├── splits.py
+├── registry.py
 ├── transit/
 │   ├── model.py
 │   └── train.py
@@ -3888,692 +4690,626 @@ aurora_ml/
     └── train.py
 ```
 
-Do not add an `evaluation/` package unless `evaluate.py` genuinely becomes too
-large.
+Use existing:
 
----
-
-# 260. Suggested Tests
-
-Expand:
-
-```text
-tests/
-├── test_evaluate.py
-├── test_splits.py
-├── test_candidate_training.py
-└── test_anomaly_training.py
-```
-
-One new:
-
-```text
-test_evaluate.py
-```
-
-is enough initially.
-
----
-
-# 261. No New E2E Script Yet
-
-Full Stage 6 orchestration belongs to:
-
-```text
-Phase 6.7
-```
-
-Use Python integration tests here.
-
----
-
-# 262. Contracts After Phase
-
-Expected new contracts:
-
-```text
-contracts/data/
-├── ml-evaluation-cohort-v1.md
-└── model-evaluation-v1.md
-```
-
-Potential:
-
-```text
-ml-split-v2.md
-```
-
-ONLY if frozen Golden reservation cannot be represented compatibly by current
-split contract.
-
----
-
-# 263. Do Not Add Model Manifest Yet
-
-Still defer:
-
-```text
-model-manifest-v1.md
-```
-
-to Phase 6.5.
-
----
-
-# 264. Do Not Add Runtime Contract Yet
-
-Still defer:
-
-```text
-model-runtime-v1.md
-```
-
-to Phase 6.6.
-
----
-
-# 265. Evaluation Lineage
-
-Candidate final evaluation must trace:
-
-```text
-evaluation run
-      |
-      v
-training run
-      |
-      v
-model + preprocessing
-      |
-      v
-Gold training snapshot
-      |
-      v
-split
-```
-
-and separately:
-
-```text
-evaluation run
-      |
-      +--> Golden cohort
-      |       |
-      |       v
-      |   Golden Gold snapshot
-      |
-      +--> Recent cohort
-              |
-              v
-          Recent Gold snapshot
+```text id="reg334"
+registry.py
 ```
 
 ---
 
-# 266. Candidate Threshold Provenance
+# 324. Suggested Test File
 
-Must answer:
+Add:
 
-```text
-Where did this threshold come from?
+```text id="reg335"
+tests/test_registry.py
 ```
 
-Trace:
+Avoid several tiny files until justified.
 
-```text
-candidate threshold
+---
+
+# 325. Test Fixture Strategy
+
+Use tiny immutable:
+
+```text id="reg336"
+training-run manifests
+
+evaluation-run manifests
+
+model/preprocessing files
+
+threshold files
+```
+
+No real long training required for most registry tests.
+
+---
+
+# 326. Real Training Integration
+
+Include at least one integration using actual tiny:
+
+```text id="reg337"
+Phase 6.2 candidate training run
+
+Phase 6.3 anomaly training run
+```
+
+to catch artifact-contract drift.
+
+---
+
+# 327. No NASA Network
+
+Normal registry tests are completely offline.
+
+---
+
+# 328. No GPU CI Requirement
+
+None.
+
+---
+
+# 329. No New E2E Script Yet
+
+Full:
+
+```text id="reg338"
+Gold -> training -> evaluation -> registry -> ONNX -> Rust
+```
+
+belongs to Phase 6.7.
+
+Phase 6.5 uses integration tests.
+
+---
+
+# 330. Phase 6.6 Handoff
+
+After Phase 6.5, Phase 6.6 can resolve:
+
+```text id="reg339"
+candidate champion
+```
+
+and:
+
+```text id="reg340"
+anomaly champion
+```
+
+into exact:
+
+```text id="reg341"
+model ID
+
+model.pt
+
+preprocessing.json
+
+evaluation threshold
+
+feature order
+
+model semantics
+```
+
+---
+
+# 331. Candidate Runtime Handoff
+
+Concept:
+
+```text id="reg342"
+candidate champion pointer
        |
-       v
-VALIDATION probabilities
+       +--> model-v1
+       |       |
+       |       +--> model.pt
+       |       +--> preprocessing.json
        |
-       v
-exact training split
+       +--> evaluation run
+               |
+               +--> threshold.json
+```
+
+---
+
+# 332. Anomaly Runtime Handoff
+
+Same:
+
+```text id="reg343"
+anomaly champion
        |
-       v
-training model
-```
-
-Never Golden.
-
----
-
-# 267. Anomaly Threshold Provenance
-
-Trace:
-
-```text
-anomaly threshold
-       |
-       v
-VALIDATION reconstruction scores
-       |
-       v
-p99 linear quantile
-       |
-       v
-training model/preprocessing
+       +--> autoencoder
+       +--> preprocessing
+       +--> p99 threshold
+       +--> reconstruction-mse-v1
 ```
 
 ---
 
-# 268. Phase 6.5 Handoff
+# 333. No Runtime Mutation Of Champion Model
 
-Phase 6.5 should receive:
+Phase 6.6 must create derived runtime artifacts.
 
-```text
-completed training run
-+
-completed Phase 6.4 evaluation run
-```
-
-before considering model registry promotion.
+It must not add files into the immutable Phase 6.5 model package.
 
 ---
 
-# 269. Registry Must Not Recompute Metrics
-
-Phase 6.5 should consume immutable:
-
-```text
-model-evaluation-v1
-```
-
-rather than rerunning Golden Test inside promotion logic.
-
----
-
-# 270. Candidate Promotion Evidence Available
-
-After 6.4, registry can later compare:
-
-```text
-Golden Average Precision
-
-Golden recall/precision/F1
-
-Recent Average Precision
-
-Recent recall
-
-metric deltas
-```
-
----
-
-# 271. Anomaly Promotion Evidence Available
-
-Later registry can compare:
-
-```text
-Golden reference alert rate
-
-Golden synthetic detection rate
-
-Recent reference alert rate
-
-Recent synthetic detection rate
-```
-
-plus reconstruction metrics.
-
----
-
-# 272. No Promotion Criteria Yet
-
-Do not freeze champion/challenger rules in Phase 6.4.
-
-That belongs to Phase 6.5.
-
----
-
-# 273. Core Invariants
+# 334. Core Invariants
 
 Invariant 1:
 
-```text
-Golden Test groups were never exposed to TRAIN or VALIDATION.
+```text id="reg345"
+Only completed verified training runs may be registered.
 ```
 
 Invariant 2:
 
-```text
-A previously exposed TIC can never become Golden for that training run.
+```text id="reg346"
+Registration never retrains a model.
 ```
 
 Invariant 3:
 
-```text
-Different sector does not make an exposed TIC unseen.
+```text id="reg347"
+Registry model packages are immutable.
 ```
 
 Invariant 4:
 
-```text
-Golden cohorts are immutable.
+```text id="reg348"
+Model identity is deterministic from trained model/preprocessing provenance.
 ```
 
 Invariant 5:
 
-```text
-Golden labels are pinned to exact Gold snapshot state.
+```text id="reg349"
+Evaluation runs do not change model ID.
 ```
 
 Invariant 6:
 
-```text
-Golden Test never selects model weights.
+```text id="reg350"
+Model manifests never contain mutable champion/challenger status.
 ```
 
 Invariant 7:
 
-```text
-Golden Test never fits preprocessing.
+```text id="reg351"
+A challenger is any eligible registered non-champion model.
 ```
 
 Invariant 8:
 
-```text
-Golden Test never selects candidate threshold.
+```text id="reg352"
+Only champion.json represents current registry selection.
 ```
 
 Invariant 9:
 
-```text
-Recent Holdout never selects candidate threshold.
+```text id="reg353"
+Registry champion does not imply runtime deployment.
 ```
 
 Invariant 10:
 
-```text
-Candidate threshold is selected from VALIDATION only.
+```text id="reg354"
+Promotion requires a completed Phase 6.4 evaluation.
 ```
 
 Invariant 11:
 
-```text
-Anomaly threshold is selected from VALIDATION reconstruction scores only.
+```text id="reg355"
+Promotion never reruns Golden Test.
 ```
 
 Invariant 12:
 
-```text
-Candidate Golden primary ranking metric is Average Precision / PR-AUC.
+```text id="reg356"
+Promotion compares the same Golden cohort.
 ```
 
 Invariant 13:
 
-```text
-Accuracy is not the sole candidate metric.
+```text id="reg357"
+Promotion-v1 compares compatible dataset views/policies only.
 ```
 
 Invariant 14:
 
-```text
-Anomaly reconstruction score is not a probability.
+```text id="reg358"
+Candidate promotion uses Golden Average Precision as primary metric.
 ```
 
 Invariant 15:
 
-```text
-Synthetic anomaly evaluation is mechanical evidence, not astrophysical ground truth.
+```text id="reg359"
+Candidate promotion enforces Golden/Recent guardrails.
 ```
 
 Invariant 16:
 
-```text
-Recent Holdout uses unseen target groups.
+```text id="reg360"
+Anomaly promotion uses reference-alert and synthetic-detection evidence.
 ```
 
 Invariant 17:
 
-```text
-Recent Holdout uses newer-sector data under V1 policy.
+```text id="reg361"
+Anomaly promotion never claims supervised anomaly accuracy.
 ```
 
 Invariant 18:
 
-```text
-Evaluation never refits preprocessing.
+```text id="reg362"
+Promotion decisions are immutable.
 ```
 
 Invariant 19:
 
-```text
-Evaluation never retrains the model.
+```text id="reg363"
+A PASS decision is written before champion pointer mutation.
 ```
 
 Invariant 20:
 
-```text
-Evaluation performs zero Bronze reads.
+```text id="reg364"
+A FAIL decision never changes champion state.
 ```
 
 Invariant 21:
 
-```text
-Evaluation performs zero Silver reads.
+```text id="reg365"
+Bootstrap is explicit and allowed only when no champion exists.
 ```
 
 Invariant 22:
 
-```text
-ClickHouse is optional.
+```text id="reg366"
+Rollback restores a prior selected model/evaluation/threshold bundle.
 ```
 
 Invariant 23:
 
-```text
-Evaluation artifacts are immutable after manifest commit.
+```text id="reg367"
+Rollback never overwrites or deletes model history.
 ```
 
 Invariant 24:
 
-```text
-Evaluation does not mutate training-run artifacts.
+```text id="reg368"
+No force option bypasses promotion policy.
 ```
 
 Invariant 25:
 
-```text
-Phase 6.4 does not promote models.
+```text id="reg369"
+Registry mutations do not require a distributed lock service.
 ```
 
 Invariant 26:
 
-```text
-Future training should reserve frozen Golden groups.
+```text id="reg370"
+Registry performs zero Bronze reads.
 ```
 
 Invariant 27:
 
-```text
-A Golden benchmark that influences model development is no longer an untouched final benchmark.
+```text id="reg371"
+Registry performs zero Silver reads.
+```
+
+Invariant 28:
+
+```text id="reg372"
+ClickHouse is not required.
+```
+
+Invariant 29:
+
+```text id="reg373"
+No ONNX artifact is created in Phase 6.5.
+```
+
+Invariant 30:
+
+```text id="reg374"
+No prediction artifact/event is created in Phase 6.5.
 ```
 
 ---
 
 # Definition of Done
 
-Phase 6.4 is COMPLETE when:
+Phase 6.5 is COMPLETE when:
 
-* [x] Golden Test semantics are explicitly separated from TRAIN/VALIDATION.
-* [x] The implementation refuses to retrofit Golden groups from exposed development groups.
-* [x] `development_exposed_groups` includes both TRAIN and VALIDATION groups.
-* [x] Golden group intersection with TRAIN is empty.
-* [x] Golden group intersection with VALIDATION is empty.
-* [x] Same-TIC cross-sector contamination is rejected.
-* [x] A later sector does not make an already exposed target Golden.
-* [x] Candidate Golden source uses an explicit committed Gold snapshot.
-* [x] Anomaly Golden source uses an explicit committed Gold snapshot.
-* [x] Candidate Recent source uses an explicit committed Gold snapshot.
-* [x] Anomaly Recent source uses an explicit committed Gold snapshot.
-* [x] No Bronze reads occur.
-* [x] No Silver reads occur.
-* [x] Evaluation works after Bronze `RAW_DELETED`.
-* [x] Evaluation works with ClickHouse offline.
-* [x] Evaluation works with NATS offline.
-* [x] Evaluation works with Go API offline.
-* [x] Evaluation works without dashboard.
-* [x] Evaluation works with external network disabled.
-* [x] Evaluation works CPU-only.
-* [x] No live TIC/TOI/TCE query occurs.
-* [x] `ml-evaluation-cohort-v1.md` exists.
-* [x] Golden cohort IDs are deterministic.
-* [x] Recent cohort IDs are deterministic.
-* [x] Cohort IDs do not depend on creation timestamp.
-* [x] Cohort manifests reference exact source Gold snapshot IDs.
-* [x] Cohort manifests reference source Gold manifest SHA256.
-* [x] Cohort manifests reference dataset-view version/fingerprint.
-* [x] Cohort manifests reference selection-policy version.
-* [x] Cohort group keys are canonically ordered.
-* [x] Cohort manifests do not copy Gold feature matrices.
-* [x] Golden cohorts are immutable.
-* [x] Recent cohorts are immutable per snapshot.
-* [x] Existing identical cohort reuse is idempotent.
-* [x] Existing conflicting cohort is rejected.
-* [x] Candidate Golden selection uses `candidate-golden-unseen-v1`.
-* [x] Candidate Golden includes only `POSITIVE`/`NEGATIVE` supervised rows.
-* [x] Candidate Golden preserves natural label distribution.
-* [x] Candidate Golden has both classes for official binary metrics.
-* [x] Previously unresolved but development-unexposed targets may become Golden after versioned relabeling.
-* [x] Any target with an exposed supervised row is excluded entirely from Golden.
-* [x] Candidate Recent uses `candidate-recent-sector-v1`.
-* [x] Candidate Recent requires sector newer than the training cutoff.
-* [x] Candidate Recent excludes TRAIN groups.
-* [x] Candidate Recent excludes VALIDATION groups.
-* [x] Candidate Recent excludes Golden groups.
-* [x] Candidate Recent does not reuse an existing TIC merely because it appears in a newer sector.
-* [x] Recent single-class state is reported explicitly instead of fabricating ROC/PR metrics.
-* [x] Anomaly Golden uses `anomaly-golden-unseen-v1`.
-* [x] Anomaly Golden requires no candidate labels.
-* [x] Anomaly Golden excludes TRAIN/VALIDATION target groups.
-* [x] Anomaly Recent uses `anomaly-recent-sector-v1`.
-* [x] Anomaly Recent excludes TRAIN/VALIDATION/Golden groups.
-* [x] Future split behavior can reserve frozen Golden groups.
-* [x] Existing `ml-split-v1` manifests are never rewritten.
-* [x] If Golden reservation requires incompatible split semantics, `ml-split-v2` is introduced rather than silently changing V1.
-* [x] Frozen Golden group IDs can be recorded as future split exclusions.
-* [x] Candidate training-run manifest integrity is validated.
-* [x] Candidate model checksum is validated.
-* [x] Candidate preprocessing checksum is validated.
-* [x] Candidate split manifest integrity is validated.
-* [x] Anomaly training-run manifest integrity is validated.
-* [x] Anomaly model checksum is validated.
-* [x] Anomaly preprocessing checksum is validated.
-* [x] Anomaly split manifest integrity is validated.
-* [x] Candidate evaluation never retrains the model.
-* [x] Anomaly evaluation never retrains the model.
-* [x] Candidate evaluation never refits preprocessing.
-* [x] Anomaly evaluation never refits preprocessing.
-* [x] Candidate validation probabilities are recomputed from frozen artifacts.
-* [x] Candidate threshold policy is versioned.
-* [x] `candidate-threshold-max-f1-v1` exists.
-* [x] Candidate threshold uses VALIDATION only.
-* [x] Candidate Golden data does not influence threshold.
-* [x] Candidate Recent data does not influence threshold.
-* [x] Candidate classification uses `probability >= threshold`.
-* [x] Candidate threshold maximizes validation F1.
-* [x] Candidate threshold tie-break semantics are deterministic.
-* [x] Tie break prefers higher recall, then precision, then lower threshold.
-* [x] Candidate threshold value is persisted.
-* [x] Candidate validation threshold-selection metrics are persisted.
-* [x] Candidate Golden Average Precision is computed.
-* [x] Candidate Golden ROC-AUC is computed.
-* [x] Candidate Golden precision is computed at frozen threshold.
-* [x] Candidate Golden recall is computed at frozen threshold.
-* [x] Candidate Golden F1 is computed at frozen threshold.
-* [x] Candidate Golden confusion matrix is computed.
-* [x] Average Precision / PR-AUC is the primary candidate ranking metric.
-* [x] Accuracy is not the sole/primary candidate metric.
-* [x] Candidate Recent uses the exact same frozen model.
-* [x] Candidate Recent uses the exact same preprocessing.
-* [x] Candidate Recent uses the exact same decision threshold.
-* [x] Candidate Recent ranking metrics are computed when class coverage permits.
-* [x] Candidate Recent threshold metrics are computed when class coverage permits.
-* [x] Candidate Recent vs Golden metric deltas are recorded.
-* [x] Candidate recent metrics do not trigger retraining automatically.
-* [x] Candidate probabilities are finite and within `[0,1]`.
-* [x] Candidate unknown model/preprocessing versions fail clearly.
-* [x] `anomaly-threshold-validation-p99-v1` exists.
-* [x] Anomaly validation scores are recomputed using frozen artifacts.
-* [x] Anomaly threshold uses validation reconstruction scores only.
-* [x] Anomaly p99 uses explicitly documented linear quantile semantics.
-* [x] Anomaly alert rule uses `score >= threshold`.
-* [x] Anomaly threshold is documented as heuristic evidence threshold.
-* [x] Anomaly Golden data does not influence threshold.
-* [x] Anomaly Recent data does not influence threshold.
-* [x] Golden reference alert rate is computed.
-* [x] Golden reference score mean is computed.
-* [x] Golden reference score median is computed.
-* [x] Golden reference score p95 is computed.
-* [x] Golden reference score p99 is computed.
-* [x] Golden reference score max is computed.
-* [x] `anomaly-synthetic-standardized-shift-v1` exists.
-* [x] Synthetic perturbation occurs only in memory.
-* [x] Synthetic perturbation occurs after frozen preprocessing.
-* [x] Synthetic perturbation does not mutate Gold.
-* [x] Synthetic feature index is deterministic from source-product identity.
-* [x] Synthetic feature index is independent of row ordering.
-* [x] V1 synthetic perturbation changes exactly one standardized feature.
-* [x] V1 synthetic shift magnitude is exactly documented.
-* [x] Golden synthetic detection rate is computed.
-* [x] Golden synthetic score statistics are computed.
-* [x] Synthetic/reference score separation diagnostic is computed.
-* [x] Synthetic results are not called astrophysical anomaly accuracy.
-* [x] Anomaly Recent uses exact same model/preprocessing/threshold.
-* [x] Recent anomaly reference alert rate is computed.
-* [x] Recent anomaly score distribution is computed.
-* [x] Recent synthetic detection rate is computed.
-* [x] Recent vs Golden anomaly drift diagnostics are computed.
-* [x] No anomaly probability is claimed.
-* [x] No anomaly threshold is tuned from Golden/Recent.
-* [x] Candidate evaluation policy is versioned.
-* [x] `candidate-evaluation-v1` exists.
-* [x] Anomaly evaluation policy is versioned.
-* [x] `anomaly-evaluation-v1` exists.
-* [x] Each concrete evaluation has `evaluation_run_id`.
-* [x] Evaluation run ID is distinct from deterministic evaluation-spec fingerprint.
-* [x] Evaluation-spec fingerprint includes exact training run.
-* [x] Evaluation-spec fingerprint includes exact model/preprocessing hashes.
-* [x] Evaluation-spec fingerprint includes Golden cohort ID.
-* [x] Evaluation-spec fingerprint includes Recent cohort ID when present.
-* [x] Evaluation-spec fingerprint includes evaluation policy.
-* [x] Evaluation-spec fingerprint includes threshold policy.
-* [x] Anomaly evaluation spec includes score-definition version.
-* [x] Anomaly evaluation spec includes synthetic-policy version.
-* [x] Operational logging/storage settings do not alter evaluation-spec fingerprint.
-* [x] Candidate evaluation artifacts live under `evaluations/runs/candidate/`.
-* [x] Anomaly evaluation artifacts live under `evaluations/runs/anomaly/`.
-* [x] `threshold.json` is persisted.
-* [x] `metrics.json` is persisted.
-* [x] Threshold artifact SHA256 is persisted.
-* [x] Metrics artifact SHA256 is persisted.
-* [x] Evaluation manifest is persisted.
-* [x] `model-evaluation-v1.md` exists.
-* [x] Evaluation manifest references exact training-run manifest SHA.
-* [x] Evaluation manifest references exact model SHA.
-* [x] Evaluation manifest references exact preprocessing SHA.
-* [x] Evaluation manifest references exact Golden cohort.
-* [x] Evaluation manifest references Recent cohort when used.
-* [x] Evaluation manifest references threshold artifact.
-* [x] Evaluation manifest references metrics artifact.
-* [x] Evaluation manifest is written last.
-* [x] Evaluation manifest is the run commit marker.
-* [x] Evaluation artifacts are immutable after commit.
-* [x] Partial evaluation artifacts without manifest are not a committed evaluation run.
-* [x] No `checkpoints/ml-evaluation/` hierarchy is introduced.
-* [x] Candidate Golden contamination test passes.
-* [x] Anomaly Golden contamination test passes.
-* [x] Recent-vs-development contamination test passes.
-* [x] Recent-vs-Golden contamination test passes.
-* [x] Multi-sector target leakage test passes.
-* [x] Candidate cohort determinism tests pass.
-* [x] Candidate cohort Gold-change identity test passes.
-* [x] Candidate Golden class-coverage test passes.
-* [x] Candidate Recent-sector test passes.
-* [x] Candidate threshold exact-selection test passes.
-* [x] Candidate threshold Golden-independence test passes.
-* [x] Candidate threshold Recent-independence test passes.
-* [x] Candidate threshold equality-boundary test passes.
-* [x] Candidate Golden metric tests pass.
-* [x] Candidate Recent metric tests pass.
-* [x] Candidate Golden-only evaluation works without Recent cohort.
-* [x] Candidate Recent single-class handling test passes.
-* [x] Candidate model/preprocessing immutability tests pass.
-* [x] Anomaly p99 threshold exactness test passes.
-* [x] Anomaly threshold Golden-independence test passes.
-* [x] Anomaly threshold Recent-independence test passes.
-* [x] Anomaly alert-boundary test passes.
-* [x] Synthetic feature-index determinism test passes.
-* [x] Synthetic shift exactness test passes.
-* [x] Synthetic Gold immutability test passes.
-* [x] Synthetic detection-rate test passes.
-* [x] Anomaly reference alert-rate test passes.
-* [x] Anomaly Recent evaluation test passes.
-* [x] Corrupt training model prevents evaluation.
-* [x] Corrupt preprocessing prevents evaluation.
-* [x] Corrupt training manifest prevents evaluation.
-* [x] Corrupt split manifest prevents evaluation.
-* [x] Corrupt cohort Gold prevents evaluation.
-* [x] Full candidate evaluation integration test passes.
-* [x] Full anomaly evaluation integration test passes.
-* [x] RAW_DELETED evaluation integration test passes.
-* [x] Evaluation performs zero Bronze reads.
-* [x] Evaluation performs zero Silver reads.
-* [x] ClickHouse-offline evaluation test passes.
-* [x] NATS-offline evaluation test passes.
-* [x] network-offline evaluation test passes.
-* [x] CPU-only evaluation test passes.
-* [x] Same evaluation specification produces reproducible logical metrics.
-* [x] Same evaluation specification produces same spec fingerprint.
-* [x] Different threshold policy changes evaluation specification.
-* [x] Different Golden cohort changes evaluation specification.
-* [x] Different Recent cohort changes evaluation specification.
-* [x] No training-run artifact is mutated.
-* [x] No Gold artifact is mutated.
-* [x] No split manifest is mutated.
-* [x] No cohort manifest is mutated after freeze.
-* [x] No row-level production predictions are persisted.
-* [x] No model registry package is created.
-* [x] No champion pointer is changed.
-* [x] No promotion decision occurs.
-* [x] No retraining is triggered automatically.
-* [x] No ONNX export occurs.
-* [x] Rust inference remains unchanged.
-* [x] No prediction NATS event exists.
-* [x] No Go API ML endpoint is added.
-* [x] No dashboard ML evaluation view is added.
-* [x] `docs/ML_EVALUATION.md` exists.
-* [x] `docs/ML_EVALUATION.md` explains why TRAIN/VALIDATION cannot later become Golden.
-* [x] `docs/ML_EVALUATION.md` documents candidate threshold semantics.
-* [x] `docs/ML_EVALUATION.md` documents anomaly p99 threshold semantics.
-* [x] `docs/ML_EVALUATION.md` documents synthetic anomaly limitations.
-* [x] `docs/ML_EVALUATION.md` documents Recent Holdout semantics.
-* [x] `docs/ML_DATASETS.md` documents TRAIN/VALIDATION/GOLDEN/RECENT roles.
-* [x] `docs/ML_TRAINING.md` distinguishes development validation from final evaluation.
-* [x] `docs/CONFIGURATION.md` contains only implemented evaluation settings.
-* [x] Python README reflects final evaluation boundary.
-* [x] Contracts README includes evaluation contracts.
-* [x] STRUCTURE.md matches actual changes.
-* [x] Existing Stage 5 and Phase 6.1–6.3 tests remain green.
-* [x] Repository is ready for Phase 6.5.
+* [ ] Existing `aurora_ml/registry.py` owns registry behavior.
+* [ ] No unnecessary registry framework/package hierarchy is introduced.
+* [ ] `contracts/data/model-manifest-v1.md` exists.
+* [ ] `contracts/data/model-promotion-v1.md` exists.
+* [ ] Candidate registry prefix exists when first candidate model is registered.
+* [ ] Anomaly registry prefix exists when first anomaly model is registered.
+* [ ] Registry model packages contain immutable `model.pt`.
+* [ ] Registry model packages contain immutable `preprocessing.json`.
+* [ ] Registry model package manifest is written last.
+* [ ] Model manifest acts as package commit marker.
+* [ ] Partial package without manifest is not considered registered.
+* [ ] Training-run manifest integrity is verified before registration.
+* [ ] Training model SHA is verified before registration.
+* [ ] Training preprocessing SHA is verified before registration.
+* [ ] Gold/split/view provenance is preserved in model manifest.
+* [ ] Feature order is preserved in model manifest.
+* [ ] Candidate task/model-version compatibility is validated.
+* [ ] Anomaly task/model-version compatibility is validated.
+* [ ] Unsupported model version is rejected.
+* [ ] Model fingerprint uses canonical serialization.
+* [ ] Model fingerprint includes task.
+* [ ] Model fingerprint includes training-run identity/provenance.
+* [ ] Model fingerprint includes model version/SHA.
+* [ ] Model fingerprint includes preprocessing version/SHA.
+* [ ] Model fingerprint includes dataset-view identity.
+* [ ] Model fingerprint includes exact feature order.
+* [ ] Evaluation-run ID does not affect model ID.
+* [ ] Registration timestamp does not affect model ID.
+* [ ] Operational storage/log settings do not affect model ID.
+* [ ] Model ID is deterministic.
+* [ ] Same training model registered twice produces same model ID.
+* [ ] New evaluation of same model does not create a new model ID.
+* [ ] Different model bytes produce different model identity.
+* [ ] Different preprocessing artifact produces different model identity.
+* [ ] Different feature-order contract changes model identity.
+* [ ] Registered model copy has same SHA as training artifact.
+* [ ] Registered preprocessing copy has same SHA as training artifact.
+* [ ] Existing identical package is reused idempotently.
+* [ ] Existing conflicting package is rejected.
+* [ ] Registered package is immutable after manifest commit.
+* [ ] Registration never mutates training run.
+* [ ] Registration never mutates evaluation run.
+* [ ] Registration never mutates Gold.
+* [ ] Registration never mutates split.
+* [ ] Registration never mutates evaluation cohort.
+* [ ] Registered model manifest contains no mutable `champion` status.
+* [ ] Registered model manifest contains no mutable `challenger` status.
+* [ ] Challenger semantics are relational rather than a mutable flag.
+* [ ] Multiple challengers may coexist.
+* [ ] `models/candidate/champion.json` is the candidate current-selection pointer.
+* [ ] `models/anomaly/champion.json` is the anomaly current-selection pointer.
+* [ ] Champion pointer is small mutable state.
+* [ ] Champion pointer references exact model ID.
+* [ ] Champion pointer references model-manifest SHA.
+* [ ] Champion pointer references exact evaluation-run ID.
+* [ ] Champion pointer references evaluation-manifest SHA.
+* [ ] Champion pointer references exact threshold artifact.
+* [ ] Champion pointer references threshold SHA.
+* [ ] Champion pointer references exact selection decision.
+* [ ] Champion pointer records previous model ID for diagnostics.
+* [ ] Candidate pointer cannot reference anomaly model.
+* [ ] Anomaly pointer cannot reference candidate model.
+* [ ] Broken champion pointer is rejected.
+* [ ] Champion model integrity is verified.
+* [ ] Champion preprocessing integrity is verified.
+* [ ] Champion evaluation integrity is verified.
+* [ ] Champion threshold integrity is verified.
+* [ ] Champion is documented as registry champion, not deployed runtime.
+* [ ] No `runtime_ready` mutable field exists in model manifest.
+* [ ] No `deployed` mutable field exists in model manifest.
+* [ ] `models/<task>/decisions/` contains immutable decision records.
+* [ ] BOOTSTRAP decision action exists.
+* [ ] PROMOTE decision action exists.
+* [ ] ROLLBACK decision action exists.
+* [ ] Promotion outcomes use PASS/FAIL.
+* [ ] Failed promotion can be persisted for audit.
+* [ ] Failed promotion does not change champion pointer.
+* [ ] Decision fingerprint is deterministic.
+* [ ] Decision ID is deterministic.
+* [ ] Decision ID ignores `created_at`.
+* [ ] Exact repeated promotion decision is idempotent.
+* [ ] Conflicting deterministic decision is rejected.
+* [ ] Decision record preserves expected current champion.
+* [ ] Decision record preserves challenger model/evaluation.
+* [ ] Decision record preserves incumbent model/evaluation.
+* [ ] Decision record preserves policy version.
+* [ ] Decision record preserves compared metric values.
+* [ ] Decision record preserves guardrail outcomes.
+* [ ] Decision record preserves reason codes.
+* [ ] Decision record itself does not falsely claim pointer application.
+* [ ] Current champion state is determined by `champion.json`.
+* [ ] `register-model` command exists or equivalent.
+* [ ] Registration command does not promote.
+* [ ] `compare-model` command exists or equivalent dry comparison.
+* [ ] Dry comparison never mutates champion pointer.
+* [ ] `promote-model` command exists or equivalent.
+* [ ] `rollback-model` command exists or equivalent.
+* [ ] `model-status` exists if useful, without introducing a database.
+* [ ] Promotion requires registered challenger model.
+* [ ] Promotion requires valid completed evaluation run.
+* [ ] Challenger evaluation must reference the challenger training artifacts.
+* [ ] Incumbent evaluation must reference current champion training artifacts.
+* [ ] Candidate/anomaly tasks cannot be cross-compared.
+* [ ] Golden cohort IDs must match for head-to-head comparison.
+* [ ] Different Golden cohorts are rejected as incomparable.
+* [ ] Evaluation-policy versions must be compatible.
+* [ ] Threshold-policy versions must be compatible.
+* [ ] Candidate promotion V1 requires matching dataset-view version/fingerprint.
+* [ ] Anomaly promotion V1 requires matching dataset-view version/fingerprint.
+* [ ] Anomaly score-definition version must match.
+* [ ] Anomaly synthetic-policy version must match.
+* [ ] If both evaluations use Recent Holdout, Recent cohort IDs must match.
+* [ ] If one evaluation has Recent and one does not, V1 comparison rejects them as incomparable.
+* [ ] Both evaluations may omit Recent and compare on Golden only.
+* [ ] Candidate `candidate-promotion-v1` exists.
+* [ ] Candidate primary metric is Golden Average Precision.
+* [ ] Candidate Golden Average Precision must strictly improve.
+* [ ] Candidate AP equality does not count as improvement.
+* [ ] Candidate Golden recall may not regress by more than `0.02`.
+* [ ] Candidate Recent Average Precision may not regress by more than `0.02` when applicable.
+* [ ] Candidate Recent recall may not regress by more than `0.03` when applicable.
+* [ ] Candidate Recent insufficient-class-coverage handling is explicit.
+* [ ] Candidate promotion policy constants are versioned semantics.
+* [ ] Candidate promotion is not based on training loss.
+* [ ] Candidate promotion is not based solely on validation metrics.
+* [ ] Candidate promotion is not based primarily on accuracy.
+* [ ] Anomaly `anomaly-promotion-v1` exists.
+* [ ] Anomaly Golden synthetic detection may not regress by more than `0.02`.
+* [ ] Anomaly Golden reference alert rate may not increase by more than `0.01`.
+* [ ] Anomaly promotion requires at least one strict Golden improvement.
+* [ ] Anomaly Recent synthetic detection may not regress by more than `0.02` when applicable.
+* [ ] Anomaly Recent reference alert rate may not increase by more than `0.01` when applicable.
+* [ ] Anomaly promotion does not use supervised accuracy.
+* [ ] Anomaly promotion does not use raw reconstruction loss as the primary cross-model criterion.
+* [ ] Candidate guardrail boundary tests pass.
+* [ ] Anomaly guardrail boundary tests pass.
+* [ ] Incompatible evaluation tests pass.
+* [ ] Candidate promotion PASS test passes.
+* [ ] Candidate promotion FAIL-primary test passes.
+* [ ] Candidate promotion FAIL-recall test passes.
+* [ ] Candidate promotion FAIL-Recent-AP test passes.
+* [ ] Candidate promotion FAIL-Recent-recall test passes.
+* [ ] Anomaly promotion PASS-synthetic-improvement test passes.
+* [ ] Anomaly promotion PASS-alert-improvement test passes.
+* [ ] Anomaly promotion FAIL-no-improvement test passes.
+* [ ] Anomaly synthetic-regression guardrail test passes.
+* [ ] Anomaly alert-regression guardrail test passes.
+* [ ] First champion bootstrap requires explicit `--bootstrap`.
+* [ ] Bootstrap requires no existing champion.
+* [ ] Bootstrap requires completed final evaluation.
+* [ ] Bootstrap cannot use only Phase 6.2/6.3 validation metrics.
+* [ ] Bootstrap creates immutable BOOTSTRAP decision.
+* [ ] Bootstrap creates champion pointer only after decision commit.
+* [ ] Bootstrap does not require an arbitrary universal accuracy floor.
+* [ ] Bootstrap fails if champion already exists.
+* [ ] No `--force` option bypasses promotion policy.
+* [ ] PASS decision is written before champion pointer mutation.
+* [ ] FAIL decision leaves pointer unchanged.
+* [ ] Current champion is re-read before pointer mutation.
+* [ ] Stale promotion detects changed champion.
+* [ ] Registry V1 documents one intentional mutation operation per task at a time.
+* [ ] No Redis lock exists.
+* [ ] No database lock exists.
+* [ ] Champion pointer PUT is verified after write.
+* [ ] Crash after PASS decision before pointer is recoverable.
+* [ ] Crash after pointer write before verification is recoverable.
+* [ ] Pointer-write failure does not corrupt immutable decision/model history.
+* [ ] No model-registry checkpoint hierarchy exists.
+* [ ] Champion is never inferred from newest model.
+* [ ] Champion is never inferred automatically from highest metric.
+* [ ] Rollback targets a prior champion decision.
+* [ ] Rollback requires explicit reason.
+* [ ] Rollback target task must match.
+* [ ] Rollback target model must verify.
+* [ ] Rollback target preprocessing must verify.
+* [ ] Rollback target evaluation must verify.
+* [ ] Rollback target threshold must verify.
+* [ ] Never-promoted model cannot be selected through rollback.
+* [ ] Choosing a never-promoted challenger requires normal promotion.
+* [ ] Rollback creates a new immutable ROLLBACK decision.
+* [ ] Rollback never mutates old promotion decision.
+* [ ] Rollback restores exact prior model/evaluation/threshold selection.
+* [ ] Rollback never deletes current/old model packages.
+* [ ] Rollback never deletes training runs.
+* [ ] Rollback never deletes evaluation runs.
+* [ ] Rollback history is reconstructable.
+* [ ] Multi-step promotion/rollback history test passes.
+* [ ] Model registration integration using real tiny candidate training run passes.
+* [ ] Model registration integration using real tiny anomaly training run passes.
+* [ ] Candidate bootstrap integration passes.
+* [ ] Anomaly bootstrap integration passes.
+* [ ] Candidate challenger promotion integration passes.
+* [ ] Anomaly challenger promotion integration passes.
+* [ ] Candidate promotion failure leaves champion unchanged.
+* [ ] Anomaly promotion failure leaves champion unchanged.
+* [ ] Rollback integration restores exact prior selection.
+* [ ] Registry works with external network disabled.
+* [ ] Registry works with ClickHouse offline.
+* [ ] Registry works with NATS offline.
+* [ ] Registry works with Go API offline.
+* [ ] Registry works without dashboard.
+* [ ] Registry works without GPU.
+* [ ] Registry works for models whose Gold lineage originates from RAW_DELETED Bronze.
+* [ ] Registry performs zero Bronze reads.
+* [ ] Registry performs zero Silver reads.
+* [ ] Registry does not scan full Gold data.
+* [ ] Registry does not mutate training artifacts.
+* [ ] Registry does not mutate evaluation artifacts.
+* [ ] Registry does not mutate split/cohort artifacts.
+* [ ] Registry does not mutate Gold.
+* [ ] No ONNX file is created.
+* [ ] No runtime package is created.
+* [ ] No runtime-ready/deployed state is added to immutable model manifest.
+* [ ] No Rust inference code is changed.
+* [ ] No inference checkpoint is created.
+* [ ] No prediction objects are created.
+* [ ] No prediction NATS event is created.
+* [ ] No Go API model-switching endpoint is created.
+* [ ] No React promotion/rollback control is created.
+* [ ] No automated promotion daemon exists.
+* [ ] No automated retraining is triggered by promotion.
+* [ ] `docs/MODEL_REGISTRY.md` exists.
+* [ ] `docs/MODEL_REGISTRY.md` documents model identity.
+* [ ] `docs/MODEL_REGISTRY.md` documents immutable package semantics.
+* [ ] `docs/MODEL_REGISTRY.md` documents challenger semantics.
+* [ ] `docs/MODEL_REGISTRY.md` documents registry champion vs deployment.
+* [ ] `docs/MODEL_REGISTRY.md` documents candidate promotion policy.
+* [ ] `docs/MODEL_REGISTRY.md` documents anomaly promotion policy.
+* [ ] `docs/MODEL_REGISTRY.md` documents bootstrap.
+* [ ] `docs/MODEL_REGISTRY.md` documents decision records.
+* [ ] `docs/MODEL_REGISTRY.md` documents rollback.
+* [ ] `docs/ML_EVALUATION.md` links evaluation artifacts to registry promotion.
+* [ ] `docs/ML_TRAINING.md` documents training-run -> registry-model boundary.
+* [ ] `docs/CHECKPOINTS.md` confirms there is no model-registry checkpoint.
+* [ ] `docs/CONFIGURATION.md` does not expose promotion-policy semantics as mutable environment knobs.
+* [ ] Python README documents training -> evaluation -> registry champion flow.
+* [ ] Contracts README includes `model-manifest-v1`.
+* [ ] Contracts README includes `model-promotion-v1`.
+* [ ] STRUCTURE.md matches actual changes.
+* [ ] `tests/test_registry.py` exists or equivalent focused tests exist.
+* [ ] Existing Stage 5 and Phase 6.1–6.4 tests remain green.
+* [ ] Repository is ready for Phase 6.6.
 
 ---
 
 # Out of Scope
 
-Do NOT implement in Phase 6.4:
+Do NOT implement in Phase 6.5:
 
-* model promotion
-* champion pointer
-* challenger pointer
-* rollback
-* registry model packaging
-* model-manifest-v1
 * ONNX export
+* ONNX model package
+* runtime-model package
 * model-runtime-v1
-* Rust inference parity
-* production prediction generation
+* Python/ONNX numerical parity
+* Python/Rust numerical parity
+* ONNX Runtime CUDA provider
+* Rust model hot reload
+* Rust champion resolution
+* inference checkpoint
+* prediction schema
 * prediction storage
-* prediction NATS events
-* Go API ML endpoints
-* dashboard model metrics
+* prediction NATS subjects
+* Go API inference endpoints
+* dashboard model switching
+* automated deployment
+* automated champion promotion
 * automated retraining
-* hyperparameter search
-* feature selection from Golden Test
-* retraining from Golden Test
-* preprocessing refit from Golden Test
-* threshold selection from Golden Test
-* threshold selection from Recent Holdout
-* anomaly probability calibration
+* cross-view promotion under V1
+* model deletion
+* training-run deletion
+* evaluation-run deletion
+* Golden benchmark deletion
+* scientific planet confirmation
 * scientific anomaly confirmation
-* scientific exoplanet confirmation
 
 ---
 
 # Next
 
-```text
+```text id="reg344"
 Stage 6 — Machine Learning Training, Evaluation & Model Registry
 
 Phase 6.1  ML Dataset View & Deterministic Group Split        [DONE]
@@ -4585,7 +5321,9 @@ Phase 6.3  Astronomical Anomaly Detection Training            [DONE]
 Phase 6.4  Evaluation — Golden Test & Recent Holdout          [DONE]
 
 Phase 6.5  Model Registry — Champion / Challenger,
-           Promotion & Rollback
+           Promotion & Rollback                               [DONE]
+
+Phase 6.6  ONNX Export & Rust Inference Parity
 ```
 
 ```

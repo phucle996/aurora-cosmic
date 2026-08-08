@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "training_run_id": "run-cand-v1-cdc9b6982876",
+  "training_spec_fingerprint": "cdc9b6982876c1eebf66a5ef98773ba790d5056c63a8508eeb1dc946aa45f457",
+  "status": "COMPLETED",
+  "gold_snapshot_id": "gold-v1-test12345678",
+  "split_id": "split-v1-eda163cd9368b680",
+  "current_epoch": 5,
+  "best_epoch": 5,
+  "best_val_loss": 0.6103121280670166,
+  "error_message": null,
+  "created_at": "2026-08-08T06:44:05.714641+00:00",
+  "updated_at": "2026-08-08T06:44:05.736955+00:00"
+}
