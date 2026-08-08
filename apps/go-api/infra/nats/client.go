@@ -1,4 +1,4 @@
-package inference
+package nats
 
 import (
 	"context"
@@ -8,29 +8,18 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
-// Dispatcher is the control-plane boundary used by HTTP handlers to enqueue
-// an already committed inference manifest. The GPU worker remains the only
-// component that executes model inference.
-type Dispatcher interface {
-	Dispatch(context.Context, string, []byte) error
-}
+type Dispatcher struct{ URL string }
 
-type NATSDispatcher struct {
-	url string
-}
+func NewDispatcher(url string) *Dispatcher { return &Dispatcher{URL: url} }
 
-func NewNATSDispatcher(url string) *NATSDispatcher {
-	return &NATSDispatcher{url: url}
-}
-
-func (d *NATSDispatcher) Dispatch(ctx context.Context, task string, payload []byte) error {
+func (d *Dispatcher) Dispatch(ctx context.Context, task string, payload []byte) error {
 	subject, err := subjectForTask(task)
 	if err != nil {
 		return err
 	}
 	connectCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	nc, err := nats.Connect(d.url, nats.Timeout(5*time.Second))
+	nc, err := nats.Connect(d.URL, nats.Timeout(5*time.Second))
 	if err != nil {
 		return fmt.Errorf("connect NATS: %w", err)
 	}

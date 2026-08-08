@@ -1,27 +1,45 @@
 package app
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"time"
 
+	"go-api/infra/clickhouse"
+	"go-api/infra/minio"
+	"go-api/infra/nats"
+	"go-api/infra/prometheus"
 	"go-api/internal/config"
-	apiHttp "go-api/internal/http"
-	"go-api/internal/inference"
-	"go-api/internal/monitoring"
-	"go-api/internal/store"
 )
 
-func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
-	chStore := store.NewClickHouseStore(cfg.ClickHouse.Endpoint, cfg.ClickHouse.Database)
-	chStore.SetCredentials(cfg.ClickHouse.User, cfg.ClickHouse.Password)
-	minioStore := store.NewMinIOStoreWithCredentials(cfg.MinIO.Endpoint, cfg.MinIO.Bucket, cfg.MinIO.AccessKey, cfg.MinIO.SecretKey)
-	dispatcher := inference.NewNATSDispatcher(cfg.NATS.URL)
-	prometheus := monitoring.NewPrometheus(cfg.Prometheus.URL)
-	router := apiHttp.NewRouter(chStore, minioStore, cfg.CORSAllowedOrigin, dispatcher, prometheus)
+type Infrastructure struct {
+	ClickHouse *clickhouse.Client
+	MinIO      *minio.Client
+	NATS       *nats.Dispatcher
+	Prometheus *prometheus.Client
+}
+
+type App struct {
+	Server *http.Server
+	Addr   string
+}
+
+func New(cfg *config.Config, log *slog.Logger) (*App, error) {
+	infra := Infrastructure{
+		ClickHouse: clickhouse.NewClient(cfg.ClickHouse.Endpoint, cfg.ClickHouse.Database, cfg.ClickHouse.User, cfg.ClickHouse.Password),
+		MinIO:      minio.NewClient(cfg.MinIO.Endpoint, cfg.MinIO.Bucket, cfg.MinIO.AccessKey, cfg.MinIO.SecretKey),
+		NATS:       nats.NewDispatcher(cfg.NATS.URL),
+		Prometheus: prometheus.NewClient(cfg.Prometheus.URL),
+	}
+
+	module, err := NewModule(infra)
+	if err != nil {
+		return nil, fmt.Errorf("initialize module: %w", err)
+	}
+
+	router := NewRouter(cfg, module)
 	addr := net.JoinHostPort(cfg.Server.Host, fmt.Sprintf("%d", cfg.Server.Port))
 
 	srv := &http.Server{
@@ -34,25 +52,8 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		MaxHeaderBytes:    1 << 20,
 	}
 
-	serverErr := make(chan error, 1)
-	go func() {
-		log.Info("HTTP REST API Gateway listening",
-			slog.String("address", addr),
-			slog.String("host", cfg.Server.Host),
-			slog.Int("port", cfg.Server.Port),
-		)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			serverErr <- err
-		}
-	}()
-
-	select {
-	case err := <-serverErr:
-		return fmt.Errorf("server error: %w", err)
-	case <-ctx.Done():
-		log.Info("Shutdown signal received, draining active connections...")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		return srv.Shutdown(shutdownCtx)
-	}
+	return &App{
+		Server: srv,
+		Addr:   addr,
+	}, nil
 }

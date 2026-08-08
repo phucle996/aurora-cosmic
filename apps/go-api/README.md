@@ -6,10 +6,28 @@ Health. Model execution remains isolated in the GPU-only Rust inference worker.
 
 ## Package Layout
 
-* `cmd/aurora-api/` — Entrypoint
-* `internal/app/` — Application runner and server router initialization
-* `internal/http/` — HTTP transport, validation, pagination, and readiness handlers
-* `internal/store/` — ClickHouse/MinIO adapters and query interfaces
+```text
+cmd/aurora-api/              process entrypoint
+infra/                       ClickHouse, MinIO, NATS, Prometheus clients
+internal/app/                composition root, module DI wiring, and Gin route registration
+internal/domain/             framework-free entities and repository/service ports
+internal/http/dto/           API request DTO structs
+internal/http/handler/       HTTP input parsing, service calls, and inline gin.H responses
+internal/repository/         ClickHouse queries and raw MinIO object adapter
+internal/service/            business workflows and MinIO model/inference logic
+internal/taxonomy/           stable application errors
+```
+
+The dependency direction is strict:
+
+```text
+route → handler → service → domain ports → repository → infra client
+```
+
+Handlers do not query ClickHouse or MinIO directly. Services own workflow
+decisions such as runtime integrity, champion selection, inference retry event
+creation, and monitoring aggregation. `infra/` contains only external client
+connections and low-level transport operations.
 
 ## Runtime contract
 
