@@ -722,11 +722,6 @@ def evaluate_anomaly_model(*args: Any, **kwargs: Any) -> Any:
         recent_cohort_manifest_sha256=recent_cohort_sha,
         evaluation_policy_version="anomaly-evaluation-v1",
         threshold_policy_version="anomaly-threshold-validation-p99-v1",
-        decision_threshold=decision_threshold,
-        threshold_sha256=threshold_sha,
-        metrics_sha256=metrics_sha,
-        metrics=metrics_data,
-        created_at=datetime.now(timezone.utc).isoformat(),
     )
 
     created_at = datetime.now(timezone.utc).isoformat()
