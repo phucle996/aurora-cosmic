@@ -19,8 +19,8 @@ fn test_rust_stable_sigmoid() {
 
 #[test]
 fn test_rust_reconstruction_mse() {
-    let std_vec = vec![0.0f32, 2.0f32];
-    let recon_vec = vec![0.0f32, 0.0f32];
+    let std_vec = [0.0f32, 2.0f32];
+    let recon_vec = [0.0f32, 0.0f32];
     let sum_sq: f64 = std_vec
         .iter()
         .zip(recon_vec.iter())

@@ -1,13 +1,22 @@
-# Build Stage
-FROM rust:alpine AS builder
+# ONNX Runtime's prebuilt Linux binary targets glibc. Use Debian for both
+# stages; Alpine/musl would compile the Rust binary but fail to load the ORT
+# shared library at runtime.
+FROM ubuntu:24.04 AS builder
 WORKDIR /app
-RUN apk add --no-cache musl-dev
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates pkg-config build-essential curl \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.97.1 \
+    && rm -rf /var/lib/apt/lists/*
+ENV PATH="/root/.cargo/bin:${PATH}"
 COPY Cargo.toml Cargo.lock* ./
 COPY src ./src
 RUN cargo build --release
 
-# Runtime Stage
-FROM alpine:latest
+FROM ubuntu:24.04
 WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/aurora-inference .
 ENTRYPOINT ["./aurora-inference"]

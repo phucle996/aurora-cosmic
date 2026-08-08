@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 /// Immutable runtime package manifest conforming to `model-runtime-v1`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct ModelRuntimeManifest {
     pub schema_version: i64,
     pub runtime_package_id: String,
@@ -45,6 +46,7 @@ fn default_producer() -> String {
 
 /// Preprocessing parameters loaded from `preprocessing.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct PreprocessingConfig {
     #[serde(default)]
     pub preprocessing_version: String,
@@ -60,12 +62,14 @@ pub struct PreprocessingConfig {
 
 /// Threshold configuration loaded from `threshold.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct ThresholdConfig {
     pub decision_threshold: f64,
 }
 
 /// Parity fixture test case loaded from `parity-fixture.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ParityCase {
     pub case_id: String,
     pub raw_features: HashMap<String, Option<f64>>,
@@ -79,6 +83,7 @@ pub struct ParityCase {
 
 /// Parity fixture specification loaded from `parity-fixture.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ParityFixture {
     pub schema_version: i64,
     pub parity_fixture_version: String,

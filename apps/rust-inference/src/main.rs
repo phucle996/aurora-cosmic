@@ -1,6 +1,9 @@
 mod app;
 mod config;
+mod gold;
 mod logger;
+mod storage;
+mod worker;
 
 #[tokio::main]
 async fn main() {
