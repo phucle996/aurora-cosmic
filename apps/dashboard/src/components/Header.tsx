@@ -22,7 +22,7 @@ const pageNames: Record<string, string> = {
   '/targets': 'Targets',
   '/candidates': 'Candidates',
   '/anomalies': 'Anomalies',
-  '/system': 'System health',
+  '/monitoring': 'Monitoring',
   '/models': 'Models & inference',
 };
 

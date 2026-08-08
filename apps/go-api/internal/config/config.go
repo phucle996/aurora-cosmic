@@ -17,6 +17,10 @@ type ServerConfig struct {
 	Port int
 }
 
+type MetricsConfig struct {
+	Addr string
+}
+
 type MinIOConfig struct {
 	Endpoint  string
 	Bucket    string
@@ -42,6 +46,7 @@ type ClickHouseConfig struct {
 type Config struct {
 	Core              CoreConfig
 	Server            ServerConfig
+	Metrics           MetricsConfig
 	MinIO             MinIOConfig
 	ClickHouse        ClickHouseConfig
 	NATS              NATSConfig
@@ -121,6 +126,9 @@ func Load() (*Config, error) {
 		Server: ServerConfig{
 			Host: host,
 			Port: port,
+		},
+		Metrics: MetricsConfig{
+			Addr: getenvOrDefault("AURORA_API_METRICS_ADDR", ":8086"),
 		},
 		MinIO: MinIOConfig{
 			Endpoint:  minioEndpoint,

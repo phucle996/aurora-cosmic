@@ -6,5 +6,5 @@ import (
 )
 
 type Monitoring interface {
-	Query(context.Context, entity.MonitoringWindow) ([]entity.MonitoringComponent, error)
+	Query(context.Context, entity.MonitoringWindow, string) ([]entity.MonitoringComponent, error)
 }

@@ -29,7 +29,7 @@ const menuItems = [
   { path: '/targets', label: 'TESS Target Discovery', icon: Target },
   { path: '/candidates', label: 'ML Transit Candidates', icon: Sparkles },
   { path: '/anomalies', label: 'Anomaly Engine', icon: AlertTriangle },
-  { path: '/system', label: 'System Topology', icon: Server },
+  { path: '/monitoring', label: 'Monitoring', icon: Server },
   { path: '/models', label: 'Models & Inference', icon: BrainCircuit },
 ];
 
@@ -40,7 +40,7 @@ export default function Sidebar(): JSX.Element {
     <UISidebar collapsible="icon" variant="inset">
       <SidebarHeader className="border-b border-sidebar-border">
         <div className="flex items-center gap-3 px-2 py-2">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground shadow-sm">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground shadow-sm">
             <Activity className="size-5" aria-hidden="true" />
           </div>
           <div className="min-w-0 group-data-[collapsible=icon]:hidden">
@@ -52,7 +52,7 @@ export default function Sidebar(): JSX.Element {
 
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#7f8ea3]">Workspace</SidebarGroupLabel>
+          <SidebarGroupLabel className="text-[11px] font-semibold uppercase tracking-[0.06em] text-sidebar-foreground/65">Workspace</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {menuItems.map((item) => {
@@ -77,7 +77,7 @@ export default function Sidebar(): JSX.Element {
         </SidebarGroup>
 
         <SidebarGroup>
-          <SidebarGroupLabel className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#7f8ea3]">Data plane</SidebarGroupLabel>
+          <SidebarGroupLabel className="text-[11px] font-semibold uppercase tracking-[0.06em] text-sidebar-foreground/65">Data plane</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               <SidebarMenuItem>

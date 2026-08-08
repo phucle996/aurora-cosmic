@@ -39,7 +39,15 @@ func (h *MonitoringHandler) Query(c *gin.Context) {
 	}
 
 	window := entity.MonitoringWindow{Duration: duration, Step: step}
-	components, err := h.monitoring.Query(c.Request.Context(), window)
+	tab := strings.TrimSpace(c.Query("tab"))
+	if tab == "" {
+		tab = entity.MonitoringAllTab
+	}
+	if !entity.IsMonitoringTab(tab) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown monitoring tab"})
+		return
+	}
+	components, err := h.monitoring.Query(c.Request.Context(), window, tab)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Prometheus monitoring is unavailable"})
 		return
@@ -57,24 +65,30 @@ func (h *MonitoringHandler) Query(c *gin.Context) {
 			}
 			return out
 		}
+		metrics := make([]gin.H, len(comp.Metrics))
+		for j, metric := range comp.Metrics {
+			metrics[j] = gin.H{
+				"key":    metric.Key,
+				"name":   metric.Name,
+				"unit":   metric.Unit,
+				"kind":   metric.Kind,
+				"points": mapPoints(metric.Points),
+			}
+		}
 		items[i] = gin.H{
 			"id":        comp.ID,
 			"name":      comp.Name,
 			"group":     comp.Group,
 			"container": comp.Container,
 			"status":    comp.Status,
-			"metrics": gin.H{
-				"cpu":        mapPoints(comp.Metrics.CPU),
-				"memory":     mapPoints(comp.Metrics.Memory),
-				"network_rx": mapPoints(comp.Metrics.NetworkRX),
-				"network_tx": mapPoints(comp.Metrics.NetworkTX),
-			},
+			"metrics":   metrics,
 		}
 	}
 
 	end := time.Now().UTC()
 	c.JSON(http.StatusOK, gin.H{
 		"source":       "prometheus",
+		"tab":          tab,
 		"range":        window.Duration.String(),
 		"start":        end.Add(-window.Duration).Format(time.RFC3339),
 		"end":          end.Format(time.RFC3339),

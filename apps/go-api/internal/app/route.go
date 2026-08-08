@@ -5,6 +5,7 @@ import (
 
 	"go-api/internal/config"
 	"go-api/internal/http/middleware"
+	"go-api/internal/observer"
 
 	"github.com/gin-gonic/gin"
 )
@@ -14,11 +15,14 @@ type Router struct {
 	module *Module
 }
 
-func NewRouter(cfg *config.Config, module *Module) *Router {
+func NewRouter(cfg *config.Config, module *Module, metrics ...*observer.Metrics) *Router {
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
 	engine.Use(gin.Recovery())
 	engine.Use(middleware.CORS(cfg))
+	if len(metrics) > 0 {
+		engine.Use(middleware.Metrics(metrics[0]))
+	}
 
 	r := &Router{engine: engine, module: module}
 	r.registerRoutes()
@@ -34,7 +38,9 @@ func (r *Router) registerRoutes() {
 		api.GET("/system", r.module.SystemHandler.System)
 		api.GET("/monitoring", r.module.MonitoringHandler.Query)
 		api.GET("/targets", r.module.AnalyticsHandler.ListTargets)
+		api.GET("/targets/:tic_id", r.module.AnalyticsHandler.GetTarget)
 		api.GET("/candidates", r.module.AnalyticsHandler.ListCandidates)
+		api.GET("/candidates/:prediction_id", r.module.AnalyticsHandler.GetCandidate)
 		api.GET("/anomalies", r.module.AnalyticsHandler.ListAnomalies)
 		api.GET("/lightcurves", r.module.AnalyticsHandler.GetLightcurve)
 		api.GET("/models", r.module.ModelsHandler.ListModels)

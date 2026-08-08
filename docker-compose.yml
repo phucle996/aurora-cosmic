@@ -12,6 +12,10 @@ services:
     environment:
       MINIO_ROOT_USER: "${MINIO_ACCESS_KEY:-minioadmin}"
       MINIO_ROOT_PASSWORD: "${MINIO_SECRET_KEY:-minioadmin}"
+      # Dev-only scrape endpoint: Prometheus can read metrics without
+      # application credentials. Restrict the published MinIO port at the
+      # deployment boundary when this compose stack is used outside localhost.
+      MINIO_PROMETHEUS_AUTH_TYPE: "public"
     command: server /data --console-address ":9001"
     volumes:
       - aurora-minio-data:/data
@@ -63,6 +67,28 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  nats-exporter:
+    image: natsio/prometheus-nats-exporter:0.20.0
+    container_name: aurora-nats-exporter
+    restart: unless-stopped
+    cpus: "0.10"
+    mem_limit: 128m
+    memswap_limit: 128m
+    command:
+      - -varz
+      - -connz
+      - -healthz
+      - -jsz
+      - streams
+      - http://nats:8222
+    expose:
+      - "7777"
+    networks:
+      - aurora-net
+    depends_on:
+      nats:
+        condition: service_healthy
 
   go-ingester:
     image: ghcr.io/phucle996/aurora-go-ingester:latest
@@ -178,6 +204,7 @@ services:
     memswap_limit: 256m
     ports:
       - "${AURORA_API_PORT:-8080}:8080"
+      - "${AURORA_API_METRICS_PORT:-8086}:8086"
     env_file:
       - ./apps/go-api/.env.example
     networks:
@@ -225,6 +252,7 @@ services:
     restart: unless-stopped
     ports:
       - "${AURORA_CLICKHOUSE_HTTP_PORT:-8123}:8123"
+      - "${AURORA_CLICKHOUSE_METRICS_PORT:-9363}:9363"
     environment:
       CLICKHOUSE_DB: "${AURORA_CLICKHOUSE_DATABASE:-aurora}"
       CLICKHOUSE_USER: "${AURORA_CLICKHOUSE_USER:-aurora}"
@@ -232,6 +260,7 @@ services:
     volumes:
       - aurora-clickhouse-data:/var/lib/clickhouse
       - ./infra/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./infra/clickhouse/prometheus.xml:/etc/clickhouse-server/config.d/prometheus.xml:ro
     networks:
       - aurora-net
     healthcheck:

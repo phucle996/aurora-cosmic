@@ -11,6 +11,7 @@ import (
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/service"
 	"go-api/internal/http/handler"
+	"go-api/internal/observer"
 )
 
 type fakeAnalytics struct{}
@@ -18,13 +19,19 @@ type fakeAnalytics struct{}
 func (fakeAnalytics) ListCandidates(context.Context, int, string, entity.PageRequest) (entity.Page[entity.Candidate], error) {
 	return entity.Page[entity.Candidate]{Items: []entity.Candidate{}, Limit: 100}, nil
 }
-func (fakeAnalytics) ListAnomalies(context.Context, int, string, entity.PageRequest) (entity.Page[entity.Anomaly], error) {
+func (fakeAnalytics) GetCandidate(context.Context, string, string) (*entity.CandidateDetail, error) {
+	return &entity.CandidateDetail{}, nil
+}
+func (fakeAnalytics) ListAnomalies(context.Context, int, string, bool, entity.PageRequest) (entity.Page[entity.Anomaly], error) {
 	return entity.Page[entity.Anomaly]{Items: []entity.Anomaly{}, Limit: 100}, nil
 }
-func (fakeAnalytics) ListTargets(context.Context, int, entity.PageRequest) (entity.Page[entity.Target], error) {
+func (fakeAnalytics) ListTargets(context.Context, entity.TargetQuery) (entity.Page[entity.Target], error) {
 	return entity.Page[entity.Target]{Items: []entity.Target{}, Limit: 100}, nil
 }
-func (fakeAnalytics) GetLightcurve(context.Context, int64, entity.PageRequest) (*entity.Lightcurve, error) {
+func (fakeAnalytics) GetTarget(context.Context, int64, int) (*entity.TargetDetail, error) {
+	return &entity.TargetDetail{}, nil
+}
+func (fakeAnalytics) GetLightcurve(context.Context, int64, int, entity.PageRequest) (*entity.Lightcurve, error) {
 	return &entity.Lightcurve{TICID: 101, Time: []float64{}, Flux: []float64{}}, nil
 }
 
@@ -51,7 +58,7 @@ func (fakeReadiness) Check(context.Context) (map[string]string, bool) {
 
 type fakeMonitoring struct{}
 
-func (fakeMonitoring) Query(context.Context, entity.MonitoringWindow) ([]entity.MonitoringComponent, error) {
+func (fakeMonitoring) Query(context.Context, entity.MonitoringWindow, string) ([]entity.MonitoringComponent, error) {
 	return []entity.MonitoringComponent{}, nil
 }
 
@@ -65,12 +72,12 @@ func newTestRouter() *app.Router {
 		ModelsHandler:     handler.NewModelsHandler(fakeModels{}, fakeInference{}),
 		SystemHandler:     handler.NewSystemHandler(fakeReadiness{}),
 		MonitoringHandler: handler.NewMonitoringHandler(fakeMonitoring{}),
-	})
+	}, observer.New())
 }
 
 func TestRouterEndpoints(t *testing.T) {
 	router := newTestRouter()
-	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/targets", "/api/v1/candidates?snapshot_id=gold-v1-test", "/api/v1/anomalies?snapshot_id=gold-v1-test", "/api/v1/lightcurves?tic_id=101"} {
+	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/targets", "/api/v1/targets/101?sector=42", "/api/v1/candidates?snapshot_id=gold-v1-test", "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", "/api/v1/anomalies?snapshot_id=gold-v1-test", "/api/v1/lightcurves?tic_id=101&sector=42"} {
 		req := httptest.NewRequest(http.MethodGet, endpoint, nil)
 		recorder := httptest.NewRecorder()
 		router.ServeHTTP(recorder, req)
@@ -83,12 +90,30 @@ func TestRouterEndpoints(t *testing.T) {
 	}
 }
 
+func TestMonitoringTabValidation(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/monitoring?tab=not-a-component", nil)
+	recorder := httptest.NewRecorder()
+	newTestRouter().ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("monitoring endpoint returned HTTP %d, expected 400", recorder.Code)
+	}
+}
+
 func TestSnapshotIsRequired(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/anomalies", nil)
 	recorder := httptest.NewRecorder()
 	newTestRouter().ServeHTTP(recorder, req)
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("anomaly endpoint returned HTTP %d, expected 400", recorder.Code)
+	}
+}
+
+func TestAnomalyFlagFilterValidation(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/anomalies?snapshot_id=gold-v1-test&only_flagged=maybe", nil)
+	recorder := httptest.NewRecorder()
+	newTestRouter().ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("anomaly only_flagged filter returned HTTP %d, expected 400", recorder.Code)
 	}
 }
 

@@ -1,6 +1,8 @@
 package app
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -12,6 +14,7 @@ import (
 	"go-api/infra/nats"
 	"go-api/infra/prometheus"
 	"go-api/internal/config"
+	"go-api/internal/observer"
 )
 
 type Infrastructure struct {
@@ -22,8 +25,9 @@ type Infrastructure struct {
 }
 
 type App struct {
-	Server *http.Server
-	Addr   string
+	Server   *http.Server
+	Observer *observer.Server
+	Addr     string
 }
 
 func New(cfg *config.Config, log *slog.Logger) (*App, error) {
@@ -39,7 +43,12 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 		return nil, fmt.Errorf("initialize module: %w", err)
 	}
 
-	router := NewRouter(cfg, module)
+	metrics := observer.New()
+	router := NewRouter(cfg, module, metrics)
+	observerServer, err := observer.Start(cfg.Metrics.Addr, metrics)
+	if err != nil {
+		return nil, fmt.Errorf("start observer: %w", err)
+	}
 	addr := net.JoinHostPort(cfg.Server.Host, fmt.Sprintf("%d", cfg.Server.Port))
 
 	srv := &http.Server{
@@ -53,7 +62,27 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 	}
 
 	return &App{
-		Server: srv,
-		Addr:   addr,
+		Server:   srv,
+		Observer: observerServer,
+		Addr:     addr,
 	}, nil
+}
+
+// Shutdown gracefully stops both the public API and its dedicated observer.
+func (a *App) Shutdown(ctx context.Context) error {
+	if a == nil {
+		return nil
+	}
+	var shutdownErrs []error
+	if a.Server != nil {
+		if err := a.Server.Shutdown(ctx); err != nil {
+			shutdownErrs = append(shutdownErrs, err)
+		}
+	}
+	if a.Observer != nil {
+		if err := a.Observer.Shutdown(ctx); err != nil {
+			shutdownErrs = append(shutdownErrs, err)
+		}
+	}
+	return errors.Join(shutdownErrs...)
 }

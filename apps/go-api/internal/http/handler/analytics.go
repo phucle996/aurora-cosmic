@@ -5,9 +5,11 @@ import (
 	"go-api/internal/domain/service"
 	"go-api/internal/http/dto"
 	"go-api/internal/taxonomy"
+	"math"
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -48,7 +50,6 @@ func (h *AnalyticsHandler) ListCandidates(c *gin.Context) {
 		}
 		sector = s
 	}
-
 	snapshot := c.Query("snapshot_id")
 	if snapshot == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": taxonomy.ErrMissingSnapshot.Error()})
@@ -69,7 +70,7 @@ func (h *AnalyticsHandler) ListCandidates(c *gin.Context) {
 	for i, item := range result.Items {
 		candidates[i] = gin.H{
 			"prediction_id":         item.PredictionID,
-			"source_product_id":    item.SourceProductID,
+			"source_product_id":     item.SourceProductID,
 			"tic_id":                item.TICID,
 			"sector":                item.Sector,
 			"raw_logit":             item.RawLogit,
@@ -81,18 +82,74 @@ func (h *AnalyticsHandler) ListCandidates(c *gin.Context) {
 			"gold_snapshot_id":      item.SnapshotID,
 			"runtime_validation_id": item.ValidationID,
 			"runtime_package_id":    item.RuntimePkgID,
+			"predicted_at":          item.PredictedAt,
 		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"task":        "candidate_vetting",
-		"count":       result.Count,
-		"candidates":  candidates,
+		"task":       "candidate_vetting",
+		"count":      result.Count,
+		"candidates": candidates,
 		"page": gin.H{
 			"count":    result.Count,
 			"limit":    result.Limit,
 			"offset":   result.Offset,
 			"has_more": result.HasMore,
+		},
+		"snapshot_id": snapshot,
+	})
+}
+
+func (h *AnalyticsHandler) GetCandidate(c *gin.Context) {
+	predictionID := c.Param("prediction_id")
+	if predictionID == "" || !snapshotPattern.MatchString(predictionID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "prediction_id is invalid"})
+		return
+	}
+	snapshot := c.Query("snapshot_id")
+	if snapshot == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": taxonomy.ErrMissingSnapshot.Error()})
+		return
+	}
+	if !snapshotPattern.MatchString(snapshot) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": taxonomy.ErrInvalidSnapshot.Error()})
+		return
+	}
+	detail, err := h.analytics.GetCandidate(c.Request.Context(), predictionID, snapshot)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			c.JSON(http.StatusNotFound, gin.H{"error": taxonomy.ErrNotFound.Error()})
+		} else {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": taxonomy.ErrAnalyticsUnavailable.Error()})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"candidate": gin.H{
+			"prediction_id":         detail.Candidate.PredictionID,
+			"source_product_id":     detail.Candidate.SourceProductID,
+			"tic_id":                detail.Candidate.TICID,
+			"sector":                detail.Candidate.Sector,
+			"raw_logit":             detail.Candidate.RawLogit,
+			"candidate_score":       detail.Candidate.CandidateScore,
+			"decision_threshold":    detail.Candidate.Threshold,
+			"above_threshold":       detail.Candidate.AboveThreshold,
+			"model_version":         detail.Candidate.ModelVersion,
+			"registered_model_id":   detail.Candidate.RegisteredModel,
+			"gold_snapshot_id":      detail.Candidate.SnapshotID,
+			"runtime_validation_id": detail.Candidate.ValidationID,
+			"runtime_package_id":    detail.Candidate.RuntimePkgID,
+			"predicted_at":          detail.Candidate.PredictedAt,
+		},
+		"evidence": gin.H{
+			"lineage_id": detail.Evidence.LineageID, "feature_version": detail.Evidence.FeatureVersion, "feature_fingerprint": detail.Evidence.FeatureFingerprint,
+			"n_points": detail.Evidence.NPoints, "time_span": detail.Evidence.TimeSpan, "median_cadence": detail.Evidence.MedianCadence, "max_gap": detail.Evidence.MaxGap,
+			"flux_mean": detail.Evidence.FluxMean, "flux_std": detail.Evidence.FluxStd, "flux_amplitude": detail.Evidence.FluxAmplitude, "flux_rms": detail.Evidence.FluxRMS, "median_flux_err": detail.Evidence.MedianFluxErr,
+			"bls_available": detail.Evidence.BLSAvailable, "bls_period": detail.Evidence.BLSPeriod, "bls_duration": detail.Evidence.BLSDuration, "bls_transit_time": detail.Evidence.BLSTransitTime, "bls_depth": detail.Evidence.BLSDepth, "bls_power": detail.Evidence.BLSPower,
+			"tpf_evidence_available": detail.Evidence.TPFEvidenceAvailable, "pixel_mad_median": detail.Evidence.PixelMADMedian, "variability_peak_fraction": detail.Evidence.VariabilityPeakFraction,
+			"transit_evidence_available": detail.Evidence.TransitEvidenceAvailable, "transit_deficit_sum": detail.Evidence.TransitDeficitSum, "transit_deficit_center_offset": detail.Evidence.TransitDeficitCenterOffset,
+			"tic_available": detail.Evidence.TICAvailable, "tmag": detail.Evidence.TMag, "teff": detail.Evidence.Teff, "stellar_radius": detail.Evidence.StellarRadius, "stellar_mass": detail.Evidence.StellarMass, "logg": detail.Evidence.LogG,
+			"matched_toi_id": detail.Evidence.MatchedTOIID, "toi_match_status": detail.Evidence.TOIMatchStatus, "matched_tce_id": detail.Evidence.MatchedTCEID, "tce_match_status": detail.Evidence.TCEMatchStatus,
 		},
 		"snapshot_id": snapshot,
 	})
@@ -119,14 +176,13 @@ func (h *AnalyticsHandler) ListAnomalies(c *gin.Context) {
 
 	var sector int
 	if raw := c.Query("sector"); raw != "" {
-		s, err := strconv.Atoi(raw)
-		if err != nil || s < 1 {
+		s, parseErr := strconv.Atoi(raw)
+		if parseErr != nil || s < 1 {
 			c.JSON(http.StatusBadRequest, gin.H{"error": taxonomy.ErrInvalidSector.Error()})
 			return
 		}
 		sector = s
 	}
-
 	snapshot := c.Query("snapshot_id")
 	if snapshot == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": taxonomy.ErrMissingSnapshot.Error()})
@@ -136,8 +192,17 @@ func (h *AnalyticsHandler) ListAnomalies(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": taxonomy.ErrInvalidSnapshot.Error()})
 		return
 	}
+	flaggedOnly := true
+	if raw := c.Query("only_flagged"); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "only_flagged must be a boolean"})
+			return
+		}
+		flaggedOnly = parsed
+	}
 
-	result, err := h.analytics.ListAnomalies(c.Request.Context(), sector, snapshot, page)
+	result, err := h.analytics.ListAnomalies(c.Request.Context(), sector, snapshot, flaggedOnly, page)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "analytical data store is unavailable"})
 		return
@@ -147,7 +212,7 @@ func (h *AnalyticsHandler) ListAnomalies(c *gin.Context) {
 	for i, item := range result.Items {
 		anomalies[i] = gin.H{
 			"prediction_id":         item.PredictionID,
-			"source_product_id":    item.SourceProductID,
+			"source_product_id":     item.SourceProductID,
 			"tic_id":                item.TICID,
 			"sector":                item.Sector,
 			"reconstruction_mse":    item.ReconstructionMSE,
@@ -158,20 +223,22 @@ func (h *AnalyticsHandler) ListAnomalies(c *gin.Context) {
 			"gold_snapshot_id":      item.SnapshotID,
 			"runtime_validation_id": item.ValidationID,
 			"runtime_package_id":    item.RuntimePkgID,
+			"predicted_at":          item.PredictedAt,
 		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"task":        "astronomical_anomaly_detection",
-		"count":       result.Count,
-		"anomalies":   anomalies,
+		"task":      "astronomical_anomaly_detection",
+		"count":     result.Count,
+		"anomalies": anomalies,
 		"page": gin.H{
 			"count":    result.Count,
 			"limit":    result.Limit,
 			"offset":   result.Offset,
 			"has_more": result.HasMore,
 		},
-		"snapshot_id": snapshot,
+		"snapshot_id":  snapshot,
+		"only_flagged": flaggedOnly,
 	})
 }
 
@@ -194,17 +261,96 @@ func (h *AnalyticsHandler) ListTargets(c *gin.Context) {
 		page.Offset = offset
 	}
 
-	var sector int
+	query := entity.TargetQuery{Page: page}
+	if raw := c.Query("tic_id"); raw != "" {
+		ticID, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || ticID < 1 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "tic_id must be a positive integer"})
+			return
+		}
+		query.TICID = ticID
+	}
 	if raw := c.Query("sector"); raw != "" {
-		s, err := strconv.Atoi(raw)
-		if err != nil || s < 1 {
+		sector, err := strconv.Atoi(raw)
+		if err != nil || sector < 1 {
 			c.JSON(http.StatusBadRequest, gin.H{"error": taxonomy.ErrInvalidSector.Error()})
 			return
 		}
-		sector = s
+		query.Sector = sector
+	}
+	parseFloat := func(name string, target **float64) bool {
+		raw := c.Query(name)
+		if raw == "" {
+			return true
+		}
+		value, err := strconv.ParseFloat(raw, 64)
+		if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+			return false
+		}
+		*target = &value
+		return true
+	}
+	if !parseFloat("tmag_min", &query.TessMagMin) || !parseFloat("tmag_max", &query.TessMagMax) ||
+		!parseFloat("teff_min", &query.EffectiveTMin) || !parseFloat("teff_max", &query.EffectiveTMax) ||
+		!parseFloat("ra_min", &query.RAMin) || !parseFloat("ra_max", &query.RAMax) ||
+		!parseFloat("dec_min", &query.DecMin) || !parseFloat("dec_max", &query.DecMax) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": taxonomy.ErrInvalidTargetFilter.Error()})
+		return
+	}
+	if query.TessMagMin != nil && query.TessMagMax != nil && *query.TessMagMin > *query.TessMagMax {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "tmag_min must not exceed tmag_max"})
+		return
+	}
+	if query.EffectiveTMin != nil && query.EffectiveTMax != nil && *query.EffectiveTMin > *query.EffectiveTMax {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "teff_min must not exceed teff_max"})
+		return
+	}
+	if query.RAMin != nil && (*query.RAMin < 0 || *query.RAMin > 360) || query.RAMax != nil && (*query.RAMax < 0 || *query.RAMax > 360) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "RA must be between 0 and 360 degrees"})
+		return
+	}
+	if query.DecMin != nil && (*query.DecMin < -90 || *query.DecMin > 90) || query.DecMax != nil && (*query.DecMax < -90 || *query.DecMax > 90) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Dec must be between -90 and 90 degrees"})
+		return
+	}
+	if query.RAMin != nil && query.RAMax != nil && *query.RAMin > *query.RAMax {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ra_min must not exceed ra_max"})
+		return
+	}
+	if query.DecMin != nil && query.DecMax != nil && *query.DecMin > *query.DecMax {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "dec_min must not exceed dec_max"})
+		return
+	}
+	if status := c.Query("pipeline_status"); status != "" {
+		if status != "discovered" && status != "ingested" && status != "scored" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "pipeline_status must be discovered, ingested, or scored"})
+			return
+		}
+		query.PipelineStatus = status
+	}
+	parseBoolFilter := func(name string, target **bool) bool {
+		raw := c.Query(name)
+		if raw == "" {
+			return true
+		}
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			return false
+		}
+		*target = &value
+		return true
+	}
+	if !parseBoolFilter("has_lightcurve", &query.HasLightcurve) || !parseBoolFilter("has_candidate", &query.HasCandidate) || !parseBoolFilter("has_anomaly", &query.HasAnomaly) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "has_lightcurve, has_candidate, and has_anomaly must be boolean"})
+		return
+	}
+	query.Sort = c.Query("sort")
+	if query.Sort != "" && query.Sort != "tmag_asc" && query.Sort != "tmag_desc" && query.Sort != "teff_asc" && query.Sort != "teff_desc" && query.Sort != "candidate_desc" && query.Sort != "anomaly_desc" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported target sort"})
+		return
 	}
 
-	result, err := h.analytics.ListTargets(c.Request.Context(), sector, page)
+	result, err := h.analytics.ListTargets(c.Request.Context(), query)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "analytical data store is unavailable"})
 		return
@@ -213,16 +359,13 @@ func (h *AnalyticsHandler) ListTargets(c *gin.Context) {
 	targets := make([]gin.H, len(result.Items))
 	for i, item := range result.Items {
 		targets[i] = gin.H{
-			"tic_id":       item.TICID,
-			"tess_mag":     item.TessMag,
-			"ra":           item.RA,
-			"dec":          item.Dec,
-			"effective_t":  item.EffectiveT,
-			"surface_grav": item.SurfaceGrav,
-			"radius":       item.Radius,
-			"sector":       item.Sector,
-			"matched_toi":  item.TOI,
-			"disposition":  item.Disposition,
+			"tic_id": item.TICID, "tess_mag": item.TessMag, "ra": item.RA, "dec": item.Dec,
+			"effective_t": item.EffectiveT, "surface_grav": item.SurfaceGrav, "radius": item.Radius,
+			"sector": item.Sector, "matched_toi": item.TOI, "disposition": item.Disposition,
+			"has_lightcurve": item.HasLightcurve, "lightcurve_points": item.LightcurvePoints, "lightcurve_time_span": item.LightcurveTimeSpan,
+			"has_candidate": item.HasCandidate, "candidate_prediction_id": item.CandidatePredictionID, "candidate_score": item.CandidateScore, "candidate_above_threshold": item.CandidateAboveThreshold,
+			"has_anomaly": item.HasAnomaly, "anomaly_prediction_id": item.AnomalyPredictionID, "anomaly_score": item.AnomalyScore,
+			"pipeline_status": item.PipelineStatus,
 		}
 	}
 
@@ -234,6 +377,43 @@ func (h *AnalyticsHandler) ListTargets(c *gin.Context) {
 			"limit":    result.Limit,
 			"offset":   result.Offset,
 			"has_more": result.HasMore,
+		},
+	})
+}
+
+func (h *AnalyticsHandler) GetTarget(c *gin.Context) {
+	ticID, err := strconv.ParseInt(c.Param("tic_id"), 10, 64)
+	if err != nil || ticID < 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "tic_id must be a positive integer"})
+		return
+	}
+	sector := 0
+	if raw := c.Query("sector"); raw != "" {
+		sector, err = strconv.Atoi(raw)
+		if err != nil || sector < 1 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": taxonomy.ErrInvalidSector.Error()})
+			return
+		}
+	}
+	target, err := h.analytics.GetTarget(c.Request.Context(), ticID, sector)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			c.JSON(http.StatusNotFound, gin.H{"error": taxonomy.ErrNotFound.Error()})
+		} else {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": taxonomy.ErrAnalyticsUnavailable.Error()})
+		}
+		return
+	}
+	item := target.Target
+	c.JSON(http.StatusOK, gin.H{
+		"target": gin.H{
+			"tic_id": item.TICID, "tess_mag": item.TessMag, "ra": item.RA, "dec": item.Dec,
+			"effective_t": item.EffectiveT, "surface_grav": item.SurfaceGrav, "radius": item.Radius,
+			"sector": item.Sector, "matched_toi": item.TOI, "disposition": item.Disposition,
+			"has_lightcurve": item.HasLightcurve, "lightcurve_points": item.LightcurvePoints, "lightcurve_time_span": item.LightcurveTimeSpan,
+			"has_candidate": item.HasCandidate, "candidate_prediction_id": item.CandidatePredictionID, "candidate_score": item.CandidateScore, "candidate_above_threshold": item.CandidateAboveThreshold,
+			"has_anomaly": item.HasAnomaly, "anomaly_prediction_id": item.AnomalyPredictionID, "anomaly_score": item.AnomalyScore,
+			"pipeline_status": item.PipelineStatus,
 		},
 	})
 }
@@ -267,14 +447,24 @@ func (h *AnalyticsHandler) GetLightcurve(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "tic_id must be a positive integer"})
 		return
 	}
+	sector := 0
+	if raw := c.Query("sector"); raw != "" {
+		parsed, parseErr := strconv.Atoi(raw)
+		if parseErr != nil || parsed < 1 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": taxonomy.ErrInvalidSector.Error()})
+			return
+		}
+		sector = parsed
+	}
 
-	result, err := h.analytics.GetLightcurve(c.Request.Context(), ticID, page)
+	result, err := h.analytics.GetLightcurve(c.Request.Context(), ticID, sector, page)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "analytical data store is unavailable"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"tic_id": result.TICID,
+		"sector": result.Sector,
 		"time":   result.Time,
 		"flux":   result.Flux,
 		"page": gin.H{

@@ -18,75 +18,140 @@ func NewMonitoringService(prometheus repo.PrometheusQuerier) domainService.Monit
 	return &MonitoringService{prometheus: prometheus}
 }
 
-type componentSpec struct{ ID, Name, Group, Container string }
-
-var components = []componentSpec{
-	{"go-ingester", "Go Ingester", "Pipeline", "aurora-go-ingester"},
-	{"rust-preprocessor", "Rust Preprocessor", "Pipeline", "aurora-rust-preprocessor"},
-	{"python-ml-worker", "Python ML Worker", "Pipeline", "aurora-python-ml-worker"},
-	{"rust-inference", "Rust GPU Inference", "Pipeline", "aurora-rust-inference"},
-	{"go-api", "Go API", "Platform", "aurora-go-api"},
-	{"minio", "MinIO Storage", "Platform", "aurora-minio"},
-	{"nats", "NATS JetStream", "Platform", "aurora-nats"},
-	{"clickhouse", "ClickHouse", "Platform", "aurora-clickhouse"},
-	{"prometheus", "Prometheus", "Observability", "aurora-prometheus"},
+type metricSpec struct {
+	Key   string
+	Name  string
+	Unit  string
+	Kind  string
+	Query string
 }
 
-func (s *MonitoringService) Query(ctx context.Context, window entity.MonitoringWindow) ([]entity.MonitoringComponent, error) {
+type componentSpec struct {
+	ID        string
+	Name      string
+	Group     string
+	Container string
+	Job       string
+	Metrics   []metricSpec
+}
+
+func rate(metric string) string {
+	return fmt.Sprintf("sum(rate(%s[2m]))", metric)
+}
+
+func averageDuration(metric string) string {
+	return fmt.Sprintf("sum(rate(%s_sum[2m])) / clamp_min(sum(rate(%s_count[2m])), 1)", metric, metric)
+}
+
+var components = []componentSpec{
+	{
+		ID: "go-ingester", Name: "Go Ingester", Group: "Pipeline", Container: "aurora-go-ingester", Job: "aurora-go-ingester",
+		Metrics: []metricSpec{
+			{Key: "throughput", Name: "Products / second", Unit: "products/s", Kind: "rate", Query: rate("aurora_ingester_products_total")},
+			{Key: "duration", Name: "Processing duration", Unit: "seconds", Kind: "duration", Query: averageDuration("aurora_ingester_product_duration_seconds")},
+			{Key: "errors", Name: "Errors / second", Unit: "errors/s", Kind: "rate", Query: rate("aurora_ingester_errors_total")},
+			{Key: "inflight", Name: "In-flight products", Unit: "products", Kind: "gauge", Query: "aurora_ingester_inflight_products"},
+			{Key: "queue", Name: "Queue depth", Unit: "products", Kind: "gauge", Query: "aurora_ingester_queue_depth"},
+			{Key: "bytes", Name: "Bytes / second", Unit: "bytes/s", Kind: "rate", Query: rate("aurora_ingester_bytes_processed_total")},
+		},
+	},
+	{
+		ID: "rust-preprocessor", Name: "Rust Preprocessor", Group: "Pipeline", Container: "aurora-rust-preprocessor", Job: "aurora-rust-preprocessor",
+		Metrics: []metricSpec{
+			{Key: "throughput", Name: "Products / second", Unit: "products/s", Kind: "rate", Query: rate("aurora_preprocessor_products_total")},
+			{Key: "duration", Name: "Processing duration", Unit: "seconds", Kind: "duration", Query: averageDuration("aurora_preprocessor_processing_duration_seconds")},
+			{Key: "errors", Name: "Errors / second", Unit: "errors/s", Kind: "rate", Query: rate("aurora_preprocessor_errors_total")},
+			{Key: "inflight", Name: "In-flight workers", Unit: "workers", Kind: "gauge", Query: "aurora_preprocessor_inflight_workers"},
+			{Key: "queue", Name: "Queue depth", Unit: "products", Kind: "gauge", Query: "aurora_preprocessor_queue_depth"},
+			{Key: "bytes", Name: "Bytes / second", Unit: "bytes/s", Kind: "rate", Query: rate("aurora_preprocessor_bytes_total")},
+		},
+	},
+	{
+		ID: "python-ml-worker", Name: "Python ML Worker", Group: "Pipeline", Container: "aurora-python-ml-worker", Job: "aurora-python-ml-worker",
+		Metrics: []metricSpec{
+			{Key: "throughput", Name: "Jobs / second", Unit: "jobs/s", Kind: "rate", Query: rate("aurora_ml_jobs_total")},
+			{Key: "duration", Name: "Job duration", Unit: "seconds", Kind: "duration", Query: averageDuration("aurora_ml_job_duration_seconds")},
+			{Key: "errors", Name: "Errors / second", Unit: "errors/s", Kind: "rate", Query: rate("aurora_ml_errors_total")},
+			{Key: "inflight", Name: "In-flight jobs", Unit: "jobs", Kind: "gauge", Query: "aurora_ml_inflight_jobs"},
+			{Key: "queue", Name: "Queue depth", Unit: "jobs", Kind: "gauge", Query: "aurora_ml_queue_depth"},
+			{Key: "rows", Name: "Rows / second", Unit: "rows/s", Kind: "rate", Query: rate("aurora_ml_rows_processed_total")},
+		},
+	},
+	{
+		ID: "rust-inference", Name: "Rust GPU Inference", Group: "Pipeline", Container: "aurora-rust-inference", Job: "aurora-rust-inference",
+		Metrics: []metricSpec{
+			{Key: "throughput", Name: "Jobs / second", Unit: "jobs/s", Kind: "rate", Query: rate("aurora_inference_jobs_total")},
+			{Key: "duration", Name: "Inference duration", Unit: "seconds", Kind: "duration", Query: averageDuration("aurora_inference_processing_duration_seconds")},
+			{Key: "errors", Name: "Errors / second", Unit: "errors/s", Kind: "rate", Query: rate("aurora_inference_errors_total")},
+			{Key: "inflight", Name: "In-flight jobs", Unit: "jobs", Kind: "gauge", Query: "aurora_inference_inflight_jobs"},
+			{Key: "queue", Name: "Queue depth", Unit: "jobs", Kind: "gauge", Query: "aurora_inference_queue_depth"},
+			{Key: "rows", Name: "Rows / second", Unit: "rows/s", Kind: "rate", Query: rate("aurora_inference_rows_processed_total")},
+		},
+	},
+	{
+		ID: "go-api", Name: "Go API", Group: "Platform", Container: "aurora-go-api", Job: "aurora-go-api",
+		Metrics: []metricSpec{
+			{Key: "throughput", Name: "Requests / second", Unit: "requests/s", Kind: "rate", Query: rate("aurora_api_http_requests_total")},
+			{Key: "duration", Name: "Request duration", Unit: "seconds", Kind: "duration", Query: averageDuration("aurora_api_http_request_duration_seconds")},
+			{Key: "errors", Name: "Errors / second", Unit: "errors/s", Kind: "rate", Query: rate("aurora_api_http_errors_total")},
+			{Key: "inflight", Name: "In-flight requests", Unit: "requests", Kind: "gauge", Query: "aurora_api_http_inflight_requests"},
+		},
+	},
+	{
+		ID: "minio", Name: "MinIO Storage", Group: "Platform", Container: "aurora-minio", Job: "aurora-minio",
+		Metrics: []metricSpec{
+			{Key: "availability", Name: "Availability", Unit: "up", Kind: "gauge", Query: `max(up{job="aurora-minio"})`},
+			{Key: "requests", Name: "S3 requests / second", Unit: "requests/s", Kind: "rate", Query: rate("minio_s3_requests_incoming_total")},
+			{Key: "traffic_in", Name: "Traffic received", Unit: "bytes/s", Kind: "rate", Query: rate("minio_s3_traffic_received_bytes")},
+			{Key: "traffic_out", Name: "Traffic sent", Unit: "bytes/s", Kind: "rate", Query: rate("minio_s3_traffic_sent_bytes")},
+			{Key: "usage", Name: "Storage used", Unit: "bytes", Kind: "gauge", Query: "minio_cluster_usage_total_bytes"},
+			{Key: "objects", Name: "Objects", Unit: "objects", Kind: "gauge", Query: "minio_cluster_usage_object_total"},
+			{Key: "offline_drives", Name: "Offline drives", Unit: "drives", Kind: "gauge", Query: "minio_cluster_drive_offline_total"},
+		},
+	},
+	{
+		ID: "nats", Name: "NATS JetStream", Group: "Platform", Container: "aurora-nats", Job: "aurora-nats",
+		Metrics: []metricSpec{
+			{Key: "availability", Name: "Availability", Unit: "up", Kind: "gauge", Query: `max(up{job="aurora-nats"})`},
+			{Key: "inbound", Name: "Inbound messages", Unit: "messages/s", Kind: "rate", Query: rate("gnatsd_varz_in_msgs")},
+			{Key: "outbound", Name: "Outbound messages", Unit: "messages/s", Kind: "rate", Query: rate("gnatsd_varz_out_msgs")},
+			{Key: "connections", Name: "Connections", Unit: "connections", Kind: "gauge", Query: "max(gnatsd_varz_connections)"},
+			{Key: "cpu", Name: "CPU usage", Unit: "percent", Kind: "gauge", Query: "100 * max(gnatsd_varz_cpu)"},
+			{Key: "memory", Name: "Memory", Unit: "bytes", Kind: "gauge", Query: "max(gnatsd_varz_mem)"},
+			{Key: "pending_bytes", Name: "Pending bytes", Unit: "bytes", Kind: "gauge", Query: "max(gnatsd_connz_pending_bytes)"},
+		},
+	},
+	{
+		ID: "clickhouse", Name: "ClickHouse", Group: "Platform", Container: "aurora-clickhouse", Job: "aurora-clickhouse",
+		Metrics: []metricSpec{
+			{Key: "availability", Name: "Availability", Unit: "up", Kind: "gauge", Query: `max(up{job="aurora-clickhouse"})`},
+			{Key: "queries", Name: "Queries / second", Unit: "queries/s", Kind: "rate", Query: rate("ClickHouseProfileEvents_Query")},
+			{Key: "selects", Name: "Selects / second", Unit: "queries/s", Kind: "rate", Query: rate("ClickHouseProfileEvents_SelectQuery")},
+			{Key: "inserts", Name: "Inserts / second", Unit: "queries/s", Kind: "rate", Query: rate("ClickHouseProfileEvents_InsertQuery")},
+			{Key: "failed_queries", Name: "Failed queries / second", Unit: "queries/s", Kind: "rate", Query: rate("ClickHouseProfileEvents_FailedQuery")},
+			{Key: "active_queries", Name: "Active queries", Unit: "queries", Kind: "gauge", Query: "max(ClickHouseMetrics_Query)"},
+			{Key: "memory", Name: "Memory used", Unit: "bytes", Kind: "gauge", Query: "max(ClickHouseMetrics_MemoryTracking)"},
+		},
+	},
+}
+
+func (s *MonitoringService) Query(ctx context.Context, window entity.MonitoringWindow, tab string) ([]entity.MonitoringComponent, error) {
 	if s.prometheus == nil {
 		return nil, fmt.Errorf("Prometheus monitoring is unavailable")
 	}
+	selected, err := selectComponents(tab)
+	if err != nil {
+		return nil, err
+	}
 	end := time.Now().UTC()
 	start := end.Add(-window.Duration)
-	result := make([]entity.MonitoringComponent, len(components))
+	result := make([]entity.MonitoringComponent, len(selected))
 	var wg sync.WaitGroup
-	for i, spec := range components {
+	for i, spec := range selected {
 		wg.Add(1)
 		go func(i int, spec componentSpec) {
 			defer wg.Done()
-
-			component := entity.MonitoringComponent{
-				ID:        spec.ID,
-				Name:      spec.Name,
-				Group:     spec.Group,
-				Container: spec.Container,
-				Status:    "no_data",
-			}
-			queries := map[string]string{
-				"cpu":        fmt.Sprintf(`sum(rate(container_cpu_usage_seconds_total{name=%q}[2m]))`, spec.Container),
-				"memory":     fmt.Sprintf(`max(container_memory_working_set_bytes{name=%q})`, spec.Container),
-				"network_rx": fmt.Sprintf(`sum(rate(container_network_receive_bytes_total{name=%q}[2m]))`, spec.Container),
-				"network_tx": fmt.Sprintf(`sum(rate(container_network_transmit_bytes_total{name=%q}[2m]))`, spec.Container),
-			}
-			var qWg sync.WaitGroup
-			var mu sync.Mutex
-			for name, expression := range queries {
-				qWg.Add(1)
-				go func(name, expression string) {
-					defer qWg.Done()
-					points, err := s.prometheus.QueryRange(ctx, expression, start, end, window.Step)
-					if err != nil {
-						return
-					}
-					mu.Lock()
-					switch name {
-					case "cpu":
-						component.Metrics.CPU = points
-					case "memory":
-						component.Metrics.Memory = points
-					case "network_rx":
-						component.Metrics.NetworkRX = points
-					case "network_tx":
-						component.Metrics.NetworkTX = points
-					}
-					mu.Unlock()
-				}(name, expression)
-			}
-			qWg.Wait()
-			if len(component.Metrics.CPU)+len(component.Metrics.Memory)+len(component.Metrics.NetworkRX)+len(component.Metrics.NetworkTX) > 0 {
-				component.Status = "up"
-			}
-			result[i] = component
+			result[i] = s.queryComponent(ctx, spec, start, end, window.Step)
 		}(i, spec)
 	}
 	wg.Wait()
@@ -97,4 +162,46 @@ func (s *MonitoringService) Query(ctx context.Context, window entity.MonitoringW
 		return result[i].Group < result[j].Group
 	})
 	return result, nil
+}
+
+func (s *MonitoringService) queryComponent(ctx context.Context, spec componentSpec, start, end time.Time, step time.Duration) entity.MonitoringComponent {
+	component := entity.MonitoringComponent{ID: spec.ID, Name: spec.Name, Group: spec.Group, Container: spec.Container, Status: "no_data", Metrics: make([]entity.MonitoringMetric, len(spec.Metrics))}
+	var wg sync.WaitGroup
+	for i, metric := range spec.Metrics {
+		wg.Add(1)
+		go func(i int, metric metricSpec) {
+			defer wg.Done()
+			points, err := s.prometheus.QueryRange(ctx, metric.Query, start, end, step)
+			if err != nil {
+				return
+			}
+			component.Metrics[i] = entity.MonitoringMetric{Key: metric.Key, Name: metric.Name, Unit: metric.Unit, Kind: metric.Kind, Points: points}
+		}(i, metric)
+	}
+	wg.Wait()
+	available := 0
+	for _, metric := range component.Metrics {
+		if len(metric.Points) > 0 {
+			available++
+		}
+	}
+	switch {
+	case available == len(component.Metrics) && available > 0:
+		component.Status = "up"
+	case available > 0:
+		component.Status = "degraded"
+	}
+	return component
+}
+
+func selectComponents(tab string) ([]componentSpec, error) {
+	if tab == "" || tab == entity.MonitoringAllTab {
+		return components, nil
+	}
+	for _, component := range components {
+		if component.ID == tab {
+			return []componentSpec{component}, nil
+		}
+	}
+	return nil, fmt.Errorf("unknown monitoring tab %q", tab)
 }

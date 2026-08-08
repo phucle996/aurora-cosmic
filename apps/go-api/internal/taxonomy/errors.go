@@ -5,6 +5,7 @@ import "errors"
 var (
 	ErrInvalidPage          = errors.New("invalid page parameters")
 	ErrInvalidSector        = errors.New("sector must be a positive integer")
+	ErrInvalidTargetFilter  = errors.New("invalid target filter")
 	ErrMissingSnapshot      = errors.New("snapshot_id is required")
 	ErrInvalidSnapshot      = errors.New("snapshot_id contains invalid characters")
 	ErrStorageUnavailable   = errors.New("storage is unavailable")

@@ -7,7 +7,9 @@ import (
 
 type Analytics interface {
 	ListCandidates(context.Context, int, string, entity.PageRequest) (entity.Page[entity.Candidate], error)
-	ListAnomalies(context.Context, int, string, entity.PageRequest) (entity.Page[entity.Anomaly], error)
-	ListTargets(context.Context, int, entity.PageRequest) (entity.Page[entity.Target], error)
-	GetLightcurve(context.Context, int64, entity.PageRequest) (*entity.Lightcurve, error)
+	GetCandidate(context.Context, string, string) (*entity.CandidateDetail, error)
+	ListAnomalies(context.Context, int, string, bool, entity.PageRequest) (entity.Page[entity.Anomaly], error)
+	ListTargets(context.Context, entity.TargetQuery) (entity.Page[entity.Target], error)
+	GetTarget(context.Context, int64, int) (*entity.TargetDetail, error)
+	GetLightcurve(context.Context, int64, int, entity.PageRequest) (*entity.Lightcurve, error)
 }
