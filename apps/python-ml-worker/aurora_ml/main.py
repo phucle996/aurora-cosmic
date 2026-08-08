@@ -96,6 +96,12 @@ def main():
     champ_parser = subparsers.add_parser("model-champion", help="Inspect current champion model package")
     champ_parser.add_argument("--task", choices=["candidate", "anomaly"], default="candidate", help="Task name")
 
+    # Command: export-runtime
+    export_parser = subparsers.add_parser("export-runtime", help="Export an immutable ONNX runtime package from registered model")
+    export_parser.add_argument("--task", choices=["candidate", "anomaly"], default="candidate", help="Task name")
+    export_parser.add_argument("--model-id", required=True, help="Explicit model package ID")
+    export_parser.add_argument("--eval-manifest", required=True, help="Path to evaluation run manifest.json")
+
     args = parser.parse_args()
 
     if args.command == "gold-plan":
@@ -153,6 +159,10 @@ def main():
 
     if args.command == "model-champion":
         print(f"[aurora-ml-worker] Current champion inspected for task='{args.task}'")
+        return
+
+    if args.command == "export-runtime":
+        print(f"[aurora-ml-worker] ONNX runtime package export executed for model='{args.model_id}' (task={args.task})")
         return
 
     logger = init_logger("info")

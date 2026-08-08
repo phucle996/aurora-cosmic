@@ -33,12 +33,26 @@ class AnomalyPreprocessor:
     feature_scales: Dict[str, float] = field(default_factory=dict)
     schema_version: int = 1
 
-    def fit(self, train_rows: List[Dict[str, Any]], split_id: str = "") -> "AnomalyPreprocessor":
+    def fit(
+        self_or_cls,
+        train_rows: List[Dict[str, Any]],
+        feature_order: Optional[Tuple[str, ...]] = None,
+        split_id: str = "",
+    ) -> "AnomalyPreprocessor":
         """Fit preprocessor statistics strictly on TRAIN split rows."""
         if not train_rows:
             raise AnomalyPreprocessingError("EMPTY_TRAIN_ROWS: Cannot fit preprocessor on empty train rows")
 
-        self.split_id = split_id
+        if isinstance(self_or_cls, type):
+            inst = self_or_cls()
+            return inst.fit(train_rows, feature_order=feature_order, split_id=split_id)
+
+        self = self_or_cls
+        if split_id:
+            self.split_id = split_id
+        if feature_order is not None:
+            self.feature_order = feature_order
+
         medians: Dict[str, float] = {}
         means: Dict[str, float] = {}
         scales: Dict[str, float] = {}
@@ -60,14 +74,17 @@ class AnomalyPreprocessor:
                 means[feat] = 0.0
                 scales[feat] = 1.0
             else:
-                arr = np.array(raw_vals, dtype=np.float64)
-                med = float(np.median(arr))
-                mn = float(np.mean(arr))
-                std = float(np.std(arr))
-
+                med = float(np.median(raw_vals))
                 medians[feat] = med
-                means[feat] = mn
-                scales[feat] = std if std > 1e-12 else 1.0
+
+                # Impute missing values with TRAIN median and compute standardization
+                imputed = [fval if not math.isnan(fval) else med for fval in raw_vals]
+                mean_val = float(np.mean(imputed))
+                std_val = float(np.std(imputed))
+                scale_val = std_val if std_val > 1e-9 else 1.0
+
+                means[feat] = mean_val
+                scales[feat] = scale_val
 
         self.feature_medians = medians
         self.feature_means = means

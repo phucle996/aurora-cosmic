@@ -568,4 +568,5 @@ class ModelRegistry:
                     )
                 )
 
+        records.sort(key=lambda r: r.created_at)
         return records

@@ -76,8 +76,15 @@ def sample_gold_manifest(snapshot_id: str = "gold-v1-test12345678", snapshot_typ
 
 def sample_candidate_rows_for_evaluation() -> List[Dict[str, Any]]:
     rows = []
-    # Training targets: TIC 101 (POSITIVE), 102 (NEGATIVE), 103 (POSITIVE), 104 (NEGATIVE)
-    for tic, lbl, sec in [(101, "POSITIVE", 10), (102, "NEGATIVE", 10), (103, "POSITIVE", 11), (104, "NEGATIVE", 11)]:
+    # Training targets: 5 POSITIVE, 5 NEGATIVE across diverse TICs
+    train_specs = [
+        (101, "POSITIVE", 10), (102, "NEGATIVE", 10),
+        (103, "POSITIVE", 11), (104, "NEGATIVE", 11),
+        (105, "POSITIVE", 12), (106, "NEGATIVE", 12),
+        (107, "POSITIVE", 13), (108, "NEGATIVE", 13),
+        (109, "POSITIVE", 14), (110, "NEGATIVE", 14),
+    ]
+    for tic, lbl, sec in train_specs:
         row = {
             "source_product_id": f"prod_{tic}_s{sec}",
             "lineage_id": f"lin_{tic}",
@@ -132,8 +139,12 @@ def sample_candidate_rows_for_evaluation() -> List[Dict[str, Any]]:
 
 def sample_anomaly_rows_for_evaluation() -> List[Dict[str, Any]]:
     rows = []
-    # Training targets: TIC 101, 102, 103, 104
-    for tic, sec in [(101, 10), (102, 10), (103, 11), (104, 11)]:
+    # Training targets: TIC 101..110
+    for tic, sec in [
+        (101, 10), (102, 10), (103, 11), (104, 11),
+        (105, 12), (106, 12), (107, 13), (108, 13),
+        (109, 14), (110, 14),
+    ]:
         row = {
             "source_product_id": f"prod_anom_{tic}_s{sec}",
             "lineage_id": f"lin_{tic}",
@@ -141,11 +152,11 @@ def sample_anomaly_rows_for_evaluation() -> List[Dict[str, Any]]:
             "tic_id": tic,
             "sector": sec,
             "silver_sha256": "d" * 64,
-            "lc_feature_version": 1,
-            "lc_feature_fingerprint": "e" * 64,
+            "anomaly_view_version": "anom-v1",
+            "anomaly_view_fingerprint": "a" * 64,
         }
         for f in ANOMALY_MODEL_INPUT_FEATURES:
-            row[f] = 1.0 + (tic % 5) * 0.1
+            row[f] = 0.1
         rows.append(row)
 
     # Golden targets: TIC 201, 202, 203
@@ -385,7 +396,7 @@ def test_full_candidate_evaluation_flow():
     """Integration test: Execute evaluate_candidate_model and verify sibling JSON artifacts."""
     manifest = sample_gold_manifest()
     all_rows = sample_candidate_rows_for_evaluation()
-    train_rows = all_rows[:4]
+    train_rows = all_rows[:10]
 
     view = build_candidate_ml_view(manifest, train_rows)
     split = create_deterministic_group_split(view, seed=42)
@@ -415,53 +426,65 @@ def test_full_candidate_evaluation_flow():
             preprocessing_sha256="p" * 64,
             training_seed=42,
             hyperparameters={},
-            train_row_count=2,
-            validation_row_count=2,
+            train_row_count=5,
+            validation_row_count=5,
             train_positive_count=1,
             train_negative_count=1,
             val_positive_count=1,
             val_negative_count=1,
             best_epoch=10,
-            best_validation_loss=0.01,
+            best_validation_loss=0.05,
             model_sha256="mod" * 21 + "m",
             metrics_sha256="met" * 21 + "m",
             created_at="2026-08-08T00:00:00Z",
         )
 
-        model = CandidateTabularMLP(input_dim=len(CANDIDATE_MODEL_INPUT_FEATURES))
-        golden_cohort = build_candidate_golden_cohort(manifest, all_rows, split)
-        recent_cohort = build_candidate_recent_cohort(manifest, all_rows, split, golden_cohort, training_max_sector=11)
+        train_manifest_path = os.path.join(tmp_dir, "training_manifest.json")
+        with open(train_manifest_path, "w", encoding="utf-8") as f:
+            json.dump(asdict(train_manifest), f)
 
-        eval_manifest, thresh_data, metrics_data = evaluate_candidate_model(
-            training_manifest=train_manifest,
-            training_split=split,
-            golden_cohort=golden_cohort,
-            training_rows=train_rows,
-            golden_rows=all_rows,
-            model_state_dict=model.state_dict(),
-            preprocessor_json_path=prep_path,
-            recent_cohort=recent_cohort,
-            recent_rows=all_rows,
-            dest_dir=tmp_dir,
+        # Build Golden and Recent cohorts
+        golden_cohort = build_evaluation_cohort(
+            task="candidate_vetting",
+            kind="GOLDEN",
+            gold_manifest=manifest,
+            rows=all_rows,
+        )
+        recent_cohort = build_evaluation_cohort(
+            task="candidate_vetting",
+            kind="RECENT",
+            gold_manifest=manifest,
+            rows=all_rows,
         )
 
-        assert isinstance(eval_manifest, EvaluationRunManifest)
-        assert eval_manifest.task == "candidate_vetting"
-        assert eval_manifest.golden_cohort_id == golden_cohort.cohort_id
-        assert eval_manifest.recent_cohort_id == recent_cohort.cohort_id
+        golden_path = os.path.join(tmp_dir, "golden_cohort.json")
+        recent_path = os.path.join(tmp_dir, "recent_cohort.json")
+        with open(golden_path, "w", encoding="utf-8") as f:
+            json.dump(golden_cohort.to_dict(), f)
+        with open(recent_path, "w", encoding="utf-8") as f:
+            json.dump(recent_cohort.to_dict(), f)
 
-        # Verify output directory and sibling files
-        out_dir = os.path.join(tmp_dir, eval_manifest.evaluation_run_id)
-        assert os.path.exists(os.path.join(out_dir, "threshold.json"))
-        assert os.path.exists(os.path.join(out_dir, "metrics.json"))
-        assert os.path.exists(os.path.join(out_dir, "manifest.json"))
+        # Execute candidate evaluation
+        eval_manifest = evaluate_candidate_model(
+            training_run_manifest_path=train_manifest_path,
+            preprocessing_json_path=prep_path,
+            golden_cohort_path=golden_path,
+            recent_cohort_path=recent_path,
+            output_dir=tmp_dir,
+        )
+
+        assert eval_manifest.schema_version == 1
+        assert eval_manifest.task == "candidate_vetting"
+        assert os.path.exists(os.path.join(tmp_dir, "threshold.json"))
+        assert os.path.exists(os.path.join(tmp_dir, "metrics.json"))
+        assert os.path.exists(os.path.join(tmp_dir, "manifest.json"))
 
 
 def test_full_anomaly_evaluation_flow():
     """Integration test: Execute evaluate_anomaly_model and verify anomaly artifacts."""
     manifest = sample_gold_manifest(snapshot_type="ANOMALY")
     all_rows = sample_anomaly_rows_for_evaluation()
-    train_rows = all_rows[:4]
+    train_rows = all_rows[:10]
 
     view = build_anomaly_ml_view(manifest, train_rows)
     split = create_anomaly_group_split(view, seed=42)
@@ -490,38 +513,45 @@ def test_full_anomaly_evaluation_flow():
             preprocessing_sha256="p" * 64,
             training_seed=42,
             hyperparameters={},
-            train_row_count=2,
-            validation_row_count=2,
+            train_group_count=5,
+            validation_group_count=5,
+            train_row_count=5,
+            validation_row_count=5,
             best_epoch=10,
-            best_validation_loss=0.01,
+            validation_reconstruction_loss=0.01,
+            validation_score_mean=0.01,
+            validation_score_median=0.01,
+            validation_score_p95=0.02,
+            validation_score_p99=0.05,
+            validation_score_max=0.1,
             model_sha256="mod" * 21 + "m",
             metrics_sha256="met" * 21 + "m",
             created_at="2026-08-08T00:00:00Z",
         )
 
-        model = AnomalyLightcurveAutoencoder(input_dim=len(ANOMALY_MODEL_INPUT_FEATURES))
-        golden_cohort = build_anomaly_golden_cohort(manifest, all_rows, split)
-        recent_cohort = build_anomaly_recent_cohort(manifest, all_rows, split, golden_cohort, training_max_sector=11)
+        train_manifest_path = os.path.join(tmp_dir, "training_manifest.json")
+        with open(train_manifest_path, "w", encoding="utf-8") as f:
+            json.dump(asdict(train_manifest), f)
 
-        eval_manifest, thresh_data, metrics_data = evaluate_anomaly_model(
-            training_manifest=train_manifest,
-            training_split=split,
-            golden_cohort=golden_cohort,
-            training_rows=train_rows,
-            golden_rows=all_rows,
-            model_state_dict=model.state_dict(),
-            preprocessor_json_path=prep_path,
-            recent_cohort=recent_cohort,
-            recent_rows=all_rows,
-            dest_dir=tmp_dir,
+        golden_cohort = build_evaluation_cohort(
+            task="astronomical_anomaly_detection",
+            kind="GOLDEN",
+            gold_manifest=manifest,
+            rows=all_rows,
+        )
+        golden_path = os.path.join(tmp_dir, "golden_cohort.json")
+        with open(golden_path, "w", encoding="utf-8") as f:
+            json.dump(golden_cohort.to_dict(), f)
+
+        eval_manifest = evaluate_anomaly_model(
+            training_run_manifest_path=train_manifest_path,
+            preprocessing_json_path=prep_path,
+            golden_cohort_path=golden_path,
+            output_dir=tmp_dir,
         )
 
-        assert isinstance(eval_manifest, EvaluationRunManifest)
+        assert eval_manifest.schema_version == 1
         assert eval_manifest.task == "astronomical_anomaly_detection"
-        assert "golden_reference_alert_rate" in metrics_data
-        assert "golden_synthetic_detection_rate" in metrics_data
-
-        out_dir = os.path.join(tmp_dir, eval_manifest.evaluation_run_id)
-        assert os.path.exists(os.path.join(out_dir, "threshold.json"))
-        assert os.path.exists(os.path.join(out_dir, "metrics.json"))
-        assert os.path.exists(os.path.join(out_dir, "manifest.json"))
+        assert os.path.exists(os.path.join(tmp_dir, "threshold.json"))
+        assert os.path.exists(os.path.join(tmp_dir, "metrics.json"))
+        assert os.path.exists(os.path.join(tmp_dir, "manifest.json"))

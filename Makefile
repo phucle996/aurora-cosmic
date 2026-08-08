@@ -190,6 +190,10 @@ e2e-stage5:
 	@echo "Running Stage 5 Gold & Scientific Analytics E2E validation script..."
 	@./tests/e2e/stage5-gold-analytics.sh
 
+e2e-stage6:
+	@echo "Running Stage 6 ML Training, Evaluation & Runtime Parity E2E validation..."
+	@./tests/e2e/stage6-runtime-parity.sh
+
 test-rust:
 	@echo "Running Rust tests..."
 	@cd apps/rust-preprocessor && cargo test
