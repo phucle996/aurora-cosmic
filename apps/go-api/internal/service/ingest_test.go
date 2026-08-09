@@ -48,11 +48,11 @@ func TestIngestStatusReadsCheckpointAndTelemetry(t *testing.T) {
 }
 
 func TestIngestStorageCapsAndSortsListing(t *testing.T) {
-	listing, err := NewIngestService(fakeIngestObjects{}, nil, "aurora").Storage(context.Background(), "bronze/", 1)
+	listing, err := NewIngestService(fakeIngestObjects{}, nil, "aurora").Storage(context.Background(), "bronze/", 1, 1)
 	if err != nil {
 		t.Fatalf("storage: %v", err)
 	}
-	if listing.Total != 2 || !listing.Truncated || len(listing.Objects) != 1 || listing.Objects[0].Key != "bronze/new.fits" {
+	if listing.Total != 2 || listing.TotalBytes != 62 || !listing.Truncated || len(listing.Objects) != 1 || listing.Objects[0].Key != "bronze/new.fits" {
 		t.Fatalf("unexpected listing: %#v", listing)
 	}
 }

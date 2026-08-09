@@ -2,14 +2,18 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/repo"
 	domainService "go-api/internal/domain/service"
+
+	"github.com/google/uuid"
 )
 
 const preprocessingObservationWindow = 5 * time.Minute
@@ -27,10 +31,46 @@ var preprocessingMetrics = []preprocessingMetric{
 	{key: "last_success", query: "max(aurora_preprocessor_last_success_timestamp_seconds)"},
 }
 
-type PreprocessingService struct{ prometheus repo.PrometheusQuerier }
+type PreprocessingService struct {
+	prometheus repo.PrometheusQuerier
+	dispatcher repo.WorkflowDispatcher
+}
 
-func NewPreprocessingService(prometheus repo.PrometheusQuerier) domainService.Preprocessing {
-	return &PreprocessingService{prometheus: prometheus}
+func NewPreprocessingService(prometheus repo.PrometheusQuerier, dispatchers ...repo.WorkflowDispatcher) domainService.Preprocessing {
+	var dispatcher repo.WorkflowDispatcher
+	if len(dispatchers) > 0 {
+		dispatcher = dispatchers[0]
+	}
+	return &PreprocessingService{prometheus: prometheus, dispatcher: dispatcher}
+}
+
+func (s *PreprocessingService) Start(ctx context.Context, request entity.PreprocessingStartRequest) (*entity.PreprocessingControlJob, error) {
+	if s.dispatcher == nil {
+		return nil, fmt.Errorf("preprocessing control is unavailable")
+	}
+	request.Mode = strings.ToLower(strings.TrimSpace(request.Mode))
+	if request.Mode == "" {
+		request.Mode = "stream"
+	}
+	if request.Mode != "stream" && request.Mode != "batch" {
+		return nil, fmt.Errorf("preprocessing mode must be stream or batch")
+	}
+	job := &entity.PreprocessingControlJob{JobID: "preprocess-job-" + uuid.NewString()[:8], Status: "accepted", Mode: request.Mode, IngestRunID: strings.TrimSpace(request.IngestRunID), Prefix: strings.TrimSpace(request.Prefix), StartedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+	command, err := json.Marshal(struct {
+		Action      string `json:"action"`
+		JobID       string `json:"job_id"`
+		Mode        string `json:"mode"`
+		IngestRunID string `json:"ingest_run_id,omitempty"`
+		Prefix      string `json:"prefix,omitempty"`
+	}{Action: "start", JobID: job.JobID, Mode: job.Mode, IngestRunID: job.IngestRunID, Prefix: job.Prefix})
+	if err != nil {
+		return nil, fmt.Errorf("encode preprocessing command: %w", err)
+	}
+	if err := s.dispatcher.Dispatch(ctx, "preprocessing_start", command); err != nil {
+		return nil, fmt.Errorf("dispatch preprocessing command: %w", err)
+	}
+	job.Status = "running"
+	return job, nil
 }
 
 func (s *PreprocessingService) Query(ctx context.Context) (*entity.PreprocessingGraph, error) {

@@ -136,7 +136,7 @@ func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error
 	return status, nil
 }
 
-func (s *IngestService) Storage(ctx context.Context, prefix string, limit int) (*entity.StorageListing, error) {
+func (s *IngestService) Storage(ctx context.Context, prefix string, page, limit int) (*entity.StorageListing, error) {
 	if s.objects == nil {
 		return nil, fmt.Errorf("MinIO storage is unavailable")
 	}
@@ -147,17 +147,28 @@ func (s *IngestService) Storage(ctx context.Context, prefix string, limit int) (
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
+	if page < 1 {
+		page = 1
+	}
 	objects, err := s.objects.ListObjects(ctx, prefix)
 	if err != nil {
 		return nil, err
 	}
 	sort.Slice(objects, func(i, j int) bool { return objects[i].LastModified.After(objects[j].LastModified) })
-	objectCount := len(objects)
-	if objectCount > limit {
-		objectCount = limit
+	var totalBytes int64
+	for _, object := range objects {
+		totalBytes += object.Size
 	}
-	listing := &entity.StorageListing{Bucket: s.bucket, Prefix: prefix, Total: len(objects), Truncated: len(objects) > limit, Objects: make([]entity.StorageObject, 0, objectCount)}
-	for _, object := range objects[:objectCount] {
+	start := (page - 1) * limit
+	if start > len(objects) {
+		start = len(objects)
+	}
+	end := start + limit
+	if end > len(objects) {
+		end = len(objects)
+	}
+	listing := &entity.StorageListing{Bucket: s.bucket, Prefix: prefix, Page: page, PageSize: limit, Total: len(objects), TotalBytes: totalBytes, Truncated: end < len(objects), Objects: make([]entity.StorageObject, 0, end-start)}
+	for _, object := range objects[start:end] {
 		listing.Objects = append(listing.Objects, entity.StorageObject{Key: object.Key, SizeBytes: object.Size, ETag: object.ETag, LastModified: object.LastModified})
 	}
 	return listing, nil

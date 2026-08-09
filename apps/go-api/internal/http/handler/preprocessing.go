@@ -2,8 +2,10 @@ package handler
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
+	"go-api/internal/domain/entity"
 	"go-api/internal/domain/service"
 
 	"github.com/gin-gonic/gin"
@@ -13,6 +15,26 @@ type PreprocessingHandler struct{ preprocessing service.Preprocessing }
 
 func NewPreprocessingHandler(preprocessing service.Preprocessing) *PreprocessingHandler {
 	return &PreprocessingHandler{preprocessing: preprocessing}
+}
+
+func (h *PreprocessingHandler) Start(c *gin.Context) {
+	var request entity.PreprocessingStartRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid preprocessing start request"})
+		return
+	}
+	if request.Mode != "" && request.Mode != "stream" && request.Mode != "batch" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "mode must be stream or batch"})
+		return
+	}
+	request.IngestRunID = strings.TrimSpace(request.IngestRunID)
+	request.Prefix = strings.TrimSpace(request.Prefix)
+	job, err := h.preprocessing.Start(c.Request.Context(), request)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "preprocessing control unavailable"})
+		return
+	}
+	c.JSON(http.StatusAccepted, job)
 }
 
 func (h *PreprocessingHandler) Query(c *gin.Context) {

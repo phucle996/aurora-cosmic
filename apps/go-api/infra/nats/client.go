@@ -39,6 +39,8 @@ func subjectForTask(task string) (string, error) {
 		return "aurora.v1.inference.candidate.requested", nil
 	case "astronomical_anomaly_detection":
 		return "aurora.v1.inference.anomaly.requested", nil
+	case "preprocessing_start":
+		return "aurora.v1.preprocessing.control", nil
 	default:
 		return "", fmt.Errorf("unsupported inference task %q", task)
 	}

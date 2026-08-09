@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -25,6 +26,15 @@ func (h *IngestHandler) Status(c *gin.Context) {
 }
 
 func (h *IngestHandler) Storage(c *gin.Context) {
+	page := 1
+	if raw := strings.TrimSpace(c.Query("page")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "page must be a positive integer"})
+			return
+		}
+		page = parsed
+	}
 	limit := 100
 	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
@@ -34,7 +44,7 @@ func (h *IngestHandler) Storage(c *gin.Context) {
 		}
 		limit = parsed
 	}
-	listing, err := h.ingest.Storage(c.Request.Context(), c.Query("prefix"), limit)
+	listing, err := h.ingest.Storage(c.Request.Context(), c.Query("prefix"), page, limit)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "storage listing unavailable"})
 		return
@@ -54,6 +64,18 @@ func (h *IngestHandler) Start(c *gin.Context) {
 	}
 	job, err := h.ingest.Start(c.Request.Context(), request)
 	if err != nil {
+		var statusError interface{ HTTPStatusCode() int }
+		if errors.As(err, &statusError) {
+			status := statusError.HTTPStatusCode()
+			if status == http.StatusConflict {
+				c.JSON(http.StatusConflict, gin.H{"error": "an ingest job is already running"})
+				return
+			}
+			if status >= http.StatusBadRequest && status < http.StatusInternalServerError {
+				c.JSON(status, gin.H{"error": "invalid ingest control request"})
+				return
+			}
+		}
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ingester control unavailable"})
 		return
 	}
@@ -63,6 +85,18 @@ func (h *IngestHandler) Start(c *gin.Context) {
 func (h *IngestHandler) Cancel(c *gin.Context) {
 	job, err := h.ingest.Cancel(c.Request.Context(), strings.TrimSpace(c.Param("job_id")))
 	if err != nil {
+		var statusError interface{ HTTPStatusCode() int }
+		if errors.As(err, &statusError) {
+			status := statusError.HTTPStatusCode()
+			if status == http.StatusNotFound {
+				c.JSON(http.StatusNotFound, gin.H{"error": "ingest job not found"})
+				return
+			}
+			if status >= http.StatusBadRequest && status < http.StatusInternalServerError {
+				c.JSON(status, gin.H{"error": "invalid ingest control request"})
+				return
+			}
+		}
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ingester control unavailable"})
 		return
 	}

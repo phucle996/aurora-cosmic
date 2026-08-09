@@ -58,8 +58,13 @@ connections and low-level transport operations.
   throughput, error, and last-success metrics. The observation scope is
   `preprocessor_service`; per-TIC hop state requires lineage/run telemetry.
 * `/api/v1/ingest/status` reads the durable ingestion checkpoint and enriches
-  it with bounded ingester Prometheus rates. `/api/v1/storage?prefix=bronze/`
-  lists a capped MinIO object view for the operational browser.
+  it with bounded ingester Prometheus rates. `/api/v1/storage?prefix=bronze/&page=1&limit=50`
+  returns a paginated MinIO object view with `total_bytes` for the selected
+  prefix.
+* `POST /api/v1/preprocessing/jobs` publishes an asynchronous preprocessing
+  start command to NATS. `mode=stream` follows new Bronze events; `mode=batch`
+  drains retained Bronze events. Preprocessing owns a separate checkpoint
+  namespace under `checkpoints/preprocessing/`.
 * Collection endpoints accept `limit` (1–1000) and `offset` (0–10000000).
 * `tic_id` is required for lightcurve queries; the API never silently chooses a
   synthetic/default target.
@@ -77,6 +82,6 @@ GET /api/v1/models?task=anomaly
 GET /api/v1/inference/jobs?model_id=model-anom-v1-dde689ef5383
 GET /api/v1/preprocessing/graph
 GET /api/v1/ingest/status
-GET /api/v1/storage?prefix=bronze/&limit=100
+GET /api/v1/storage?prefix=bronze/&page=1&limit=50
 POST /api/v1/inference/jobs/inference-job-v1-<id>/retry
 ```

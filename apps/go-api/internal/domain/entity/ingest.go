@@ -50,6 +50,7 @@ type IngestControlJob struct {
 	Status       string    `json:"status"`
 	ManifestPath string    `json:"manifest_path,omitempty"`
 	Sector       int       `json:"sector,omitempty"`
+	Concurrency  int       `json:"concurrency,omitempty"`
 	StartedAt    time.Time `json:"started_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 	Error        string    `json:"error,omitempty"`
@@ -63,9 +64,12 @@ type StorageObject struct {
 }
 
 type StorageListing struct {
-	Bucket    string          `json:"bucket"`
-	Prefix    string          `json:"prefix"`
-	Total     int             `json:"total"`
-	Truncated bool            `json:"truncated"`
-	Objects   []StorageObject `json:"objects"`
+	Bucket     string          `json:"bucket"`
+	Prefix     string          `json:"prefix"`
+	Page       int             `json:"page"`
+	PageSize   int             `json:"page_size"`
+	Total      int             `json:"total"`
+	TotalBytes int64           `json:"total_bytes"`
+	Truncated  bool            `json:"truncated"`
+	Objects    []StorageObject `json:"objects"`
 }

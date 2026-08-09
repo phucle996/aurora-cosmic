@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"go-api/internal/app"
@@ -67,6 +68,9 @@ type fakePreprocessing struct{}
 func (fakePreprocessing) Query(context.Context) (*entity.PreprocessingGraph, error) {
 	return &entity.PreprocessingGraph{Source: "prometheus", Status: "not_observed", Hops: []entity.PreprocessingHop{}, Edges: []entity.PreprocessingEdge{}}, nil
 }
+func (fakePreprocessing) Start(context.Context, entity.PreprocessingStartRequest) (*entity.PreprocessingControlJob, error) {
+	return &entity.PreprocessingControlJob{JobID: "preprocess-job-test", Status: "running", Mode: "stream"}, nil
+}
 
 type fakeIngest struct{}
 
@@ -74,7 +78,7 @@ func (fakeIngest) Status(context.Context) (*entity.IngestStatus, error) {
 	return &entity.IngestStatus{Observed: false, Source: "minio-checkpoint", Status: "not_observed"}, nil
 }
 
-func (fakeIngest) Storage(context.Context, string, int) (*entity.StorageListing, error) {
+func (fakeIngest) Storage(context.Context, string, int, int) (*entity.StorageListing, error) {
 	return &entity.StorageListing{Bucket: "aurora", Prefix: "bronze/", Objects: []entity.StorageObject{}}, nil
 }
 
@@ -122,6 +126,16 @@ func TestMonitoringTabValidation(t *testing.T) {
 	newTestRouter().ServeHTTP(recorder, req)
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("monitoring endpoint returned HTTP %d, expected 400", recorder.Code)
+	}
+}
+
+func TestPreprocessingStart(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/preprocessing/jobs", strings.NewReader(`{"mode":"batch"}`))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	newTestRouter().ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("preprocessing start returned HTTP %d, expected 202", recorder.Code)
 	}
 }
 

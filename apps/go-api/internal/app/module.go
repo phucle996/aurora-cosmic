@@ -60,7 +60,7 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	if monitoringService == nil {
 		return nil, fmt.Errorf("service MonitoringService is nil")
 	}
-	preprocessingService := service.NewPreprocessingService(infra.Prometheus)
+	preprocessingService := service.NewPreprocessingService(infra.Prometheus, infra.NATS)
 	if preprocessingService == nil {
 		return nil, fmt.Errorf("service PreprocessingService is nil")
 	}
