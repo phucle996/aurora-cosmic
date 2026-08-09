@@ -7,6 +7,8 @@ import {
   Files,
   Gauge,
   HardDrive,
+  ChevronLeft,
+  ChevronRight,
   RefreshCw,
   Square,
   Play,
@@ -57,8 +59,8 @@ type IngestStatus = {
 };
 
 type StorageObject = { key: string; size_bytes: number; etag?: string; last_modified: string };
-type StorageListing = { bucket: string; prefix: string; total: number; truncated: boolean; objects: StorageObject[] };
-type IngestControlJob = { job_id: string; status: string; sector?: number; manifest_path?: string; started_at: string; updated_at: string; error?: string };
+type StorageListing = { bucket: string; prefix: string; page: number; page_size: number; total: number; total_bytes: number; truncated: boolean; objects: StorageObject[] };
+type IngestControlJob = { job_id: string; status: string; sector?: number; concurrency?: number; manifest_path?: string; started_at: string; updated_at: string; error?: string };
 
 const prefixes = ['bronze/', 'silver/', 'gold/', 'checkpoints/'];
 
@@ -96,22 +98,23 @@ export default function IngestStorageSection(): JSX.Element {
   const [storage, setStorage] = useState<StorageListing | null>(null);
   const [prefix, setPrefix] = useState('bronze/');
   const [customPrefix, setCustomPrefix] = useState('bronze/');
+  const [storagePage, setStoragePage] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [controlJob, setControlJob] = useState<IngestControlJob | null>(null);
   const [sector, setSector] = useState('42');
-  const [limit, setLimit] = useState('10');
   const [concurrency, setConcurrency] = useState('8');
   const [controlBusy, setControlBusy] = useState(false);
+  const configuredWorkers = Math.max(1, controlJob?.concurrency ?? (Number(concurrency) || 1));
 
-  const load = useCallback(async (isRefresh = false) => {
+  const storagePageSize = 50;
+  const load = useCallback(async () => {
     setError(null);
-    if (isRefresh) setRefreshing(true); else setLoading(true);
+    setLoading(true);
     try {
       const [nextStatus, nextStorage] = await Promise.all([
         apiFetch<IngestStatus>('/v1/ingest/status'),
-        apiFetch<StorageListing>(`/v1/storage?prefix=${encodeURIComponent(prefix)}&limit=100`),
+        apiFetch<StorageListing>(`/v1/storage?prefix=${encodeURIComponent(prefix)}&page=${storagePage}&limit=${storagePageSize}`),
       ]);
       setStatus(nextStatus);
       setStorage(nextStorage);
@@ -119,13 +122,12 @@ export default function IngestStorageSection(): JSX.Element {
       setError(loadError instanceof Error ? loadError.message : 'Không thể tải trạng thái ingest/storage');
     } finally {
       setLoading(false);
-      setRefreshing(false);
     }
-  }, [prefix]);
+  }, [prefix, storagePage]);
 
   useEffect(() => {
     void load();
-    const timer = window.setInterval(() => void load(true), 5_000);
+    const timer = window.setInterval(() => void load(), 5_000);
     return () => window.clearInterval(timer);
   }, [load]);
 
@@ -137,12 +139,14 @@ export default function IngestStorageSection(): JSX.Element {
   function selectPrefix(next: string): void {
     setPrefix(next);
     setCustomPrefix(next);
+    setStoragePage(1);
   }
 
   function submitCustomPrefix(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     const next = customPrefix.trim() || 'bronze/';
     setPrefix(next.endsWith('/') ? next : `${next}/`);
+    setStoragePage(1);
   }
 
   async function startIngest(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -150,9 +154,9 @@ export default function IngestStorageSection(): JSX.Element {
     setControlBusy(true);
     setError(null);
     try {
-      const job = await apiFetch<IngestControlJob>('/v1/ingest/jobs', { method: 'POST', body: JSON.stringify({ sector: Number(sector), limit: Number(limit), concurrency: Number(concurrency) }) });
+      const job = await apiFetch<IngestControlJob>('/v1/ingest/jobs', { method: 'POST', body: JSON.stringify({ sector: Number(sector), concurrency: Number(concurrency) }) });
       setControlJob(job);
-      await load(true);
+      await load();
     } catch (controlError) {
       setError(controlError instanceof Error ? controlError.message : 'Không thể bắt đầu ingest');
     } finally {
@@ -180,7 +184,6 @@ export default function IngestStorageSection(): JSX.Element {
         <h2 className="font-heading text-2xl font-semibold tracking-tight md:text-3xl">Ingest &amp; Storage</h2>
         <p className="mt-1 max-w-3xl text-sm text-muted-foreground">Theo dõi tiến độ tải dữ liệu vào Bronze và kiểm tra object thật trong MinIO cùng một màn hình.</p>
       </div>
-      <Button variant="outline" onClick={() => void load(true)} disabled={loading || refreshing}><RefreshCw className={refreshing ? 'animate-spin' : ''} />Refresh</Button>
     </div>
 
     {error && <div className="flex items-start gap-3 border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive"><AlertCircle className="mt-0.5 size-4 shrink-0" /><div><p className="font-medium">Không tải được ingest/storage state</p><p className="mt-1 opacity-90">{error}</p></div></div>}
@@ -192,28 +195,29 @@ export default function IngestStorageSection(): JSX.Element {
       <Stat icon={Gauge} label="Workers / queue" value={status ? `${status.inflight_products.toFixed(0)} / ${status.queue_depth.toFixed(0)}` : '—'} detail="In-flight products / queued" />
     </div>
 
-    <Card className="rounded-md"><CardHeader className="border-b border-border/60"><div className="flex items-start justify-between gap-3"><div><CardTitle>Ingest controls</CardTitle><CardDescription>Start a bounded MAST → MinIO Bronze run from the ingester control plane.</CardDescription></div>{controlJob && <Badge variant={statusVariant(controlJob.status)}>{controlJob.status}</Badge>}</div></CardHeader><CardContent className="pt-5"><form className="grid gap-3 md:grid-cols-[1fr_1fr_1fr_auto]" onSubmit={startIngest}><label className="space-y-1 text-xs text-muted-foreground">Sector<Input type="number" min={1} value={sector} onChange={(event) => setSector(event.target.value)} /></label><label className="space-y-1 text-xs text-muted-foreground">Product limit<Input type="number" min={1} max={1000} value={limit} onChange={(event) => setLimit(event.target.value)} /></label><label className="space-y-1 text-xs text-muted-foreground">Download workers<Input type="number" min={1} max={64} value={concurrency} onChange={(event) => setConcurrency(event.target.value)} /></label><div className="flex items-end gap-2">{controlJob?.status === 'running' || controlJob?.status === 'cancelling' ? <Button type="button" variant="destructive" onClick={() => void cancelIngest()} disabled={controlBusy}><Square />Cancel</Button> : <Button type="submit" disabled={controlBusy}><Play />{controlBusy ? 'Starting…' : 'Start ingest'}</Button>}</div></form>{controlJob?.error && <p className="mt-3 text-xs text-destructive">{controlJob.error}</p>}<p className="mt-3 text-xs text-muted-foreground">The run is single-flight and checkpointed in MinIO. Progress below is read from the durable checkpoint, not simulated in the browser.</p></CardContent></Card>
+    <Card className="rounded-md"><CardHeader className="border-b border-border/60"><div className="flex items-start justify-between gap-3"><div><CardTitle>Ingest controls</CardTitle><CardDescription>Start MAST → MinIO Bronze discovery. No product-count limit is sent; the 50 GB Bronze run budget remains the safety boundary.</CardDescription></div>{controlJob && <Badge variant={statusVariant(controlJob.status)}>{controlJob.status}</Badge>}</div></CardHeader><CardContent className="pt-5"><form className="grid gap-3 md:grid-cols-[1fr_1fr_auto]" onSubmit={startIngest}><label className="space-y-1 text-xs text-muted-foreground">Sector<Input type="number" min={1} value={sector} onChange={(event) => setSector(event.target.value)} /></label><label className="space-y-1 text-xs text-muted-foreground">Download workers<Input type="number" min={1} max={64} value={concurrency} onChange={(event) => setConcurrency(event.target.value)} /></label><div className="flex items-end gap-2">{controlJob?.status === 'running' || controlJob?.status === 'cancelling' ? <Button type="button" variant="destructive" onClick={() => void cancelIngest()} disabled={controlBusy}><Square />Cancel</Button> : <Button type="submit" disabled={controlBusy}><Play />{controlBusy ? 'Starting…' : 'Start ingest'}</Button>}</div></form>{controlJob?.error && <p className="mt-3 text-xs text-destructive">{controlJob.error}</p>}<p className="mt-3 text-xs text-muted-foreground">The run is single-flight and checkpointed in MinIO. Progress below is read from the durable checkpoint, not simulated in the browser.</p></CardContent></Card>
 
     <div className="grid min-w-0 gap-6 2xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
-      <Card className="min-w-0 rounded-md">
+      <Card className="min-w-0 h-[620px] rounded-md">
         <CardHeader className="border-b border-border/60"><div className="flex items-start justify-between gap-3"><div><CardTitle>Ingest progress</CardTitle><CardDescription>Durable checkpoint state from MinIO</CardDescription></div><Badge variant={statusVariant(status?.status ?? 'not_observed')}>{status?.status ?? 'not observed'}</Badge></div></CardHeader>
-        <CardContent className="space-y-5 pt-5">
+        <CardContent className="h-[540px] space-y-5 overflow-y-auto pt-5">
           {status?.observed ? <>
             <div><div className="mb-2 flex justify-between text-xs"><span className="text-muted-foreground">Product completion</span><span className="font-mono tabular-nums">{progress.toFixed(1)}%</span></div><Progress value={progress} className="h-2" /></div>
             <div className="grid gap-3 sm:grid-cols-2"><div className="border border-border/60 bg-muted/15 p-3"><p className="text-xs text-muted-foreground">Run ID</p><p className="mt-1 break-all font-mono text-xs">{status.run_id}</p></div><div className="border border-border/60 bg-muted/15 p-3"><p className="text-xs text-muted-foreground">Manifest</p><p className="mt-1 break-all font-mono text-xs">{status.manifest_path || '—'}</p></div></div>
+            <div><div className="mb-2 flex items-center justify-between"><p className="text-xs font-medium uppercase tracking-[0.1em] text-muted-foreground">Download worker slots</p><span className="font-mono text-xs text-muted-foreground">{Math.min(configuredWorkers, Math.round(status.inflight_products))}/{configuredWorkers} active</span></div><div className="grid grid-cols-2 gap-2 lg:grid-cols-4">{Array.from({ length: configuredWorkers }, (_, index) => { const active = index < Math.round(status.inflight_products); const queued = !active && index < Math.round(status.inflight_products + status.queue_depth); return <div key={index} className="border border-border/60 bg-muted/15 p-3"><div className="flex items-center justify-between text-xs"><span className="font-mono">worker-{index + 1}</span><Badge variant={active ? 'secondary' : queued ? 'outline' : 'outline'}>{active ? 'downloading' : queued ? 'queued' : 'idle'}</Badge></div><Progress value={active ? 100 : 0} className="mt-3 h-1.5" /><p className="mt-2 text-[11px] text-muted-foreground">{active ? 'Active download slot' : queued ? 'Waiting in queue' : 'Available'}</p></div>; })}</div><p className="mt-2 text-[11px] text-muted-foreground">Slot state is derived from the live inflight and queue gauges; product-level truth remains in the checkpoint table below.</p></div>
             <div className="grid gap-3 sm:grid-cols-2"><div className="flex items-center gap-2 text-xs text-muted-foreground"><Timer className="size-4" />Started {formatDate(status.started_at)}</div><div className="flex items-center gap-2 text-xs text-muted-foreground"><RefreshCw className="size-4" />Updated {formatDate(status.updated_at)}</div></div>
             {status.failed_products > 0 && <div className="border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">{status.failed_products} product(s) failed. Open the product table below to inspect retry/error details.</div>}
           </> : <div className="border border-dashed border-border/60 p-8 text-center text-sm text-muted-foreground">Chưa quan sát được checkpoint ingestion. Chạy một ingest run để progress xuất hiện tại đây.</div>}
         </CardContent>
       </Card>
 
-      <Card className="min-w-0 rounded-md">
-        <CardHeader className="border-b border-border/60"><div className="flex items-start justify-between gap-3"><div><CardTitle>Storage browser</CardTitle><CardDescription>{storage?.bucket || 'aurora'} / {storage?.prefix || prefix}</CardDescription></div><Badge variant="outline">{storage?.total ?? 0} objects</Badge></div></CardHeader>
-        <CardContent className="space-y-4 pt-5">
+      <Card className="min-w-0 h-[620px] rounded-md">
+        <CardHeader className="border-b border-border/60"><div className="flex items-start justify-between gap-3"><div><CardTitle>Storage browser</CardTitle><CardDescription>{storage?.bucket || 'aurora'} / {storage?.prefix || prefix} · {formatBytes(storage?.total_bytes ?? 0)}</CardDescription></div><Badge variant="outline">{storage?.total ?? 0} objects</Badge></div></CardHeader>
+        <CardContent className="h-[540px] space-y-4 overflow-y-auto pt-5">
           <div className="flex flex-wrap gap-2">{prefixes.map((item) => <Button key={item} variant={prefix === item ? 'secondary' : 'outline'} size="sm" onClick={() => selectPrefix(item)}><Database />{item}</Button>)}</div>
           <form className="flex gap-2" onSubmit={submitCustomPrefix}><Input value={customPrefix} onChange={(event) => setCustomPrefix(event.target.value)} placeholder="bronze/tess/..." /><Button type="submit" variant="outline">Open prefix</Button></form>
-          <div className="max-h-[430px] overflow-auto border border-border/60"><Table><TableHeader><TableRow><TableHead>Object key</TableHead><TableHead>Size</TableHead><TableHead>Modified</TableHead></TableRow></TableHeader><TableBody>{loading && !storage ? <TableRow><TableCell colSpan={3} className="h-24 text-center text-sm text-muted-foreground">Loading storage…</TableCell></TableRow> : storage?.objects.length ? storage.objects.map((object) => <TableRow key={object.key}><TableCell className="max-w-[420px] truncate font-mono text-xs" title={object.key}>{object.key}</TableCell><TableCell className="font-mono text-xs">{formatBytes(object.size_bytes)}</TableCell><TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDate(object.last_modified)}</TableCell></TableRow>) : <TableRow><TableCell colSpan={3} className="h-24 text-center text-sm text-muted-foreground">No objects under this prefix.</TableCell></TableRow>}</TableBody></Table></div>
-          {storage?.truncated && <p className="text-xs text-muted-foreground">Showing first 100 objects, sorted by most recently modified.</p>}
+          <div className="h-[360px] overflow-auto border border-border/60"><Table><TableHeader><TableRow><TableHead>Object key</TableHead><TableHead>Size</TableHead><TableHead>Modified</TableHead></TableRow></TableHeader><TableBody>{loading && !storage ? <TableRow><TableCell colSpan={3} className="h-24 text-center text-sm text-muted-foreground">Loading storage…</TableCell></TableRow> : storage?.objects.length ? storage.objects.map((object) => <TableRow key={object.key}><TableCell className="max-w-[420px] truncate font-mono text-xs" title={object.key}>{object.key}</TableCell><TableCell className="font-mono text-xs">{formatBytes(object.size_bytes)}</TableCell><TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDate(object.last_modified)}</TableCell></TableRow>) : <TableRow><TableCell colSpan={3} className="h-24 text-center text-sm text-muted-foreground">No objects under this prefix.</TableCell></TableRow>}</TableBody></Table></div>
+          <div className="flex items-center justify-between border-t border-border/60 pt-3"><span className="text-xs text-muted-foreground">Page {storage?.page ?? storagePage} · {storage?.objects.length ?? 0} shown of {storage?.total ?? 0}</span><div className="flex gap-2"><Button size="sm" variant="outline" disabled={storagePage <= 1 || loading} onClick={() => setStoragePage((page) => Math.max(1, page - 1))}><ChevronLeft />Previous</Button><Button size="sm" variant="outline" disabled={!storage?.truncated || loading} onClick={() => setStoragePage((page) => page + 1)}>Next<ChevronRight /></Button></div></div>
         </CardContent>
       </Card>
     </div>
