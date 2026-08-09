@@ -62,22 +62,48 @@ func (fakeMonitoring) Query(context.Context, entity.MonitoringWindow, string) ([
 	return []entity.MonitoringComponent{}, nil
 }
 
+type fakePreprocessing struct{}
+
+func (fakePreprocessing) Query(context.Context) (*entity.PreprocessingGraph, error) {
+	return &entity.PreprocessingGraph{Source: "prometheus", Status: "not_observed", Hops: []entity.PreprocessingHop{}, Edges: []entity.PreprocessingEdge{}}, nil
+}
+
+type fakeIngest struct{}
+
+func (fakeIngest) Status(context.Context) (*entity.IngestStatus, error) {
+	return &entity.IngestStatus{Observed: false, Source: "minio-checkpoint", Status: "not_observed"}, nil
+}
+
+func (fakeIngest) Storage(context.Context, string, int) (*entity.StorageListing, error) {
+	return &entity.StorageListing{Bucket: "aurora", Prefix: "bronze/", Objects: []entity.StorageObject{}}, nil
+}
+
+func (fakeIngest) Start(context.Context, entity.IngestStartRequest) (*entity.IngestControlJob, error) {
+	return &entity.IngestControlJob{JobID: "ingest-job-test", Status: "running"}, nil
+}
+
+func (fakeIngest) Cancel(context.Context, string) (*entity.IngestControlJob, error) {
+	return &entity.IngestControlJob{JobID: "ingest-job-test", Status: "cancelling"}, nil
+}
+
 var _ service.Analytics = fakeAnalytics{}
 
 func newTestRouter() *app.Router {
 	return app.NewRouter(&config.Config{
 		CORSAllowedOrigin: "http://localhost:8501",
 	}, &app.Module{
-		AnalyticsHandler:  handler.NewAnalyticsHandler(fakeAnalytics{}),
-		ModelsHandler:     handler.NewModelsHandler(fakeModels{}, fakeInference{}),
-		SystemHandler:     handler.NewSystemHandler(fakeReadiness{}),
-		MonitoringHandler: handler.NewMonitoringHandler(fakeMonitoring{}),
+		AnalyticsHandler:     handler.NewAnalyticsHandler(fakeAnalytics{}),
+		ModelsHandler:        handler.NewModelsHandler(fakeModels{}, fakeInference{}),
+		SystemHandler:        handler.NewSystemHandler(fakeReadiness{}),
+		MonitoringHandler:    handler.NewMonitoringHandler(fakeMonitoring{}),
+		PreprocessingHandler: handler.NewPreprocessingHandler(fakePreprocessing{}),
+		IngestHandler:        handler.NewIngestHandler(fakeIngest{}),
 	}, observer.New())
 }
 
 func TestRouterEndpoints(t *testing.T) {
 	router := newTestRouter()
-	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/targets", "/api/v1/targets/101?sector=42", "/api/v1/candidates?snapshot_id=gold-v1-test", "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", "/api/v1/anomalies?snapshot_id=gold-v1-test", "/api/v1/lightcurves?tic_id=101&sector=42"} {
+	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/preprocessing/graph", "/api/v1/ingest/status", "/api/v1/storage?prefix=bronze/&limit=10", "/api/v1/targets", "/api/v1/targets/101?sector=42", "/api/v1/candidates?snapshot_id=gold-v1-test", "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", "/api/v1/anomalies?snapshot_id=gold-v1-test", "/api/v1/lightcurves?tic_id=101&sector=42"} {
 		req := httptest.NewRequest(http.MethodGet, endpoint, nil)
 		recorder := httptest.NewRecorder()
 		router.ServeHTTP(recorder, req)

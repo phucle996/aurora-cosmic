@@ -26,6 +26,10 @@ type MetricsConfig struct {
 	Addr string
 }
 
+type ControlConfig struct {
+	Addr string
+}
+
 type IngestConfig struct {
 	Concurrency        int
 	CheckpointInterval time.Duration
@@ -55,6 +59,7 @@ type Config struct {
 	MinIO    MinIOConfig
 	NATS     NATSConfig
 	Metrics  MetricsConfig
+	Control  ControlConfig
 	Ingest   IngestConfig
 	Bronze   BronzeConfig
 	MAST     MASTConfig
@@ -127,6 +132,7 @@ func Load() (*Config, error) {
 		Metrics: MetricsConfig{
 			Addr: optionalEnv("AURORA_METRICS_ADDR", ":8081"),
 		},
+		Control: ControlConfig{Addr: optionalEnv("AURORA_INGEST_CONTROL_ADDR", ":8087")},
 		Ingest: IngestConfig{
 			Concurrency:        concurrency,
 			CheckpointInterval: checkpointInterval,

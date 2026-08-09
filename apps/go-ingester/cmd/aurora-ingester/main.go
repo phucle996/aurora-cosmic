@@ -43,7 +43,7 @@ func main() {
 	defer stop()
 
 	if len(os.Args) < 2 {
-		if err := app.Run(ctx, cfg, log); err != nil {
+		if err := app.Run(ctx, cfg, log, metrics); err != nil {
 			log.Error("Runtime error encountered", slog.Any("error", err))
 			os.Exit(1)
 		}
@@ -78,7 +78,7 @@ func main() {
 
 	default:
 		// Legacy runner
-		if err := app.Run(ctx, cfg, log); err != nil {
+		if err := app.Run(ctx, cfg, log, metrics); err != nil {
 			log.Error("Runtime error encountered", slog.Any("error", err))
 			os.Exit(1)
 		}

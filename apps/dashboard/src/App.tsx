@@ -12,6 +12,8 @@ import OverviewPage from '@/pages/overview/page';
 import MonitoringPage from '@/pages/monitoring/page';
 import TargetsPage from '@/pages/targets/page';
 import ModelsPage from '@/pages/models/page';
+import PreprocessingPage from '@/pages/preprocessing/page';
+import IngestPage from '@/pages/ingest/page';
 
 export default function App(): JSX.Element {
   return (
@@ -27,6 +29,8 @@ export default function App(): JSX.Element {
                   <Routes>
                     <Route path="/" element={<OverviewPage />} />
                     <Route path="/targets" element={<TargetsPage />} />
+                    <Route path="/preprocessing" element={<PreprocessingPage />} />
+                    <Route path="/ingest" element={<IngestPage />} />
                     <Route path="/candidates" element={<CandidatesPage />} />
                     <Route path="/anomalies" element={<AnomaliesPage />} />
                     <Route path="/monitoring" element={<MonitoringPage />} />

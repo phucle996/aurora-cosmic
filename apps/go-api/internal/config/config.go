@@ -44,14 +44,15 @@ type ClickHouseConfig struct {
 }
 
 type Config struct {
-	Core              CoreConfig
-	Server            ServerConfig
-	Metrics           MetricsConfig
-	MinIO             MinIOConfig
-	ClickHouse        ClickHouseConfig
-	NATS              NATSConfig
-	Prometheus        PrometheusConfig
-	CORSAllowedOrigin string
+	Core               CoreConfig
+	Server             ServerConfig
+	Metrics            MetricsConfig
+	MinIO              MinIOConfig
+	ClickHouse         ClickHouseConfig
+	NATS               NATSConfig
+	Prometheus         PrometheusConfig
+	IngesterControlURL string
+	CORSAllowedOrigin  string
 }
 
 func Load() (*Config, error) {
@@ -142,9 +143,10 @@ func Load() (*Config, error) {
 			User:     clickHouseUser,
 			Password: clickHousePassword,
 		},
-		NATS:              NATSConfig{URL: getenvOrDefault("NATS_URL", "nats://nats:4222")},
-		Prometheus:        PrometheusConfig{URL: getenvOrDefault("PROMETHEUS_URL", "http://prometheus:9090")},
-		CORSAllowedOrigin: corsAllowedOrigin,
+		NATS:               NATSConfig{URL: getenvOrDefault("NATS_URL", "nats://nats:4222")},
+		Prometheus:         PrometheusConfig{URL: getenvOrDefault("PROMETHEUS_URL", "http://prometheus:9090")},
+		IngesterControlURL: getenvOrDefault("INGESTER_CONTROL_URL", "http://go-ingester:8087"),
+		CORSAllowedOrigin:  corsAllowedOrigin,
 	}
 
 	if err := cfg.Validate(); err != nil {

@@ -2,11 +2,12 @@ import {
   Activity,
   AlertTriangle,
   BrainCircuit,
-  Database,
+  DownloadCloud,
   LayoutDashboard,
   Server,
   Sparkles,
   Target,
+  Workflow,
 } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router-dom';
 import type { JSX } from 'react';
@@ -27,6 +28,8 @@ import {
 const menuItems = [
   { path: '/', label: 'Platform Overview', icon: LayoutDashboard },
   { path: '/targets', label: 'TESS Target Discovery', icon: Target },
+  { path: '/preprocessing', label: 'Preprocessing & Lineage', icon: Workflow },
+  { path: '/ingest', label: 'Ingest & Storage', icon: DownloadCloud },
   { path: '/candidates', label: 'ML Transit Candidates', icon: Sparkles },
   { path: '/anomalies', label: 'Anomaly Engine', icon: AlertTriangle },
   { path: '/monitoring', label: 'Monitoring', icon: Server },
@@ -76,19 +79,6 @@ export default function Sidebar(): JSX.Element {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        <SidebarGroup>
-          <SidebarGroupLabel className="text-[11px] font-semibold uppercase tracking-[0.06em] text-sidebar-foreground/65">Data plane</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton tooltip="Storage and event streams" className="font-medium">
-                  <Database aria-hidden="true" />
-                  <span>Storage & event streams</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
       </SidebarContent>
 
       <SidebarFooter className="border-t border-sidebar-border">

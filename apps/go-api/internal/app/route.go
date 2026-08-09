@@ -37,6 +37,11 @@ func (r *Router) registerRoutes() {
 	{
 		api.GET("/system", r.module.SystemHandler.System)
 		api.GET("/monitoring", r.module.MonitoringHandler.Query)
+		api.GET("/preprocessing/graph", r.module.PreprocessingHandler.Query)
+		api.GET("/ingest/status", r.module.IngestHandler.Status)
+		api.GET("/storage", r.module.IngestHandler.Storage)
+		api.POST("/ingest/jobs", r.module.IngestHandler.Start)
+		api.POST("/ingest/jobs/:job_id/cancel", r.module.IngestHandler.Cancel)
 		api.GET("/targets", r.module.AnalyticsHandler.ListTargets)
 		api.GET("/targets/:tic_id", r.module.AnalyticsHandler.GetTarget)
 		api.GET("/candidates", r.module.AnalyticsHandler.ListCandidates)

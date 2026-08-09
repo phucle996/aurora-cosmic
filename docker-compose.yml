@@ -101,6 +101,8 @@ services:
     memswap_limit: 768m
     ports:
       - "${AURORA_INGESTER_METRICS_PORT:-8081}:8081"
+    expose:
+      - "8087"
     env_file:
       - ./apps/go-ingester/.env.example
     networks:

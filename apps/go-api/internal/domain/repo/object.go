@@ -3,6 +3,8 @@ package repo
 import (
 	"context"
 	"time"
+
+	"go-api/internal/domain/entity"
 )
 
 type ObjectInfo struct {
@@ -16,4 +18,9 @@ type ObjectRepository interface {
 	Ping(context.Context) error
 	ListObjects(context.Context, string) ([]ObjectInfo, error)
 	GetObject(context.Context, string) ([]byte, error)
+}
+
+type IngestController interface {
+	Start(context.Context, entity.IngestStartRequest) (*entity.IngestControlJob, error)
+	Cancel(context.Context, string) (*entity.IngestControlJob, error)
 }

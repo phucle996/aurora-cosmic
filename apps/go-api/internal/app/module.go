@@ -9,10 +9,12 @@ import (
 )
 
 type Module struct {
-	AnalyticsHandler  *handler.AnalyticsHandler
-	ModelsHandler     *handler.ModelsHandler
-	SystemHandler     *handler.SystemHandler
-	MonitoringHandler *handler.MonitoringHandler
+	AnalyticsHandler     *handler.AnalyticsHandler
+	ModelsHandler        *handler.ModelsHandler
+	SystemHandler        *handler.SystemHandler
+	MonitoringHandler    *handler.MonitoringHandler
+	PreprocessingHandler *handler.PreprocessingHandler
+	IngestHandler        *handler.IngestHandler
 }
 
 func NewModule(infra Infrastructure) (*Module, error) {
@@ -58,11 +60,21 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	if monitoringService == nil {
 		return nil, fmt.Errorf("service MonitoringService is nil")
 	}
+	preprocessingService := service.NewPreprocessingService(infra.Prometheus)
+	if preprocessingService == nil {
+		return nil, fmt.Errorf("service PreprocessingService is nil")
+	}
+	ingestService := service.NewIngestService(objectRepo, infra.Prometheus, infra.MinIO.Bucket, infra.Ingester)
+	if ingestService == nil {
+		return nil, fmt.Errorf("service IngestService is nil")
+	}
 
 	return &Module{
-		AnalyticsHandler:  handler.NewAnalyticsHandler(analyticsService),
-		ModelsHandler:     handler.NewModelsHandler(modelsService, inferenceService),
-		SystemHandler:     handler.NewSystemHandler(readinessService),
-		MonitoringHandler: handler.NewMonitoringHandler(monitoringService),
+		AnalyticsHandler:     handler.NewAnalyticsHandler(analyticsService),
+		ModelsHandler:        handler.NewModelsHandler(modelsService, inferenceService),
+		SystemHandler:        handler.NewSystemHandler(readinessService),
+		MonitoringHandler:    handler.NewMonitoringHandler(monitoringService),
+		PreprocessingHandler: handler.NewPreprocessingHandler(preprocessingService),
+		IngestHandler:        handler.NewIngestHandler(ingestService),
 	}, nil
 }

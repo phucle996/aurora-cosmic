@@ -51,6 +51,15 @@ connections and low-level transport operations.
 * `/api/v1/monitoring?tab=<component>&range=1h&step=60` returns one selected
   component and generic metric series (`key`, `name`, `unit`, `kind`, `points`).
   The `tab` can be omitted for the legacy all-components response.
+* `/api/v1/preprocessing/graph` projects the latest five minutes of Rust
+  preprocessor Prometheus telemetry onto the Bronze → Silver lineage canvas.
+  It returns `not_observed` when no samples exist, and otherwise derives
+  `running`, `completed`, `retry`, or `failed` from bounded worker, queue,
+  throughput, error, and last-success metrics. The observation scope is
+  `preprocessor_service`; per-TIC hop state requires lineage/run telemetry.
+* `/api/v1/ingest/status` reads the durable ingestion checkpoint and enriches
+  it with bounded ingester Prometheus rates. `/api/v1/storage?prefix=bronze/`
+  lists a capped MinIO object view for the operational browser.
 * Collection endpoints accept `limit` (1–1000) and `offset` (0–10000000).
 * `tic_id` is required for lightcurve queries; the API never silently chooses a
   synthetic/default target.
@@ -66,5 +75,8 @@ GET /api/v1/targets/882271?sector=42
 GET /api/v1/lightcurves?tic_id=882271&sector=42&limit=1000&offset=0
 GET /api/v1/models?task=anomaly
 GET /api/v1/inference/jobs?model_id=model-anom-v1-dde689ef5383
+GET /api/v1/preprocessing/graph
+GET /api/v1/ingest/status
+GET /api/v1/storage?prefix=bronze/&limit=100
 POST /api/v1/inference/jobs/inference-job-v1-<id>/retry
 ```
