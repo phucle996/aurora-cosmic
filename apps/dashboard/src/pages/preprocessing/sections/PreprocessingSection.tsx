@@ -14,7 +14,7 @@ import {
   DrawerTitle,
 } from '@/components/ui/drawer';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { apiFetch } from '@/lib/api';
+import { apiBase, apiFetch } from '@/lib/api';
 import {
   Background,
   BackgroundVariant,
@@ -120,8 +120,19 @@ export default function PreprocessingSection(): JSX.Element {
         .catch((error: unknown) => { if (mounted) { setGraph(null); setObservationError(error instanceof Error ? error.message : 'Observation unavailable'); } });
     };
     loadGraph();
+    const eventSource = new EventSource(`${apiBase}/v1/events?workflow=preprocessing`);
+    eventSource.addEventListener('workflow', (event) => {
+      const message = event as MessageEvent<string>;
+      try {
+        const update = JSON.parse(message.data) as { payload?: PreprocessingJob; status?: string };
+        if (update.payload?.job_id) setPreprocessingJob(update.payload);
+      } catch {
+        // The next graph request remains the source of truth if an event is malformed.
+      }
+      loadGraph();
+    });
     const timer = window.setInterval(loadGraph, 15_000);
-    return () => { mounted = false; window.clearInterval(timer); };
+    return () => { mounted = false; window.clearInterval(timer); eventSource.close(); };
   }, []);
   const liveHops = useMemo(() => {
     const updates = new Map((graph?.hops ?? []).map((hop) => [hop.id, hop]));

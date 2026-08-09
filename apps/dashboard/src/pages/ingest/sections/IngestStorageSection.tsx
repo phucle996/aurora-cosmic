@@ -22,7 +22,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { apiFetch } from '@/lib/api';
+import { apiBase, apiFetch } from '@/lib/api';
 
 type IngestProduct = {
   id: string;
@@ -127,8 +127,18 @@ export default function IngestStorageSection(): JSX.Element {
 
   useEffect(() => {
     void load();
+    const eventSource = new EventSource(`${apiBase}/v1/events?workflow=ingest`);
+    eventSource.addEventListener('workflow', (event) => {
+      try {
+        const update = JSON.parse((event as MessageEvent<string>).data) as { payload?: IngestControlJob };
+        if (update.payload?.job_id) setControlJob(update.payload);
+      } catch {
+        // The next authoritative status request will recover from malformed data.
+      }
+      void load();
+    });
     const timer = window.setInterval(() => void load(), 5_000);
-    return () => window.clearInterval(timer);
+    return () => { window.clearInterval(timer); eventSource.close(); };
   }, [load]);
 
   const progress = useMemo(() => {

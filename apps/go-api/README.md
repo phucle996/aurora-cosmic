@@ -61,6 +61,9 @@ connections and low-level transport operations.
   it with bounded ingester Prometheus rates. `/api/v1/storage?prefix=bronze/&page=1&limit=50`
   returns a paginated MinIO object view with `total_bytes` for the selected
   prefix.
+* `GET /api/v1/events?workflow=preprocessing` is a long-lived SSE invalidation
+  stream. Start/cancel commands publish workflow events so dashboards can
+  refetch authoritative status immediately; polling remains the fallback.
 * `POST /api/v1/preprocessing/jobs` publishes an asynchronous preprocessing
   start command to NATS. `mode=stream` follows new Bronze events; `mode=batch`
   drains retained Bronze events. Preprocessing owns a separate checkpoint
@@ -83,5 +86,6 @@ GET /api/v1/inference/jobs?model_id=model-anom-v1-dde689ef5383
 GET /api/v1/preprocessing/graph
 GET /api/v1/ingest/status
 GET /api/v1/storage?prefix=bronze/&page=1&limit=50
+GET /api/v1/events?workflow=preprocessing
 POST /api/v1/inference/jobs/inference-job-v1-<id>/retry
 ```

@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 
+	"go-api/internal/events"
 	"go-api/internal/http/handler"
 	"go-api/internal/repository"
 	"go-api/internal/service"
@@ -15,6 +16,7 @@ type Module struct {
 	MonitoringHandler    *handler.MonitoringHandler
 	PreprocessingHandler *handler.PreprocessingHandler
 	IngestHandler        *handler.IngestHandler
+	EventsHandler        *handler.EventsHandler
 }
 
 func NewModule(infra Infrastructure) (*Module, error) {
@@ -39,6 +41,7 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	if objectRepo == nil {
 		return nil, fmt.Errorf("repository ObjectMinIO is nil")
 	}
+	eventBroker := events.NewBroker()
 
 	analyticsService := service.NewAnalyticsService(analyticsRepo)
 	if analyticsService == nil {
@@ -60,11 +63,11 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	if monitoringService == nil {
 		return nil, fmt.Errorf("service MonitoringService is nil")
 	}
-	preprocessingService := service.NewPreprocessingService(infra.Prometheus, infra.NATS)
+	preprocessingService := service.NewPreprocessingServiceWithEvents(infra.Prometheus, infra.NATS, eventBroker)
 	if preprocessingService == nil {
 		return nil, fmt.Errorf("service PreprocessingService is nil")
 	}
-	ingestService := service.NewIngestService(objectRepo, infra.Prometheus, infra.MinIO.Bucket, infra.Ingester)
+	ingestService := service.NewIngestServiceWithEvents(objectRepo, infra.Prometheus, infra.MinIO.Bucket, infra.Ingester, eventBroker)
 	if ingestService == nil {
 		return nil, fmt.Errorf("service IngestService is nil")
 	}
@@ -76,5 +79,6 @@ func NewModule(infra Infrastructure) (*Module, error) {
 		MonitoringHandler:    handler.NewMonitoringHandler(monitoringService),
 		PreprocessingHandler: handler.NewPreprocessingHandler(preprocessingService),
 		IngestHandler:        handler.NewIngestHandler(ingestService),
+		EventsHandler:        handler.NewEventsHandler(eventBroker),
 	}, nil
 }

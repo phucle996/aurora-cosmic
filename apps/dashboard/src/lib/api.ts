@@ -1,4 +1,4 @@
-const apiBase = (import.meta.env.VITE_AURORA_API_URL || '/api').replace(/\/$/, '');
+export const apiBase = (import.meta.env.VITE_AURORA_API_URL || '/api').replace(/\/$/, '');
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBase}${path}`, {

@@ -19,6 +19,7 @@ type IngestService struct {
 	prometheus repo.PrometheusQuerier
 	bucket     string
 	controller repo.IngestController
+	publisher  repo.EventPublisher
 }
 
 type ingestionCheckpoint struct {
@@ -49,18 +50,38 @@ func NewIngestService(objects repo.ObjectRepository, prometheus repo.PrometheusQ
 	return &IngestService{objects: objects, prometheus: prometheus, bucket: bucket, controller: controller}
 }
 
+func NewIngestServiceWithEvents(objects repo.ObjectRepository, prometheus repo.PrometheusQuerier, bucket string, controller repo.IngestController, publisher repo.EventPublisher) domainService.Ingest {
+	return &IngestService{objects: objects, prometheus: prometheus, bucket: bucket, controller: controller, publisher: publisher}
+}
+
 func (s *IngestService) Start(ctx context.Context, request entity.IngestStartRequest) (*entity.IngestControlJob, error) {
 	if s.controller == nil {
 		return nil, fmt.Errorf("ingester control is unavailable")
 	}
-	return s.controller.Start(ctx, request)
+	job, err := s.controller.Start(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	if s.publisher != nil {
+		payload, _ := json.Marshal(job)
+		_ = s.publisher.Publish(ctx, entity.WorkflowEvent{Type: "workflow", Workflow: "ingest", Status: job.Status, JobID: job.JobID, OccurredAt: job.UpdatedAt, Payload: payload})
+	}
+	return job, nil
 }
 
 func (s *IngestService) Cancel(ctx context.Context, jobID string) (*entity.IngestControlJob, error) {
 	if s.controller == nil {
 		return nil, fmt.Errorf("ingester control is unavailable")
 	}
-	return s.controller.Cancel(ctx, jobID)
+	job, err := s.controller.Cancel(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if s.publisher != nil {
+		payload, _ := json.Marshal(job)
+		_ = s.publisher.Publish(ctx, entity.WorkflowEvent{Type: "workflow", Workflow: "ingest", Status: job.Status, JobID: job.JobID, OccurredAt: job.UpdatedAt, Payload: payload})
+	}
+	return job, nil
 }
 
 func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error) {

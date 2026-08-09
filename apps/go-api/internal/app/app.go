@@ -59,9 +59,11 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 		Handler:           router,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       60 * time.Second,
-		MaxHeaderBytes:    1 << 20,
+		// SSE workflow streams are intentionally long-lived. Downstream calls
+		// keep their own bounded contexts instead of this connection timeout.
+		WriteTimeout:   0,
+		IdleTimeout:    60 * time.Second,
+		MaxHeaderBytes: 1 << 20,
 	}
 
 	return &App{

@@ -34,6 +34,7 @@ var preprocessingMetrics = []preprocessingMetric{
 type PreprocessingService struct {
 	prometheus repo.PrometheusQuerier
 	dispatcher repo.WorkflowDispatcher
+	publisher  repo.EventPublisher
 }
 
 func NewPreprocessingService(prometheus repo.PrometheusQuerier, dispatchers ...repo.WorkflowDispatcher) domainService.Preprocessing {
@@ -42,6 +43,10 @@ func NewPreprocessingService(prometheus repo.PrometheusQuerier, dispatchers ...r
 		dispatcher = dispatchers[0]
 	}
 	return &PreprocessingService{prometheus: prometheus, dispatcher: dispatcher}
+}
+
+func NewPreprocessingServiceWithEvents(prometheus repo.PrometheusQuerier, dispatcher repo.WorkflowDispatcher, publisher repo.EventPublisher) domainService.Preprocessing {
+	return &PreprocessingService{prometheus: prometheus, dispatcher: dispatcher, publisher: publisher}
 }
 
 func (s *PreprocessingService) Start(ctx context.Context, request entity.PreprocessingStartRequest) (*entity.PreprocessingControlJob, error) {
@@ -70,6 +75,10 @@ func (s *PreprocessingService) Start(ctx context.Context, request entity.Preproc
 		return nil, fmt.Errorf("dispatch preprocessing command: %w", err)
 	}
 	job.Status = "running"
+	if s.publisher != nil {
+		payload, _ := json.Marshal(job)
+		_ = s.publisher.Publish(ctx, entity.WorkflowEvent{Type: "workflow", Workflow: "preprocessing", Status: job.Status, JobID: job.JobID, OccurredAt: job.UpdatedAt, Payload: payload})
+	}
 	return job, nil
 }
 
