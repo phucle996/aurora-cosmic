@@ -25,6 +25,10 @@ type IngestController interface {
 	Cancel(context.Context, string) (*entity.IngestControlJob, error)
 }
 
+type IngestRuntimeController interface {
+	Current(context.Context) (*entity.IngestControlJob, error)
+}
+
 type WorkflowDispatcher interface {
 	Dispatch(context.Context, string, []byte) error
 }

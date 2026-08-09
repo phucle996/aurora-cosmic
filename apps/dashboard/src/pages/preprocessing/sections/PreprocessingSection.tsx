@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { JSX, MouseEvent } from 'react';
-import { ArrowRight, Play, Workflow, X } from 'lucide-react';
+import { ArrowRight, Play, Square, Workflow, X } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -51,10 +51,20 @@ type PreprocessingGraph = {
   status: HopStatus;
   observation_scope: string;
   observed_at: string;
+  run?: PreprocessingJob | null;
+  progress: {
+    checkpoint_total: number;
+    checkpoint_completed: number;
+    checkpoint_pending: number;
+    backlog_pending: number;
+    backlog_ack_pending: number;
+    items_to_process: number;
+    observed_at?: string;
+  };
   hops: Array<Pick<Hop, 'id' | 'status' | 'observed_at' | 'metrics'>>;
   edges: Array<{ id: string; source: string; target: string; status: HopStatus }>;
 };
-type PreprocessingJob = { job_id: string; status: string; mode: string; started_at: string; updated_at: string };
+type PreprocessingJob = { job_id: string; status: string; mode: string; ingest_run_id?: string; prefix?: string; started_at: string; updated_at: string; error?: string };
 
 type CanvasSelection = { kind: 'hop' | 'edge'; id: string } | null;
 
@@ -112,11 +122,12 @@ export default function PreprocessingSection(): JSX.Element {
   const [startMode, setStartMode] = useState<'stream' | 'batch'>('stream');
   const [preprocessingJob, setPreprocessingJob] = useState<PreprocessingJob | null>(null);
   const [startBusy, setStartBusy] = useState(false);
+  const [stopBusy, setStopBusy] = useState(false);
   useEffect(() => {
     let mounted = true;
     const loadGraph = () => {
       apiFetch<PreprocessingGraph>('/v1/preprocessing/graph')
-        .then((next) => { if (mounted) { setGraph(next); setObservationError(null); } })
+        .then((next) => { if (mounted) { setGraph(next); if (next.run?.job_id) setPreprocessingJob(next.run); setObservationError(null); } })
         .catch((error: unknown) => { if (mounted) { setGraph(null); setObservationError(error instanceof Error ? error.message : 'Observation unavailable'); } });
     };
     loadGraph();
@@ -181,6 +192,9 @@ export default function PreprocessingSection(): JSX.Element {
   const edgeFrom = selectedEdge === undefined ? undefined : liveHops[selectedEdge];
   const edgeTo = selectedEdge === undefined ? undefined : liveHops[selectedEdge + 1];
   const selectedEdgeStatus = selectedEdge === undefined ? undefined : liveEdges[selectedEdge]?.status;
+  const activeRun = graph?.run ?? preprocessingJob;
+  const preprocessingIsRunning = activeRun?.status === 'running' || activeRun?.status === 'accepted' || activeRun?.status === 'cancelling';
+  const preprocessingCanStop = activeRun?.status === 'running' || activeRun?.status === 'accepted';
 
   async function startPreprocessing(): Promise<void> {
     setStartBusy(true);
@@ -198,6 +212,21 @@ export default function PreprocessingSection(): JSX.Element {
     }
   }
 
+  async function stopPreprocessing(): Promise<void> {
+    if (!activeRun?.job_id) return;
+    setStopBusy(true);
+    setObservationError(null);
+    try {
+      const job = await apiFetch<PreprocessingJob>(`/v1/preprocessing/jobs/${encodeURIComponent(activeRun.job_id)}/stop`, { method: 'POST' });
+      setPreprocessingJob(job);
+      setGraph((current) => current ? { ...current, run: job } : current);
+    } catch (error) {
+      setObservationError(error instanceof Error ? error.message : 'Không thể dừng preprocessing');
+    } finally {
+      setStopBusy(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
@@ -206,8 +235,10 @@ export default function PreprocessingSection(): JSX.Element {
           <h2 className="font-heading text-2xl font-semibold tracking-tight md:text-3xl">Preprocessing &amp; Lineage</h2>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">Canvas mô tả từng hop Bronze → Silver và thứ tự commit bảo đảm dữ liệu downstream không bị mất.</p>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2"><select value={startMode} onChange={(event) => setStartMode(event.target.value as 'stream' | 'batch')} className="h-9 border border-border bg-background px-3 text-xs"><option value="stream">Stream new Bronze events</option><option value="batch">Process retained Bronze backlog</option></select><Button onClick={() => void startPreprocessing()} disabled={startBusy}><Play />{startBusy ? 'Starting…' : 'Start preprocessing'}</Button>{preprocessingJob && <Badge variant="outline">{preprocessingJob.status} · {preprocessingJob.mode}</Badge>}<span className="w-full text-right text-xs text-muted-foreground">{observationError ? 'Live observation unavailable · showing baseline' : graph ? `Live: ${statusCopy[graph.status]} · ${graph.observation_scope}` : 'Loading live observation…'}</span></div>
+        <div className="flex flex-wrap items-center justify-end gap-2"><select value={startMode} onChange={(event) => setStartMode(event.target.value as 'stream' | 'batch')} className="h-9 border border-border bg-background px-3 text-xs" disabled={preprocessingIsRunning}><option value="stream">Stream new Bronze events</option><option value="batch">Process retained Bronze backlog</option></select><Button onClick={() => void startPreprocessing()} disabled={startBusy || preprocessingIsRunning}><Play />{preprocessingIsRunning ? (activeRun?.status === 'cancelling' ? 'Stopping…' : 'Preprocessing running…') : startBusy ? 'Starting…' : 'Start preprocessing'}</Button>{preprocessingCanStop && <Button variant="destructive" onClick={() => void stopPreprocessing()} disabled={stopBusy}><Square />{stopBusy ? 'Stopping…' : 'Stop preprocessing'}</Button>}{activeRun && <Badge variant="outline">{activeRun.status} · {activeRun.mode}</Badge>}<span className="w-full text-right text-xs text-muted-foreground">{observationError ? 'Live observation unavailable · showing baseline' : graph ? `Live: ${statusCopy[graph.status] ?? graph.status} · ${graph.observation_scope}` : 'Loading live observation…'}</span></div>
       </div>
+
+      {(startMode === 'batch' || activeRun?.mode === 'batch') && graph?.progress && <Card className="rounded-none border-primary/30"><CardHeader className="border-b border-border/60 py-4"><CardTitle className="text-base">{activeRun?.mode === 'batch' ? 'Backlog execution state' : 'Backlog preview'}</CardTitle><CardDescription>Batch bắt đầu từ checkpoint hiện có và chỉ xử lý phần còn lại trong JetStream.</CardDescription></CardHeader><CardContent className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-5"><DetailMetric label="Run / checkpoint" value={`${activeRun?.job_id ?? 'not started'} · ${graph.progress.checkpoint_completed}/${graph.progress.checkpoint_total}`} /><DetailMetric label="Checkpoint pending" value={String(graph.progress.checkpoint_pending)} /><DetailMetric label="JetStream pending" value={String(graph.progress.backlog_pending)} /><DetailMetric label="In-flight / ack pending" value={String(graph.progress.backlog_ack_pending)} /><DetailMetric label="Items to process" value={String(graph.progress.items_to_process)} /></CardContent></Card>}
 
       <Card className="overflow-hidden">
         <CardHeader className="gap-3 md:flex-row md:items-center md:justify-between"><div><CardTitle>Preprocessing canvas</CardTitle><CardDescription>Click vào node hoặc mũi tên để mở detail drawer từ cạnh dưới.</CardDescription></div><div className="flex flex-wrap gap-2 text-xs"><Legend color="bg-emerald-500" label="completed / running" /><Legend color="bg-amber-500" label="retry" /><Legend color="bg-muted-foreground/40" label="not observed" /></div></CardHeader>

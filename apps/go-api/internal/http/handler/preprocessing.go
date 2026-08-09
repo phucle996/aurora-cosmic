@@ -51,5 +51,19 @@ func (h *PreprocessingHandler) Query(c *gin.Context) {
 	for i, edge := range graph.Edges {
 		edges[i] = gin.H{"id": edge.ID, "source": edge.Source, "target": edge.Target, "status": edge.Status, "observed_at": edge.ObservedAt.Format(time.RFC3339)}
 	}
-	c.JSON(http.StatusOK, gin.H{"source": graph.Source, "observation_scope": graph.ObservationScope, "status": graph.Status, "observed_at": graph.ObservedAt.Format(time.RFC3339), "hops": hops, "edges": edges})
+	var run any
+	if graph.Run != nil {
+		run = gin.H{"job_id": graph.Run.JobID, "status": graph.Run.Status, "mode": graph.Run.Mode, "ingest_run_id": graph.Run.IngestRunID, "prefix": graph.Run.Prefix, "started_at": graph.Run.StartedAt.Format(time.RFC3339), "updated_at": graph.Run.UpdatedAt.Format(time.RFC3339), "error": graph.Run.Error}
+	}
+	progress := gin.H{"checkpoint_total": graph.Progress.CheckpointTotal, "checkpoint_completed": graph.Progress.CheckpointCompleted, "checkpoint_pending": graph.Progress.CheckpointPending, "backlog_pending": graph.Progress.BacklogPending, "backlog_ack_pending": graph.Progress.BacklogAckPending, "items_to_process": graph.Progress.ItemsToProcess, "observed_at": graph.Progress.ObservedAt.Format(time.RFC3339)}
+	c.JSON(http.StatusOK, gin.H{"source": graph.Source, "observation_scope": graph.ObservationScope, "status": graph.Status, "observed_at": graph.ObservedAt.Format(time.RFC3339), "run": run, "progress": progress, "hops": hops, "edges": edges})
+}
+
+func (h *PreprocessingHandler) Stop(c *gin.Context) {
+	job, err := h.preprocessing.Stop(c.Request.Context(), strings.TrimSpace(c.Param("job_id")))
+	if err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusAccepted, job)
 }

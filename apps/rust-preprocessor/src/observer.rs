@@ -25,6 +25,8 @@ pub struct Metrics {
     errors: IntCounterVec,
     inflight: IntGauge,
     queue: IntGauge,
+    backlog_pending: IntGauge,
+    backlog_ack_pending: IntGauge,
     bytes: IntCounterVec,
     last_success: Gauge,
 }
@@ -63,6 +65,14 @@ impl Metrics {
             "aurora_preprocessor_queue_depth",
             "Number of fetched products waiting to be dispatched to workers.",
         )?;
+        let backlog_pending = IntGauge::new(
+            "aurora_preprocessor_backlog_pending",
+            "Retained Bronze messages available for the preprocessing consumer.",
+        )?;
+        let backlog_ack_pending = IntGauge::new(
+            "aurora_preprocessor_backlog_ack_pending",
+            "Bronze messages fetched by preprocessing but not yet acknowledged.",
+        )?;
         let bytes = IntCounterVec::new(
             Opts::new(
                 "aurora_preprocessor_bytes_total",
@@ -80,6 +90,8 @@ impl Metrics {
         registry.register(Box::new(errors.clone()))?;
         registry.register(Box::new(inflight.clone()))?;
         registry.register(Box::new(queue.clone()))?;
+        registry.register(Box::new(backlog_pending.clone()))?;
+        registry.register(Box::new(backlog_ack_pending.clone()))?;
         registry.register(Box::new(bytes.clone()))?;
         registry.register(Box::new(last_success.clone()))?;
 
@@ -90,6 +102,8 @@ impl Metrics {
             errors,
             inflight,
             queue,
+            backlog_pending,
+            backlog_ack_pending,
             bytes,
             last_success,
         })
@@ -97,6 +111,11 @@ impl Metrics {
 
     pub fn set_queue_depth(&self, depth: usize) {
         self.queue.set(depth as i64);
+    }
+
+    pub fn set_backlog(&self, pending: u64, ack_pending: usize) {
+        self.backlog_pending.set(pending.min(i64::MAX as u64) as i64);
+        self.backlog_ack_pending.set(ack_pending.min(i64::MAX as usize) as i64);
     }
 
     pub fn record_transport_error(&self) {

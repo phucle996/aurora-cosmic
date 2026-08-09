@@ -20,6 +20,9 @@ type IngestService struct {
 	bucket     string
 	controller repo.IngestController
 	publisher  repo.EventPublisher
+	runtimeMu  sync.RWMutex
+	runtimeJob *entity.IngestControlJob
+	runtime    *entity.IngestStatus
 }
 
 type ingestionCheckpoint struct {
@@ -66,6 +69,10 @@ func (s *IngestService) Start(ctx context.Context, request entity.IngestStartReq
 		payload, _ := json.Marshal(job)
 		_ = s.publisher.Publish(ctx, entity.WorkflowEvent{Type: "workflow", Workflow: "ingest", Status: job.Status, JobID: job.JobID, OccurredAt: job.UpdatedAt, Payload: payload})
 	}
+	s.runtimeMu.Lock()
+	s.runtimeJob = job
+	s.runtime = &entity.IngestStatus{Observed: true, Source: "api-runtime", ControlJobID: job.JobID, Status: strings.ToLower(job.Status), ManifestPath: job.ManifestPath, StartedAt: job.StartedAt, UpdatedAt: job.UpdatedAt, ObservedAt: time.Now().UTC(), Products: []entity.IngestProduct{}}
+	s.runtimeMu.Unlock()
 	return job, nil
 }
 
@@ -81,6 +88,14 @@ func (s *IngestService) Cancel(ctx context.Context, jobID string) (*entity.Inges
 		payload, _ := json.Marshal(job)
 		_ = s.publisher.Publish(ctx, entity.WorkflowEvent{Type: "workflow", Workflow: "ingest", Status: job.Status, JobID: job.JobID, OccurredAt: job.UpdatedAt, Payload: payload})
 	}
+	s.runtimeMu.Lock()
+	s.runtimeJob = job
+	if s.runtime != nil {
+		s.runtime.Status = strings.ToLower(job.Status)
+		s.runtime.UpdatedAt = job.UpdatedAt
+		s.runtime.ObservedAt = time.Now().UTC()
+	}
+	s.runtimeMu.Unlock()
 	return job, nil
 }
 
@@ -88,8 +103,33 @@ func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error
 	if s.objects == nil {
 		return nil, fmt.Errorf("MinIO ingestion checkpoint is unavailable")
 	}
+	var controlJob *entity.IngestControlJob
+	if runtimeController, ok := s.controller.(repo.IngestRuntimeController); ok {
+		if current, currentErr := runtimeController.Current(ctx); currentErr == nil && current != nil && current.Status != "not_observed" {
+			controlJob = current
+			s.runtimeMu.Lock()
+			s.runtimeJob = current
+			if s.runtime == nil || current.StartedAt.After(s.runtime.StartedAt) {
+				s.runtime = &entity.IngestStatus{Observed: true, Source: "ingester-control", ControlJobID: current.JobID, Status: strings.ToLower(current.Status), Error: current.Error, ManifestPath: current.ManifestPath, StartedAt: current.StartedAt, UpdatedAt: current.UpdatedAt, ObservedAt: time.Now().UTC(), Products: []entity.IngestProduct{}}
+			} else {
+				s.runtime.Status = strings.ToLower(current.Status)
+				s.runtime.Error = current.Error
+				s.runtime.UpdatedAt = current.UpdatedAt
+				s.runtime.ObservedAt = time.Now().UTC()
+			}
+			s.runtimeMu.Unlock()
+		}
+	}
 	data, err := s.objects.GetObject(ctx, "checkpoints/ingestion/current.json")
 	if err != nil {
+		s.runtimeMu.RLock()
+		if s.runtime != nil {
+			cached := *s.runtime
+			cached.Products = append([]entity.IngestProduct(nil), s.runtime.Products...)
+			s.runtimeMu.RUnlock()
+			return &cached, nil
+		}
+		s.runtimeMu.RUnlock()
 		return &entity.IngestStatus{Observed: false, Source: "minio-checkpoint", Status: "not_observed", ObservedAt: time.Now().UTC()}, nil
 	}
 	var pointer struct {
@@ -107,22 +147,46 @@ func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error
 		return nil, fmt.Errorf("decode ingestion run %s: %w", pointer.ActiveRunID, err)
 	}
 	status := &entity.IngestStatus{Observed: true, Source: "minio-checkpoint", RunID: checkpoint.RunID, Status: strings.ToLower(checkpoint.Status), ManifestPath: checkpoint.ManifestPath, StartedAt: checkpoint.StartedAt, UpdatedAt: checkpoint.UpdatedAt, ObservedAt: time.Now().UTC(), Products: make([]entity.IngestProduct, 0, len(checkpoint.Products))}
-	for id, product := range checkpoint.Products {
-		status.TotalProducts++
-		status.ExpectedBytes += product.ExpectedSizeBytes
-		status.CompletedBytes += product.SizeBytes
-		switch strings.ToUpper(product.State) {
-		case "STORED", "PUBLISHED":
-			status.CompletedProducts++
-		case "DOWNLOADING":
-			status.Downloading++
-		case "FAILED":
-			status.FailedProducts++
-		}
-		status.Products = append(status.Products, entity.IngestProduct{ID: id, Kind: string(product.ProductKind), ObjectKey: product.ObjectKey, State: strings.ToLower(product.State), SizeBytes: product.SizeBytes, Expected: product.ExpectedSizeBytes, Attempts: product.Attempts, LastError: product.LastError, UpdatedAt: product.UpdatedAt})
+	if controlJob != nil {
+		status.ControlJobID = controlJob.JobID
 	}
-	sort.Slice(status.Products, func(i, j int) bool { return status.Products[i].UpdatedAt.After(status.Products[j].UpdatedAt) })
-	if s.prometheus != nil {
+	usingRuntimeState := false
+	s.runtimeMu.RLock()
+	if s.runtime != nil && controlJob != nil && s.runtime.StartedAt.After(checkpoint.UpdatedAt) {
+		usingRuntimeState = true
+		status = &entity.IngestStatus{Observed: true, Source: "api-runtime", ControlJobID: s.runtime.ControlJobID, Status: s.runtime.Status, Error: s.runtime.Error, ManifestPath: s.runtime.ManifestPath, StartedAt: s.runtime.StartedAt, UpdatedAt: s.runtime.UpdatedAt, ObservedAt: time.Now().UTC(), Products: []entity.IngestProduct{}}
+	}
+	s.runtimeMu.RUnlock()
+	if !usingRuntimeState {
+		for id, product := range checkpoint.Products {
+			status.TotalProducts++
+			status.ExpectedBytes += product.ExpectedSizeBytes
+			status.CompletedBytes += product.SizeBytes
+			switch strings.ToUpper(product.State) {
+			case "STORED", "PUBLISHED":
+				status.CompletedProducts++
+			case "DOWNLOADING":
+				status.Downloading++
+			case "FAILED":
+				status.FailedProducts++
+			}
+			status.Products = append(status.Products, entity.IngestProduct{ID: id, Kind: string(product.ProductKind), ObjectKey: product.ObjectKey, State: strings.ToLower(product.State), SizeBytes: product.SizeBytes, Expected: product.ExpectedSizeBytes, Attempts: product.Attempts, LastError: product.LastError, UpdatedAt: product.UpdatedAt})
+		}
+		sort.Slice(status.Products, func(i, j int) bool { return status.Products[i].UpdatedAt.After(status.Products[j].UpdatedAt) })
+	}
+	// The control plane is authoritative for lifecycle state. A cancellation
+	// can leave the durable checkpoint in RUNNING until the worker has flushed
+	// its final snapshot; exposing that stale checkpoint state keeps the UI on
+	// the Cancel button after the control job is already canceled.
+	if controlJob != nil {
+		status.ControlJobID = controlJob.JobID
+		status.Status = strings.ToLower(controlJob.Status)
+		status.Error = controlJob.Error
+		if controlJob.UpdatedAt.After(status.UpdatedAt) {
+			status.UpdatedAt = controlJob.UpdatedAt
+		}
+	}
+	if s.prometheus != nil && status.Status == "running" {
 		end := time.Now().UTC()
 		start := end.Add(-5 * time.Minute)
 		queries := map[string]string{
@@ -154,6 +218,12 @@ func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error
 		status.QueueDepth = values["queue"]
 		status.InflightProducts = values["inflight"]
 	}
+	s.runtimeMu.Lock()
+	s.runtime = status
+	if controlJob != nil {
+		s.runtimeJob = controlJob
+	}
+	s.runtimeMu.Unlock()
 	return status, nil
 }
 

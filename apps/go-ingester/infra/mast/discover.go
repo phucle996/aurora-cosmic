@@ -125,7 +125,10 @@ func queryMASTObservations(ctx context.Context, client *Client, opts DiscoverOpt
 			"format":   "json",
 			"pagesize": opts.PageSize,
 			"page":     page,
-			"timeout":  10,
+			// MAST may take tens of seconds to materialize a large sector page.
+			// Keep the server-side query window aligned with the client's header
+			// timeout instead of forcing an early EXECUTING/timeout response.
+			"timeout": 30,
 			"params": map[string]any{
 				"columns": "*",
 				"filters": filters,

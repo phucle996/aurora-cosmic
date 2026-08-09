@@ -22,6 +22,24 @@ func (h *IngestHandler) Status(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ingest status unavailable"})
 		return
 	}
+	// Keep the public status payload bounded by default. Callers that truly
+	// need the complete checkpoint can opt out with products_limit=0.
+	productsLimit := 100
+	if raw := strings.TrimSpace(c.Query("products_limit")); raw != "" {
+		parsed, parseErr := strconv.Atoi(raw)
+		if parseErr != nil || parsed < 0 || parsed > 500 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "products_limit must be between 0 and 500"})
+			return
+		}
+		productsLimit = parsed
+	}
+	if productsLimit > 0 && len(status.Products) > productsLimit {
+		response := *status
+		response.Products = append([]entity.IngestProduct(nil), status.Products[:productsLimit]...)
+		response.ProductsTruncated = true
+		c.JSON(http.StatusOK, &response)
+		return
+	}
 	c.JSON(http.StatusOK, status)
 }
 

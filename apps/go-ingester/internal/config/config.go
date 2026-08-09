@@ -114,7 +114,7 @@ func Load() (*Config, error) {
 
 	// MAST configuration — optional, fallback to defaults if not set.
 	mastURL := optionalEnv("MAST_API_URL", "https://mast.stsci.edu/api/v0/invoke")
-	mastTimeout := optionalEnv("MAST_TIMEOUT", "30s")
+	mastTimeout := optionalEnv("MAST_TIMEOUT", "90s")
 	mastPageSize, _ := optionalEnvInt("MAST_PAGE_SIZE", 1000)
 
 	cfg := &Config{

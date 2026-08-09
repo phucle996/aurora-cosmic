@@ -141,6 +141,14 @@ func (s *controlServer) jobs(w http.ResponseWriter, r *http.Request) {
 	if request.Concurrency <= 0 {
 		request.Concurrency = s.cfg.Ingest.Concurrency
 	}
+	manifestPath := request.ManifestPath
+	if manifestPath == "" {
+		limitLabel := "all"
+		if request.Limit > 0 {
+			limitLabel = fmt.Sprintf("%d", request.Limit)
+		}
+		manifestPath = fmt.Sprintf("remote:tess/sector=%d/limit=%s", request.Sector, limitLabel)
+	}
 	s.mu.Lock()
 	if s.active != nil && s.active.Status == "running" {
 		s.mu.Unlock()
@@ -148,15 +156,15 @@ func (s *controlServer) jobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	run := &controlRun{ID: "ingest-job-" + uuid.NewString()[:8], Status: "running", ManifestPath: request.ManifestPath, Sector: request.Sector, Concurrency: request.Concurrency, StartedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(), cancel: cancel}
+	run := &controlRun{ID: "ingest-job-" + uuid.NewString()[:8], Status: "running", ManifestPath: manifestPath, Sector: request.Sector, Concurrency: request.Concurrency, StartedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(), cancel: cancel}
 	s.active = run
 	s.mu.Unlock()
 	go func() {
 		var manifest *model.Manifest
 		var err error
-		manifestPath := request.ManifestPath
-		if manifestPath != "" {
-			manifest, err = plan.Read(manifestPath)
+		resolvedManifestPath := request.ManifestPath
+		if resolvedManifestPath != "" {
+			manifest, err = plan.Read(resolvedManifestPath)
 		} else {
 			timeout, parseErr := time.ParseDuration(s.cfg.MAST.Timeout)
 			if parseErr != nil {
@@ -171,7 +179,7 @@ func (s *controlServer) jobs(w http.ResponseWriter, r *http.Request) {
 				if request.Limit > 0 {
 					limitLabel = fmt.Sprintf("%d", request.Limit)
 				}
-				manifestPath = fmt.Sprintf("remote:tess/sector=%d/limit=%s", request.Sector, limitLabel)
+				resolvedManifestPath = fmt.Sprintf("remote:tess/sector=%d/limit=%s", request.Sector, limitLabel)
 			}
 		}
 		if err == nil {
@@ -196,7 +204,7 @@ func (s *controlServer) jobs(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				if cpManager == nil {
-					cpManager = checkpoint.NewManager(cpStore, model.CreateNewInitialCheckpoint("ingest-"+uuid.NewString()[:8], manifestPath, manifestHash, manifest.Products()))
+					cpManager = checkpoint.NewManager(cpStore, model.CreateNewInitialCheckpoint("ingest-"+uuid.NewString()[:8], resolvedManifestPath, manifestHash, manifest.Products()))
 				}
 				publisher, pubErr := eventsinfra.NewNATSPublisher(s.cfg.NATS.URL, 5*time.Second)
 				if pubErr != nil {

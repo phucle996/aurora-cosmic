@@ -54,25 +54,51 @@ func (c *Client) SetDownloadURL(downloadURL string) {
 func (c *Client) Query(ctx context.Context, reqBody url.Values) ([]byte, error) {
 	// MAST's SOAP-backed endpoint reads form parameters from the POST body;
 	// putting `request` in the URL query results in HTTP 500 "Missing parameter".
-	for attempt := 0; attempt < 60; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL, strings.NewReader(reqBody.Encode()))
-		if err != nil {
-			return nil, fmt.Errorf("mast query: create request: %w", err)
-		}
+	for poll := 0; poll < 60; poll++ {
+		var body []byte
+		var lastErr error
+		for attempt := 0; attempt < 4; attempt++ {
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL, strings.NewReader(reqBody.Encode()))
+			if err != nil {
+				return nil, fmt.Errorf("mast query: create request: %w", err)
+			}
 
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		resp, err := c.httpClient.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("mast query: execute: %w", err)
-		}
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			resp, err := c.httpClient.Do(req)
+			if err != nil {
+				if ctx.Err() != nil {
+					return nil, fmt.Errorf("mast query: execute: %w", ctx.Err())
+				}
+				lastErr = fmt.Errorf("mast query: execute: %w", err)
+			} else {
+				responseBody, readErr := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if readErr != nil {
+					lastErr = fmt.Errorf("mast query: read body: %w", readErr)
+				} else if resp.StatusCode == http.StatusOK {
+					body = responseBody
+					lastErr = nil
+					break
+				} else {
+					lastErr = fmt.Errorf("mast query status %d: %s", resp.StatusCode, string(responseBody))
+					if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < 500 {
+						return nil, lastErr
+					}
+				}
+			}
 
-		body, readErr := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if readErr != nil {
-			return nil, fmt.Errorf("mast query: read body: %w", readErr)
+			if attempt == 3 {
+				break
+			}
+			backoff := time.Duration(1<<attempt) * time.Second
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("mast query: retry canceled: %w", ctx.Err())
+			case <-time.After(backoff):
+			}
 		}
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("mast query status %d: %s", resp.StatusCode, string(body))
+		if lastErr != nil {
+			return nil, lastErr
 		}
 
 		if !mastQueryExecuting(body) {

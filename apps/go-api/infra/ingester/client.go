@@ -54,6 +54,30 @@ func (c *Client) Cancel(ctx context.Context, jobID string) (*entity.IngestContro
 	return &job, nil
 }
 
+func (c *Client) Current(ctx context.Context) (*entity.IngestControlJob, error) {
+	if c == nil || c.Endpoint == "" {
+		return nil, fmt.Errorf("ingester control endpoint is unavailable")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.Endpoint+"/api/v1/ingest/jobs", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("ingester control request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return nil, &HTTPError{StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(body))}
+	}
+	var job entity.IngestControlJob
+	if err := json.NewDecoder(resp.Body).Decode(&job); err != nil {
+		return nil, fmt.Errorf("decode ingester control response: %w", err)
+	}
+	return &job, nil
+}
+
 func (c *Client) post(ctx context.Context, path string, body any, output any) error {
 	if c == nil || c.Endpoint == "" {
 		return fmt.Errorf("ingester control endpoint is unavailable")

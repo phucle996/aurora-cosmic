@@ -71,6 +71,9 @@ func (fakePreprocessing) Query(context.Context) (*entity.PreprocessingGraph, err
 func (fakePreprocessing) Start(context.Context, entity.PreprocessingStartRequest) (*entity.PreprocessingControlJob, error) {
 	return &entity.PreprocessingControlJob{JobID: "preprocess-job-test", Status: "running", Mode: "stream"}, nil
 }
+func (fakePreprocessing) Stop(context.Context, string) (*entity.PreprocessingControlJob, error) {
+	return &entity.PreprocessingControlJob{JobID: "preprocess-job-test", Status: "cancelling", Mode: "stream"}, nil
+}
 
 type fakeIngest struct{}
 
@@ -136,6 +139,15 @@ func TestPreprocessingStart(t *testing.T) {
 	newTestRouter().ServeHTTP(recorder, req)
 	if recorder.Code != http.StatusAccepted {
 		t.Fatalf("preprocessing start returned HTTP %d, expected 202", recorder.Code)
+	}
+}
+
+func TestPreprocessingStop(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/preprocessing/jobs/preprocess-job-test/stop", nil)
+	recorder := httptest.NewRecorder()
+	newTestRouter().ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("preprocessing stop returned HTTP %d, expected 202", recorder.Code)
 	}
 }
 

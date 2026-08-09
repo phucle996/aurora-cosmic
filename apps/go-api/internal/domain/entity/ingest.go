@@ -18,7 +18,9 @@ type IngestStatus struct {
 	Observed          bool            `json:"observed"`
 	Source            string          `json:"source"`
 	RunID             string          `json:"run_id,omitempty"`
+	ControlJobID      string          `json:"control_job_id,omitempty"`
 	Status            string          `json:"status"`
+	Error             string          `json:"error,omitempty"`
 	ManifestPath      string          `json:"manifest_path,omitempty"`
 	StartedAt         time.Time       `json:"started_at,omitempty"`
 	UpdatedAt         time.Time       `json:"updated_at,omitempty"`
@@ -34,6 +36,7 @@ type IngestStatus struct {
 	InflightProducts  float64         `json:"inflight_products"`
 	ObservedAt        time.Time       `json:"observed_at"`
 	Products          []IngestProduct `json:"products,omitempty"`
+	ProductsTruncated bool            `json:"products_truncated,omitempty"`
 }
 
 type IngestStartRequest struct {

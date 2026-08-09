@@ -55,7 +55,7 @@ pub async fn run_pool(
         "Worker pool starting"
     );
 
-    let consumer = loop {
+    let mut consumer = loop {
         match stream
             .get_or_create_consumer(
                 &cfg.durable,
@@ -115,6 +115,10 @@ pub async fn run_pool(
                     Ok(p) => p,
                     Err(_) => break,
                 };
+
+                if let Ok(info) = consumer.info().await {
+                    metrics.set_backlog(info.num_pending, info.num_ack_pending);
+                }
 
                 let mut fetch = consumer.fetch().max_messages(fetch_size);
                 if mode == "batch" {

@@ -19,6 +19,19 @@ type PreprocessingControlJob struct {
 	Error       string    `json:"error,omitempty"`
 }
 
+// PreprocessingProgress is the compact runtime snapshot shown by the control
+// plane. Checkpoint counts come from durable MinIO state; backlog counts come
+// from the JetStream consumer observer.
+type PreprocessingProgress struct {
+	CheckpointTotal     int       `json:"checkpoint_total"`
+	CheckpointCompleted int       `json:"checkpoint_completed"`
+	CheckpointPending   int       `json:"checkpoint_pending"`
+	BacklogPending      int       `json:"backlog_pending"`
+	BacklogAckPending   int       `json:"backlog_ack_pending"`
+	ItemsToProcess      int       `json:"items_to_process"`
+	ObservedAt          time.Time `json:"observed_at"`
+}
+
 // PreprocessingHop is service-scoped because preprocessor metrics do not carry
 // a TIC label. It describes the observed pipeline contract, not a single run.
 type PreprocessingHop struct {
@@ -46,6 +59,8 @@ type PreprocessingGraph struct {
 	ObservationScope string
 	Status           string
 	ObservedAt       time.Time
+	Run              *PreprocessingControlJob
+	Progress         PreprocessingProgress
 	Hops             []PreprocessingHop
 	Edges            []PreprocessingEdge
 }

@@ -60,7 +60,11 @@ connections and low-level transport operations.
 * `/api/v1/ingest/status` reads the durable ingestion checkpoint and enriches
   it with bounded ingester Prometheus rates. `/api/v1/storage?prefix=bronze/&page=1&limit=50`
   returns a paginated MinIO object view with `total_bytes` for the selected
-  prefix.
+  prefix. While discovery is still before the first checkpoint, the API keeps
+  the live control-job state in memory and hydrates it from the ingester
+  control endpoint after an API restart, so a browser refresh never falls back
+  to an older completed run. Status responses expose the latest 100 products
+  by default; use `products_limit=0` only for a full checkpoint dump.
 * `GET /api/v1/events?workflow=preprocessing` is a long-lived SSE invalidation
   stream. Start/cancel commands publish workflow events so dashboards can
   refetch authoritative status immediately; polling remains the fallback.

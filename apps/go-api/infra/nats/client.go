@@ -41,6 +41,8 @@ func subjectForTask(task string) (string, error) {
 		return "aurora.v1.inference.anomaly.requested", nil
 	case "preprocessing_start":
 		return "aurora.v1.preprocessing.control", nil
+	case "preprocessing_stop":
+		return "aurora.v1.preprocessing.control", nil
 	default:
 		return "", fmt.Errorf("unsupported inference task %q", task)
 	}

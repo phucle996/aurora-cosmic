@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, JSX } from 'react';
 import {
   AlertCircle,
@@ -40,7 +40,9 @@ type IngestStatus = {
   observed: boolean;
   source: string;
   run_id?: string;
+  control_job_id?: string;
   status: string;
+  error?: string;
   manifest_path?: string;
   started_at?: string;
   updated_at?: string;
@@ -56,6 +58,7 @@ type IngestStatus = {
   inflight_products: number;
   observed_at: string;
   products?: IngestProduct[];
+  products_truncated?: boolean;
 };
 
 type StorageObject = { key: string; size_bytes: number; etag?: string; last_modified: string };
@@ -105,28 +108,65 @@ export default function IngestStorageSection(): JSX.Element {
   const [sector, setSector] = useState('42');
   const [concurrency, setConcurrency] = useState('8');
   const [controlBusy, setControlBusy] = useState(false);
+  const loadInFlight = useRef<Promise<void> | null>(null);
+  const storageRef = useRef<StorageListing | null>(null);
+  const lastStorageRefresh = useRef(0);
   const configuredWorkers = Math.max(1, controlJob?.concurrency ?? (Number(concurrency) || 1));
 
   const storagePageSize = 50;
-  const load = useCallback(async () => {
-    setError(null);
-    setLoading(true);
-    try {
-      const [nextStatus, nextStorage] = await Promise.all([
-        apiFetch<IngestStatus>('/v1/ingest/status'),
-        apiFetch<StorageListing>(`/v1/storage?prefix=${encodeURIComponent(prefix)}&page=${storagePage}&limit=${storagePageSize}`),
-      ]);
-      setStatus(nextStatus);
-      setStorage(nextStorage);
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Không thể tải trạng thái ingest/storage');
-    } finally {
-      setLoading(false);
-    }
+  const load = useCallback((forceStorage = false) => {
+    if (loadInFlight.current) return loadInFlight.current;
+    const request = (async () => {
+      setError(null);
+      setLoading(true);
+      try {
+        const cachedStorage = storageRef.current;
+        const refreshStorage = forceStorage || !cachedStorage || cachedStorage.prefix !== prefix || cachedStorage.page !== storagePage || Date.now() - lastStorageRefresh.current >= 15_000;
+        const storageRequest: Promise<StorageListing> = refreshStorage
+          ? apiFetch<StorageListing>(`/v1/storage?prefix=${encodeURIComponent(prefix)}&page=${storagePage}&limit=${storagePageSize}`)
+          : Promise.resolve(cachedStorage);
+        const [nextStatus, nextStorage] = await Promise.all([
+          apiFetch<IngestStatus>('/v1/ingest/status?products_limit=100'),
+          storageRequest,
+        ]);
+        setStatus(nextStatus);
+        // The control job lives on the API/ingester, not in browser state.
+        // Hydrate it from the authoritative status response so a page refresh
+        // cannot expose a second Start button while a run is still active.
+        const controlJobID = nextStatus.control_job_id;
+        if (controlJobID) {
+          setControlJob((previous) => ({
+            job_id: controlJobID,
+            status: nextStatus.status,
+            manifest_path: nextStatus.manifest_path,
+            started_at: nextStatus.started_at ?? previous?.started_at ?? new Date().toISOString(),
+            updated_at: nextStatus.updated_at ?? previous?.updated_at ?? new Date().toISOString(),
+            concurrency: previous?.job_id === controlJobID ? previous.concurrency : undefined,
+            error: nextStatus.error,
+          }));
+        } else if (nextStatus.status !== 'running' && nextStatus.status !== 'cancelling') {
+          setControlJob((previous) => (previous && (previous.status === 'running' || previous.status === 'cancelling') ? null : previous));
+        }
+        if (refreshStorage) {
+          storageRef.current = nextStorage;
+          lastStorageRefresh.current = Date.now();
+          setStorage(nextStorage);
+        }
+      } catch (loadError) {
+        setError(loadError instanceof Error ? loadError.message : 'Không thể tải trạng thái ingest/storage');
+      } finally {
+        setLoading(false);
+      }
+    })();
+    loadInFlight.current = request;
+    void request.finally(() => {
+      if (loadInFlight.current === request) loadInFlight.current = null;
+    });
+    return request;
   }, [prefix, storagePage]);
 
   useEffect(() => {
-    void load();
+    void load(true);
     const eventSource = new EventSource(`${apiBase}/v1/events?workflow=ingest`);
     eventSource.addEventListener('workflow', (event) => {
       try {
@@ -135,7 +175,7 @@ export default function IngestStorageSection(): JSX.Element {
       } catch {
         // The next authoritative status request will recover from malformed data.
       }
-      void load();
+      void load(true);
     });
     const timer = window.setInterval(() => void load(), 5_000);
     return () => { window.clearInterval(timer); eventSource.close(); };
@@ -166,7 +206,7 @@ export default function IngestStorageSection(): JSX.Element {
     try {
       const job = await apiFetch<IngestControlJob>('/v1/ingest/jobs', { method: 'POST', body: JSON.stringify({ sector: Number(sector), concurrency: Number(concurrency) }) });
       setControlJob(job);
-      await load();
+      await load(true);
     } catch (controlError) {
       setError(controlError instanceof Error ? controlError.message : 'Không thể bắt đầu ingest');
     } finally {
@@ -187,6 +227,8 @@ export default function IngestStorageSection(): JSX.Element {
     }
   }
 
+  const ingestIsRunning = controlJob?.status === 'running' || controlJob?.status === 'cancelling' || (status?.status === 'running' && Boolean(status.control_job_id));
+
   return <div className="space-y-6">
     <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
       <div>
@@ -205,7 +247,7 @@ export default function IngestStorageSection(): JSX.Element {
       <Stat icon={Gauge} label="Workers / queue" value={status ? `${status.inflight_products.toFixed(0)} / ${status.queue_depth.toFixed(0)}` : '—'} detail="In-flight products / queued" />
     </div>
 
-    <Card className="rounded-md"><CardHeader className="border-b border-border/60"><div className="flex items-start justify-between gap-3"><div><CardTitle>Ingest controls</CardTitle><CardDescription>Start MAST → MinIO Bronze discovery. No product-count limit is sent; the 50 GB Bronze run budget remains the safety boundary.</CardDescription></div>{controlJob && <Badge variant={statusVariant(controlJob.status)}>{controlJob.status}</Badge>}</div></CardHeader><CardContent className="pt-5"><form className="grid gap-3 md:grid-cols-[1fr_1fr_auto]" onSubmit={startIngest}><label className="space-y-1 text-xs text-muted-foreground">Sector<Input type="number" min={1} value={sector} onChange={(event) => setSector(event.target.value)} /></label><label className="space-y-1 text-xs text-muted-foreground">Download workers<Input type="number" min={1} max={64} value={concurrency} onChange={(event) => setConcurrency(event.target.value)} /></label><div className="flex items-end gap-2">{controlJob?.status === 'running' || controlJob?.status === 'cancelling' ? <Button type="button" variant="destructive" onClick={() => void cancelIngest()} disabled={controlBusy}><Square />Cancel</Button> : <Button type="submit" disabled={controlBusy}><Play />{controlBusy ? 'Starting…' : 'Start ingest'}</Button>}</div></form>{controlJob?.error && <p className="mt-3 text-xs text-destructive">{controlJob.error}</p>}<p className="mt-3 text-xs text-muted-foreground">The run is single-flight and checkpointed in MinIO. Progress below is read from the durable checkpoint, not simulated in the browser.</p></CardContent></Card>
+    <Card className="rounded-md"><CardHeader className="border-b border-border/60"><div className="flex items-start justify-between gap-3"><div><CardTitle>Ingest controls</CardTitle><CardDescription>Start MAST → MinIO Bronze discovery. No product-count limit is sent; the 50 GB Bronze run budget remains the safety boundary.</CardDescription></div>{(controlJob || status?.status) && <Badge variant={statusVariant(controlJob?.status ?? status?.status ?? 'not_observed')}>{controlJob?.status ?? status?.status}</Badge>}</div></CardHeader><CardContent className="pt-5"><form className="grid gap-3 md:grid-cols-[1fr_1fr_auto]" onSubmit={startIngest}><label className="space-y-1 text-xs text-muted-foreground">Sector<Input type="number" min={1} value={sector} onChange={(event) => setSector(event.target.value)} /></label><label className="space-y-1 text-xs text-muted-foreground">Download workers<Input type="number" min={1} max={64} value={concurrency} onChange={(event) => setConcurrency(event.target.value)} /></label><div className="flex items-end gap-2">{ingestIsRunning && controlJob?.job_id ? <Button type="button" variant="destructive" onClick={() => void cancelIngest()} disabled={controlBusy}><Square />{controlJob.status === 'cancelling' ? 'Cancelling…' : 'Cancel ingest'}</Button> : <Button type="submit" disabled={controlBusy || ingestIsRunning}><Play />{ingestIsRunning ? 'Ingest running…' : controlBusy ? 'Starting…' : 'Start ingest'}</Button>}</div></form>{(controlJob?.error || status?.error) && <p className="mt-3 text-xs text-destructive">{controlJob?.error || status?.error}</p>}<p className="mt-3 text-xs text-muted-foreground">The run is single-flight and checkpointed in MinIO. Progress below is read from the durable checkpoint, not simulated in the browser.</p></CardContent></Card>
 
     <div className="grid min-w-0 gap-6 2xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
       <Card className="min-w-0 h-[620px] rounded-md">
@@ -216,6 +258,8 @@ export default function IngestStorageSection(): JSX.Element {
             <div className="grid gap-3 sm:grid-cols-2"><div className="border border-border/60 bg-muted/15 p-3"><p className="text-xs text-muted-foreground">Run ID</p><p className="mt-1 break-all font-mono text-xs">{status.run_id}</p></div><div className="border border-border/60 bg-muted/15 p-3"><p className="text-xs text-muted-foreground">Manifest</p><p className="mt-1 break-all font-mono text-xs">{status.manifest_path || '—'}</p></div></div>
             <div><div className="mb-2 flex items-center justify-between"><p className="text-xs font-medium uppercase tracking-[0.1em] text-muted-foreground">Download worker slots</p><span className="font-mono text-xs text-muted-foreground">{Math.min(configuredWorkers, Math.round(status.inflight_products))}/{configuredWorkers} active</span></div><div className="grid grid-cols-2 gap-2 lg:grid-cols-4">{Array.from({ length: configuredWorkers }, (_, index) => { const active = index < Math.round(status.inflight_products); const queued = !active && index < Math.round(status.inflight_products + status.queue_depth); return <div key={index} className="border border-border/60 bg-muted/15 p-3"><div className="flex items-center justify-between text-xs"><span className="font-mono">worker-{index + 1}</span><Badge variant={active ? 'secondary' : queued ? 'outline' : 'outline'}>{active ? 'downloading' : queued ? 'queued' : 'idle'}</Badge></div><Progress value={active ? 100 : 0} className="mt-3 h-1.5" /><p className="mt-2 text-[11px] text-muted-foreground">{active ? 'Active download slot' : queued ? 'Waiting in queue' : 'Available'}</p></div>; })}</div><p className="mt-2 text-[11px] text-muted-foreground">Slot state is derived from the live inflight and queue gauges; product-level truth remains in the checkpoint table below.</p></div>
             <div className="grid gap-3 sm:grid-cols-2"><div className="flex items-center gap-2 text-xs text-muted-foreground"><Timer className="size-4" />Started {formatDate(status.started_at)}</div><div className="flex items-center gap-2 text-xs text-muted-foreground"><RefreshCw className="size-4" />Updated {formatDate(status.updated_at)}</div></div>
+            {status.source === 'api-runtime' && status.total_products === 0 && status.status === 'running' && <div className="border border-primary/30 bg-primary/5 p-3 text-xs text-muted-foreground">Đã dispatch tới ingester. Đang discovery MAST và chờ checkpoint đầu tiên; progress sẽ chuyển sang số liệu download thật ngay khi sản phẩm được lập kế hoạch.</div>}
+            {status.error && <div className="border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">{status.error}</div>}
             {status.failed_products > 0 && <div className="border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">{status.failed_products} product(s) failed. Open the product table below to inspect retry/error details.</div>}
           </> : <div className="border border-dashed border-border/60 p-8 text-center text-sm text-muted-foreground">Chưa quan sát được checkpoint ingestion. Chạy một ingest run để progress xuất hiện tại đây.</div>}
         </CardContent>
@@ -232,6 +276,6 @@ export default function IngestStorageSection(): JSX.Element {
       </Card>
     </div>
 
-    <Card className="rounded-md"><CardHeader className="border-b border-border/60"><CardTitle className="text-base">Products in current run</CardTitle><CardDescription>Checkpoint product state, object key and retry information.</CardDescription></CardHeader><CardContent className="p-0"><div className="max-h-[360px] overflow-auto"><Table><TableHeader><TableRow><TableHead>Product</TableHead><TableHead>Kind</TableHead><TableHead>State</TableHead><TableHead>Object key</TableHead><TableHead>Attempts</TableHead><TableHead>Updated</TableHead></TableRow></TableHeader><TableBody>{status?.products?.length ? status.products.map((product) => <TableRow key={product.id}><TableCell className="font-mono text-xs">{product.id}</TableCell><TableCell className="text-xs">{product.kind || '—'}</TableCell><TableCell><Badge variant={statusVariant(product.state)}>{product.state}</Badge>{product.last_error && <p className="mt-1 max-w-[220px] truncate text-[11px] text-destructive" title={product.last_error}>{product.last_error}</p>}</TableCell><TableCell className="max-w-[380px] truncate font-mono text-xs" title={product.object_key}>{product.object_key || '—'}</TableCell><TableCell className="font-mono text-xs">{product.attempts}</TableCell><TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDate(product.updated_at)}</TableCell></TableRow>) : <TableRow><TableCell colSpan={6} className="h-24 text-center text-sm text-muted-foreground">No product checkpoint data.</TableCell></TableRow>}</TableBody></Table></div></CardContent></Card>
+    <Card className="rounded-md"><CardHeader className="border-b border-border/60"><CardTitle className="text-base">Products in current run</CardTitle><CardDescription>{status?.products_truncated ? 'Showing the latest 100 checkpoint products to keep live progress responsive.' : 'Checkpoint product state, object key and retry information.'}</CardDescription></CardHeader><CardContent className="p-0"><div className="max-h-[360px] overflow-auto"><Table><TableHeader><TableRow><TableHead>Product</TableHead><TableHead>Kind</TableHead><TableHead>State</TableHead><TableHead>Object key</TableHead><TableHead>Attempts</TableHead><TableHead>Updated</TableHead></TableRow></TableHeader><TableBody>{status?.products?.length ? status.products.map((product) => <TableRow key={product.id}><TableCell className="font-mono text-xs">{product.id}</TableCell><TableCell className="text-xs">{product.kind || '—'}</TableCell><TableCell><Badge variant={statusVariant(product.state)}>{product.state}</Badge>{product.last_error && <p className="mt-1 max-w-[220px] truncate text-[11px] text-destructive" title={product.last_error}>{product.last_error}</p>}</TableCell><TableCell className="max-w-[380px] truncate font-mono text-xs" title={product.object_key}>{product.object_key || '—'}</TableCell><TableCell className="font-mono text-xs">{product.attempts}</TableCell><TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDate(product.updated_at)}</TableCell></TableRow>) : <TableRow><TableCell colSpan={6} className="h-24 text-center text-sm text-muted-foreground">No product checkpoint data.</TableCell></TableRow>}</TableBody></Table></div></CardContent></Card>
   </div>;
 }

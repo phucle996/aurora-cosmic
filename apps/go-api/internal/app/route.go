@@ -39,6 +39,7 @@ func (r *Router) registerRoutes() {
 		api.GET("/monitoring", r.module.MonitoringHandler.Query)
 		api.GET("/preprocessing/graph", r.module.PreprocessingHandler.Query)
 		api.POST("/preprocessing/jobs", r.module.PreprocessingHandler.Start)
+		api.POST("/preprocessing/jobs/:job_id/stop", r.module.PreprocessingHandler.Stop)
 		if r.module.EventsHandler != nil {
 			api.GET("/events", r.module.EventsHandler.Stream)
 		}
