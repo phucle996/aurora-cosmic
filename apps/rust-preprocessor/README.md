@@ -6,6 +6,13 @@ from MinIO, performs deterministic scientific preprocessing, writes a versioned
 Parquet artifact to Silver, commits checkpoint and lineage records, publishes a
 Silver-ready event, and only then acknowledges the Bronze message.
 
+The worker stays idle after startup until the control plane publishes a start
+command on `AURORA_PREPROCESS_CONTROL_SUBJECT` (default
+`aurora.v1.preprocessing.control`). The dashboard exposes this as the
+**Start preprocessing** button. `stream` mode follows new Bronze events;
+`batch` mode drains retained Bronze events. Run checkpoints are written under
+`checkpoints/preprocessing/`, independently from ingestion checkpoints.
+
 ## Runtime flow
 
 ```text

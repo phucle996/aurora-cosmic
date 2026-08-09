@@ -24,6 +24,13 @@ pub struct NatsConfig {
     pub url: String,
 }
 
+/// Control-plane configuration for explicit preprocessing starts.
+#[derive(Debug, Clone)]
+pub struct ControlConfig {
+    pub subject: String,
+    pub autostart: bool,
+}
+
 /// Prometheus observer HTTP endpoint configuration.
 #[derive(Debug, Clone)]
 pub struct ObserverConfig {
@@ -83,6 +90,7 @@ pub struct Config {
     pub core: CoreConfig,
     pub minio: MinioConfig,
     pub nats: NatsConfig,
+    pub control: ControlConfig,
     pub observer: ObserverConfig,
     pub consumer: ConsumerConfig,
     pub lc_pipeline: LightCurveConfig,
@@ -179,6 +187,14 @@ impl Config {
             nats: NatsConfig {
                 url: require_env("NATS_URL")?,
             },
+            control: ControlConfig {
+                subject: env::var("AURORA_PREPROCESS_CONTROL_SUBJECT")
+                    .unwrap_or_else(|_| "aurora.v1.preprocessing.control".to_string()),
+                autostart: env::var("AURORA_PREPROCESS_AUTOSTART")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(false),
+            },
             observer: ObserverConfig {
                 addr: env::var("AURORA_METRICS_ADDR")
                     .unwrap_or_else(|_| "0.0.0.0:8082".to_string()),
@@ -223,6 +239,8 @@ impl Config {
             log_level = %self.core.log_level,
             workers = self.consumer.workers,
             nats_url = %self.nats.url,
+            control_subject = %self.control.subject,
+            autostart = self.control.autostart,
             metrics_addr = %self.observer.addr,
             minio_endpoint = %self.minio.endpoint,
             minio_bucket = %self.minio.bucket,

@@ -24,6 +24,7 @@ pub async fn run_pool(
     img_cfg: ImageConfig,
     cancel: CancellationToken,
     metrics: Arc<Metrics>,
+    mode: &str,
 ) -> Result<()> {
     // The ingester creates AURORA_BRONZE lazily when it publishes the first
     // product. Keep the preprocessor alive while that happens instead of
@@ -115,14 +116,17 @@ pub async fn run_pool(
                     Err(_) => break,
                 };
 
-                let messages = match consumer
-                    .fetch()
-                    .max_messages(fetch_size)
-                    .messages()
-                    .await
-                {
+                let mut fetch = consumer.fetch().max_messages(fetch_size);
+                if mode == "batch" {
+                    fetch = fetch.expires(Duration::from_secs(2));
+                }
+                let messages = match fetch.messages().await {
                     Ok(msgs) => msgs,
                     Err(e) => {
+                        if mode == "batch" {
+                            tracing::info!(error = %e, "Batch preprocessing reached the end of retained Bronze events");
+                            break;
+                        }
                         tracing::error!(error = %e, "Failed to fetch messages from JetStream");
                         metrics.record_transport_error();
                         drop(permit);
@@ -136,6 +140,10 @@ pub async fn run_pool(
 
                 if msgs.is_empty() {
                     drop(permit);
+                    if mode == "batch" {
+                        tracing::info!("Batch preprocessing drained retained Bronze events");
+                        break;
+                    }
                     tokio::time::sleep(Duration::from_millis(500)).await;
                     continue;
                 }
