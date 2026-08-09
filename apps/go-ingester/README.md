@@ -4,7 +4,7 @@
 
 ## Package Layout
 
-* `cmd/aurora-ingester/` — Entrypoint, subcommand routing (`plan`, `ingest`, `status`)
+* `cmd/aurora-ingester/` — Entrypoint, subcommand routing (`plan`, `ingest`, `cleanup`)
 * `internal/app/` — Application runner and lifecycle
 * `internal/config/` — Environment-based configuration
 * `internal/observer/` — Bounded Prometheus metrics and `/healthz` endpoint
@@ -61,15 +61,10 @@ go run ./cmd/aurora-ingester ingest \
     --dry-run
 ```
 
-## 3. Ingestion Status
+## 3. Metrics
 
-Display progress status of the current/latest ingestion run:
-
-```bash
-go run ./cmd/aurora-ingester status
-```
-
-## 4. Metrics
+Ingestion progress and storage contents are available in the dashboard at
+`/ingest`; the service no longer maintains a terminal progress command.
 
 The service exposes a small, low-cardinality observer surface on
 `AURORA_METRICS_ADDR` (default `:8081`):

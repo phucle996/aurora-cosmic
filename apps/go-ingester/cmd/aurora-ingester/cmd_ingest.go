@@ -105,11 +105,6 @@ func runIngest(ctx context.Context, cfg *config.Config, log *slog.Logger, args [
 	pipeline.SetObserver(metrics)
 	pipeline.SetCheckpointInterval(cfg.Ingest.CheckpointInterval)
 	pipeline.SetMaxRunBytes(cfg.Bronze.MaxBytes)
-	var progress *progressPrinter
-	if !*dryRun {
-		progress = newProgressPrinter(os.Stdout)
-		pipeline.SetProgressReporter(progress.Update)
-	}
 
 	log.Info("ingest: starting pipeline run",
 		slog.Int("concurrency", *concurrency),
@@ -117,9 +112,6 @@ func runIngest(ctx context.Context, cfg *config.Config, log *slog.Logger, args [
 	)
 
 	summary, results, err := pipeline.IngestManifest(ctx, m, *dryRun)
-	if progress != nil {
-		progress.Finish()
-	}
 	if err != nil {
 		return fmt.Errorf("pipeline execution: %w", err)
 	}

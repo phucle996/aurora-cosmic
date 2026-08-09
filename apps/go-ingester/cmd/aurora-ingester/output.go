@@ -2,13 +2,9 @@ package main
 
 import (
 	"fmt"
-	"io"
-	"strings"
-	"sync"
 	"time"
 
 	"go-ingester/internal/model"
-	"go-ingester/internal/pipeline/ingest"
 )
 
 // printPlanSummary prints a human-readable ingestion plan summary to stdout.
@@ -84,64 +80,6 @@ func printIngestSummary(s *model.Summary) {
 		fmt.Printf("  throughput:        %s/s\n", humanBytes(int64(s.ThroughputBps)))
 	}
 	fmt.Println()
-}
-
-// progressPrinter renders Docker-pull-style single-line download progress.
-// Updates are serialized because workers report concurrently.
-type progressPrinter struct {
-	out io.Writer
-	mu  sync.Mutex
-}
-
-func newProgressPrinter(out io.Writer) *progressPrinter {
-	return &progressPrinter{out: out}
-}
-
-func (p *progressPrinter) Update(event ingest.ProgressEvent) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	percent := 0.0
-	if event.TotalProducts > 0 {
-		percent = float64(event.CompletedProducts) * 100 / float64(event.TotalProducts)
-	}
-	path := event.Result.ObjectKey
-	if path == "" {
-		path = event.Result.SourceProductID
-	}
-	path = compactPath(path, 72)
-
-	totalBytes := "?"
-	if event.TotalBytes > 0 {
-		totalBytes = humanBytes(event.TotalBytes)
-	}
-	line := fmt.Sprintf("\rdownload %d/%d (%5.1f%%) | %s/%s | %s/s | workers %d/%d | %s",
-		event.CompletedProducts,
-		event.TotalProducts,
-		percent,
-		humanBytes(event.CompletedBytes),
-		totalBytes,
-		humanBytes(int64(event.ThroughputBps)),
-		event.ActiveWorkers,
-		event.ConfiguredWorkers,
-		path,
-	)
-	// Pad the line so a shorter later path cannot leave stale characters in a
-	// terminal. Docker log collectors preserve the carriage return naturally.
-	fmt.Fprintf(p.out, "%-160s", line)
-}
-
-func (p *progressPrinter) Finish() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	fmt.Fprintln(p.out)
-}
-
-func compactPath(path string, maxLen int) string {
-	if len(path) <= maxLen {
-		return path
-	}
-	return "..." + strings.TrimPrefix(path[len(path)-maxLen+3:], "/")
 }
 
 // humanBytes formats byte counts into human-readable strings (KiB, MiB, GiB).

@@ -40,44 +40,17 @@ cp apps/go-api/.env.example apps/go-api/.env
 cp apps/dashboard/.env.example apps/dashboard/.env
 ```
 
-### 2. Sanity & Configuration Checks
+### 2. Run Stack
 ```bash
-./scripts/repo-check.sh
-make config-check
-```
+# Build and start the complete Docker Compose stack, including init services
+make init
 
-### 3. Build & Run Stack
-```bash
-# Build all service containers
-make build
-
-# Start local MinIO, NATS, and microservice containers
+# Start or stop without rebuilding
 make up
-
-# Check container status & logs
-make ps
-make logs
-
-# Run local infrastructure & stack smoke test
-make smoke
-```
-
-### 4. Code Quality & Testing
-```bash
-# Format code across Go, Rust, and Python
-make fmt
-
-# Run linters (go vet, cargo clippy, ruff, oxlint)
-make lint
-
-# Run unit test suites
-make test
-```
-
-### 5. Shutdown
-```bash
-# Stop full stack preserving persistent volumes
 make down
+
+# Stop and remove Compose volumes/data
+make clean
 ```
 
 ---
