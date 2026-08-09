@@ -115,43 +115,53 @@ func queryMASTObservations(ctx context.Context, client *Client, opts DiscoverOpt
 		})
 	}
 
-	requestMap := map[string]any{
-		// Mast.Caom.Filtered is the supported service for portal-style
-		// observation filters. Mashup.Table.Query can return an empty dataset
-		// for the same payload without reporting an error.
-		"service":  "Mast.Caom.Filtered",
-		"format":   "json",
-		"pagesize": opts.PageSize,
-		"page":     1,
-		"timeout":  10,
-		"params": map[string]any{
-			"columns": "*",
-			"filters": filters,
-		},
+	observations := make([]model.Observation, 0)
+	for page := 1; ; page++ {
+		requestMap := map[string]any{
+			// Mast.Caom.Filtered is the supported service for portal-style
+			// observation filters. Mashup.Table.Query can return an empty dataset
+			// for the same payload without reporting an error.
+			"service":  "Mast.Caom.Filtered",
+			"format":   "json",
+			"pagesize": opts.PageSize,
+			"page":     page,
+			"timeout":  10,
+			"params": map[string]any{
+				"columns": "*",
+				"filters": filters,
+			},
+		}
+
+		jsonBytes, err := json.Marshal(requestMap)
+		if err != nil {
+			return nil, fmt.Errorf("marshal request: %w", err)
+		}
+
+		values := url.Values{}
+		values.Set("request", string(jsonBytes))
+		data, err := client.Query(ctx, values)
+		if err != nil {
+			return nil, err
+		}
+
+		var rawResp struct {
+			Data   []model.Observation `json:"data"`
+			Paging struct {
+				RowsTotal int `json:"rowsTotal"`
+			} `json:"paging"`
+		}
+		if err := json.Unmarshal(data, &rawResp); err != nil {
+			return nil, fmt.Errorf("unmarshal observations response: %w", err)
+		}
+
+		observations = append(observations, rawResp.Data...)
+		if opts.Limit > 0 && len(observations) >= opts.Limit {
+			return observations[:opts.Limit], nil
+		}
+		if len(rawResp.Data) == 0 || rawResp.Paging.RowsTotal == 0 || len(observations) >= rawResp.Paging.RowsTotal || len(rawResp.Data) < opts.PageSize {
+			return observations, nil
+		}
 	}
-
-	jsonBytes, err := json.Marshal(requestMap)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
-	}
-
-	values := url.Values{}
-	values.Set("request", string(jsonBytes))
-
-	data, err := client.Query(ctx, values)
-	if err != nil {
-		return nil, err
-	}
-
-	var rawResp struct {
-		Data []model.Observation `json:"data"`
-	}
-
-	if err := json.Unmarshal(data, &rawResp); err != nil {
-		return nil, fmt.Errorf("unmarshal observations response: %w", err)
-	}
-
-	return rawResp.Data, nil
 }
 
 func parseTICFromTarget(target string) int64 {

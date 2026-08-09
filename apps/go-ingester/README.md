@@ -2,6 +2,13 @@
 
 `aurora-ingester` is responsible for querying NASA MAST, discovering TESS FITS products, creating deterministic ingestion manifests, streaming raw FITS directly into MinIO Bronze, publishing lightweight ingestion events via NATS JetStream, and persisting restart-safe checkpoints.
 
+The Compose service starts idle. It only creates an ingestion run after the
+dashboard calls `POST /api/v1/ingest/jobs`; startup/restart never discovers or
+downloads data automatically. The dashboard does not send a product-count
+limit: discovery continues until the configured Bronze run budget is reached.
+The CLI `ingest` command remains an explicit operator-only path for local
+manifest runs.
+
 ## Package Layout
 
 * `cmd/aurora-ingester/` — Entrypoint, subcommand routing (`plan`, `ingest`, `cleanup`)
@@ -26,6 +33,11 @@ go run ./cmd/aurora-ingester plan \
     --limit 100 \
     --output manifest.json
 ```
+
+The default manifest policy accepts LC-only samples because MAST can return a
+light-curve observation without its matching TPF row in the same bounded page.
+Set `AURORA_REQUIRE_TPF_LC_PAIR=true` when a deployment explicitly requires
+strict TPF + LC pairing; that policy can legitimately produce an empty plan.
 
 ## 2. Streaming Ingestion & Resume
 

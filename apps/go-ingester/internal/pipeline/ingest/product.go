@@ -2,14 +2,44 @@ package ingest
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 
 	"go-ingester/internal/model"
 )
 
 // ingestProduct processes a single ManifestProduct: key building -> MAST streaming -> MinIO PutObject -> verification -> NATS event publish.
-func (p *Pipeline) ingestProduct(ctx context.Context, prod model.ManifestProduct, dryRun bool) model.ProductResult {
+var errRunByteBudget = errors.New("ingest run byte budget reached")
+
+type budgetReader struct {
+	source io.Reader
+	budget *runByteBudget
+}
+
+func (r *budgetReader) Read(p []byte) (int, error) {
+	if r.budget == nil || r.budget.limit <= 0 {
+		return r.source.Read(p)
+	}
+	allowed := len(p)
+	for allowed > 0 {
+		if r.budget.reserve(int64(allowed)) {
+			break
+		}
+		allowed /= 2
+	}
+	if allowed == 0 {
+		return 0, errRunByteBudget
+	}
+	n, err := r.source.Read(p[:allowed])
+	if n < allowed {
+		r.budget.release(int64(allowed - n))
+	}
+	return n, err
+}
+
+func (p *Pipeline) ingestProduct(ctx context.Context, prod model.ManifestProduct, dryRun bool, budget *runByteBudget) model.ProductResult {
 	objectKey, err := model.BuildObjectKey(prod)
 	if err != nil {
 		return model.ProductResult{
@@ -95,8 +125,19 @@ func (p *Pipeline) ingestProduct(ctx context.Context, prod model.ManifestProduct
 	if uploadSize <= 0 {
 		uploadSize = prod.SizeBytes
 	}
+	reservedBytes := int64(0)
+	if uploadSize > 0 {
+		if !budget.reserve(uploadSize) {
+			return model.ProductResult{SourceProductID: prod.SourceProductID, ObjectKey: objectKey, Status: model.StatusSkipped, Error: errRunByteBudget}
+		}
+		reservedBytes = uploadSize
+	}
 
-	hr := model.NewHashedReader(stream)
+	readStream := io.Reader(stream)
+	if uploadSize <= 0 {
+		readStream = &budgetReader{source: stream, budget: budget}
+	}
+	hr := model.NewHashedReader(readStream)
 
 	userMeta := map[string]string{
 		"source-product-id": prod.SourceProductID,
@@ -110,10 +151,15 @@ func (p *Pipeline) ingestProduct(ctx context.Context, prod model.ManifestProduct
 
 	// Stream into MinIO.
 	if err := p.minioClient.PutObject(ctx, p.bucket, objectKey, hr, uploadSize, userMeta); err != nil {
+		budget.release(reservedBytes)
+		status := model.StatusFailed
+		if errors.Is(err, errRunByteBudget) {
+			status = model.StatusSkipped
+		}
 		return model.ProductResult{
 			SourceProductID: prod.SourceProductID,
 			ObjectKey:       objectKey,
-			Status:          model.StatusFailed,
+			Status:          status,
 			Error:           fmt.Errorf("minio put: %w", err),
 		}
 	}

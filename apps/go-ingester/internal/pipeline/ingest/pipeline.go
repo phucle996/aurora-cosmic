@@ -55,6 +55,33 @@ type Pipeline struct {
 	log                *slog.Logger
 }
 
+type runByteBudget struct {
+	limit int64
+	used  atomic.Int64
+}
+
+func (b *runByteBudget) reserve(size int64) bool {
+	if b == nil || b.limit <= 0 || size <= 0 {
+		return true
+	}
+	for {
+		current := b.used.Load()
+		if size > b.limit-current {
+			return false
+		}
+		if b.used.CompareAndSwap(current, current+size) {
+			return true
+		}
+	}
+}
+
+func (b *runByteBudget) release(size int64) {
+	if b == nil || size <= 0 {
+		return
+	}
+	b.used.Add(-size)
+}
+
 // NewPipeline constructs an ingestion Pipeline.
 func NewPipeline(sourceReader SourceReader, minioClient model.Client, publisher model.Publisher, cpManager *checkpoint.Manager, bucket string, concurrency int, log *slog.Logger) *Pipeline {
 	if concurrency <= 0 {
@@ -135,6 +162,7 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun
 			runBytes += prod.SizeBytes
 		}
 	}
+	runBudget := &runByteBudget{limit: p.maxRunBytes}
 
 	// Ensure destination bucket exists only after cheap manifest validation.
 	// An oversized run must fail without opening a storage connection.
@@ -284,7 +312,7 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun
 					if p.cpManager != nil {
 						p.cpManager.UpdateProductState(prod.SourceProductID, model.StateDownloading, 0, "", nil)
 					}
-					res = p.ingestProduct(ctx, prod, dryRun)
+					res = p.ingestProduct(ctx, prod, dryRun, runBudget)
 				}
 				activeWorkers.Add(-1)
 				if p.metrics != nil {
@@ -303,6 +331,8 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun
 						p.cpManager.UpdateProductState(prod.SourceProductID, model.StateStored, res.SizeBytes, res.SHA256, res.Error)
 					case model.StatusFailed:
 						p.cpManager.UpdateProductState(prod.SourceProductID, model.StateFailed, res.SizeBytes, res.SHA256, res.Error)
+					case model.StatusSkipped:
+						p.cpManager.UpdateProductState(prod.SourceProductID, model.StatePlanned, res.SizeBytes, res.SHA256, res.Error)
 					}
 					checkpointDirty.Add(1)
 				}

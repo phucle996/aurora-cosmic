@@ -148,10 +148,14 @@ func Load() (*Config, error) {
 			PageSize: mastPageSize,
 		},
 		Manifest: ManifestConfig{
-			IncludeTPF:  optionalEnvBool("AURORA_INCLUDE_TPF", true),
-			IncludeLC:   optionalEnvBool("AURORA_INCLUDE_LIGHTCURVE", true),
-			IncludeFFI:  optionalEnvBool("AURORA_INCLUDE_FFI", true),
-			RequirePair: optionalEnvBool("AURORA_REQUIRE_TPF_LC_PAIR", true),
+			IncludeTPF: optionalEnvBool("AURORA_INCLUDE_TPF", true),
+			IncludeLC:  optionalEnvBool("AURORA_INCLUDE_LIGHTCURVE", true),
+			IncludeFFI: optionalEnvBool("AURORA_INCLUDE_FFI", true),
+			// MAST's observation catalog commonly exposes a light-curve row
+			// without a matching TPF row in the same bounded page. Keep LC-only
+			// samples ingestible by default; deployments that require paired
+			// TPF/LC science products can opt into the strict policy explicitly.
+			RequirePair: optionalEnvBool("AURORA_REQUIRE_TPF_LC_PAIR", false),
 		},
 	}
 

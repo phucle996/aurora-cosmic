@@ -37,6 +37,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, metrics *obs
 	if err := control.Start(); err != nil {
 		return err
 	}
+	log.Info("Ingest control ready; waiting for an explicit UI start command")
 	defer control.Shutdown(context.Background())
 	<-ctx.Done()
 	log.Info("Shutdown signal received, stopping ingestion tasks...")
@@ -66,6 +67,7 @@ type controlRun struct {
 	Status       string    `json:"status"`
 	ManifestPath string    `json:"manifest_path,omitempty"`
 	Sector       int       `json:"sector,omitempty"`
+	Concurrency  int       `json:"concurrency,omitempty"`
 	StartedAt    time.Time `json:"started_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 	Error        string    `json:"error,omitempty"`
@@ -132,8 +134,9 @@ func (s *controlServer) jobs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "manifest_path or sector is required", http.StatusBadRequest)
 		return
 	}
-	if request.Limit <= 0 {
-		request.Limit = 10
+	if request.Limit < 0 {
+		http.Error(w, "limit must be zero or greater", http.StatusBadRequest)
+		return
 	}
 	if request.Concurrency <= 0 {
 		request.Concurrency = s.cfg.Ingest.Concurrency
@@ -145,7 +148,7 @@ func (s *controlServer) jobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	run := &controlRun{ID: "ingest-job-" + uuid.NewString()[:8], Status: "running", ManifestPath: request.ManifestPath, Sector: request.Sector, StartedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(), cancel: cancel}
+	run := &controlRun{ID: "ingest-job-" + uuid.NewString()[:8], Status: "running", ManifestPath: request.ManifestPath, Sector: request.Sector, Concurrency: request.Concurrency, StartedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(), cancel: cancel}
 	s.active = run
 	s.mu.Unlock()
 	go func() {
@@ -164,7 +167,11 @@ func (s *controlServer) jobs(w http.ResponseWriter, r *http.Request) {
 				err = discoverErr
 			} else {
 				manifest, err = plan.Build(results, model.SelectOptions{IncludeTPF: s.cfg.Manifest.IncludeTPF, IncludeLC: s.cfg.Manifest.IncludeLC, IncludeFFI: s.cfg.Manifest.IncludeFFI, RequirePair: s.cfg.Manifest.RequirePair, MaxSamples: request.Limit})
-				manifestPath = fmt.Sprintf("remote:tess/sector=%d/limit=%d", request.Sector, request.Limit)
+				limitLabel := "all"
+				if request.Limit > 0 {
+					limitLabel = fmt.Sprintf("%d", request.Limit)
+				}
+				manifestPath = fmt.Sprintf("remote:tess/sector=%d/limit=%s", request.Sector, limitLabel)
 			}
 		}
 		if err == nil {
