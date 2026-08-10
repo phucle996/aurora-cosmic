@@ -44,6 +44,7 @@ type PreprocessingHop struct {
 	Output      string
 	ObservedAt  time.Time
 	Metrics     map[string]float64
+	Details     map[string]string
 }
 
 type PreprocessingEdge struct {

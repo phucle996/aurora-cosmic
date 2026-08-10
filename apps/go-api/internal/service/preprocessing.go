@@ -41,6 +41,7 @@ type PreprocessingService struct {
 	runtimeMu          sync.RWMutex
 	runtimeJob         *entity.PreprocessingControlJob
 	progress           entity.PreprocessingProgress
+	checkpointDetails  map[string]string
 	progressAt         time.Time
 	progressRefreshing bool
 }
@@ -65,6 +66,13 @@ func (s *PreprocessingService) Start(ctx context.Context, request entity.Preproc
 	if s.dispatcher == nil {
 		return nil, fmt.Errorf("preprocessing control is unavailable")
 	}
+	s.runtimeMu.RLock()
+	if s.runtimeJob != nil && (s.runtimeJob.Status == "running" || s.runtimeJob.Status == "accepted" || s.runtimeJob.Status == "cancelling") {
+		activeJobID := s.runtimeJob.JobID
+		s.runtimeMu.RUnlock()
+		return nil, fmt.Errorf("preprocessing job %s is still active", activeJobID)
+	}
+	s.runtimeMu.RUnlock()
 	request.Mode = strings.ToLower(strings.TrimSpace(request.Mode))
 	if request.Mode == "" {
 		request.Mode = "stream"
@@ -130,6 +138,12 @@ func (s *PreprocessingService) Stop(ctx context.Context, jobID string) (*entity.
 		return nil, fmt.Errorf("encode preprocessing stop command: %w", err)
 	}
 	if err := s.dispatcher.Dispatch(ctx, "preprocessing_stop", command); err != nil {
+		s.runtimeMu.Lock()
+		if s.runtimeJob != nil && s.runtimeJob.JobID == job.JobID {
+			s.runtimeJob.Status = "running"
+			s.runtimeJob.UpdatedAt = time.Now().UTC()
+		}
+		s.runtimeMu.Unlock()
 		return nil, fmt.Errorf("dispatch preprocessing stop command: %w", err)
 	}
 	if s.publisher != nil {
@@ -147,6 +161,10 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 		runtimeJob = &copy
 	}
 	runtimeProgress := s.progress
+	checkpointDetails := make(map[string]string, len(s.checkpointDetails))
+	for key, value := range s.checkpointDetails {
+		checkpointDetails[key] = value
+	}
 	progressAt := s.progressAt
 	s.runtimeMu.RUnlock()
 
@@ -249,7 +267,7 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 	if runtimeJob != nil && (runtimeJob.Status == "cancelling" || runtimeJob.Status == "canceled" || runtimeJob.Status == "cancelled") {
 		status = runtimeJob.Status
 	}
-	hops := preprocessingHops(status, values, end)
+	hops := preprocessingHops(status, values, end, checkpointDetails)
 	edges := make([]entity.PreprocessingEdge, 0, len(hops)-1)
 	for i := 0; i < len(hops)-1; i++ {
 		edges = append(edges, entity.PreprocessingEdge{ID: fmt.Sprintf("edge-%d", i), Source: hops[i].ID, Target: hops[i+1].ID, Status: status, ObservedAt: end})
@@ -274,6 +292,8 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 	completed := 0
 	var countMu sync.Mutex
 	var countWG sync.WaitGroup
+	var latestAt time.Time
+	var latestDetails map[string]string
 	semaphore := make(chan struct{}, 32)
 	for _, object := range objects {
 		object := object
@@ -291,11 +311,60 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 				return
 			}
 			var checkpoint struct {
-				State string `json:"state"`
+				CheckpointID        string  `json:"checkpoint_id"`
+				SourceProductID     string  `json:"source_product_id"`
+				SampleID            *string `json:"sample_id"`
+				ProductKind         string  `json:"product_kind"`
+				BronzeBucket        string  `json:"bronze_bucket"`
+				BronzeObjectKey     string  `json:"bronze_object_key"`
+				BronzeSHA256        string  `json:"bronze_sha256"`
+				ProcessorVersion    string  `json:"processor_version"`
+				SilverBucket        *string `json:"silver_bucket"`
+				SilverObjectKey     *string `json:"silver_object_key"`
+				SilverSHA256        *string `json:"silver_sha256"`
+				SilverSizeBytes     *uint64 `json:"silver_size_bytes"`
+				SilverSchemaVersion *string `json:"silver_schema_version"`
+				State               string  `json:"state"`
+				Attempts            uint32  `json:"attempts"`
+				LastError           *string `json:"last_error"`
+				Terminal            bool    `json:"terminal"`
+				CreatedAt           string  `json:"created_at"`
+				UpdatedAt           string  `json:"updated_at"`
 			}
-			if json.Unmarshal(data, &checkpoint) == nil && strings.EqualFold(checkpoint.State, "COMPLETED") {
+			if json.Unmarshal(data, &checkpoint) == nil {
+				updatedAt, _ := time.Parse(time.RFC3339Nano, checkpoint.UpdatedAt)
+				if updatedAt.IsZero() {
+					updatedAt = object.LastModified
+				}
 				countMu.Lock()
-				completed++
+				if strings.EqualFold(checkpoint.State, "COMPLETED") {
+					completed++
+				}
+				if latestDetails == nil || updatedAt.After(latestAt) {
+					latestAt = updatedAt
+					latestDetails = map[string]string{
+						"checkpoint_id":         checkpoint.CheckpointID,
+						"checkpoint_key":        object.Key,
+						"source_product_id":     checkpoint.SourceProductID,
+						"sample_id":             optionalString(checkpoint.SampleID),
+						"product_kind":          checkpoint.ProductKind,
+						"bronze_bucket":         checkpoint.BronzeBucket,
+						"bronze_object_key":     checkpoint.BronzeObjectKey,
+						"bronze_sha256":         checkpoint.BronzeSHA256,
+						"processor_version":     checkpoint.ProcessorVersion,
+						"silver_bucket":         optionalString(checkpoint.SilverBucket),
+						"silver_object_key":     optionalString(checkpoint.SilverObjectKey),
+						"silver_sha256":         optionalString(checkpoint.SilverSHA256),
+						"silver_size_bytes":     optionalUint64(checkpoint.SilverSizeBytes),
+						"silver_schema_version": optionalString(checkpoint.SilverSchemaVersion),
+						"state":                 checkpoint.State,
+						"attempts":              fmt.Sprintf("%d", checkpoint.Attempts),
+						"last_error":            optionalString(checkpoint.LastError),
+						"terminal":              fmt.Sprintf("%t", checkpoint.Terminal),
+						"created_at":            checkpoint.CreatedAt,
+						"updated_at":            checkpoint.UpdatedAt,
+					}
+				}
 				countMu.Unlock()
 			}
 		}()
@@ -305,6 +374,7 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 	s.progress.CheckpointTotal = len(objects)
 	s.progress.CheckpointCompleted = completed
 	s.progress.CheckpointPending = len(objects) - completed
+	s.checkpointDetails = latestDetails
 	s.progressAt = time.Now().UTC()
 	s.progressRefreshing = false
 	s.runtimeMu.Unlock()
@@ -338,7 +408,7 @@ func preprocessingStatus(values map[string]float64, observed bool, now time.Time
 	return "not_observed"
 }
 
-func preprocessingHops(status string, values map[string]float64, observedAt time.Time) []entity.PreprocessingHop {
+func preprocessingHops(status string, values map[string]float64, observedAt time.Time, details map[string]string) []entity.PreprocessingHop {
 	metrics := make(map[string]float64, len(values))
 	for key, value := range values {
 		metrics[key] = value
@@ -355,6 +425,51 @@ func preprocessingHops(status string, values map[string]float64, observedAt time
 	}
 	for i := range hops {
 		hops[i].Status, hops[i].ObservedAt, hops[i].Metrics = status, observedAt, metrics
+		hops[i].Details = hopDetails(hops[i].ID, details)
 	}
 	return hops
+}
+
+func hopDetails(id string, checkpoint map[string]string) map[string]string {
+	details := make(map[string]string)
+	for key, value := range checkpoint {
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		details[key] = value
+	}
+	if len(details) == 0 {
+		return details
+	}
+	keysByHop := map[string][]string{
+		"bronze":     {"source_product_id", "product_kind", "bronze_bucket", "bronze_object_key", "bronze_sha256"},
+		"decode":     {"product_kind", "bronze_object_key", "attempts"},
+		"transform":  {"product_kind", "processor_version", "attempts"},
+		"silver":     {"silver_bucket", "silver_object_key", "silver_sha256", "silver_size_bytes", "silver_schema_version"},
+		"checkpoint": {"checkpoint_id", "checkpoint_key", "state", "attempts", "terminal", "updated_at", "last_error"},
+		"lineage":    {"source_product_id", "processor_version", "checkpoint_id"},
+		"event":      {"silver_object_key", "silver_schema_version"},
+		"ack":        {"source_product_id", "state"},
+	}
+	filtered := make(map[string]string)
+	for _, key := range keysByHop[id] {
+		if value, ok := details[key]; ok {
+			filtered[key] = value
+		}
+	}
+	return filtered
+}
+
+func optionalString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func optionalUint64(value *uint64) string {
+	if value == nil {
+		return ""
+	}
+	return fmt.Sprintf("%d", *value)
 }

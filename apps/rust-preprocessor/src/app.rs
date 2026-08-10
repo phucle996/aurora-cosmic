@@ -25,7 +25,7 @@ struct PreprocessingControlCommand {
     prefix: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct PreprocessingRunCheckpoint {
     schema_version: u32,
     run_id: String,
@@ -127,6 +127,11 @@ pub async fn run(config: Config) -> Result<()> {
         .await
         .with_context(|| format!("Failed to subscribe to {}", config.control.subject))?;
     let mut worker_task: Option<JoinHandle<()>> = None;
+    let mut worker_cancel: Option<CancellationToken> = None;
+    let mut active_job_id: Option<String> = None;
+    let mut active_mode = "stream".to_string();
+    let mut active_ingest_run_id: Option<String> = None;
+    let mut active_prefix: Option<String> = None;
 
     if config.control.autostart {
         let now = chrono::Utc::now().to_rfc3339();
@@ -168,7 +173,8 @@ pub async fn run(config: Config) -> Result<()> {
         let img_config = config.image_pipeline.clone();
         let jetstream_ref = jetstream.clone();
         let minio_ref = Arc::clone(&minio);
-        let cancel_ref = cancel.clone();
+        let cancel_ref = cancel.child_token();
+        let cancel_for_task = cancel_ref.clone();
         let metrics_ref = Arc::clone(&metrics);
         let mode = command.mode.clone();
         worker_task = Some(tokio::spawn(async move {
@@ -178,7 +184,7 @@ pub async fn run(config: Config) -> Result<()> {
                 &cfg_consumer,
                 lc_config,
                 img_config,
-                cancel_ref,
+                cancel_for_task,
                 metrics_ref,
                 &mode,
             )
@@ -187,6 +193,11 @@ pub async fn run(config: Config) -> Result<()> {
                 tracing::error!(error = %e, "Worker pool exited with error");
             }
         }));
+        worker_cancel = Some(cancel_ref);
+        active_job_id = Some(command.job_id);
+        active_mode = command.mode;
+        active_ingest_run_id = command.ingest_run_id;
+        active_prefix = command.prefix;
     }
 
     // 5. Wait for shutdown or an explicit start command.
@@ -218,6 +229,8 @@ pub async fn run(config: Config) -> Result<()> {
                             .unwrap_or(false)
                         {
                             worker_task.take();
+                            worker_cancel = None;
+                            active_job_id = None;
                             tracing::info!("Previous preprocessing worker completed; accepting a new start");
                         }
                         if worker_task.is_some() {
@@ -247,15 +260,52 @@ pub async fn run(config: Config) -> Result<()> {
                             let img_config = config.image_pipeline.clone();
                             let jetstream_ref = jetstream.clone();
                             let minio_ref = Arc::clone(&minio);
-                            let cancel_ref = cancel.clone();
+                            let cancel_ref = cancel.child_token();
+                            let cancel_for_task = cancel_ref.clone();
                             let metrics_ref = Arc::clone(&metrics);
                             let mode = command.mode.clone();
                             worker_task = Some(tokio::spawn(async move {
-                                if let Err(e) = worker::run_pool(jetstream_ref, minio_ref, &cfg_consumer, lc_config, img_config, cancel_ref, metrics_ref, &mode).await {
+                                if let Err(e) = worker::run_pool(jetstream_ref, minio_ref, &cfg_consumer, lc_config, img_config, cancel_for_task, metrics_ref, &mode).await {
                                     tracing::error!(error = %e, "Worker pool exited with error");
                                 }
                             }));
+                            worker_cancel = Some(cancel_ref);
+                            active_job_id = Some(command.job_id.clone());
+                            active_mode = command.mode.clone();
+                            active_ingest_run_id = command.ingest_run_id.clone();
+                            active_prefix = command.prefix.clone();
                             tracing::info!(job_id = %command.job_id, mode = %command.mode, "Preprocessing workflow started");
+                        }
+                    }
+                    Ok(command) if command.action == "stop" => {
+                        if active_job_id.as_deref() != Some(command.job_id.as_str()) && worker_task.is_some() {
+                            tracing::warn!(job_id = %command.job_id, "Ignoring stop for a non-active preprocessing job");
+                        } else {
+                            if let Some(worker_cancel) = worker_cancel.as_ref() {
+                                worker_cancel.cancel();
+                            }
+                            let existing = minio
+                                .get_json_object::<PreprocessingRunCheckpoint>(&config.minio.bucket, &format!("checkpoints/preprocessing/runs/{}.json", command.job_id))
+                                .await
+                                .context("Failed to read preprocessing checkpoint before stop")?;
+                            let now = chrono::Utc::now().to_rfc3339();
+                            let mut checkpoint = existing.unwrap_or(PreprocessingRunCheckpoint {
+                                schema_version: 1,
+                                run_id: command.job_id.clone(),
+                                status: "RUNNING".to_string(),
+                                mode: active_mode.clone(),
+                                ingest_run_id: active_ingest_run_id.clone(),
+                                prefix: active_prefix.clone(),
+                                started_at: now.clone(),
+                                updated_at: now.clone(),
+                            });
+                            checkpoint.status = "CANCELED".to_string();
+                            checkpoint.updated_at = now;
+                            minio
+                                .put_json_object(&config.minio.bucket, &format!("checkpoints/preprocessing/runs/{}.json", checkpoint.run_id), &checkpoint)
+                                .await
+                                .context("Failed to write canceled preprocessing checkpoint")?;
+                            tracing::info!(job_id = %command.job_id, "Preprocessing stop requested");
                         }
                     }
                     Ok(command) => tracing::warn!(action = %command.action, "Unsupported preprocessing control action"),

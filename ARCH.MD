@@ -2,9 +2,7 @@
 
 # AURORA Cosmic Data Platform
 
-===============================================================================
 1. OVERVIEW
-===============================================================================
 
 AURORA is a continuously evolving astronomical data platform built around
 NASA TESS observations.
@@ -34,9 +32,7 @@ while the total amount of data processed over the lifetime of the platform
 may grow far beyond local storage capacity.
 
 
-===============================================================================
 2. CORE ARCHITECTURE
-===============================================================================
 
 
                               NASA / MAST
@@ -126,9 +122,7 @@ may grow far beyond local storage capacity.
                          +----------------------+
 
 
-===============================================================================
 3. SOURCE DATA
-===============================================================================
 
 
 Primary source:
@@ -171,9 +165,7 @@ Primary logical sample:
            +-- label / candidate information
 
 
-===============================================================================
 4. GO INGESTER
-===============================================================================
 
 
                          MAST
@@ -195,9 +187,7 @@ After an object is safely stored, Go publishes a lightweight NATS event.
 Go also maintains ingestion progress so the service can resume after restart.
 
 
-===============================================================================
 5. NATS JETSTREAM
-===============================================================================
 
 
 NATS is the control / event plane.
@@ -233,9 +223,7 @@ NATS does NOT carry large FITS binaries.
 Messages reference objects stored in MinIO.
 
 
-===============================================================================
 6. MINIO DATA LAKE
-===============================================================================
 
 
 s3://aurora/
@@ -284,9 +272,7 @@ Checkpoints / manifests:
     durable system progress and data lineage
 
 
-===============================================================================
 7. ROLLING RAW DATA
-===============================================================================
 
 
                      MAST
@@ -325,9 +311,7 @@ Historical raw FITS may be deleted after successful processing.
 Manifests, Gold features, labels and model history are preserved.
 
 
-===============================================================================
 8. RUST PREPROCESSOR
-===============================================================================
 
 
                          NATS
@@ -362,9 +346,7 @@ CPU-heavy FITS work is isolated from the async runtime where necessary.
 The worker writes derived data back to MinIO.
 
 
-===============================================================================
 9. CHECKPOINTS
-===============================================================================
 
 
                     MinIO
@@ -390,9 +372,7 @@ Services can crash and restart without restarting the whole pipeline.
 Checkpoints also support idempotent processing.
 
 
-===============================================================================
 10. DATA LIFECYCLE
-===============================================================================
 
 
     DISCOVERED
@@ -426,9 +406,7 @@ Raw deletion never removes lineage information.
 The lifecycle keeps local storage bounded while knowledge continues growing.
 
 
-===============================================================================
 11. ML PLATFORM
-===============================================================================
 
 
                          MINIO GOLD
@@ -473,9 +451,7 @@ Rust owns production inference.
 Go exposes results through the API.
 
 
-===============================================================================
 12. MODEL EVOLUTION
-===============================================================================
 
 
                  cumulative Gold data
@@ -506,9 +482,7 @@ Previous model versions remain available for rollback.
 Model evolution continues while raw storage remains bounded.
 
 
-===============================================================================
 13. GPU ACCELERATION
-===============================================================================
 
 
                      ~4 GiB VRAM
@@ -545,9 +519,7 @@ GPU acceleration is optional.
 The complete system must remain functional on CPU.
 
 
-===============================================================================
 14. LANGUAGE RESPONSIBILITIES
-===============================================================================
 
 
 GO
@@ -574,9 +546,7 @@ PYTHON
     model evaluation
 
 
-===============================================================================
 15. SYSTEM STATE
-===============================================================================
 
 
 Persistent data:
@@ -619,9 +589,7 @@ The architecture separates:
     Go / Rust / Python
 
 
-===============================================================================
 16. NO SPARK
-===============================================================================
 
 
 Spark is not required.
@@ -676,9 +644,7 @@ AURORA focuses on implementing the data-system mechanics directly
 instead of introducing a general-purpose distributed compute framework.
 
 
-===============================================================================
 17. CORE SYSTEM RULES
-===============================================================================
 
 
 1.
@@ -731,9 +697,7 @@ instead of introducing a general-purpose distributed compute framework.
     GPU acceleration is optional and must have CPU fallback.
 
 
-===============================================================================
 18. CORE DATA FLOW
-===============================================================================
 
 
                           NASA / MAST

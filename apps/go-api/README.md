@@ -66,12 +66,15 @@ connections and low-level transport operations.
   to an older completed run. Status responses expose the latest 100 products
   by default; use `products_limit=0` only for a full checkpoint dump.
 * `GET /api/v1/events?workflow=preprocessing` is a long-lived SSE invalidation
-  stream. Start/cancel commands publish workflow events so dashboards can
+  stream. Start/stop commands publish workflow events so dashboards can
   refetch authoritative status immediately; polling remains the fallback.
 * `POST /api/v1/preprocessing/jobs` publishes an asynchronous preprocessing
   start command to NATS. `mode=stream` follows new Bronze events; `mode=batch`
   drains retained Bronze events. Preprocessing owns a separate checkpoint
   namespace under `checkpoints/preprocessing/`.
+* `POST /api/v1/preprocessing/jobs/:job_id/stop` cancels the active worker and
+  records a durable `CANCELED` run checkpoint. The stop state is kept in API
+  memory while the worker drains, so refreshes do not re-enable a stale start.
 * Collection endpoints accept `limit` (1–1000) and `offset` (0–10000000).
 * `tic_id` is required for lightcurve queries; the API never silently chooses a
   synthetic/default target.

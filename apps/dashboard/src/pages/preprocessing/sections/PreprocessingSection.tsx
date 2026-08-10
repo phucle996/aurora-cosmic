@@ -33,7 +33,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
-type HopStatus = 'not_observed' | 'running' | 'completed' | 'retry' | 'failed';
+type HopStatus = 'not_observed' | 'running' | 'completed' | 'retry' | 'failed' | 'cancelling' | 'canceled';
 type Hop = {
   id: string;
   label: string;
@@ -44,6 +44,7 @@ type Hop = {
   output: string;
   observed_at?: string;
   metrics?: Record<string, number>;
+  details?: Record<string, string>;
 };
 type HopNodeData = Hop & { onSelect?: () => void };
 
@@ -80,7 +81,7 @@ const hops: Hop[] = [
 ];
 
 const statusCopy: Record<HopStatus, string> = {
-  not_observed: 'Not observed', running: 'Running', completed: 'Completed', retry: 'Retrying', failed: 'Failed',
+  not_observed: 'Not observed', running: 'Running', completed: 'Completed', retry: 'Retrying', failed: 'Failed', cancelling: 'Stopping', canceled: 'Canceled',
 };
 
 function statusClass(status: HopStatus): string {
@@ -88,6 +89,7 @@ function statusClass(status: HopStatus): string {
   if (status === 'running') return 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
   if (status === 'retry') return 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
   if (status === 'failed') return 'border-destructive/40 bg-destructive/10 text-destructive';
+  if (status === 'canceled' || status === 'cancelling') return 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
   return 'border-border bg-muted/40 text-muted-foreground';
 }
 
@@ -98,7 +100,7 @@ function PreprocessNode({ data, selected }: NodeProps): JSX.Element {
   const sourcePosition = index === 3 ? Position.Bottom : Position.Right;
   return <div onClick={(event) => { event.stopPropagation(); hop.onSelect?.(); }} className={`relative w-[190px] border-2 bg-card px-4 py-3 text-left shadow-sm transition ${selected ? 'border-primary ring-2 ring-primary/20' : 'border-border hover:border-primary/60'}`}>
     <Handle type="target" position={targetPosition} className="!size-2 !border-0 !bg-muted-foreground/60" />
-    <div className="flex items-start justify-between gap-2"><span className="flex size-7 items-center justify-center border border-border bg-muted/50 text-xs font-semibold">{index + 1}</span><span className={`mt-2 size-2 rounded-full ${hop.status === 'running' || hop.status === 'completed' ? 'bg-emerald-500' : hop.status === 'failed' ? 'bg-destructive' : hop.status === 'retry' ? 'bg-amber-500' : 'bg-muted-foreground/40'}`} /></div>
+    <div className="flex items-start justify-between gap-2"><span className="flex size-7 items-center justify-center border border-border bg-muted/50 text-xs font-semibold">{index + 1}</span><span className={`mt-2 size-2 rounded-full ${hop.status === 'running' || hop.status === 'completed' ? 'bg-emerald-500' : hop.status === 'failed' ? 'bg-destructive' : hop.status === 'retry' || hop.status === 'cancelling' ? 'bg-amber-500' : 'bg-muted-foreground/40'}`} /></div>
     <p className="mt-4 text-sm font-semibold">{hop.label}</p><p className="mt-1 min-h-8 text-xs leading-5 text-muted-foreground">{hop.description}</p><Badge className={`mt-3 border ${statusClass(hop.status)}`} variant="outline">{statusCopy[hop.status]}</Badge>
     <Handle type="source" position={sourcePosition} className="!size-2 !border-0 !bg-muted-foreground/60" />
   </div>;
@@ -257,15 +259,17 @@ export default function PreprocessingSection(): JSX.Element {
 
 function HopDetail({ hop }: { hop: Hop }): JSX.Element {
   const metricSummary = hop.metrics ? Object.entries(hop.metrics).map(([key, value]) => `${key}: ${value.toFixed(3)}`).join(' · ') : 'No Prometheus samples';
-  return <Tabs defaultValue="summary" className="mx-auto max-w-5xl"><TabsList variant="line"><TabsTrigger value="summary">Summary</TabsTrigger><TabsTrigger value="compare">Before / After</TabsTrigger><TabsTrigger value="lineage">Artifacts &amp; lineage</TabsTrigger></TabsList><TabsContent value="summary" className="pt-5"><div className="grid gap-4 md:grid-cols-3"><DetailMetric label="Status" value={statusCopy[hop.status]} /><DetailMetric label="Input" value={hop.input} /><DetailMetric label="Output" value={hop.output} /></div><div className="mt-5 border border-border bg-muted/20 p-4"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Contract</p><p className="mt-2 break-all font-mono text-sm text-foreground">{hop.contract}</p></div><p className="mt-4 text-xs text-muted-foreground">Observed at {hop.observed_at ? new Date(hop.observed_at).toLocaleString() : '—'} · {metricSummary}</p></TabsContent><TabsContent value="compare" className="pt-5"><ComparisonEmpty hop={hop} /></TabsContent><TabsContent value="lineage" className="pt-5"><div className="grid gap-4 md:grid-cols-2"><DetailMetric label="Processor version" value={hop.id === 'transform' ? 'product-specific v1' : '—'} /><DetailMetric label="Schema version" value={hop.id === 'silver' ? 'silver-* -v1' : '—'} /><DetailMetric label="Checkpoint" value={hop.status === 'not_observed' ? 'Not observed' : 'Service telemetry only'} /><DetailMetric label="Lineage ID" value={hop.status === 'not_observed' ? 'Not observed' : 'Service telemetry only'} /></div></TabsContent></Tabs>;
+  const details = Object.entries(hop.details ?? {});
+  return <Tabs defaultValue="summary" className="mx-auto max-w-5xl"><TabsList variant="line"><TabsTrigger value="summary">Summary</TabsTrigger><TabsTrigger value="compare">Before / After</TabsTrigger><TabsTrigger value="lineage">Artifacts &amp; lineage</TabsTrigger></TabsList><TabsContent value="summary" className="space-y-5 pt-5"><div className="grid gap-4 md:grid-cols-3"><DetailMetric label="Status" value={statusCopy[hop.status] ?? hop.status} /><DetailMetric label="Input" value={hop.input} /><DetailMetric label="Output" value={hop.output} /></div><div className="border border-border bg-muted/20 p-4"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Contract</p><p className="mt-2 break-all font-mono text-sm text-foreground">{hop.contract}</p></div><EvidenceList details={details} empty="No durable checkpoint has been observed for this hop yet." /><p className="text-xs text-muted-foreground">Observed at {hop.observed_at ? new Date(hop.observed_at).toLocaleString() : '—'} · {metricSummary}</p></TabsContent><TabsContent value="compare" className="pt-5"><div className="grid gap-4 md:grid-cols-2"><DetailMetric label="Before" value={hop.details?.bronze_object_key ?? hop.input} /><DetailMetric label="After" value={hop.details?.silver_object_key ?? hop.output} /><DetailMetric label="Output size" value={hop.details?.silver_size_bytes ? `${hop.details.silver_size_bytes} bytes` : 'Not observed'} /><DetailMetric label="Output schema" value={hop.details?.silver_schema_version ?? 'Not observed'} /></div></TabsContent><TabsContent value="lineage" className="pt-5"><EvidenceList details={details.filter(([key]) => ['checkpoint_id', 'checkpoint_key', 'source_product_id', 'processor_version', 'bronze_sha256', 'silver_sha256', 'updated_at'].includes(key))} empty="Lineage evidence is not observed for this hop yet." /></TabsContent></Tabs>;
+}
+
+function EvidenceList({ details, empty }: { details: Array<[string, string]>; empty: string }): JSX.Element {
+  if (details.length === 0) return <div className="border border-dashed border-border p-5 text-sm text-muted-foreground">{empty}</div>;
+  return <div className="grid gap-3 sm:grid-cols-2">{details.map(([key, value]) => <DetailMetric key={key} label={key.replaceAll('_', ' ')} value={value} />)}</div>;
 }
 
 function EdgeDetail({ from, to, status }: { from: Hop; to: Hop; status: HopStatus }): JSX.Element {
   return <div className="mx-auto max-w-5xl space-y-5"><div className="flex items-center gap-3 border border-border bg-muted/20 p-5"><Badge variant="outline">{from.label}</Badge><ArrowRight className="text-muted-foreground" /><Badge variant="outline">{to.label}</Badge></div><div className="grid gap-4 md:grid-cols-3"><DetailMetric label="Transition state" value={statusCopy[status]} /><DetailMetric label="Event source" value={from.output} /><DetailMetric label="Next contract" value={to.contract} /></div><p className="text-sm text-muted-foreground">Transition state is derived from the preprocessor service metrics.</p></div>;
-}
-
-function ComparisonEmpty({ hop }: { hop: Hop }): JSX.Element {
-  return <div className="grid gap-4 md:grid-cols-2"><div className="border border-border bg-muted/20 p-5"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Before</p><p className="mt-3 text-sm font-medium">{hop.input}</p><p className="mt-1 text-sm text-muted-foreground">Chưa có artifact được chọn.</p></div><div className="border border-border bg-muted/20 p-5"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">After</p><p className="mt-3 text-sm font-medium">{hop.output}</p><p className="mt-1 text-sm text-muted-foreground">Chưa có artifact được chọn.</p></div></div>;
 }
 
 function DetailMetric({ label, value }: { label: string; value: string }): JSX.Element { return <div className="border border-border bg-muted/20 p-4"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 break-all font-medium text-foreground">{value}</p></div>; }
