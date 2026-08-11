@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aurora-gold-builder"
+version = "0.1.0"
+description = "AURORA CPU-only Silver to Gold snapshot builder"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "astropy",
+    "minio>=7.2,<8",
+    "nats-py>=2.7,<3",
+    "numpy",
+    "prometheus-client>=0.20,<1",
+    "pyarrow",
+    "scipy",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["aurora_gold_builder"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

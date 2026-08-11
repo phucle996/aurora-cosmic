@@ -96,6 +96,7 @@ jobs:
         run: |
           cd apps/python-ml-worker
           pip install -e ".[dev]"
+          pip install -e "../python-gold-builder[dev]"
 
       - name: Verify python-ml-worker
         run: |
@@ -103,6 +104,10 @@ jobs:
           ruff format --check .
           ruff check .
           PYTHONPATH=. pytest
+          cd ../python-gold-builder
+          ruff format --check .
+          ruff check .
+          PYTHONPATH=../python-ml-worker:. pytest
 
   dashboard-checks:
     name: Dashboard Verification (React TSX & Vite)
@@ -131,6 +136,7 @@ jobs:
       go-ingester: ${{ steps.filter.outputs.go-ingester }}
       rust-preprocessor: ${{ steps.filter.outputs.rust-preprocessor }}
       python-ml-worker: ${{ steps.filter.outputs.python-ml-worker }}
+      gold-builder: ${{ steps.filter.outputs.gold-builder }}
       rust-inference: ${{ steps.filter.outputs.rust-inference }}
       go-api: ${{ steps.filter.outputs.go-api }}
       dashboard: ${{ steps.filter.outputs.dashboard }}
@@ -150,6 +156,9 @@ jobs:
               - 'apps/rust-preprocessor/**'
             python-ml-worker:
               - 'apps/python-ml-worker/**'
+            gold-builder:
+              - 'apps/python-gold-builder/**'
+              - 'apps/python-ml-worker/aurora_ml/pipeline/**'
             rust-inference:
               - 'apps/rust-inference/**'
             go-api:
@@ -214,6 +223,24 @@ jobs:
         with:
           scan-type: 'fs'
           scan-ref: 'apps/python-ml-worker'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+          version: 'latest'
+
+  scan-gold-builder:
+    needs: changes
+    if: ${{ needs.changes.outputs.gold-builder == 'true' }}
+    name: Trivy Scan (gold-builder)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          scan-type: 'fs'
+          scan-ref: 'apps/python-gold-builder'
           format: 'table'
           severity: 'CRITICAL,HIGH'
           version: 'latest'

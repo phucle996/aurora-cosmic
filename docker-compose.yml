@@ -141,6 +141,8 @@ services:
     depends_on:
       minio:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
       nats:
         condition: service_healthy
 
@@ -172,6 +174,28 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  gold-builder:
+    image: ghcr.io/phucle996/aurora-gold-builder:latest
+    build:
+      context: ./apps
+      dockerfile: python-gold-builder/Dockerfile
+    container_name: aurora-gold-builder
+    restart: unless-stopped
+    cpus: "1.0"
+    mem_limit: 1g
+    memswap_limit: 1g
+    env_file:
+      - ./apps/python-gold-builder/.env.example
+    networks:
+      - aurora-net
+    depends_on:
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      nats:
+        condition: service_healthy
 
   rust-inference:
     image: ghcr.io/phucle996/aurora-rust-inference:latest
