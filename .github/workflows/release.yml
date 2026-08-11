@@ -126,7 +126,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ./apps
-          file: python-gold-builder/Dockerfile
+          file: ./apps/python-gold-builder/Dockerfile
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/aurora-gold-builder:latest
