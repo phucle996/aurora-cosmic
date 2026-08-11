@@ -30,7 +30,7 @@ func (p *Pipeline) recoverCheckpointProduct(ctx context.Context, prod model.Mani
 			key, _ = model.BuildObjectKey(prod)
 		}
 		info, exists, statErr := p.minioClient.StatObject(ctx, p.bucket, key)
-		if statErr == nil && exists && info.Size == prod.SizeBytes {
+		if statErr == nil && exists && existingObjectMatchesExpected(info.Size, prod.SizeBytes) {
 			p.log.Info("ingest: checkpoint recovery - valid Bronze object found, publishing NATS event",
 				slog.String("object_key", key),
 				slog.Int64("size", info.Size),

@@ -13,6 +13,16 @@ import (
 // ingestProduct processes a single ManifestProduct: key building -> MAST streaming -> MinIO PutObject -> verification -> NATS event publish.
 var errRunByteBudget = errors.New("ingest run byte budget reached")
 
+// existingObjectMatchesExpected treats a zero manifest size as unknown. MAST
+// does not provide byte sizes for every product, so an existing non-empty
+// Bronze object is still reusable when no expected size was advertised.
+func existingObjectMatchesExpected(actual, expected int64) bool {
+	if expected <= 0 {
+		return actual > 0
+	}
+	return actual == expected
+}
+
 type budgetReader struct {
 	source io.Reader
 	budget *runByteBudget
@@ -74,7 +84,7 @@ func (p *Pipeline) ingestProduct(ctx context.Context, prod model.ManifestProduct
 			slog.Any("error", err),
 		)
 	} else if exists {
-		if info.Size == prod.SizeBytes {
+		if existingObjectMatchesExpected(info.Size, prod.SizeBytes) {
 			p.log.Info("ingest: skipping existing valid object",
 				slog.String("object_key", objectKey),
 				slog.Int64("size", info.Size),

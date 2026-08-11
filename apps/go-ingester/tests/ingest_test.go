@@ -263,6 +263,37 @@ func TestPipelineSkipExistingValidObject(t *testing.T) {
 	}
 }
 
+func TestPipelineSkipExistingObjectWithUnknownExpectedSize(t *testing.T) {
+	mockStorage := newMockStorageClient()
+	objectKey := "bronze/tess/lightcurve/sector=0005/tic=777/unknown-size_lc.fits"
+	existingData := []byte("EXISTING_OBJECT_WITH_UNKNOWN_MANIFEST_SIZE")
+	mockStorage.objects[objectKey] = &model.ObjectInfo{
+		Key:          objectKey,
+		Size:         int64(len(existingData)),
+		UserMetadata: map[string]string{"sha256": "dummyhash"},
+	}
+	mockStorage.content[objectKey] = existingData
+
+	pipe := ingest.NewPipeline(nil, mockStorage, nil, nil, "aurora", 1, nil)
+	man := &model.Manifest{Samples: []model.Sample{{LightCurve: &model.ManifestProduct{
+		SourceProductID: "p-unknown-size",
+		Kind:            model.KindLightCurve,
+		Filename:        "unknown-size_lc.fits",
+		DataURI:         "mast:TESS/unknown-size_lc.fits",
+		SizeBytes:       0,
+		Sector:          5,
+		TICID:           777,
+	}}}}
+
+	summary, results, err := pipe.IngestManifest(context.Background(), man, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if summary.SkippedCount != 1 || len(results) != 1 || results[0].Status != model.StatusSkipped {
+		t.Fatalf("expected existing object to be skipped, summary=%+v results=%+v", summary, results)
+	}
+}
+
 func TestPipelineSizeMismatchFailure(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/fits")
