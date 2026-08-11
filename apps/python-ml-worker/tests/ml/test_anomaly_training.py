@@ -12,7 +12,6 @@ import torch
 from aurora_ml.ml.anomaly.checkpoint import (
     AnomalyTrainingRunCheckpoint,
     AnomalyTrainingRunManifest,
-    AnomalyTrainingRunSpec,
     derive_anomaly_training_run_identity,
 )
 from aurora_ml.ml.anomaly.model import (
@@ -88,6 +87,7 @@ def sample_anomaly_training_rows() -> list[dict]:
 
 
 # --- Unit Tests ---
+
 
 def test_anomaly_preprocessor_train_only_fit():
     """Verify preprocessor statistics are computed strictly on TRAIN rows."""
@@ -210,6 +210,10 @@ def test_anomaly_spec_fingerprint_determinism():
 
 # --- Integration Tests ---
 
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="full training integration requires CUDA"
+)
 def test_full_anomaly_training_flow():
     """Integration test: Execute train_anomaly_model and verify artifacts."""
     manifest = sample_gold_anomaly_manifest()

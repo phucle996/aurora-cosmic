@@ -4,7 +4,7 @@ Implements model-runtime-v1 and model-runtime-validation-v1 for Candidate Vettin
 and Astronomical Anomaly Detection runtime packages.
 """
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -17,11 +17,15 @@ import onnx
 import onnxruntime as ort
 import torch
 
-from aurora_ml.ml.anomaly.model import AnomalyAutoencoderV1, ANOMALY_MODEL_INPUT_FEATURES
+from aurora_ml.ml.anomaly.model import (
+    AnomalyAutoencoderV1,
+)
 from aurora_ml.ml.anomaly.preprocessor import AnomalyPreprocessor
-from aurora_ml.ml.candidate.model import CandidateTabularMlpV1, CANDIDATE_MODEL_INPUT_FEATURES
+from aurora_ml.ml.candidate.model import (
+    CandidateTabularMlpV1,
+)
 from aurora_ml.ml.candidate.preprocessor import CandidatePreprocessor
-from aurora_ml.ml.registry import ModelRegistry, ModelPackageManifest
+from aurora_ml.ml.registry import ModelRegistry
 
 
 class OnnxExportError(Exception):
@@ -145,7 +149,9 @@ def compute_file_sha256(path: str) -> str:
 class RuntimeExporter:
     """Exports registered PyTorch models to ONNX Runtime Packages and verifies parity."""
 
-    def __init__(self, registry_root: str = "models", runtime_root: str = "models/runtime"):
+    def __init__(
+        self, registry_root: str = "models", runtime_root: str = "models/runtime"
+    ):
         self.registry_root = registry_root
         self.runtime_root = runtime_root
 
@@ -160,7 +166,9 @@ class RuntimeExporter:
         pkg_dir = os.path.join(self.registry_root, "candidate", model_id)
         manifest_path = os.path.join(pkg_dir, "manifest.json")
         if not os.path.exists(manifest_path):
-            raise OnnxExportError(f"Candidate model package manifest not found: {manifest_path}")
+            raise OnnxExportError(
+                f"Candidate model package manifest not found: {manifest_path}"
+            )
 
         registry = ModelRegistry(self.registry_root)
         model_pkg = registry.load_model_manifest(manifest_path)
@@ -178,7 +186,11 @@ class RuntimeExporter:
             threshold_sha = compute_file_sha256(threshold_path)
             with open(threshold_path, "r", encoding="utf-8") as f:
                 th_data = json.load(f)
-            decision_threshold = float(th_data.get("decision_threshold", eval_data.get("decision_threshold", 0.5)))
+            decision_threshold = float(
+                th_data.get(
+                    "decision_threshold", eval_data.get("decision_threshold", 0.5)
+                )
+            )
         else:
             decision_threshold = float(eval_data.get("decision_threshold", 0.5))
             threshold_bytes = json.dumps(
@@ -196,9 +208,13 @@ class RuntimeExporter:
 
         # 3. Export to ONNX (opset 17, dynamic batch)
         os.makedirs(os.path.join(self.runtime_root, "candidate"), exist_ok=True)
-        temp_onnx_path = os.path.join(self.runtime_root, "candidate", f"temp_{model_id}.onnx")
+        temp_onnx_path = os.path.join(
+            self.runtime_root, "candidate", f"temp_{model_id}.onnx"
+        )
 
-        dummy_input = torch.randn(2, len(model_pkg.feature_order), dtype=torch.float32, device=device)
+        dummy_input = torch.randn(
+            2, len(model_pkg.feature_order), dtype=torch.float32, device=device
+        )
         torch.onnx.export(
             native_model,
             dummy_input,
@@ -245,11 +261,16 @@ class RuntimeExporter:
 
         # PyTorch native prediction
         with torch.no_grad():
-            native_logits = native_model(torch.tensor(raw_features_matrix, dtype=torch.float32)).numpy().flatten()
-            native_scores = 1.0 / (1.0 + np.exp(-native_logits))
+            native_logits = (
+                native_model(torch.tensor(raw_features_matrix, dtype=torch.float32))
+                .numpy()
+                .flatten()
+            )
 
         # ONNX Runtime prediction
-        ort_sess = ort.InferenceSession(temp_onnx_path, providers=["CPUExecutionProvider"])
+        ort_sess = ort.InferenceSession(
+            temp_onnx_path, providers=["CPUExecutionProvider"]
+        )
         ort_outputs = ort_sess.run(["logits"], {"features": raw_features_matrix})
         ort_logits = ort_outputs[0].flatten()
         ort_scores = 1.0 / (1.0 + np.exp(-ort_logits))
@@ -257,25 +278,28 @@ class RuntimeExporter:
         # Verify numerical parity (|diff| <= 1e-5)
         abs_diff = np.abs(native_logits - ort_logits)
         max_abs_err = float(np.max(abs_diff))
-        max_rel_err = float(np.max(abs_diff / (np.abs(native_logits) + 1e-9)))
 
         if max_abs_err > 1e-5:
             if os.path.exists(temp_onnx_path):
                 os.remove(temp_onnx_path)
-            raise OnnxParityError(f"PYTHON_ONNX_PARITY_FAILED: max_abs_error={max_abs_err:.6e} > 1e-5")
+            raise OnnxParityError(
+                f"PYTHON_ONNX_PARITY_FAILED: max_abs_error={max_abs_err:.6e} > 1e-5"
+            )
 
         # Build parity-fixture.json
         fixture_cases = []
         for i, r in enumerate(sample_rows):
             above_th = bool(ort_scores[i] >= decision_threshold)
-            fixture_cases.append({
-                "case_id": f"cand-case-{i+1}",
-                "raw_features": {k: r.get(k) for k in model_pkg.feature_order},
-                "standardized_features": raw_features_matrix[i].tolist(),
-                "expected_logit": float(ort_logits[i]),
-                "expected_score": float(ort_scores[i]),
-                "expected_above_threshold": above_th,
-            })
+            fixture_cases.append(
+                {
+                    "case_id": f"cand-case-{i + 1}",
+                    "raw_features": {k: r.get(k) for k in model_pkg.feature_order},
+                    "standardized_features": raw_features_matrix[i].tolist(),
+                    "expected_logit": float(ort_logits[i]),
+                    "expected_score": float(ort_scores[i]),
+                    "expected_above_threshold": above_th,
+                }
+            )
 
         fixture_obj = {
             "schema_version": 1,
@@ -285,7 +309,9 @@ class RuntimeExporter:
             "decision_threshold": decision_threshold,
             "cases": fixture_cases,
         }
-        fixture_bytes = json.dumps(fixture_obj, sort_keys=True, indent=2).encode("utf-8")
+        fixture_bytes = json.dumps(fixture_obj, sort_keys=True, indent=2).encode(
+            "utf-8"
+        )
         fixture_sha = hashlib.sha256(fixture_bytes).hexdigest()
 
         # 7. Derive runtime package ID
@@ -317,8 +343,12 @@ class RuntimeExporter:
         shutil.copyfile(prep_path, os.path.join(runtime_dir, "preprocessing.json"))
 
         # Write threshold.json
-        with open(os.path.join(runtime_dir, "threshold.json"), "w", encoding="utf-8") as f:
-            json.dump({"decision_threshold": decision_threshold}, f, indent=2, sort_keys=True)
+        with open(
+            os.path.join(runtime_dir, "threshold.json"), "w", encoding="utf-8"
+        ) as f:
+            json.dump(
+                {"decision_threshold": decision_threshold}, f, indent=2, sort_keys=True
+            )
 
         # Write parity-fixture.json
         with open(os.path.join(runtime_dir, "parity-fixture.json"), "wb") as f:
@@ -338,7 +368,9 @@ class RuntimeExporter:
             model_version=model_pkg.model_version,
             preprocessing_version=model_pkg.preprocessing_version,
             preprocessing_sha256=model_pkg.preprocessing_json_sha256,
-            threshold_policy_version=eval_data.get("threshold_policy_version", "candidate-threshold-max-f1-v1"),
+            threshold_policy_version=eval_data.get(
+                "threshold_policy_version", "candidate-threshold-max-f1-v1"
+            ),
             threshold_sha256=threshold_sha,
             decision_threshold=decision_threshold,
             score_definition_version="candidate-sigmoid-score-v1",
@@ -358,7 +390,9 @@ class RuntimeExporter:
             created_at=created_at,
         )
 
-        with open(os.path.join(runtime_dir, "manifest.json"), "w", encoding="utf-8") as f:
+        with open(
+            os.path.join(runtime_dir, "manifest.json"), "w", encoding="utf-8"
+        ) as f:
             json.dump(manifest.to_dict(), f, indent=2, sort_keys=True)
 
         return manifest
@@ -374,7 +408,9 @@ class RuntimeExporter:
         pkg_dir = os.path.join(self.registry_root, "anomaly", model_id)
         manifest_path = os.path.join(pkg_dir, "manifest.json")
         if not os.path.exists(manifest_path):
-            raise OnnxExportError(f"Anomaly model package manifest not found: {manifest_path}")
+            raise OnnxExportError(
+                f"Anomaly model package manifest not found: {manifest_path}"
+            )
 
         registry = ModelRegistry(self.registry_root)
         model_pkg = registry.load_model_manifest(manifest_path)
@@ -392,7 +428,11 @@ class RuntimeExporter:
             threshold_sha = compute_file_sha256(threshold_path)
             with open(threshold_path, "r", encoding="utf-8") as f:
                 th_data = json.load(f)
-            decision_threshold = float(th_data.get("decision_threshold", eval_data.get("decision_threshold", 0.05)))
+            decision_threshold = float(
+                th_data.get(
+                    "decision_threshold", eval_data.get("decision_threshold", 0.05)
+                )
+            )
         else:
             decision_threshold = float(eval_data.get("decision_threshold", 0.05))
             threshold_bytes = json.dumps(
@@ -410,9 +450,13 @@ class RuntimeExporter:
 
         # 3. Export to ONNX (opset 17, dynamic batch)
         os.makedirs(os.path.join(self.runtime_root, "anomaly"), exist_ok=True)
-        temp_onnx_path = os.path.join(self.runtime_root, "anomaly", f"temp_{model_id}.onnx")
+        temp_onnx_path = os.path.join(
+            self.runtime_root, "anomaly", f"temp_{model_id}.onnx"
+        )
 
-        dummy_input = torch.randn(2, len(model_pkg.feature_order), dtype=torch.float32, device=device)
+        dummy_input = torch.randn(
+            2, len(model_pkg.feature_order), dtype=torch.float32, device=device
+        )
         torch.onnx.export(
             native_model,
             dummy_input,
@@ -457,37 +501,45 @@ class RuntimeExporter:
 
         # PyTorch native prediction
         with torch.no_grad():
-            native_recon = native_model(torch.tensor(raw_features_matrix, dtype=torch.float32)).numpy()
-            native_mse = np.mean((raw_features_matrix - native_recon) ** 2, axis=1)
+            native_recon = native_model(
+                torch.tensor(raw_features_matrix, dtype=torch.float32)
+            ).numpy()
 
         # ONNX Runtime prediction
-        ort_sess = ort.InferenceSession(temp_onnx_path, providers=["CPUExecutionProvider"])
-        ort_outputs = ort_sess.run(["reconstruction"], {"features": raw_features_matrix})
+        ort_sess = ort.InferenceSession(
+            temp_onnx_path, providers=["CPUExecutionProvider"]
+        )
+        ort_outputs = ort_sess.run(
+            ["reconstruction"], {"features": raw_features_matrix}
+        )
         ort_recon = ort_outputs[0]
         ort_mse = np.mean((raw_features_matrix - ort_recon) ** 2, axis=1)
 
         # Verify parity
         abs_diff = np.abs(native_recon - ort_recon)
         max_abs_err = float(np.max(abs_diff))
-        max_rel_err = float(np.max(abs_diff / (np.abs(native_recon) + 1e-9)))
 
         if max_abs_err > 1e-5:
             if os.path.exists(temp_onnx_path):
                 os.remove(temp_onnx_path)
-            raise OnnxParityError(f"PYTHON_ONNX_PARITY_FAILED: max_abs_error={max_abs_err:.6e} > 1e-5")
+            raise OnnxParityError(
+                f"PYTHON_ONNX_PARITY_FAILED: max_abs_error={max_abs_err:.6e} > 1e-5"
+            )
 
         # Build parity-fixture.json
         fixture_cases = []
         for i, r in enumerate(sample_rows):
             above_th = bool(ort_mse[i] >= decision_threshold)
-            fixture_cases.append({
-                "case_id": f"anom-case-{i+1}",
-                "raw_features": {k: r.get(k) for k in model_pkg.feature_order},
-                "standardized_features": raw_features_matrix[i].tolist(),
-                "expected_reconstruction": ort_recon[i].tolist(),
-                "expected_mse": float(ort_mse[i]),
-                "expected_above_threshold": above_th,
-            })
+            fixture_cases.append(
+                {
+                    "case_id": f"anom-case-{i + 1}",
+                    "raw_features": {k: r.get(k) for k in model_pkg.feature_order},
+                    "standardized_features": raw_features_matrix[i].tolist(),
+                    "expected_reconstruction": ort_recon[i].tolist(),
+                    "expected_mse": float(ort_mse[i]),
+                    "expected_above_threshold": above_th,
+                }
+            )
 
         fixture_obj = {
             "schema_version": 1,
@@ -497,7 +549,9 @@ class RuntimeExporter:
             "decision_threshold": decision_threshold,
             "cases": fixture_cases,
         }
-        fixture_bytes = json.dumps(fixture_obj, sort_keys=True, indent=2).encode("utf-8")
+        fixture_bytes = json.dumps(fixture_obj, sort_keys=True, indent=2).encode(
+            "utf-8"
+        )
         fixture_sha = hashlib.sha256(fixture_bytes).hexdigest()
 
         # 7. Derive runtime ID
@@ -527,8 +581,12 @@ class RuntimeExporter:
 
         shutil.copyfile(prep_path, os.path.join(runtime_dir, "preprocessing.json"))
 
-        with open(os.path.join(runtime_dir, "threshold.json"), "w", encoding="utf-8") as f:
-            json.dump({"decision_threshold": decision_threshold}, f, indent=2, sort_keys=True)
+        with open(
+            os.path.join(runtime_dir, "threshold.json"), "w", encoding="utf-8"
+        ) as f:
+            json.dump(
+                {"decision_threshold": decision_threshold}, f, indent=2, sort_keys=True
+            )
 
         with open(os.path.join(runtime_dir, "parity-fixture.json"), "wb") as f:
             f.write(fixture_bytes)
@@ -547,7 +605,9 @@ class RuntimeExporter:
             model_version=model_pkg.model_version,
             preprocessing_version=model_pkg.preprocessing_version,
             preprocessing_sha256=model_pkg.preprocessing_json_sha256,
-            threshold_policy_version=eval_data.get("threshold_policy_version", "anomaly-threshold-validation-p99-v1"),
+            threshold_policy_version=eval_data.get(
+                "threshold_policy_version", "anomaly-threshold-validation-p99-v1"
+            ),
             threshold_sha256=threshold_sha,
             decision_threshold=decision_threshold,
             score_definition_version="anomaly-reconstruction-mse-v1",
@@ -567,7 +627,9 @@ class RuntimeExporter:
             created_at=created_at,
         )
 
-        with open(os.path.join(runtime_dir, "manifest.json"), "w", encoding="utf-8") as f:
+        with open(
+            os.path.join(runtime_dir, "manifest.json"), "w", encoding="utf-8"
+        ) as f:
             json.dump(manifest.to_dict(), f, indent=2, sort_keys=True)
 
         return manifest

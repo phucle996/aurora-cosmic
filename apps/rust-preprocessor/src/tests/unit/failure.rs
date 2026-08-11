@@ -14,7 +14,8 @@ fn test_classify_minio_timeout_is_retryable() {
 
 #[test]
 fn test_classify_checksum_mismatch_is_conflict() {
-    let err = make_err("SHA-256 checksum mismatch for aurora-bronze/key: expected=abc computed=def");
+    let err =
+        make_err("SHA-256 checksum mismatch for aurora-bronze/key: expected=abc computed=def");
     let f = classify_pipeline_error(&err);
     assert_eq!(f.class, FailureClass::Conflict);
     assert_eq!(f.kind, ErrorKind::BronzeIntegrityMismatch);

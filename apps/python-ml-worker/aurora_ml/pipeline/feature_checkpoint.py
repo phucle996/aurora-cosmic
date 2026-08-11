@@ -90,8 +90,7 @@ class FeatureCheckpointRecord:
                 f"Unsupported FeatureCheckpoint schema_version: {d.get('schema_version')}"
             )
         artifacts = [
-            FeatureArtifactProgress.from_dict(art)
-            for art in d.get("artifacts", [])
+            FeatureArtifactProgress.from_dict(art) for art in d.get("artifacts", [])
         ]
         return cls(
             schema_version=1,
@@ -99,7 +98,9 @@ class FeatureCheckpointRecord:
             snapshot_type=d["snapshot_type"],
             snapshot_fingerprint=d["snapshot_fingerprint"],
             state=d.get("state", FeatureCheckpointState.PLANNED),
-            expected_artifact_count=int(d.get("expected_artifact_count", len(artifacts))),
+            expected_artifact_count=int(
+                d.get("expected_artifact_count", len(artifacts))
+            ),
             artifacts=artifacts,
             attempts=int(d.get("attempts", 1)),
             last_error=d.get("last_error"),

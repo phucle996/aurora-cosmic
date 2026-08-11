@@ -4,7 +4,7 @@ Implements model-manifest-v1 and model-promotion-v1 for Candidate Vetting and
 Astronomical Anomaly Detection models.
 """
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -197,16 +197,22 @@ class ModelRegistry:
         """Register a verified immutable model package into models/<task>/<model-id>/."""
         # 1. Load and verify training run manifest
         if not os.path.exists(training_run_manifest_path):
-            raise ModelRegistryError(f"Training run manifest not found: {training_run_manifest_path}")
+            raise ModelRegistryError(
+                f"Training run manifest not found: {training_run_manifest_path}"
+            )
         with open(training_run_manifest_path, "r", encoding="utf-8") as f:
             train_data = json.load(f)
         train_manifest_sha = hashlib.sha256(
-            json.dumps(train_data, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            json.dumps(train_data, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
         ).hexdigest()
 
         # 2. Load and verify evaluation run manifest
         if not os.path.exists(evaluation_run_manifest_path):
-            raise ModelRegistryError(f"Evaluation run manifest not found: {evaluation_run_manifest_path}")
+            raise ModelRegistryError(
+                f"Evaluation run manifest not found: {evaluation_run_manifest_path}"
+            )
         with open(evaluation_run_manifest_path, "r", encoding="utf-8") as f:
             eval_data = json.load(f)
         eval_manifest_sha = hashlib.sha256(
@@ -215,7 +221,9 @@ class ModelRegistry:
 
         # 3. Verify artifact file hashes match training manifest
         if not os.path.exists(model_pt_source_path):
-            raise ModelRegistryError(f"model.pt artifact not found: {model_pt_source_path}")
+            raise ModelRegistryError(
+                f"model.pt artifact not found: {model_pt_source_path}"
+            )
         with open(model_pt_source_path, "rb") as f:
             actual_model_pt_sha = hashlib.sha256(f.read()).hexdigest()
 
@@ -225,7 +233,9 @@ class ModelRegistry:
             )
 
         if not os.path.exists(preprocessing_json_source_path):
-            raise ModelRegistryError(f"preprocessing.json artifact not found: {preprocessing_json_source_path}")
+            raise ModelRegistryError(
+                f"preprocessing.json artifact not found: {preprocessing_json_source_path}"
+            )
         with open(preprocessing_json_source_path, "rb") as f:
             actual_prep_sha = hashlib.sha256(f.read()).hexdigest()
 
@@ -313,9 +323,11 @@ class ModelRegistry:
         package_dir = os.path.join(self._task_dir(task), challenger_model_id)
         manifest_path = os.path.join(package_dir, "manifest.json")
         if not os.path.exists(manifest_path):
-            raise ModelRegistryError(f"Model package not found or uncommitted: {challenger_model_id}")
+            raise ModelRegistryError(
+                f"Model package not found or uncommitted: {challenger_model_id}"
+            )
 
-        challenger_manifest = self.load_model_manifest(manifest_path)
+        self.load_model_manifest(manifest_path)
 
         with open(evaluation_run_manifest_path, "r", encoding="utf-8") as f:
             eval_data = json.load(f)
@@ -338,12 +350,15 @@ class ModelRegistry:
             prev_champion_id = current_champion.model_id
             if task == "candidate_vetting":
                 # Load current champion evaluation metrics
-                champ_eval_dir = os.path.dirname(manifest_path)
                 # Compare Challenger Golden PR-AUC vs Champion Golden PR-AUC
                 challenger_pr_auc = metrics.get("golden_pr_auc", 0.0)
                 # Load champion eval manifest
                 champ_eval_path = os.path.join(
-                    "evaluations", "runs", "candidate", current_champion.evaluation_run_id, "metrics.json"
+                    "evaluations",
+                    "runs",
+                    "candidate",
+                    current_champion.evaluation_run_id,
+                    "metrics.json",
                 )
                 champ_pr_auc = 0.0
                 if os.path.exists(champ_eval_path):
@@ -358,15 +373,23 @@ class ModelRegistry:
                 decision = "CHALLENGER_OUTPERFORMS_CHAMPION"
             else:
                 # Anomaly: compare synthetic detection rate
-                challenger_det_rate = metrics.get("golden_synthetic_detection_rate", 0.0)
+                challenger_det_rate = metrics.get(
+                    "golden_synthetic_detection_rate", 0.0
+                )
                 champ_det_rate = 0.0
                 champ_eval_path = os.path.join(
-                    "evaluations", "runs", "anomaly", current_champion.evaluation_run_id, "metrics.json"
+                    "evaluations",
+                    "runs",
+                    "anomaly",
+                    current_champion.evaluation_run_id,
+                    "metrics.json",
                 )
                 if os.path.exists(champ_eval_path):
                     with open(champ_eval_path, "r", encoding="utf-8") as f:
                         champ_metrics = json.load(f)
-                    champ_det_rate = champ_metrics.get("golden_synthetic_detection_rate", 0.0)
+                    champ_det_rate = champ_metrics.get(
+                        "golden_synthetic_detection_rate", 0.0
+                    )
 
                 if challenger_det_rate < champ_det_rate:
                     raise ModelPromotionRejectionError(
@@ -424,7 +447,9 @@ class ModelRegistry:
         package_dir = os.path.join(self._task_dir(task), target_model_id)
         manifest_path = os.path.join(package_dir, "manifest.json")
         if not os.path.exists(manifest_path):
-            raise ModelRegistryError(f"Target rollback model package not found: {target_model_id}")
+            raise ModelRegistryError(
+                f"Target rollback model package not found: {target_model_id}"
+            )
 
         current_champion = self.get_champion(task)
         prev_champ_id = current_champion.model_id if current_champion else None

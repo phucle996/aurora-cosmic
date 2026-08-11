@@ -21,7 +21,9 @@ from prometheus_client import (
 )
 
 
-_OPERATIONS = frozenset({"training", "inference", "evaluation", "export", "gold", "other"})
+_OPERATIONS = frozenset(
+    {"training", "inference", "evaluation", "export", "gold", "other"}
+)
 _STATUSES = frozenset({"success", "failed", "skipped"})
 
 
@@ -176,8 +178,12 @@ class ObserverServer:
     def start(self) -> None:
         if self._server is not None:
             return
-        self._server = ThreadingHTTPServer(_address(self._address), _handler(self._metrics))
-        self._thread = Thread(target=self._server.serve_forever, name="ml-observer", daemon=True)
+        self._server = ThreadingHTTPServer(
+            _address(self._address), _handler(self._metrics)
+        )
+        self._thread = Thread(
+            target=self._server.serve_forever, name="ml-observer", daemon=True
+        )
         self._thread.start()
 
     def shutdown(self) -> None:

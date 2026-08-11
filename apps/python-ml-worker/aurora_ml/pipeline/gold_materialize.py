@@ -4,27 +4,18 @@ Converts Stage 5 scientific feature/enrichment records into durable, immutable, 
 Gold Parquet datasets (gold-candidate-v1, gold-anomaly-v1).
 """
 
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from aurora_ml.pipeline.catalogs import CandidateEnrichmentRecord
-from aurora_ml.pipeline.evidence import FfiEvidenceFeatures, TpfVettingFeatures
-from aurora_ml.pipeline.feature_checkpoint import (
-    FeatureArtifactProgress,
-    FeatureCheckpointRecord,
-    FeatureCheckpointState,
-    get_feature_checkpoint_key,
+from aurora_ml.pipeline.gold import (
+    SilverInputRef,
 )
-from aurora_ml.pipeline.features import LightCurveFeatures
-from aurora_ml.pipeline.gold import GoldSnapshotManifest, GoldSnapshotPlan, SilverInputRef
 
 
 class GoldMaterializeError(Exception):
@@ -298,11 +289,15 @@ def write_partition_parquet(
     return len(sorted_rows), content_sha256, parquet_sha256, size_bytes
 
 
-def format_sector_partition_path(snapshot_id: str, snapshot_type: str, dataset: str, sector: int) -> str:
+def format_sector_partition_path(
+    snapshot_id: str, snapshot_type: str, dataset: str, sector: int
+) -> str:
     """Format canonical MinIO object key for a Gold partition."""
     sec_str = f"sector={sector:04d}"
     if snapshot_type.upper() == "CANDIDATE":
-        return f"gold/snapshots/{snapshot_id}/data/candidate/{sec_str}/part-00000.parquet"
+        return (
+            f"gold/snapshots/{snapshot_id}/data/candidate/{sec_str}/part-00000.parquet"
+        )
     else:
         return f"gold/snapshots/{snapshot_id}/data/anomaly/{dataset}/{sec_str}/part-00000.parquet"
 
@@ -328,7 +323,9 @@ def extract_sector_from_input_ref(inp: SilverInputRef) -> int:
     return 1
 
 
-def group_inputs_by_sector(inputs: List[SilverInputRef]) -> Dict[int, List[SilverInputRef]]:
+def group_inputs_by_sector(
+    inputs: List[SilverInputRef],
+) -> Dict[int, List[SilverInputRef]]:
     """Group Silver inputs deterministically by sector."""
     grouped: Dict[int, List[SilverInputRef]] = {}
     for inp in inputs:

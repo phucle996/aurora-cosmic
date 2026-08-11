@@ -45,7 +45,12 @@ def select_candidate_validation_threshold(
                     best_f1, best_rec, best_prec, best_thresh = f1, rec, prec, float(t)
                 elif abs(prec - best_prec) < 1e-9:
                     if t < best_thresh:
-                        best_f1, best_rec, best_prec, best_thresh = f1, rec, prec, float(t)
+                        best_f1, best_rec, best_prec, best_thresh = (
+                            f1,
+                            rec,
+                            prec,
+                            float(t),
+                        )
 
     return best_thresh, best_f1, best_prec, best_rec
 
@@ -126,7 +131,11 @@ def calculate_candidate_cohort_metrics(
 
     precision = float(tp / (tp + fp)) if (tp + fp) > 0 else 0.0
     recall = float(tp / (tp + fn)) if (tp + fn) > 0 else 0.0
-    f1 = float(2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+    f1 = (
+        float(2 * precision * recall / (precision + recall))
+        if (precision + recall) > 0
+        else 0.0
+    )
 
     return {
         "status": "OK",
@@ -145,7 +154,9 @@ def calculate_candidate_cohort_metrics(
 def select_anomaly_validation_threshold(val_scores: np.ndarray) -> float:
     """Select decision threshold strictly on VALIDATION reconstruction scores."""
     if len(val_scores) == 0:
-        raise ValueError("NO_VALIDATION_SCORES: Cannot compute threshold on empty validation scores")
+        raise ValueError(
+            "NO_VALIDATION_SCORES: Cannot compute threshold on empty validation scores"
+        )
 
     threshold = float(np.quantile(val_scores, 0.99, method="linear"))
     return threshold

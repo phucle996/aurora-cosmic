@@ -3,7 +3,7 @@ package entity
 type Task string
 
 const (
-	TaskCandidateVetting  Task = "candidate_vetting"
+	TaskCandidateVetting Task = "candidate_vetting"
 	TaskAnomalyDetection Task = "astronomical_anomaly_detection"
 )
 

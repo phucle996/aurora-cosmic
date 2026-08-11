@@ -181,7 +181,9 @@ fn test_silver_object_ready_event_serialization() {
         source_product_id: "tess2021204101400-s0042-0000000123456789".to_string(),
         sample_id: Some("sample-789".to_string()),
         bucket: "aurora".to_string(),
-        object_key: "silver/tess/lightcurve/processor=lc-preprocess-v1/sector=0042/tic=123456789/lc.parquet".to_string(),
+        object_key:
+            "silver/tess/lightcurve/processor=lc-preprocess-v1/sector=0042/tic=123456789/lc.parquet"
+                .to_string(),
         product_kind: ProductKind::LightCurve,
         schema_version: "silver-lightcurve-v1".to_string(),
         processor_version: "lc-preprocess-v1".to_string(),
@@ -195,7 +197,8 @@ fn test_silver_object_ready_event_serialization() {
     };
 
     let json_bytes = serde_json::to_vec(&silver_event).expect("Serialization failed");
-    let deserialized: SilverObjectReady = serde_json::from_slice(&json_bytes).expect("Deserialization failed");
+    let deserialized: SilverObjectReady =
+        serde_json::from_slice(&json_bytes).expect("Deserialization failed");
 
     assert_eq!(silver_event, deserialized);
     assert_eq!(deserialized.event_type, "silver.object.ready");

@@ -10,7 +10,9 @@ use async_nats::jetstream::{self, AckKind};
 use chrono::Utc;
 
 pub use pipeline::execute_item_pipeline;
-pub use pool::{parse_duration, run_pool};
+#[allow(unused_imports)]
+pub use pool::parse_duration;
+pub use pool::run_pool;
 pub use publisher::{build_silver_event, publish_silver_event};
 pub use recovery::evaluate_recovery;
 
@@ -35,6 +37,7 @@ use crate::observer::Metrics;
 /// 6. Silver Sink: Upload Silver to MinIO, update checkpoint to COMPLETED
 /// 7. Lineage Commit: Commit durable lineage record and evaluate Bronze eviction eligibility
 /// 8. ACK JetStream message
+#[allow(clippy::too_many_arguments)]
 pub async fn process_message(
     msg: jetstream::Message,
     minio: Arc<MinioClient>,
@@ -450,6 +453,7 @@ fn build_processing_params(
 /// - TERMINAL   → persist FAILED + terminal checkpoint, TERM
 /// - CONFLICT   → persist FAILED + terminal checkpoint, TERM (preserve artifacts)
 /// - REJECTED   → persist FAILED + terminal checkpoint, TERM (scientific rejection)
+#[allow(clippy::too_many_arguments)]
 async fn handle_failure(
     minio: &MinioClient,
     checkpoint: &mut PreprocessingCheckpoint,

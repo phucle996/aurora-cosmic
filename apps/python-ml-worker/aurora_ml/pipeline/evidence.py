@@ -9,7 +9,6 @@ import json
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-from scipy import stats
 
 from aurora_ml.pipeline.features import LightCurveFeatures
 from aurora_ml.pipeline.gold import SilverInputRef
@@ -278,7 +277,9 @@ def compute_tpf_features(
                 transit_deficit_sum = tot_deficit
 
                 if tot_deficit > 1e-12:
-                    transit_deficit_peak_fraction = float(np.max(positive_deficit) / tot_deficit)
+                    transit_deficit_peak_fraction = float(
+                        np.max(positive_deficit) / tot_deficit
+                    )
                     transit_deficit_effective_pixels = float(
                         (tot_deficit**2) / np.sum(positive_deficit**2)
                     )
@@ -295,7 +296,9 @@ def compute_tpf_features(
                     geom_center_r = (rows - 1) / 2.0
                     geom_center_c = (cols - 1) / 2.0
                     transit_deficit_center_offset_pixels = float(
-                        np.sqrt((c_row - geom_center_r) ** 2 + (c_col - geom_center_c) ** 2)
+                        np.sqrt(
+                            (c_row - geom_center_r) ** 2 + (c_col - geom_center_c) ** 2
+                        )
                     )
 
     fingerprint = derive_tpf_feature_fingerprint(
@@ -311,7 +314,9 @@ def compute_tpf_features(
         lineage_id=metadata.get("lineage_id", ""),
         source_product_id=metadata.get("source_product_id", ""),
         product_kind=metadata.get("product_kind", "TARGET_PIXEL"),
-        silver_schema_version=metadata.get("silver_schema_version", "silver-target-pixel-v1"),
+        silver_schema_version=metadata.get(
+            "silver_schema_version", "silver-target-pixel-v1"
+        ),
         silver_sha256=metadata.get("silver_sha256", ""),
         processor_version=metadata.get("processor_version", ""),
         tpf_feature_version=feature_version,
@@ -410,7 +415,9 @@ def compute_ffi_features(
                 # Central 3x3 region
                 center_r = c_h // 2
                 center_c = c_w // 2
-                center_dev = dev[center_r - 1 : center_r + 2, center_c - 1 : center_c + 2]
+                center_dev = dev[
+                    center_r - 1 : center_r + 2, center_c - 1 : center_c + 2
+                ]
                 if dev_sum > 1e-12:
                     center_dev_frac = float(np.sum(center_dev) / dev_sum)
     else:

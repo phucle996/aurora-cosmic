@@ -16,6 +16,7 @@ use crate::worker::process_message;
 const BRONZE_FILTER_SUBJECT: &str = "aurora.v1.bronze.*.ready";
 
 /// Run the Tokio Parallel Worker Pool.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_pool(
     jetstream: jetstream::Context,
     minio: Arc<MinioClient>,

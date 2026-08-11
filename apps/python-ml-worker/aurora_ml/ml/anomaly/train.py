@@ -34,6 +34,7 @@ from aurora_ml.pipeline.gold import GoldSnapshotManifest
 
 class AnomalyTrainingError(Exception):
     """Base exception for anomaly training execution failures."""
+
     pass
 
 
@@ -60,7 +61,9 @@ def train_anomaly_model(
     # 1. Preflight Validations
     gold_manifest.validate()
     if split_manifest.schema_version != 1:
-        raise AnomalyTrainingError("INVALID_SPLIT_MANIFEST_SCHEMA: Unsupported split manifest schema version")
+        raise AnomalyTrainingError(
+            "INVALID_SPLIT_MANIFEST_SCHEMA: Unsupported split manifest schema version"
+        )
 
     if split_manifest.gold_snapshot_id != gold_manifest.snapshot_id:
         raise AnomalyTrainingError(
@@ -68,7 +71,9 @@ def train_anomaly_model(
         )
 
     gold_manifest_sha = hashlib.sha256(
-        json.dumps(gold_manifest.to_dict(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+        json.dumps(
+            gold_manifest.to_dict(), sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
     ).hexdigest()
     if split_manifest.gold_manifest_sha256 != gold_manifest_sha:
         raise AnomalyTrainingError(
@@ -93,14 +98,18 @@ def train_anomaly_model(
     if not train_rows:
         raise AnomalyTrainingError("EMPTY_TRAIN_SPLIT: TRAIN partition contains 0 rows")
     if not val_rows:
-        raise AnomalyTrainingError("EMPTY_VAL_SPLIT: VALIDATION partition contains 0 rows")
+        raise AnomalyTrainingError(
+            "EMPTY_VAL_SPLIT: VALIDATION partition contains 0 rows"
+        )
 
     # Revalidate TIC disjointness
     train_tics = {r.get("tic_id") for r in train_rows if r.get("tic_id") is not None}
     val_tics = {r.get("tic_id") for r in val_rows if r.get("tic_id") is not None}
     overlap = train_tics.intersection(val_tics)
     if overlap:
-        raise AnomalyTrainingError(f"TIC_LEAKAGE_DETECTED: Targets present in both splits: {overlap}")
+        raise AnomalyTrainingError(
+            f"TIC_LEAKAGE_DETECTED: Targets present in both splits: {overlap}"
+        )
 
     # 2. Spec & Recovery Checkpoint Initialization
     hyperparams = {
@@ -114,7 +123,9 @@ def train_anomaly_model(
         "amp_dtype": "float16",
     }
 
-    view_fp_payload = json.dumps({"feature_names": list(ANOMALY_MODEL_INPUT_FEATURES)}, sort_keys=True)
+    view_fp_payload = json.dumps(
+        {"feature_names": list(ANOMALY_MODEL_INPUT_FEATURES)}, sort_keys=True
+    )
     dataset_view_fp = hashlib.sha256(view_fp_payload.encode("utf-8")).hexdigest()
 
     # 3. Seed Randomness
@@ -226,7 +237,9 @@ def train_anomaly_model(
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_epoch = epoch
-            best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            best_model_state = {
+                k: v.cpu().clone() for k, v in model.state_dict().items()
+            }
             patience_counter = 0
         else:
             patience_counter += 1
@@ -277,7 +290,9 @@ def train_anomaly_model(
     }
 
     # 8. Artifact Serialization & Manifest
-    output_dir = dest_dir or os.path.join("training-runs", "anomaly", spec.training_run_id)
+    output_dir = dest_dir or os.path.join(
+        "training-runs", "anomaly", spec.training_run_id
+    )
     os.makedirs(output_dir, exist_ok=True)
 
     # Save model.pt
@@ -306,7 +321,9 @@ def train_anomaly_model(
 
     # Build AnomalyTrainingRunManifest
     split_manifest_sha = hashlib.sha256(
-        json.dumps(split_manifest.to_dict(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+        json.dumps(
+            split_manifest.to_dict(), sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
     ).hexdigest()
 
     manifest = AnomalyTrainingRunManifest(

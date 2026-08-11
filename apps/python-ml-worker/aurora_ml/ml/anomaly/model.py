@@ -11,6 +11,8 @@ import torch.nn as nn
 
 from aurora_ml.ml.datasets.splits import ANOMALY_MODEL_INPUT_FEATURES
 
+__all__ = ["AnomalyLightcurveAutoencoder", "ANOMALY_MODEL_INPUT_FEATURES"]
+
 
 class AnomalyLightcurveAutoencoder(nn.Module):
     """PyTorch Tabular Autoencoder for astronomical light-curve anomaly detection."""

@@ -15,6 +15,7 @@ from aurora_ml.ml.datasets.splits import ANOMALY_MODEL_INPUT_FEATURES
 
 class AnomalyPreprocessingError(Exception):
     """Base exception for anomaly preprocessing errors."""
+
     pass
 
 
@@ -42,7 +43,9 @@ class AnomalyPreprocessor:
     ) -> "AnomalyPreprocessor":
         """Fit preprocessor statistics strictly on TRAIN split rows."""
         if not train_rows:
-            raise AnomalyPreprocessingError("EMPTY_TRAIN_ROWS: Cannot fit preprocessor on empty train rows")
+            raise AnomalyPreprocessingError(
+                "EMPTY_TRAIN_ROWS: Cannot fit preprocessor on empty train rows"
+            )
 
         if feature_order is not None:
             if isinstance(feature_order, str):
@@ -97,7 +100,9 @@ class AnomalyPreprocessor:
     def transform_features(self, rows: List[Dict[str, Any]]) -> np.ndarray:
         """Transform input rows to a 2D float32 standardized feature matrix."""
         if not self.feature_medians:
-            raise AnomalyPreprocessingError("UNFITTED_PREPROCESSOR: Must call fit() before transform()")
+            raise AnomalyPreprocessingError(
+                "UNFITTED_PREPROCESSOR: Must call fit() before transform()"
+            )
 
         n_rows = len(rows)
         n_feats = len(self.feature_order)
@@ -144,11 +149,15 @@ class AnomalyPreprocessor:
     def from_dict(cls, d: Dict[str, Any]) -> "AnomalyPreprocessor":
         """Instantiate AnomalyPreprocessor from dict."""
         if d.get("schema_version", 1) != 1:
-            raise AnomalyPreprocessingError(f"Unsupported schema version: {d.get('schema_version')}")
+            raise AnomalyPreprocessingError(
+                f"Unsupported schema version: {d.get('schema_version')}"
+            )
 
         return cls(
             schema_version=d.get("schema_version", 1),
-            preprocessing_version=d.get("preprocessing_version", "anomaly-lightcurve-preprocess-v1"),
+            preprocessing_version=d.get(
+                "preprocessing_version", "anomaly-lightcurve-preprocess-v1"
+            ),
             split_id=d.get("split_id", ""),
             feature_order=tuple(d.get("feature_order", ANOMALY_MODEL_INPUT_FEATURES)),
             feature_medians=dict(d.get("feature_medians", {})),

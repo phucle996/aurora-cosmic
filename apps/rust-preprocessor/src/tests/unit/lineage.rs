@@ -48,7 +48,7 @@ fn test_processing_fingerprint_is_deterministic() {
 #[test]
 fn test_processing_fingerprint_differs_for_different_params() {
     let params_strict = serde_json::json!({"quality_mode": "strict", "min_points": 100});
-    let params_none   = serde_json::json!({"quality_mode": "none",   "min_points": 100});
+    let params_none = serde_json::json!({"quality_mode": "none",   "min_points": 100});
     let fp1 = derive_processing_fingerprint("lc-preprocess-v1", &params_strict);
     let fp2 = derive_processing_fingerprint("lc-preprocess-v1", &params_none);
     assert_ne!(fp1, fp2);
@@ -80,9 +80,15 @@ fn test_lineage_key_ffi() {
 // Eviction Eligibility Policy
 // ---------------------------------------------------------------------------
 
-fn completed() -> ProcessingState { ProcessingState::Completed }
-fn failed() -> ProcessingState { ProcessingState::Failed }
-fn processing() -> ProcessingState { ProcessingState::Processing }
+fn completed() -> ProcessingState {
+    ProcessingState::Completed
+}
+fn failed() -> ProcessingState {
+    ProcessingState::Failed
+}
+fn processing() -> ProcessingState {
+    ProcessingState::Processing
+}
 
 #[test]
 fn test_eviction_eligible_when_all_conditions_met() {

@@ -11,12 +11,10 @@ from aurora_ml.ml.datasets.splits import (
     CandidateGroupSplit,
     CandidateMlView,
     MlDatasetError,
-    MlSplitConflictError,
     MlSplitError,
     build_candidate_ml_view,
     create_deterministic_group_split,
     derive_group_key,
-    derive_view_fingerprint,
     load_split_manifest,
     save_split_manifest,
 )
@@ -92,7 +90,9 @@ def _make_row(tic_id, sector, label, source_suffix=""):
         "stellar_mass": 1.0,
         "logg": 4.4,
         "matched_toi_id": f"{tic_id}.01" if label in ("POSITIVE", "NEGATIVE") else None,
-        "toi_match_status": "EPHEMERIS_MATCH" if label in ("POSITIVE", "NEGATIVE") else "NO_MATCH",
+        "toi_match_status": "EPHEMERIS_MATCH"
+        if label in ("POSITIVE", "NEGATIVE")
+        else "NO_MATCH",
         "toi_period_error": 0.001 if label in ("POSITIVE", "NEGATIVE") else None,
         "matched_tce_id": None,
         "tce_match_status": "NO_MATCH",
@@ -129,10 +129,14 @@ def test_candidate_ml_view_builder_success():
     assert isinstance(view, CandidateMlView)
     assert view.dataset_view_version == "candidate-ml-view-v1"
     assert view.gold_snapshot_id == manifest.snapshot_id
-    assert view.total_row_count == 13  # 2 TIC-1001 sectors + 5 POS + 5 NEG + 1 UNRESOLVED
-    assert view.supervised_eligible_count == 12  # 7 POSITIVE (TIC1001 x2 + TICs 1002-1006) + 5 NEGATIVE
-    assert view.positive_count == 7   # TIC 1001 s10, s11, TICs 1002-1006
-    assert view.negative_count == 5   # TICs 2001-2005
+    assert (
+        view.total_row_count == 13
+    )  # 2 TIC-1001 sectors + 5 POS + 5 NEG + 1 UNRESOLVED
+    assert (
+        view.supervised_eligible_count == 12
+    )  # 7 POSITIVE (TIC1001 x2 + TICs 1002-1006) + 5 NEGATIVE
+    assert view.positive_count == 7  # TIC 1001 s10, s11, TICs 1002-1006
+    assert view.negative_count == 5  # TICs 2001-2005
     assert view.unresolved_count == 1  # TIC 3001
     assert len(view.feature_names) == 32
     assert view.feature_names == CANDIDATE_MODEL_INPUT_FEATURES
@@ -140,7 +144,9 @@ def test_candidate_ml_view_builder_success():
 
 def test_frozen_feature_ordering_alphabetical():
     # Verify 32 MODEL_INPUT feature names are strictly sorted alphabetically
-    assert list(CANDIDATE_MODEL_INPUT_FEATURES) == sorted(CANDIDATE_MODEL_INPUT_FEATURES)
+    assert list(CANDIDATE_MODEL_INPUT_FEATURES) == sorted(
+        CANDIDATE_MODEL_INPUT_FEATURES
+    )
     assert len(CANDIDATE_MODEL_INPUT_FEATURES) == 32
 
 

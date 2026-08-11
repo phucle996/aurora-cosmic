@@ -9,31 +9,29 @@ import os
 import tempfile
 from typing import Any, Dict, List, Tuple
 
-import numpy as np
-import pytest
 import torch
 
 from aurora_ml.export_onnx import RuntimeExporter
-from aurora_ml.ml.anomaly.model import AnomalyLightcurveAutoencoder, ANOMALY_MODEL_INPUT_FEATURES
-from aurora_ml.ml.anomaly.preprocessor import AnomalyPreprocessor
-from aurora_ml.ml.candidate.model import CandidateTabularMLP, CANDIDATE_MODEL_INPUT_FEATURES
+from aurora_ml.ml.candidate.model import (
+    CandidateTabularMLP,
+    CANDIDATE_MODEL_INPUT_FEATURES,
+)
 from aurora_ml.ml.candidate.preprocessor import CandidatePreprocessor
 from aurora_ml.ml.datasets.splits import (
-    build_anomaly_ml_view,
     build_candidate_ml_view,
-    create_anomaly_group_split,
     create_deterministic_group_split,
 )
 from aurora_ml.ml.evaluate import (
     build_evaluation_cohort,
-    evaluate_anomaly_model,
     evaluate_candidate_model,
 )
 from aurora_ml.ml.registry import ModelRegistry
 from aurora_ml.pipeline.gold import GoldSnapshotManifest
 
 
-def generate_candidate_e2e_dataset() -> Tuple[GoldSnapshotManifest, List[Dict[str, Any]]]:
+def generate_candidate_e2e_dataset() -> Tuple[
+    GoldSnapshotManifest, List[Dict[str, Any]]
+]:
     """Generate sample Gold candidate dataset with train, validation, golden, and recent targets."""
     manifest = GoldSnapshotManifest(
         schema_version=1,
@@ -53,11 +51,16 @@ def generate_candidate_e2e_dataset() -> Tuple[GoldSnapshotManifest, List[Dict[st
     rows = []
     # Training targets: 5 POSITIVE, 5 NEGATIVE across diverse TICs
     train_specs = [
-        (101, "POSITIVE", 10), (102, "NEGATIVE", 10),
-        (103, "POSITIVE", 11), (104, "NEGATIVE", 11),
-        (105, "POSITIVE", 12), (106, "NEGATIVE", 12),
-        (107, "POSITIVE", 13), (108, "NEGATIVE", 13),
-        (109, "POSITIVE", 14), (110, "NEGATIVE", 14),
+        (101, "POSITIVE", 10),
+        (102, "NEGATIVE", 10),
+        (103, "POSITIVE", 11),
+        (104, "NEGATIVE", 11),
+        (105, "POSITIVE", 12),
+        (106, "NEGATIVE", 12),
+        (107, "POSITIVE", 13),
+        (108, "NEGATIVE", 13),
+        (109, "POSITIVE", 14),
+        (110, "NEGATIVE", 14),
     ]
     for tic, lbl, sec in train_specs:
         row = {
@@ -76,7 +79,12 @@ def generate_candidate_e2e_dataset() -> Tuple[GoldSnapshotManifest, List[Dict[st
         rows.append(row)
 
     # Golden targets: TIC 201..204
-    for tic, lbl, sec in [(201, "POSITIVE", 10), (202, "NEGATIVE", 10), (203, "POSITIVE", 11), (204, "NEGATIVE", 11)]:
+    for tic, lbl, sec in [
+        (201, "POSITIVE", 10),
+        (202, "NEGATIVE", 10),
+        (203, "POSITIVE", 11),
+        (204, "NEGATIVE", 11),
+    ]:
         row = {
             "source_product_id": f"prod_{tic}_s{sec}",
             "lineage_id": f"lin_{tic}",
@@ -116,6 +124,7 @@ def test_stage6_candidate_end_to_end_lifecycle():
     """Verify complete Stage 6 Candidate lifecycle: Gold -> Split -> Train -> Eval -> Registry -> ONNX -> Parity."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         import hashlib
+
         gold_manifest, rows = generate_candidate_e2e_dataset()
         train_rows = rows[:10]
 
@@ -128,7 +137,9 @@ def test_stage6_candidate_end_to_end_lifecycle():
         assert split.validation_row_count > 0
 
         # 2. Fit Preprocessor
-        prep = CandidatePreprocessor().fit(train_rows, CANDIDATE_MODEL_INPUT_FEATURES, split.split_id)
+        prep = CandidatePreprocessor().fit(
+            train_rows, CANDIDATE_MODEL_INPUT_FEATURES, split.split_id
+        )
         prep_path = os.path.join(tmp_dir, "preprocessing.json")
         with open(prep_path, "w", encoding="utf-8") as f:
             json.dump(prep.to_dict(), f)
@@ -143,35 +154,42 @@ def test_stage6_candidate_end_to_end_lifecycle():
         # 4. Training Run Manifest
         train_manifest_path = os.path.join(tmp_dir, "training_manifest.json")
         with open(train_manifest_path, "w", encoding="utf-8") as f:
-            json.dump({
-                "schema_version": 1,
-                "training_run_id": "run-cand-v1-e2e",
-                "training_spec_fingerprint": "f" * 64,
-                "task": "candidate_vetting",
-                "model_version": "candidate-tabular-mlp-v1",
-                "gold_snapshot_id": gold_manifest.snapshot_id,
-                "gold_manifest_sha256": "g" * 64,
-                "split_id": split.split_id,
-                "split_manifest_sha256": "s" * 64,
-                "dataset_view_version": view.dataset_view_version,
-                "dataset_view_fingerprint": view.view_fingerprint,
-                "feature_order": list(CANDIDATE_MODEL_INPUT_FEATURES),
-                "preprocessing_version": "candidate-preprocess-v1",
-                "preprocessing_sha256": prep_sha,
-                "training_seed": 42,
-                "hyperparameters": {},
-                "train_row_count": split.train_row_count,
-                "validation_row_count": split.validation_row_count,
-                "best_epoch": 10,
-                "best_validation_loss": 0.05,
-                "model_sha256": model_sha,
-                "metrics_sha256": "m" * 64,
-                "created_at": "2026-08-08T00:00:00Z",
-            }, f)
+            json.dump(
+                {
+                    "schema_version": 1,
+                    "training_run_id": "run-cand-v1-e2e",
+                    "training_spec_fingerprint": "f" * 64,
+                    "task": "candidate_vetting",
+                    "model_version": "candidate-tabular-mlp-v1",
+                    "gold_snapshot_id": gold_manifest.snapshot_id,
+                    "gold_manifest_sha256": "g" * 64,
+                    "split_id": split.split_id,
+                    "split_manifest_sha256": "s" * 64,
+                    "dataset_view_version": view.dataset_view_version,
+                    "dataset_view_fingerprint": view.view_fingerprint,
+                    "feature_order": list(CANDIDATE_MODEL_INPUT_FEATURES),
+                    "preprocessing_version": "candidate-preprocess-v1",
+                    "preprocessing_sha256": prep_sha,
+                    "training_seed": 42,
+                    "hyperparameters": {},
+                    "train_row_count": split.train_row_count,
+                    "validation_row_count": split.validation_row_count,
+                    "best_epoch": 10,
+                    "best_validation_loss": 0.05,
+                    "model_sha256": model_sha,
+                    "metrics_sha256": "m" * 64,
+                    "created_at": "2026-08-08T00:00:00Z",
+                },
+                f,
+            )
 
         # 5. Build Cohorts & Evaluate
-        golden_cohort = build_evaluation_cohort("candidate_vetting", "GOLDEN", gold_manifest, rows)
-        recent_cohort = build_evaluation_cohort("candidate_vetting", "RECENT", gold_manifest, rows)
+        golden_cohort = build_evaluation_cohort(
+            "candidate_vetting", "GOLDEN", gold_manifest, rows
+        )
+        recent_cohort = build_evaluation_cohort(
+            "candidate_vetting", "RECENT", gold_manifest, rows
+        )
         golden_path = os.path.join(tmp_dir, "golden_cohort.json")
         recent_path = os.path.join(tmp_dir, "recent_cohort.json")
         with open(golden_path, "w", encoding="utf-8") as f:
@@ -180,7 +198,7 @@ def test_stage6_candidate_end_to_end_lifecycle():
             json.dump(recent_cohort.to_dict(), f)
 
         eval_dir = os.path.join(tmp_dir, "eval_out")
-        eval_manifest = evaluate_candidate_model(
+        evaluate_candidate_model(
             training_run_manifest_path=train_manifest_path,
             preprocessing_json_path=prep_path,
             golden_cohort_path=golden_path,
@@ -200,7 +218,9 @@ def test_stage6_candidate_end_to_end_lifecycle():
         )
         assert pkg.task == "candidate_vetting"
 
-        promo = registry.promote_model("candidate_vetting", pkg.model_id, eval_manifest_path)
+        promo = registry.promote_model(
+            "candidate_vetting", pkg.model_id, eval_manifest_path
+        )
         assert promo.comparison_decision == "BOOTSTRAP_INITIAL_CHAMPION"
         assert registry.get_champion("candidate_vetting").model_id == pkg.model_id
 

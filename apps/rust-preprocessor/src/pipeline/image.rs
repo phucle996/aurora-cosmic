@@ -55,6 +55,7 @@ pub struct ProcessedTargetPixel {
 
 /// Normalized, calibrated Full Frame Image representation with statistics and cutouts.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ProcessedFfi {
     pub width: usize,
     pub height: usize,
@@ -240,7 +241,7 @@ fn median_f32(values: &mut [f32]) -> f32 {
     }
     values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let mid = values.len() / 2;
-    if values.len() % 2 == 0 {
+    if values.len().is_multiple_of(2) {
         (values[mid - 1] + values[mid]) / 2.0
     } else {
         values[mid]
@@ -280,7 +281,7 @@ pub fn preprocess_ffi(
     let statistics = if finite_pixel_count > 0 {
         finite_pixels.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let mid = finite_pixel_count / 2;
-        let median = if finite_pixel_count % 2 == 0 {
+        let median = if finite_pixel_count.is_multiple_of(2) {
             (finite_pixels[mid - 1] + finite_pixels[mid]) / 2.0
         } else {
             finite_pixels[mid]

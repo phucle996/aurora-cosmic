@@ -96,9 +96,8 @@ pub fn preprocess_lc(
     let mut quality_removed = 0usize;
     let mut invalid_removed = 0usize;
 
-    for i in 0..input_points {
+    for (i, &f) in raw_flux.iter().enumerate().take(input_points) {
         let t = raw.time[i];
-        let f = raw_flux[i];
         let q = raw.quality.get(i).copied().unwrap_or(0);
 
         // Quality check
@@ -287,7 +286,7 @@ fn calculate_median(values: &[f32]) -> f32 {
     let mut sorted = values.to_vec();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let mid = sorted.len() / 2;
-    if sorted.len() % 2 == 0 {
+    if sorted.len().is_multiple_of(2) {
         (sorted[mid - 1] + sorted[mid]) / 2.0
     } else {
         sorted[mid]

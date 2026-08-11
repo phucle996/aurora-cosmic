@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::Path;
 
 use anyhow::{Context, Result};
 
@@ -13,7 +13,7 @@ use crate::pipeline;
 pub async fn execute_item_pipeline(
     minio: &MinioClient,
     event: &BronzeObjectReady,
-    tmp_dir: &PathBuf,
+    tmp_dir: &Path,
     lc_cfg: &LightCurveConfig,
     img_cfg: &ImageConfig,
 ) -> Result<SilverArtifact> {
@@ -35,7 +35,7 @@ pub async fn execute_item_pipeline(
     // Steps 2, 3, 4: CPU-bound Decode -> Preprocess -> Parquet Serialization
     let event_clone = event.clone();
     let temp_fits_path = temp_fits_file.path.clone();
-    let tmp_dir_clone = tmp_dir.clone();
+    let tmp_dir_clone = tmp_dir.to_path_buf();
     let lc_config = lc_cfg.clone();
     let img_config = img_cfg.clone();
 

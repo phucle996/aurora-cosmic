@@ -1,6 +1,5 @@
 """Unit & integration tests for Gold Snapshot Contract, Identity, and Planning."""
 
-import json
 import pytest
 
 from aurora_ml.data import parse_lineage_to_silver_ref
@@ -9,7 +8,6 @@ from aurora_ml.pipeline.gold import (
     GoldSnapshotPlanner,
     SilverInputRef,
     derive_snapshot_identity,
-    sort_silver_inputs,
 )
 
 
@@ -401,7 +399,11 @@ def test_manifest_json_roundtrip():
     manifest_deserialized = GoldSnapshotManifest.from_json(json_str)
 
     assert manifest_deserialized.snapshot_id == plan.manifest.snapshot_id
-    assert manifest_deserialized.snapshot_fingerprint == plan.manifest.snapshot_fingerprint
+    assert (
+        manifest_deserialized.snapshot_fingerprint == plan.manifest.snapshot_fingerprint
+    )
     assert manifest_deserialized.input_count == 2
     assert len(manifest_deserialized.inputs) == 2
-    assert manifest_deserialized.inputs[0].lineage_id == plan.manifest.inputs[0].lineage_id
+    assert (
+        manifest_deserialized.inputs[0].lineage_id == plan.manifest.inputs[0].lineage_id
+    )

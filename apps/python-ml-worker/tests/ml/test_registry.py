@@ -13,13 +13,11 @@ from typing import Any, Dict
 import pytest
 
 from aurora_ml.ml.registry import (
-    ModelPackageConflictError,
     ModelPackageIntegrityError,
     ModelPackageManifest,
     ModelPromotionRecord,
     ModelPromotionRejectionError,
     ModelRegistry,
-    ModelRegistryError,
 )
 
 
@@ -29,8 +27,16 @@ def sample_training_manifest_dict(
     prep_sha: str = "p" * 64,
 ) -> Dict[str, Any]:
     prefix = "cand" if task == "candidate_vetting" else "anom"
-    model_v = "candidate-tabular-mlp-v1" if task == "candidate_vetting" else "anomaly-lightcurve-autoencoder-v1"
-    prep_v = "candidate-preprocess-v1" if task == "candidate_vetting" else "anomaly-lightcurve-preprocess-v1"
+    model_v = (
+        "candidate-tabular-mlp-v1"
+        if task == "candidate_vetting"
+        else "anomaly-lightcurve-autoencoder-v1"
+    )
+    prep_v = (
+        "candidate-preprocess-v1"
+        if task == "candidate_vetting"
+        else "anomaly-lightcurve-preprocess-v1"
+    )
 
     return {
         "schema_version": 1,
@@ -68,7 +74,10 @@ def sample_eval_manifest_dict(
     metrics = (
         {"golden_pr_auc": golden_pr_auc, "golden_roc_auc": 0.90, "golden_recall": 0.80}
         if task == "candidate_vetting"
-        else {"golden_synthetic_detection_rate": golden_synthetic_rate, "golden_reference_alert_rate": 0.01}
+        else {
+            "golden_synthetic_detection_rate": golden_synthetic_rate,
+            "golden_reference_alert_rate": 0.01,
+        }
     )
 
     return {
@@ -110,6 +119,7 @@ def test_model_package_registration_and_manifest_commit_marker():
         with open(model_pt, "wb") as f:
             f.write(b"model_weights_data_12345")
         import hashlib
+
         model_sha = hashlib.sha256(b"model_weights_data_12345").hexdigest()
 
         prep_json = os.path.join(tmp_dir, "preprocessing.json")
@@ -119,7 +129,9 @@ def test_model_package_registration_and_manifest_commit_marker():
 
         train_manifest = os.path.join(tmp_dir, "train_manifest.json")
         with open(train_manifest, "w", encoding="utf-8") as f:
-            json.dump(sample_training_manifest_dict(model_sha=model_sha, prep_sha=prep_sha), f)
+            json.dump(
+                sample_training_manifest_dict(model_sha=model_sha, prep_sha=prep_sha), f
+            )
 
         eval_manifest = os.path.join(tmp_dir, "eval_manifest.json")
         with open(eval_manifest, "w", encoding="utf-8") as f:
@@ -159,12 +171,18 @@ def test_corrupt_model_artifact_rejection():
         with open(prep_json, "wb") as f:
             f.write(b"{}")
         import hashlib
+
         prep_sha = hashlib.sha256(b"{}").hexdigest()
 
         # Training manifest points to a DIFFERENT expected model SHA
         train_manifest = os.path.join(tmp_dir, "train_manifest.json")
         with open(train_manifest, "w", encoding="utf-8") as f:
-            json.dump(sample_training_manifest_dict(model_sha="wrong_sha" * 8, prep_sha=prep_sha), f)
+            json.dump(
+                sample_training_manifest_dict(
+                    model_sha="wrong_sha" * 8, prep_sha=prep_sha
+                ),
+                f,
+            )
 
         eval_manifest = os.path.join(tmp_dir, "eval_manifest.json")
         with open(eval_manifest, "w", encoding="utf-8") as f:
@@ -195,6 +213,7 @@ def test_cold_start_bootstrap_candidate_promotion():
         with open(model_pt, "wb") as f:
             f.write(b"weights")
         import hashlib
+
         model_sha = hashlib.sha256(b"weights").hexdigest()
 
         prep_json = os.path.join(tmp_dir, "preprocessing.json")
@@ -204,7 +223,9 @@ def test_cold_start_bootstrap_candidate_promotion():
 
         train_manifest = os.path.join(tmp_dir, "train_manifest.json")
         with open(train_manifest, "w", encoding="utf-8") as f:
-            json.dump(sample_training_manifest_dict(model_sha=model_sha, prep_sha=prep_sha), f)
+            json.dump(
+                sample_training_manifest_dict(model_sha=model_sha, prep_sha=prep_sha), f
+            )
 
         eval_manifest = os.path.join(tmp_dir, "eval_manifest.json")
         with open(eval_manifest, "w", encoding="utf-8") as f:
@@ -266,12 +287,18 @@ def test_candidate_challenger_promotion_success_and_rejection():
             json.dump(d, f)
 
         # Register & bootstrap Model A
-        pkg_a = registry.register_model_package("candidate_vetting", train_a, eval_a, model_a_pt, prep_json)
+        pkg_a = registry.register_model_package(
+            "candidate_vetting", train_a, eval_a, model_a_pt, prep_json
+        )
 
         # Save eval_a metrics in evaluations/runs/candidate/eval-cand-v1-modelA/metrics.json so promote_model can read champion metrics
-        champ_eval_dir = os.path.join("evaluations", "runs", "candidate", "eval-cand-v1-modelA")
+        champ_eval_dir = os.path.join(
+            "evaluations", "runs", "candidate", "eval-cand-v1-modelA"
+        )
         os.makedirs(champ_eval_dir, exist_ok=True)
-        with open(os.path.join(champ_eval_dir, "metrics.json"), "w", encoding="utf-8") as f:
+        with open(
+            os.path.join(champ_eval_dir, "metrics.json"), "w", encoding="utf-8"
+        ) as f:
             json.dump({"golden_pr_auc": 0.80}, f)
 
         registry.promote_model("candidate_vetting", pkg_a.model_id, eval_a)
@@ -294,7 +321,9 @@ def test_candidate_challenger_promotion_success_and_rejection():
             d["evaluation_run_id"] = "eval-cand-v1-modelB"
             json.dump(d, f)
 
-        pkg_b = registry.register_model_package("candidate_vetting", train_b, eval_b, model_b_pt, prep_json)
+        pkg_b = registry.register_model_package(
+            "candidate_vetting", train_b, eval_b, model_b_pt, prep_json
+        )
 
         with pytest.raises(ModelPromotionRejectionError, match="PROMOTION_REJECTED"):
             registry.promote_model("candidate_vetting", pkg_b.model_id, eval_b)
@@ -317,7 +346,9 @@ def test_candidate_challenger_promotion_success_and_rejection():
             d["evaluation_run_id"] = "eval-cand-v1-modelC"
             json.dump(d, f)
 
-        pkg_c = registry.register_model_package("candidate_vetting", train_c, eval_c, model_c_pt, prep_json)
+        pkg_c = registry.register_model_package(
+            "candidate_vetting", train_c, eval_c, model_c_pt, prep_json
+        )
         promo_c = registry.promote_model("candidate_vetting", pkg_c.model_id, eval_c)
 
         assert promo_c.comparison_decision == "CHALLENGER_OUTPERFORMS_CHAMPION"
@@ -347,12 +378,16 @@ def test_safe_champion_rollback():
 
         train_a = os.path.join(tmp_dir, "t_a.json")
         with open(train_a, "w", encoding="utf-8") as f:
-            json.dump(sample_training_manifest_dict(model_sha=sha_a, prep_sha=prep_sha), f)
+            json.dump(
+                sample_training_manifest_dict(model_sha=sha_a, prep_sha=prep_sha), f
+            )
         eval_a = os.path.join(tmp_dir, "e_a.json")
         with open(eval_a, "w", encoding="utf-8") as f:
             json.dump(sample_eval_manifest_dict(), f)
 
-        pkg_a = registry.register_model_package("candidate_vetting", train_a, eval_a, model_a, prep)
+        pkg_a = registry.register_model_package(
+            "candidate_vetting", train_a, eval_a, model_a, prep
+        )
         registry.promote_model("candidate_vetting", pkg_a.model_id, eval_a)
 
         # Rollback test

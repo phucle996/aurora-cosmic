@@ -6,7 +6,7 @@ Transforms Silver Light Curve time-series into deterministic scientific feature 
 from dataclasses import asdict, dataclass
 import hashlib
 import json
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 from astropy.timeseries import BoxLeastSquares
 import numpy as np
@@ -165,7 +165,11 @@ def compute_lightcurve_features(
 
     effective_max_period = min(bls_max_period_days, time_span / 2.0)
 
-    if n_points < bls_min_points or time_span < (bls_min_period_days * 2.0) or effective_max_period <= bls_min_period_days:
+    if (
+        n_points < bls_min_points
+        or time_span < (bls_min_period_days * 2.0)
+        or effective_max_period <= bls_min_period_days
+    ):
         bls_available = False
         feature_status = "PARTIAL" if n_points >= 10 else "INSUFFICIENT_BASELINE"
     else:
@@ -176,7 +180,9 @@ def compute_lightcurve_features(
             else:
                 bls_model = BoxLeastSquares(t=time, y=flux)
 
-            period_grid = np.linspace(bls_min_period_days, effective_max_period, num=1000)
+            period_grid = np.linspace(
+                bls_min_period_days, effective_max_period, num=1000
+            )
             duration_grid = np.array([0.05, 0.1, 0.2, 0.4])  # days
             # Filter durations < period
             duration_grid = duration_grid[duration_grid < bls_min_period_days]
@@ -203,7 +209,9 @@ def compute_lightcurve_features(
         lineage_id=metadata.get("lineage_id", ""),
         source_product_id=metadata.get("source_product_id", ""),
         product_kind=metadata.get("product_kind", "LIGHT_CURVE"),
-        silver_schema_version=metadata.get("silver_schema_version", "silver-lightcurve-v1"),
+        silver_schema_version=metadata.get(
+            "silver_schema_version", "silver-lightcurve-v1"
+        ),
         silver_sha256=metadata.get("silver_sha256", ""),
         processor_version=metadata.get("processor_version", ""),
         feature_version=feature_version,

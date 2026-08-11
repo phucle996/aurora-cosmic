@@ -263,5 +263,3 @@ async fn serve_connection(
     stream.write_all(&body).await?;
     stream.shutdown().await
 }
-
-

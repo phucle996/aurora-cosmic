@@ -34,7 +34,8 @@ fn test_checkpoint_serialization_roundtrip() {
 
     cp.silver_bucket = Some("aurora".to_string());
     cp.silver_object_key = Some("silver/tess/lc.parquet".to_string());
-    cp.silver_sha256 = Some("fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210".to_string());
+    cp.silver_sha256 =
+        Some("fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210".to_string());
     cp.silver_size_bytes = Some(4096);
     cp.silver_schema_version = Some("silver-lightcurve-v1".to_string());
     cp.state = ProcessingState::SilverStored;
@@ -51,7 +52,10 @@ fn test_checkpoint_serialization_roundtrip() {
 
     assert_eq!(deserialized.checkpoint_id, cp.checkpoint_id);
     assert_eq!(deserialized.state, ProcessingState::Completed);
-    assert_eq!(deserialized.silver_object_key, Some("silver/tess/lc.parquet".to_string()));
+    assert_eq!(
+        deserialized.silver_object_key,
+        Some("silver/tess/lc.parquet".to_string())
+    );
 }
 
 #[test]

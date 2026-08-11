@@ -67,9 +67,9 @@ const (
 type LifecycleState string
 
 const (
-	StateEvictable     LifecycleState = "EVICTABLE"
-	StateEvicting      LifecycleState = "EVICTING"
-	StateRawDeleted    LifecycleState = "RAW_DELETED"
+	StateEvictable      LifecycleState = "EVICTABLE"
+	StateEvicting       LifecycleState = "EVICTING"
+	StateRawDeleted     LifecycleState = "RAW_DELETED"
 	StateEvictionFailed LifecycleState = "EVICTION_FAILED"
 )
 
@@ -120,11 +120,11 @@ type lineageBronze struct {
 
 // lineageSilver captures the Silver identity fields from a lineage record.
 type lineageSilver struct {
-	Bucket          string `json:"bucket"`
-	ObjectKey       string `json:"object_key"`
-	SizeBytes       int64  `json:"size_bytes"`
-	SHA256          string `json:"sha256"`
-	SchemaVersion   string `json:"schema_version"`
+	Bucket           string `json:"bucket"`
+	ObjectKey        string `json:"object_key"`
+	SizeBytes        int64  `json:"size_bytes"`
+	SHA256           string `json:"sha256"`
+	SchemaVersion    string `json:"schema_version"`
 	ProcessorVersion string `json:"processor_version"`
 }
 
@@ -136,14 +136,14 @@ type lineageSource struct {
 
 // lineageRecord is the minimal subset of a lineage-v1 JSON record needed for lifecycle decisions.
 type lineageRecord struct {
-	SchemaVersion           uint32          `json:"schema_version"`
-	LineageID               string          `json:"lineage_id"`
-	Status                  string          `json:"status"`
-	CommittedAt             string          `json:"committed_at"`
-	Source                  lineageSource   `json:"source"`
-	Bronze                  lineageBronze   `json:"bronze"`
-	Silver                  lineageSilver   `json:"silver"`
-	Eviction                lineageEviction `json:"eviction"`
+	SchemaVersion uint32          `json:"schema_version"`
+	LineageID     string          `json:"lineage_id"`
+	Status        string          `json:"status"`
+	CommittedAt   string          `json:"committed_at"`
+	Source        lineageSource   `json:"source"`
+	Bronze        lineageBronze   `json:"bronze"`
+	Silver        lineageSilver   `json:"silver"`
+	Eviction      lineageEviction `json:"eviction"`
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -152,18 +152,18 @@ type lineageRecord struct {
 
 // Candidate is a Bronze object proposed for eviction.
 type Candidate struct {
-	LineageID       string
-	SourceProductID string
-	BronzeBucket    string
-	BronzeObjectKey string
-	BronzeSizeBytes int64
-	BronzeSHA256    string
-	SilverBucket    string
-	SilverObjectKey string
-	SilverSHA256    string
-	SilverSchemaVersion string
+	LineageID              string
+	SourceProductID        string
+	BronzeBucket           string
+	BronzeObjectKey        string
+	BronzeSizeBytes        int64
+	BronzeSHA256           string
+	SilverBucket           string
+	SilverObjectKey        string
+	SilverSHA256           string
+	SilverSchemaVersion    string
 	SilverProcessorVersion string
-	SourceURI       string
+	SourceURI              string
 	// StoredAt is the Bronze storage timestamp used for oldest-first ordering.
 	StoredAt time.Time
 }
@@ -181,13 +181,13 @@ type BlockedReason struct {
 
 // EvictionResult describes the outcome of a cleanup run.
 type EvictionResult struct {
-	UsageBefore   int64
-	UsageAfter    int64
+	UsageBefore    int64
+	UsageAfter     int64
 	ObjectsDeleted int
-	BytesDeleted  int64
-	Blocked       []BlockedReason
-	TargetReached bool // true when UsageAfter <= LowWatermarkBytes
-	DryRun        bool
+	BytesDeleted   int64
+	Blocked        []BlockedReason
+	TargetReached  bool // true when UsageAfter <= LowWatermarkBytes
+	DryRun         bool
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -709,12 +709,12 @@ func (e *StoragePressureError) Error() string {
 // MinIOAdapter wraps the concrete MinIOClient to satisfy rawStorageClient.
 // This avoids import cycles between lifecycle and storage packages.
 type MinIOAdapter struct {
-	ListBronzeUsageFn   func(ctx context.Context, bucket string) (int64, int, error)
-	ListLineageKeysFn   func(ctx context.Context, bucket, prefix string) ([]string, error)
-	GetJSONObjectFn     func(ctx context.Context, bucket, objectKey string, dst any) (bool, error)
-	PutJSONObjectFn     func(ctx context.Context, bucket, objectKey string, src any) error
-	DeleteObjectFn      func(ctx context.Context, bucket, objectKey string) error
-	StatObjectExistsFn  func(ctx context.Context, bucket, objectKey string) (int64, bool, error)
+	ListBronzeUsageFn  func(ctx context.Context, bucket string) (int64, int, error)
+	ListLineageKeysFn  func(ctx context.Context, bucket, prefix string) ([]string, error)
+	GetJSONObjectFn    func(ctx context.Context, bucket, objectKey string, dst any) (bool, error)
+	PutJSONObjectFn    func(ctx context.Context, bucket, objectKey string, src any) error
+	DeleteObjectFn     func(ctx context.Context, bucket, objectKey string) error
+	StatObjectExistsFn func(ctx context.Context, bucket, objectKey string) (int64, bool, error)
 }
 
 func (a *MinIOAdapter) ListBronzeUsage(ctx context.Context, bucket string) (int64, int, error) {

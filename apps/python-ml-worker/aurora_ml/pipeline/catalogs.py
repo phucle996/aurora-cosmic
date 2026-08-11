@@ -10,7 +10,6 @@ import json
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
-import numpy as np
 
 from aurora_ml.pipeline.evidence import TpfVettingFeatures
 from aurora_ml.pipeline.features import LightCurveFeatures
@@ -274,7 +273,9 @@ def normalize_toi_disposition(raw_disposition: str) -> str:
     return "OTHER"
 
 
-def normalize_tic_catalog(rows: List[Dict[str, Any]]) -> Tuple[List[TicCatalogRecord], str]:
+def normalize_tic_catalog(
+    rows: List[Dict[str, Any]],
+) -> Tuple[List[TicCatalogRecord], str]:
     """Normalize raw TIC rows with canonical sorting and duplicate key rejection."""
     records: Dict[int, TicCatalogRecord] = {}
 
@@ -283,7 +284,9 @@ def normalize_tic_catalog(rows: List[Dict[str, Any]]) -> Tuple[List[TicCatalogRe
         if tic_id is None:
             raise ValueError("TIC catalog row missing required integer 'tic_id'")
         if tic_id in records:
-            raise ValueError(f"CATALOG_DUPLICATE_KEY: Duplicate tic_id {tic_id} found in TIC snapshot")
+            raise ValueError(
+                f"CATALOG_DUPLICATE_KEY: Duplicate tic_id {tic_id} found in TIC snapshot"
+            )
 
         rec = TicCatalogRecord(
             tic_id=tic_id,
@@ -291,8 +294,12 @@ def normalize_tic_catalog(rows: List[Dict[str, Any]]) -> Tuple[List[TicCatalogRe
             dec_deg=parse_nullable_float(row.get("dec_deg") or row.get("dec")),
             tmag=parse_nullable_float(row.get("tmag")),
             teff=parse_nullable_float(row.get("teff")),
-            stellar_radius=parse_nullable_float(row.get("stellar_radius") or row.get("rad")),
-            stellar_mass=parse_nullable_float(row.get("stellar_mass") or row.get("mass")),
+            stellar_radius=parse_nullable_float(
+                row.get("stellar_radius") or row.get("rad")
+            ),
+            stellar_mass=parse_nullable_float(
+                row.get("stellar_mass") or row.get("mass")
+            ),
             logg=parse_nullable_float(row.get("logg")),
         )
         records[tic_id] = rec
@@ -307,7 +314,9 @@ def normalize_tic_catalog(rows: List[Dict[str, Any]]) -> Tuple[List[TicCatalogRe
     return sorted_records, data_sha256
 
 
-def normalize_toi_catalog(rows: List[Dict[str, Any]]) -> Tuple[List[ToiCatalogRecord], str]:
+def normalize_toi_catalog(
+    rows: List[Dict[str, Any]],
+) -> Tuple[List[ToiCatalogRecord], str]:
     """Normalize raw TOI rows with string ID preservation and canonical sorting."""
     records: List[ToiCatalogRecord] = []
 
@@ -318,16 +327,26 @@ def normalize_toi_catalog(rows: List[Dict[str, Any]]) -> Tuple[List[ToiCatalogRe
         if not toi_id or tic_id is None:
             raise ValueError("TOI catalog row missing required 'toi_id' or 'tic_id'")
 
-        raw_disp = str(row.get("toi_disposition_raw") or row.get("tfopwg_disp") or "UNKNOWN").strip()
+        raw_disp = str(
+            row.get("toi_disposition_raw") or row.get("tfopwg_disp") or "UNKNOWN"
+        ).strip()
         norm_disp = normalize_toi_disposition(raw_disp)
 
         rec = ToiCatalogRecord(
             toi_id=toi_id,
             tic_id=tic_id,
-            catalog_period=parse_nullable_float(row.get("catalog_period") or row.get("period")),
-            catalog_epoch=parse_nullable_float(row.get("catalog_epoch") or row.get("epoch")),
-            catalog_duration=parse_nullable_float(row.get("catalog_duration") or row.get("duration")),
-            catalog_depth=parse_nullable_float(row.get("catalog_depth") or row.get("depth")),
+            catalog_period=parse_nullable_float(
+                row.get("catalog_period") or row.get("period")
+            ),
+            catalog_epoch=parse_nullable_float(
+                row.get("catalog_epoch") or row.get("epoch")
+            ),
+            catalog_duration=parse_nullable_float(
+                row.get("catalog_duration") or row.get("duration")
+            ),
+            catalog_depth=parse_nullable_float(
+                row.get("catalog_depth") or row.get("depth")
+            ),
             toi_disposition_raw=raw_disp,
             toi_disposition_norm=norm_disp,
         )
@@ -343,7 +362,9 @@ def normalize_toi_catalog(rows: List[Dict[str, Any]]) -> Tuple[List[ToiCatalogRe
     return sorted_records, data_sha256
 
 
-def normalize_tce_catalog(rows: List[Dict[str, Any]]) -> Tuple[List[TceCatalogRecord], str]:
+def normalize_tce_catalog(
+    rows: List[Dict[str, Any]],
+) -> Tuple[List[TceCatalogRecord], str]:
     """Normalize raw TCE rows with canonical sorting."""
     records: List[TceCatalogRecord] = []
 
@@ -358,11 +379,21 @@ def normalize_tce_catalog(rows: List[Dict[str, Any]]) -> Tuple[List[TceCatalogRe
             tce_id=tce_id,
             tic_id=tic_id,
             sector=parse_nullable_int(row.get("sector")),
-            catalog_period=parse_nullable_float(row.get("catalog_period") or row.get("period")),
-            catalog_epoch=parse_nullable_float(row.get("catalog_epoch") or row.get("epoch")),
-            catalog_duration=parse_nullable_float(row.get("catalog_duration") or row.get("duration")),
-            detection_statistic=parse_nullable_float(row.get("detection_statistic") or row.get("max_mes")),
-            tce_disposition_raw=str(row.get("tce_disposition_raw") or "UNKNOWN").strip(),
+            catalog_period=parse_nullable_float(
+                row.get("catalog_period") or row.get("period")
+            ),
+            catalog_epoch=parse_nullable_float(
+                row.get("catalog_epoch") or row.get("epoch")
+            ),
+            catalog_duration=parse_nullable_float(
+                row.get("catalog_duration") or row.get("duration")
+            ),
+            detection_statistic=parse_nullable_float(
+                row.get("detection_statistic") or row.get("max_mes")
+            ),
+            tce_disposition_raw=str(
+                row.get("tce_disposition_raw") or "UNKNOWN"
+            ).strip(),
         )
         records.append(rec)
 
@@ -384,7 +415,11 @@ def match_toi_candidate(
 
     Returns (matched_toi_record, match_status, period_error).
     """
-    if lc_features.tic_id is None or not lc_features.bls_available or lc_features.bls_period is None:
+    if (
+        lc_features.tic_id is None
+        or not lc_features.bls_available
+        or lc_features.bls_period is None
+    ):
         return None, "NO_MATCH", None
 
     tic_id = lc_features.tic_id
@@ -420,7 +455,14 @@ def match_toi_candidate(
     # Exact matches take priority over harmonic matches
     if len(exact_matches) == 1:
         best_toi, best_err = exact_matches[0]
-        status = "EPHEMERIS_MATCH" if (best_toi.catalog_epoch is not None and lc_features.bls_transit_time is not None) else "PERIOD_ONLY"
+        status = (
+            "EPHEMERIS_MATCH"
+            if (
+                best_toi.catalog_epoch is not None
+                and lc_features.bls_transit_time is not None
+            )
+            else "PERIOD_ONLY"
+        )
         return best_toi, status, best_err
     elif len(exact_matches) > 1:
         return None, "AMBIGUOUS", None
@@ -428,7 +470,14 @@ def match_toi_candidate(
     # Fallback to harmonic matches if no exact match exists
     if len(harmonic_matches) == 1:
         best_toi, best_err = harmonic_matches[0]
-        status = "EPHEMERIS_MATCH" if (best_toi.catalog_epoch is not None and lc_features.bls_transit_time is not None) else "PERIOD_ONLY"
+        status = (
+            "EPHEMERIS_MATCH"
+            if (
+                best_toi.catalog_epoch is not None
+                and lc_features.bls_transit_time is not None
+            )
+            else "PERIOD_ONLY"
+        )
         return best_toi, status, best_err
     elif len(harmonic_matches) > 1:
         return None, "AMBIGUOUS", None
@@ -442,7 +491,11 @@ def match_tce_candidate(
     period_tolerance: float = 0.05,
 ) -> Tuple[Optional[TceCatalogRecord], str]:
     """Match detected BLS candidate against TCE entries for target TIC ID and sector."""
-    if lc_features.tic_id is None or not lc_features.bls_available or lc_features.bls_period is None:
+    if (
+        lc_features.tic_id is None
+        or not lc_features.bls_available
+        or lc_features.bls_period is None
+    ):
         return None, "NO_MATCH"
 
     tic_id = lc_features.tic_id
@@ -452,7 +505,8 @@ def match_tce_candidate(
     target_tces = [
         r
         for r in tce_candidates
-        if r.tic_id == tic_id and (sector is None or r.sector is None or r.sector == sector)
+        if r.tic_id == tic_id
+        and (sector is None or r.sector is None or r.sector == sector)
     ]
     if not target_tces:
         return None, "NO_MATCH"
@@ -501,7 +555,9 @@ def derive_candidate_label(
             training_label = "UNRESOLVED"
 
     return CandidateLabelRecord(
-        source_product_id=toi_rec.toi_id if toi_rec else (tce_rec.tce_id if tce_rec else "unknown"),
+        source_product_id=toi_rec.toi_id
+        if toi_rec
+        else (tce_rec.tce_id if tce_rec else "unknown"),
         sample_id=None,
         tic_id=toi_rec.tic_id if toi_rec else (tce_rec.tic_id if tce_rec else None),
         matched_toi_id=toi_rec.toi_id if toi_rec else None,
@@ -534,19 +590,27 @@ def enrich_candidate(
     tic_available = tic_rec is not None
 
     # Target-level TOI count
-    target_tois = [r for r in toi_candidates if r.tic_id == tic_id] if tic_id is not None else []
+    target_tois = (
+        [r for r in toi_candidates if r.tic_id == tic_id] if tic_id is not None else []
+    )
     target_has_toi = len(target_tois) > 0
     toi_count_for_target = len(target_tois)
 
     # Candidate ephemeris matching
-    toi_match = match_toi_candidate(lc_features, toi_candidates, period_tolerance=period_tolerance)
-    tce_match = match_tce_candidate(lc_features, tce_candidates, period_tolerance=period_tolerance)
+    toi_match = match_toi_candidate(
+        lc_features, toi_candidates, period_tolerance=period_tolerance
+    )
+    tce_match = match_tce_candidate(
+        lc_features, tce_candidates, period_tolerance=period_tolerance
+    )
 
     toi_rec, toi_status, toi_p_err = toi_match
     tce_rec, tce_status = tce_match
 
     # Derive training label record
-    label_rec = derive_candidate_label(toi_match, tce_match, policy_version=policy_version)
+    label_rec = derive_candidate_label(
+        toi_match, tce_match, policy_version=policy_version
+    )
     label_rec.source_product_id = lc_features.source_product_id
     label_rec.sample_id = lc_features.sample_id
     label_rec.tic_id = tic_id

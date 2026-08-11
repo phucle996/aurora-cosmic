@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -31,7 +31,6 @@ from aurora_ml.ml.datasets.splits import (
 )
 from aurora_ml.ml.evaluate.cohort import (
     EvaluationCohort,
-    MlEvaluationError,
     check_group_contamination,
     load_evaluation_cohort,
 )
@@ -120,7 +119,9 @@ def evaluate_candidate_model(*args: Any, **kwargs: Any) -> Any:
     And file-path based calls:
         evaluate_candidate_model(training_run_manifest_path=..., preprocessing_json_path=..., ...) -> manifest
     """
-    if "training_run_manifest_path" in kwargs or (len(args) == 0 and "output_dir" in kwargs):
+    if "training_run_manifest_path" in kwargs or (
+        len(args) == 0 and "output_dir" in kwargs
+    ):
         # File path based execution
         train_manifest_path = kwargs.get("training_run_manifest_path", "")
         with open(train_manifest_path, "r", encoding="utf-8") as f:
@@ -134,7 +135,11 @@ def evaluate_candidate_model(*args: Any, **kwargs: Any) -> Any:
         golden_cohort = load_evaluation_cohort(golden_cohort_path)
 
         recent_cohort_path = kwargs.get("recent_cohort_path")
-        recent_cohort = load_evaluation_cohort(recent_cohort_path) if recent_cohort_path and os.path.exists(recent_cohort_path) else None
+        recent_cohort = (
+            load_evaluation_cohort(recent_cohort_path)
+            if recent_cohort_path and os.path.exists(recent_cohort_path)
+            else None
+        )
 
         output_dir = kwargs.get("output_dir", ".")
 
@@ -187,7 +192,9 @@ def evaluate_candidate_model(*args: Any, **kwargs: Any) -> Any:
             golden_cohort_id=golden_cohort.cohort_id,
             golden_cohort_manifest_sha256=golden_cohort.cohort_fingerprint,
             recent_cohort_id=recent_cohort.cohort_id if recent_cohort else None,
-            recent_cohort_manifest_sha256=recent_cohort.cohort_fingerprint if recent_cohort else None,
+            recent_cohort_manifest_sha256=recent_cohort.cohort_fingerprint
+            if recent_cohort
+            else None,
             evaluation_policy_version="candidate-evaluation-v1",
             threshold_policy_version="candidate-threshold-max-f1-v1",
         )
@@ -201,12 +208,16 @@ def evaluate_candidate_model(*args: Any, **kwargs: Any) -> Any:
             training_run_manifest_sha256=train_manifest_sha,
             model_version=t_data.get("model_version", "candidate-tabular-mlp-v1"),
             model_sha256=t_data.get("model_sha256", "0" * 64),
-            preprocessing_version=t_data.get("preprocessing_version", "candidate-preprocess-v1"),
+            preprocessing_version=t_data.get(
+                "preprocessing_version", "candidate-preprocess-v1"
+            ),
             preprocessing_sha256=t_data.get("preprocessing_sha256", "0" * 64),
             golden_cohort_id=golden_cohort.cohort_id,
             golden_cohort_manifest_sha256=golden_cohort.cohort_fingerprint,
             recent_cohort_id=recent_cohort.cohort_id if recent_cohort else None,
-            recent_cohort_manifest_sha256=recent_cohort.cohort_fingerprint if recent_cohort else None,
+            recent_cohort_manifest_sha256=recent_cohort.cohort_fingerprint
+            if recent_cohort
+            else None,
             evaluation_policy_version="candidate-evaluation-v1",
             threshold_policy_version="candidate-threshold-max-f1-v1",
             decision_threshold=decision_threshold,
@@ -218,25 +229,49 @@ def evaluate_candidate_model(*args: Any, **kwargs: Any) -> Any:
 
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
-            with open(os.path.join(output_dir, "threshold.json"), "w", encoding="utf-8") as f:
+            with open(
+                os.path.join(output_dir, "threshold.json"), "w", encoding="utf-8"
+            ) as f:
                 f.write(threshold_json)
-            with open(os.path.join(output_dir, "metrics.json"), "w", encoding="utf-8") as f:
+            with open(
+                os.path.join(output_dir, "metrics.json"), "w", encoding="utf-8"
+            ) as f:
                 f.write(metrics_json)
-            with open(os.path.join(output_dir, "manifest.json"), "w", encoding="utf-8") as f:
+            with open(
+                os.path.join(output_dir, "manifest.json"), "w", encoding="utf-8"
+            ) as f:
                 json.dump(manifest.to_dict(), f, indent=2, sort_keys=True)
 
         return manifest
 
     # Direct in-memory invocation
-    training_manifest: TrainingRunManifest = args[0] if len(args) > 0 else kwargs["training_manifest"]
-    training_split: CandidateGroupSplit = args[1] if len(args) > 1 else kwargs["training_split"]
-    golden_cohort: EvaluationCohort = args[2] if len(args) > 2 else kwargs["golden_cohort"]
-    training_rows: List[Dict[str, Any]] = args[3] if len(args) > 3 else kwargs["training_rows"]
-    golden_rows: List[Dict[str, Any]] = args[4] if len(args) > 4 else kwargs["golden_rows"]
-    model_state_dict: Dict[str, Any] = args[5] if len(args) > 5 else kwargs["model_state_dict"]
-    preprocessor_json_path: str = args[6] if len(args) > 6 else kwargs["preprocessor_json_path"]
-    recent_cohort: Optional[EvaluationCohort] = args[7] if len(args) > 7 else kwargs.get("recent_cohort")
-    recent_rows: Optional[List[Dict[str, Any]]] = args[8] if len(args) > 8 else kwargs.get("recent_rows")
+    training_manifest: TrainingRunManifest = (
+        args[0] if len(args) > 0 else kwargs["training_manifest"]
+    )
+    training_split: CandidateGroupSplit = (
+        args[1] if len(args) > 1 else kwargs["training_split"]
+    )
+    golden_cohort: EvaluationCohort = (
+        args[2] if len(args) > 2 else kwargs["golden_cohort"]
+    )
+    training_rows: List[Dict[str, Any]] = (
+        args[3] if len(args) > 3 else kwargs["training_rows"]
+    )
+    golden_rows: List[Dict[str, Any]] = (
+        args[4] if len(args) > 4 else kwargs["golden_rows"]
+    )
+    model_state_dict: Dict[str, Any] = (
+        args[5] if len(args) > 5 else kwargs["model_state_dict"]
+    )
+    preprocessor_json_path: str = (
+        args[6] if len(args) > 6 else kwargs["preprocessor_json_path"]
+    )
+    recent_cohort: Optional[EvaluationCohort] = (
+        args[7] if len(args) > 7 else kwargs.get("recent_cohort")
+    )
+    recent_rows: Optional[List[Dict[str, Any]]] = (
+        args[8] if len(args) > 8 else kwargs.get("recent_rows")
+    )
     dest_dir: Optional[str] = args[9] if len(args) > 9 else kwargs.get("dest_dir")
 
     # 1. Contamination checks
@@ -274,8 +309,10 @@ def evaluate_candidate_model(*args: Any, **kwargs: Any) -> Any:
         val_logits = model(val_tensors)
         val_probs = torch.sigmoid(val_logits).numpy().flatten()
 
-    decision_threshold, val_f1, val_prec, val_rec = select_candidate_validation_threshold(
-        y_true=val_labels.numpy(), y_prob=val_probs
+    decision_threshold, val_f1, val_prec, val_rec = (
+        select_candidate_validation_threshold(
+            y_true=val_labels.numpy(), y_prob=val_probs
+        )
     )
 
     # 4. Evaluate Golden Test cohort
@@ -359,11 +396,17 @@ def evaluate_candidate_model(*args: Any, **kwargs: Any) -> Any:
         metrics_data["recent_positive_count"] = recent_metrics.get("positive_count")
         metrics_data["recent_negative_count"] = recent_metrics.get("negative_count")
 
-        if metrics_data.get("golden_pr_auc") is not None and metrics_data.get("recent_pr_auc") is not None:
+        if (
+            metrics_data.get("golden_pr_auc") is not None
+            and metrics_data.get("recent_pr_auc") is not None
+        ):
             metrics_data["pr_auc_drift"] = float(
                 metrics_data["recent_pr_auc"] - metrics_data["golden_pr_auc"]
             )
-        if metrics_data.get("golden_recall") is not None and metrics_data.get("recent_recall") is not None:
+        if (
+            metrics_data.get("golden_recall") is not None
+            and metrics_data.get("recent_recall") is not None
+        ):
             metrics_data["recall_drift"] = float(
                 metrics_data["recent_recall"] - metrics_data["golden_recall"]
             )
@@ -373,7 +416,9 @@ def evaluate_candidate_model(*args: Any, **kwargs: Any) -> Any:
 
     # 7. Derive evaluation run identity
     training_manifest_sha = hashlib.sha256(
-        json.dumps(training_manifest.to_dict(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+        json.dumps(
+            training_manifest.to_dict(), sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
     ).hexdigest()
     golden_cohort_sha = golden_cohort.cohort_fingerprint
     recent_cohort_sha = recent_cohort.cohort_fingerprint if recent_cohort else None
@@ -434,7 +479,9 @@ def evaluate_candidate_model(*args: Any, **kwargs: Any) -> Any:
 
 def evaluate_anomaly_model(*args: Any, **kwargs: Any) -> Any:
     """Execute complete anomaly autoencoder evaluation against frozen Golden Test and Recent Holdout cohorts."""
-    if "training_run_manifest_path" in kwargs or (len(args) == 0 and "output_dir" in kwargs):
+    if "training_run_manifest_path" in kwargs or (
+        len(args) == 0 and "output_dir" in kwargs
+    ):
         train_manifest_path = kwargs.get("training_run_manifest_path", "")
         with open(train_manifest_path, "r", encoding="utf-8") as f:
             t_data = json.load(f)
@@ -447,7 +494,11 @@ def evaluate_anomaly_model(*args: Any, **kwargs: Any) -> Any:
         golden_cohort = load_evaluation_cohort(golden_cohort_path)
 
         recent_cohort_path = kwargs.get("recent_cohort_path")
-        recent_cohort = load_evaluation_cohort(recent_cohort_path) if recent_cohort_path and os.path.exists(recent_cohort_path) else None
+        recent_cohort = (
+            load_evaluation_cohort(recent_cohort_path)
+            if recent_cohort_path and os.path.exists(recent_cohort_path)
+            else None
+        )
 
         output_dir = kwargs.get("output_dir", ".")
 
@@ -502,7 +553,9 @@ def evaluate_anomaly_model(*args: Any, **kwargs: Any) -> Any:
             golden_cohort_id=golden_cohort.cohort_id,
             golden_cohort_manifest_sha256=golden_cohort.cohort_fingerprint,
             recent_cohort_id=recent_cohort.cohort_id if recent_cohort else None,
-            recent_cohort_manifest_sha256=recent_cohort.cohort_fingerprint if recent_cohort else None,
+            recent_cohort_manifest_sha256=recent_cohort.cohort_fingerprint
+            if recent_cohort
+            else None,
             evaluation_policy_version="anomaly-evaluation-v1",
             threshold_policy_version="anomaly-threshold-validation-p99-v1",
         )
@@ -514,14 +567,20 @@ def evaluate_anomaly_model(*args: Any, **kwargs: Any) -> Any:
             task="astronomical_anomaly_detection",
             training_run_id=t_data["training_run_id"],
             training_run_manifest_sha256=train_manifest_sha,
-            model_version=t_data.get("model_version", "anomaly-lightcurve-autoencoder-v1"),
+            model_version=t_data.get(
+                "model_version", "anomaly-lightcurve-autoencoder-v1"
+            ),
             model_sha256=t_data.get("model_sha256", "0" * 64),
-            preprocessing_version=t_data.get("preprocessing_version", "anomaly-lightcurve-preprocess-v1"),
+            preprocessing_version=t_data.get(
+                "preprocessing_version", "anomaly-lightcurve-preprocess-v1"
+            ),
             preprocessing_sha256=t_data.get("preprocessing_sha256", "0" * 64),
             golden_cohort_id=golden_cohort.cohort_id,
             golden_cohort_manifest_sha256=golden_cohort.cohort_fingerprint,
             recent_cohort_id=recent_cohort.cohort_id if recent_cohort else None,
-            recent_cohort_manifest_sha256=recent_cohort.cohort_fingerprint if recent_cohort else None,
+            recent_cohort_manifest_sha256=recent_cohort.cohort_fingerprint
+            if recent_cohort
+            else None,
             evaluation_policy_version="anomaly-evaluation-v1",
             threshold_policy_version="anomaly-threshold-validation-p99-v1",
             decision_threshold=decision_threshold,
@@ -533,25 +592,49 @@ def evaluate_anomaly_model(*args: Any, **kwargs: Any) -> Any:
 
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
-            with open(os.path.join(output_dir, "threshold.json"), "w", encoding="utf-8") as f:
+            with open(
+                os.path.join(output_dir, "threshold.json"), "w", encoding="utf-8"
+            ) as f:
                 f.write(threshold_json)
-            with open(os.path.join(output_dir, "metrics.json"), "w", encoding="utf-8") as f:
+            with open(
+                os.path.join(output_dir, "metrics.json"), "w", encoding="utf-8"
+            ) as f:
                 f.write(metrics_json)
-            with open(os.path.join(output_dir, "manifest.json"), "w", encoding="utf-8") as f:
+            with open(
+                os.path.join(output_dir, "manifest.json"), "w", encoding="utf-8"
+            ) as f:
                 json.dump(manifest.to_dict(), f, indent=2, sort_keys=True)
 
         return manifest
 
     # Direct in-memory invocation
-    training_manifest: AnomalyTrainingRunManifest = args[0] if len(args) > 0 else kwargs["training_manifest"]
-    training_split: CandidateGroupSplit = args[1] if len(args) > 1 else kwargs["training_split"]
-    golden_cohort: EvaluationCohort = args[2] if len(args) > 2 else kwargs["golden_cohort"]
-    training_rows: List[Dict[str, Any]] = args[3] if len(args) > 3 else kwargs["training_rows"]
-    golden_rows: List[Dict[str, Any]] = args[4] if len(args) > 4 else kwargs["golden_rows"]
-    model_state_dict: Dict[str, Any] = args[5] if len(args) > 5 else kwargs["model_state_dict"]
-    preprocessor_json_path: str = args[6] if len(args) > 6 else kwargs["preprocessor_json_path"]
-    recent_cohort: Optional[EvaluationCohort] = args[7] if len(args) > 7 else kwargs.get("recent_cohort")
-    recent_rows: Optional[List[Dict[str, Any]]] = args[8] if len(args) > 8 else kwargs.get("recent_rows")
+    training_manifest: AnomalyTrainingRunManifest = (
+        args[0] if len(args) > 0 else kwargs["training_manifest"]
+    )
+    training_split: CandidateGroupSplit = (
+        args[1] if len(args) > 1 else kwargs["training_split"]
+    )
+    golden_cohort: EvaluationCohort = (
+        args[2] if len(args) > 2 else kwargs["golden_cohort"]
+    )
+    training_rows: List[Dict[str, Any]] = (
+        args[3] if len(args) > 3 else kwargs["training_rows"]
+    )
+    golden_rows: List[Dict[str, Any]] = (
+        args[4] if len(args) > 4 else kwargs["golden_rows"]
+    )
+    model_state_dict: Dict[str, Any] = (
+        args[5] if len(args) > 5 else kwargs["model_state_dict"]
+    )
+    preprocessor_json_path: str = (
+        args[6] if len(args) > 6 else kwargs["preprocessor_json_path"]
+    )
+    recent_cohort: Optional[EvaluationCohort] = (
+        args[7] if len(args) > 7 else kwargs.get("recent_cohort")
+    )
+    recent_rows: Optional[List[Dict[str, Any]]] = (
+        args[8] if len(args) > 8 else kwargs.get("recent_rows")
+    )
     dest_dir: Optional[str] = args[9] if len(args) > 9 else kwargs.get("dest_dir")
 
     # 1. Contamination checks
@@ -576,9 +659,7 @@ def evaluate_anomaly_model(*args: Any, **kwargs: Any) -> Any:
     val_groups = {
         a.group_key for a in training_split.assignments if a.split == "VALIDATION"
     }
-    val_anomaly_rows = [
-        r for r in training_rows if derive_group_key(r) in val_groups
-    ]
+    val_anomaly_rows = [r for r in training_rows if derive_group_key(r) in val_groups]
 
     val_tensors = preprocessor.transform(val_anomaly_rows)
 
@@ -599,7 +680,9 @@ def evaluate_anomaly_model(*args: Any, **kwargs: Any) -> Any:
 
     with torch.no_grad():
         golden_reconstructed = model(golden_tensors)
-        golden_ref_scores = compute_reconstruction_mse(golden_tensors, golden_reconstructed).numpy()
+        golden_ref_scores = compute_reconstruction_mse(
+            golden_tensors, golden_reconstructed
+        ).numpy()
 
     golden_ref_dist = calculate_anomaly_score_distribution(golden_ref_scores)
     golden_ref_alert_rate = float(np.mean(golden_ref_scores >= decision_threshold))
@@ -614,10 +697,14 @@ def evaluate_anomaly_model(*args: Any, **kwargs: Any) -> Any:
 
     with torch.no_grad():
         golden_synth_recon = model(golden_synth_tensors)
-        golden_synth_scores = compute_reconstruction_mse(golden_synth_tensors, golden_synth_recon).numpy()
+        golden_synth_scores = compute_reconstruction_mse(
+            golden_synth_tensors, golden_synth_recon
+        ).numpy()
 
     golden_synth_dist = calculate_anomaly_score_distribution(golden_synth_scores)
-    golden_synth_detection_rate = float(np.mean(golden_synth_scores >= decision_threshold))
+    golden_synth_detection_rate = float(
+        np.mean(golden_synth_scores >= decision_threshold)
+    )
 
     # 6. Evaluate Recent Holdout if provided
     recent_metrics: Optional[Dict[str, Any]] = None
@@ -632,10 +719,14 @@ def evaluate_anomaly_model(*args: Any, **kwargs: Any) -> Any:
 
             with torch.no_grad():
                 recent_reconstructed = model(recent_tensors)
-                recent_ref_scores = compute_reconstruction_mse(recent_tensors, recent_reconstructed).numpy()
+                recent_ref_scores = compute_reconstruction_mse(
+                    recent_tensors, recent_reconstructed
+                ).numpy()
 
             recent_ref_dist = calculate_anomaly_score_distribution(recent_ref_scores)
-            recent_ref_alert_rate = float(np.mean(recent_ref_scores >= decision_threshold))
+            recent_ref_alert_rate = float(
+                np.mean(recent_ref_scores >= decision_threshold)
+            )
 
             recent_synth_tensors = torch.tensor(
                 apply_synthetic_standardized_shift(
@@ -646,10 +737,13 @@ def evaluate_anomaly_model(*args: Any, **kwargs: Any) -> Any:
 
             with torch.no_grad():
                 recent_synth_recon = model(recent_synth_tensors)
-                recent_synth_scores = compute_reconstruction_mse(recent_synth_tensors, recent_synth_recon).numpy()
+                recent_synth_scores = compute_reconstruction_mse(
+                    recent_synth_tensors, recent_synth_recon
+                ).numpy()
 
-            recent_synth_dist = calculate_anomaly_score_distribution(recent_synth_scores)
-            recent_synth_detection_rate = float(np.mean(recent_synth_scores >= decision_threshold))
+            recent_synth_detection_rate = float(
+                np.mean(recent_synth_scores >= decision_threshold)
+            )
 
             recent_metrics = {
                 "recent_reference_alert_rate": recent_ref_alert_rate,
@@ -705,7 +799,9 @@ def evaluate_anomaly_model(*args: Any, **kwargs: Any) -> Any:
 
     # 8. Derive evaluation run identity
     training_manifest_sha = hashlib.sha256(
-        json.dumps(training_manifest.to_dict(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+        json.dumps(
+            training_manifest.to_dict(), sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
     ).hexdigest()
     golden_cohort_sha = golden_cohort.cohort_fingerprint
     recent_cohort_sha = recent_cohort.cohort_fingerprint if recent_cohort else None

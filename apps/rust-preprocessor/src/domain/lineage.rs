@@ -211,11 +211,15 @@ impl LineageRecord {
             }
             Ok(None) => {
                 // First commit
-                minio.put_json_object(bucket, key, candidate).await
-                    .map_err(|e| ProcessingFailure::retryable(
-                        ErrorKind::InternalTemporary,
-                        format!("Failed to PUT lineage record: {e}"),
-                    ))?;
+                minio
+                    .put_json_object(bucket, key, candidate)
+                    .await
+                    .map_err(|e| {
+                        ProcessingFailure::retryable(
+                            ErrorKind::InternalTemporary,
+                            format!("Failed to PUT lineage record: {e}"),
+                        )
+                    })?;
                 Ok(LineageOutcome::Committed)
             }
         }
@@ -239,6 +243,7 @@ impl LineageRecord {
 // ---------------------------------------------------------------------------
 
 /// Result of a lineage commit operation.
+#[allow(clippy::large_enum_variant)]
 pub enum LineageOutcome {
     /// Record was newly created.
     Committed,
@@ -277,16 +282,10 @@ pub async fn build_lineage_record(
     let source_version = bronze_stat.metadata_value("source-version");
 
     let lineage_id = derive_lineage_id(&event.source_product_id, &artifact.processor_version);
-    let processing_fingerprint = derive_processing_fingerprint(
-        &artifact.processor_version,
-        &processing_params,
-    );
+    let processing_fingerprint =
+        derive_processing_fingerprint(&artifact.processor_version, &processing_params);
 
-    let eviction = evaluate_eviction_eligibility(
-        &source_uri,
-        &checkpoint.state,
-        &artifact.sha256,
-    );
+    let eviction = evaluate_eviction_eligibility(&source_uri, &checkpoint.state, &artifact.sha256);
 
     Ok(LineageRecord {
         schema_version: CURRENT_LINEAGE_SCHEMA_VERSION,
@@ -386,11 +385,7 @@ pub fn derive_processing_fingerprint(
     processor_version: &str,
     processing_params: &serde_json::Value,
 ) -> String {
-    let canonical = format!(
-        "{}:{}",
-        processor_version,
-        processing_params.to_string()
-    );
+    let canonical = format!("{}:{}", processor_version, processing_params);
     let mut hasher = Sha256::new();
     hasher.update(canonical.as_bytes());
     hex::encode(hasher.finalize())

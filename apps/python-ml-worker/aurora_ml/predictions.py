@@ -24,13 +24,9 @@ def compute_candidate_prediction_id(
     source_product_id: str,
 ) -> Tuple[str, str]:
     """Compute deterministic candidate prediction ID and fingerprint."""
-    payload = {
-        "task": "candidate_vetting",
-        "runtime_package_id": runtime_package_id,
-        "gold_snapshot_id": gold_snapshot_id,
-        "source_product_id": source_product_id,
-    }
-    canonical = f"pred-cand-v1:{runtime_package_id}:{gold_snapshot_id}:{source_product_id}".encode("utf-8")
+    canonical = f"pred-cand-v1:{runtime_package_id}:{gold_snapshot_id}:{source_product_id}".encode(
+        "utf-8"
+    )
     fp = hashlib.sha256(canonical).hexdigest()
     pred_id = f"pred-cand-v1-{fp[:16]}"
     return pred_id, fp
@@ -42,7 +38,9 @@ def compute_anomaly_prediction_id(
     source_product_id: str,
 ) -> Tuple[str, str]:
     """Compute deterministic anomaly prediction ID and fingerprint."""
-    canonical = f"pred-anom-v1:{runtime_package_id}:{gold_snapshot_id}:{source_product_id}".encode("utf-8")
+    canonical = f"pred-anom-v1:{runtime_package_id}:{gold_snapshot_id}:{source_product_id}".encode(
+        "utf-8"
+    )
     fp = hashlib.sha256(canonical).hexdigest()
     pred_id = f"pred-anom-v1-{fp[:16]}"
     return pred_id, fp

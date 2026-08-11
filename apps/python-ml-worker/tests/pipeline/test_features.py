@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 
 from aurora_ml.pipeline.features import (
-    LightCurveFeatures,
     compute_lightcurve_features,
     derive_feature_fingerprint,
     extract_features_from_silver,
@@ -106,7 +105,7 @@ def test_synthetic_transit_bls_recovery():
 
     # Add periodic dips
     for t_idx, t_val in enumerate(time):
-        phase = (t_val % period)
+        phase = t_val % period
         if phase < duration:
             flux[t_idx] = -depth
 

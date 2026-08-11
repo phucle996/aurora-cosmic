@@ -4,7 +4,7 @@ Tests Golden Test and Recent Holdout cohorts, validation-only threshold selectio
 group contamination checks, PR-AUC / ROC-AUC, p99 anomaly thresholds, and synthetic shifts.
 """
 
-from dataclasses import asdict, replace
+from dataclasses import asdict
 import json
 import os
 import tempfile
@@ -12,13 +12,10 @@ from typing import Any, Dict, List
 
 import numpy as np
 import pytest
-import torch
 
 from aurora_ml.ml.anomaly.checkpoint import AnomalyTrainingRunManifest
-from aurora_ml.ml.anomaly.model import AnomalyLightcurveAutoencoder
 from aurora_ml.ml.anomaly.preprocessor import AnomalyPreprocessor
 from aurora_ml.ml.candidate.checkpoint import TrainingRunManifest
-from aurora_ml.ml.candidate.model import CandidateTabularMLP
 from aurora_ml.ml.candidate.preprocessor import CandidatePreprocessor
 from aurora_ml.ml.datasets.splits import (
     ANOMALY_MODEL_INPUT_FEATURES,
@@ -31,33 +28,26 @@ from aurora_ml.ml.datasets.splits import (
     create_deterministic_group_split,
 )
 from aurora_ml.ml.evaluate import (
-    EvaluationCohort,
-    EvaluationCohortConflictError,
     EvaluationGroupLeakageError,
-    EvaluationRunManifest,
-    InsufficientClassCoverageError,
-    MlEvaluationError,
     apply_synthetic_standardized_shift,
-    build_anomaly_golden_cohort,
-    build_anomaly_recent_cohort,
     build_candidate_golden_cohort,
     build_candidate_recent_cohort,
-    calculate_anomaly_score_distribution,
+    build_evaluation_cohort,
     calculate_candidate_cohort_metrics,
     check_group_contamination,
     compute_average_precision,
     compute_roc_auc,
     evaluate_anomaly_model,
     evaluate_candidate_model,
-    load_evaluation_cohort,
-    save_evaluation_cohort,
     select_anomaly_validation_threshold,
     select_candidate_validation_threshold,
 )
 from aurora_ml.pipeline.gold import GoldSnapshotManifest
 
 
-def sample_gold_manifest(snapshot_id: str = "gold-v1-test12345678", snapshot_type: str = "CANDIDATE") -> GoldSnapshotManifest:
+def sample_gold_manifest(
+    snapshot_id: str = "gold-v1-test12345678", snapshot_type: str = "CANDIDATE"
+) -> GoldSnapshotManifest:
     return GoldSnapshotManifest(
         snapshot_id=snapshot_id,
         snapshot_fingerprint="a" * 64,
@@ -78,11 +68,16 @@ def sample_candidate_rows_for_evaluation() -> List[Dict[str, Any]]:
     rows = []
     # Training targets: 5 POSITIVE, 5 NEGATIVE across diverse TICs
     train_specs = [
-        (101, "POSITIVE", 10), (102, "NEGATIVE", 10),
-        (103, "POSITIVE", 11), (104, "NEGATIVE", 11),
-        (105, "POSITIVE", 12), (106, "NEGATIVE", 12),
-        (107, "POSITIVE", 13), (108, "NEGATIVE", 13),
-        (109, "POSITIVE", 14), (110, "NEGATIVE", 14),
+        (101, "POSITIVE", 10),
+        (102, "NEGATIVE", 10),
+        (103, "POSITIVE", 11),
+        (104, "NEGATIVE", 11),
+        (105, "POSITIVE", 12),
+        (106, "NEGATIVE", 12),
+        (107, "POSITIVE", 13),
+        (108, "NEGATIVE", 13),
+        (109, "POSITIVE", 14),
+        (110, "NEGATIVE", 14),
     ]
     for tic, lbl, sec in train_specs:
         row = {
@@ -101,7 +96,12 @@ def sample_candidate_rows_for_evaluation() -> List[Dict[str, Any]]:
         rows.append(row)
 
     # Golden targets: TIC 201 (POSITIVE), 202 (NEGATIVE), 203 (POSITIVE), 204 (NEGATIVE)
-    for tic, lbl, sec in [(201, "POSITIVE", 10), (202, "NEGATIVE", 10), (203, "POSITIVE", 11), (204, "NEGATIVE", 11)]:
+    for tic, lbl, sec in [
+        (201, "POSITIVE", 10),
+        (202, "NEGATIVE", 10),
+        (203, "POSITIVE", 11),
+        (204, "NEGATIVE", 11),
+    ]:
         row = {
             "source_product_id": f"prod_{tic}_s{sec}",
             "lineage_id": f"lin_{tic}",
@@ -141,9 +141,16 @@ def sample_anomaly_rows_for_evaluation() -> List[Dict[str, Any]]:
     rows = []
     # Training targets: TIC 101..110
     for tic, sec in [
-        (101, 10), (102, 10), (103, 11), (104, 11),
-        (105, 12), (106, 12), (107, 13), (108, 13),
-        (109, 14), (110, 14),
+        (101, 10),
+        (102, 10),
+        (103, 11),
+        (104, 11),
+        (105, 12),
+        (106, 12),
+        (107, 13),
+        (108, 13),
+        (109, 14),
+        (110, 14),
     ]:
         row = {
             "source_product_id": f"prod_anom_{tic}_s{sec}",
@@ -305,19 +312,35 @@ def test_contamination_preflight_leakage_exception():
         val_negative_count=1,
         feature_names=CANDIDATE_MODEL_INPUT_FEATURES,
         assignments=[
-            GroupAssignmentRecord(group_key="tic:101", split="TRAIN", row_count=1, positive_count=1, negative_count=0),
-            GroupAssignmentRecord(group_key="tic:102", split="VALIDATION", row_count=1, positive_count=0, negative_count=1),
+            GroupAssignmentRecord(
+                group_key="tic:101",
+                split="TRAIN",
+                row_count=1,
+                positive_count=1,
+                negative_count=0,
+            ),
+            GroupAssignmentRecord(
+                group_key="tic:102",
+                split="VALIDATION",
+                row_count=1,
+                positive_count=0,
+                negative_count=1,
+            ),
         ],
         created_at="2026-08-08T00:00:00Z",
     )
 
     # Overlaps with TRAIN
     with pytest.raises(EvaluationGroupLeakageError, match="intersect with TRAIN"):
-        check_group_contamination(cohort_group_keys=["tic:101", "tic:999"], training_split=split)
+        check_group_contamination(
+            cohort_group_keys=["tic:101", "tic:999"], training_split=split
+        )
 
     # Overlaps with VALIDATION
     with pytest.raises(EvaluationGroupLeakageError, match="intersect with VALIDATION"):
-        check_group_contamination(cohort_group_keys=["tic:102", "tic:999"], training_split=split)
+        check_group_contamination(
+            cohort_group_keys=["tic:102", "tic:999"], training_split=split
+        )
 
 
 # -----------------------------------------------------------------------------
@@ -402,7 +425,9 @@ def test_full_candidate_evaluation_flow():
     split = create_deterministic_group_split(view, seed=42)
 
     # Fit preprocessor and save to temp file
-    preprocessor = CandidatePreprocessor().fit(train_rows, CANDIDATE_MODEL_INPUT_FEATURES, split.split_id)
+    preprocessor = CandidatePreprocessor().fit(
+        train_rows, CANDIDATE_MODEL_INPUT_FEATURES, split.split_id
+    )
     with tempfile.TemporaryDirectory() as tmp_dir:
         prep_path = os.path.join(tmp_dir, "preprocessing.json")
         with open(prep_path, "w", encoding="utf-8") as f:
@@ -423,13 +448,20 @@ def test_full_candidate_evaluation_flow():
             feature_order=list(CANDIDATE_MODEL_INPUT_FEATURES),
             training_seed=42,
             hyperparameters={},
-            counts={"train_row_count": 5, "validation_row_count": 5,
-                    "train_positive_count": 1, "train_negative_count": 1,
-                    "val_positive_count": 1, "val_negative_count": 1},
+            counts={
+                "train_row_count": 5,
+                "validation_row_count": 5,
+                "train_positive_count": 1,
+                "train_negative_count": 1,
+                "val_positive_count": 1,
+                "val_negative_count": 1,
+            },
             best_epoch=10,
-            artifacts={"model_sha256": "mod" * 21 + "m",
-                       "preprocessing_sha256": "p" * 64,
-                       "metrics_sha256": "met" * 21 + "m"},
+            artifacts={
+                "model_sha256": "mod" * 21 + "m",
+                "preprocessing_sha256": "p" * 64,
+                "metrics_sha256": "met" * 21 + "m",
+            },
             schema_version=1,
             created_at="2026-08-08T00:00:00Z",
         )
@@ -484,7 +516,9 @@ def test_full_anomaly_evaluation_flow():
     view = build_anomaly_ml_view(manifest, train_rows)
     split = create_anomaly_group_split(view, seed=42)
 
-    preprocessor = AnomalyPreprocessor().fit(train_rows, ANOMALY_MODEL_INPUT_FEATURES, split.split_id)
+    preprocessor = AnomalyPreprocessor().fit(
+        train_rows, ANOMALY_MODEL_INPUT_FEATURES, split.split_id
+    )
     with tempfile.TemporaryDirectory() as tmp_dir:
         prep_path = os.path.join(tmp_dir, "preprocessing.json")
         with open(prep_path, "w", encoding="utf-8") as f:

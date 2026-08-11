@@ -24,7 +24,9 @@ def sample_silver_ref(sector: int = 1) -> SilverInputRef:
     )
 
 
-def sample_candidate_manifest(sid: str = "gold-v1-abc123456789") -> GoldSnapshotManifest:
+def sample_candidate_manifest(
+    sid: str = "gold-v1-abc123456789",
+) -> GoldSnapshotManifest:
     inp = sample_silver_ref(sector=1)
     return GoldSnapshotManifest(
         schema_version=1,

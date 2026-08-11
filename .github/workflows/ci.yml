@@ -59,6 +59,11 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libcfitsio-dev pkg-config
+
       - name: Verify rust-preprocessor
         run: |
           cd apps/rust-preprocessor
@@ -89,7 +94,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install ruff pytest
+          cd apps/python-ml-worker
+          pip install -e ".[dev]"
 
       - name: Verify python-ml-worker
         run: |

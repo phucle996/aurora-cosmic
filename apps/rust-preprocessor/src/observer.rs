@@ -114,8 +114,10 @@ impl Metrics {
     }
 
     pub fn set_backlog(&self, pending: u64, ack_pending: usize) {
-        self.backlog_pending.set(pending.min(i64::MAX as u64) as i64);
-        self.backlog_ack_pending.set(ack_pending.min(i64::MAX as usize) as i64);
+        self.backlog_pending
+            .set(pending.min(i64::MAX as u64) as i64);
+        self.backlog_ack_pending
+            .set(ack_pending.min(i64::MAX as usize) as i64);
     }
 
     pub fn record_transport_error(&self) {

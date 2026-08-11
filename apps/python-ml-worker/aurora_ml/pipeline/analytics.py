@@ -7,7 +7,6 @@ ClickHouse is strictly a derived query index.
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import json
 from typing import Any, Dict, List, Optional
 
 from aurora_ml.pipeline.gold import GoldSnapshotManifest
@@ -80,7 +79,9 @@ class GoldAnalyticsLoader:
     ) -> GoldSnapshotIndexRecord:
         """Load and project a committed Gold snapshot into analytical tables."""
         if not manifest or not manifest.snapshot_id:
-            raise UncommittedGoldError("Cannot index snapshot: Manifest is missing or uncommitted")
+            raise UncommittedGoldError(
+                "Cannot index snapshot: Manifest is missing or uncommitted"
+            )
 
         manifest.validate()
         sid = manifest.snapshot_id
@@ -107,7 +108,9 @@ class GoldAnalyticsLoader:
             for r in cand_rows:
                 pid = r.get("source_product_id")
                 if pid in seen_product_ids:
-                    raise AnalyticsLoaderError(f"Duplicate candidate identity in partition: '{pid}'")
+                    raise AnalyticsLoaderError(
+                        f"Duplicate candidate identity in partition: '{pid}'"
+                    )
                 seen_product_ids.add(pid)
                 r_copy = dict(r)
                 r_copy["snapshot_id"] = sid
@@ -161,7 +164,9 @@ class GoldAnalyticsLoader:
         self.mock_snapshots[sid] = rec
         return rec
 
-    def query_candidates(self, snapshot_id: str, sector: Optional[int] = None) -> List[Dict[str, Any]]:
+    def query_candidates(
+        self, snapshot_id: str, sector: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
         """Query candidate features filtering explicitly by snapshot_id."""
         if not snapshot_id:
             raise SnapshotIsolationError("Analytical queries MUST specify snapshot_id")

@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from aurora_ml.ml.datasets.splits import CandidateGroupSplit, derive_group_key
 from aurora_ml.pipeline.gold import GoldSnapshotManifest
@@ -16,26 +16,31 @@ from aurora_ml.pipeline.gold import GoldSnapshotManifest
 
 class MlEvaluationError(Exception):
     """Base exception for ML evaluation failures."""
+
     pass
 
 
 class EvaluationGroupLeakageError(MlEvaluationError):
     """Raised when evaluation cohort contains groups exposed to model training/validation."""
+
     pass
 
 
 class EvaluationCohortConflictError(MlEvaluationError):
     """Raised when an immutable cohort manifest conflict is detected."""
+
     pass
 
 
 class EvaluationRunConflictError(MlEvaluationError):
     """Raised when an immutable evaluation run manifest conflict is detected."""
+
     pass
 
 
 class InsufficientClassCoverageError(MlEvaluationError):
     """Raised when an evaluation dataset lacks required class representations."""
+
     pass
 
 
@@ -144,7 +149,11 @@ def build_candidate_golden_cohort(
     training_split: Optional[Any] = None,
 ) -> EvaluationCohort:
     """Build candidate Golden Test cohort from committed Gold snapshot, excluding TRAIN & VALIDATION groups."""
-    dev_groups = {a.group_key for a in training_split.assignments} if training_split is not None else set()
+    dev_groups = (
+        {a.group_key for a in training_split.assignments}
+        if training_split is not None
+        else set()
+    )
 
     # Filter supervised rows with labels POSITIVE / NEGATIVE
     supervised_rows = [
@@ -159,7 +168,9 @@ def build_candidate_golden_cohort(
             groups.setdefault(gk, []).append(r)
 
     if not groups:
-        raise MlEvaluationError("NO_UNSEEN_GROUPS: No unseen target groups available for Golden Test")
+        raise MlEvaluationError(
+            "NO_UNSEEN_GROUPS: No unseen target groups available for Golden Test"
+        )
 
     sorted_group_keys = sorted(groups.keys())
     eligible_rows = [r for gk in sorted_group_keys for r in groups[gk]]
@@ -173,11 +184,19 @@ def build_candidate_golden_cohort(
         )
 
     manifest_sha = hashlib.sha256(
-        json.dumps(gold_manifest.to_dict(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+        json.dumps(
+            gold_manifest.to_dict(), sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
     ).hexdigest()
 
-    dview_version = training_split.dataset_view_version if training_split is not None else "candidate-ml-view-v1"
-    dview_fp = training_split.split_fingerprint if training_split is not None else ("0" * 64)
+    dview_version = (
+        training_split.dataset_view_version
+        if training_split is not None
+        else "candidate-ml-view-v1"
+    )
+    dview_fp = (
+        training_split.split_fingerprint if training_split is not None else ("0" * 64)
+    )
     excluded_ids = [training_split.split_id] if training_split is not None else []
 
     cohort_id, cohort_fp = derive_cohort_identity(
@@ -223,7 +242,11 @@ def build_candidate_recent_cohort(
     training_max_sector: Optional[int] = None,
 ) -> EvaluationCohort:
     """Build candidate Recent Holdout cohort for newer sectors, excluding all training and golden groups."""
-    dev_groups = {a.group_key for a in training_split.assignments} if training_split is not None else set()
+    dev_groups = (
+        {a.group_key for a in training_split.assignments}
+        if training_split is not None
+        else set()
+    )
     if golden_cohort:
         dev_groups.update(golden_cohort.group_keys)
 
@@ -236,7 +259,13 @@ def build_candidate_recent_cohort(
                     if s is not None and isinstance(s, int):
                         training_max_sector = max(training_max_sector, s)
         if training_max_sector == 0:
-            all_sectors = sorted({r.get("sector") for r in candidate_rows if r.get("sector") is not None and isinstance(r.get("sector"), int)})
+            all_sectors = sorted(
+                {
+                    r.get("sector")
+                    for r in candidate_rows
+                    if r.get("sector") is not None and isinstance(r.get("sector"), int)
+                }
+            )
             if len(all_sectors) > 1:
                 training_max_sector = all_sectors[-2]
             elif len(all_sectors) == 1:
@@ -267,11 +296,19 @@ def build_candidate_recent_cohort(
     neg_c = sum(1 for r in eligible_rows if r.get("training_label") == "NEGATIVE")
 
     manifest_sha = hashlib.sha256(
-        json.dumps(gold_manifest.to_dict(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+        json.dumps(
+            gold_manifest.to_dict(), sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
     ).hexdigest()
 
-    dview_version = training_split.dataset_view_version if training_split is not None else "candidate-ml-view-v1"
-    dview_fp = training_split.split_fingerprint if training_split is not None else ("0" * 64)
+    dview_version = (
+        training_split.dataset_view_version
+        if training_split is not None
+        else "candidate-ml-view-v1"
+    )
+    dview_fp = (
+        training_split.split_fingerprint if training_split is not None else ("0" * 64)
+    )
     excluded_ids = [training_split.split_id] if training_split is not None else []
     if golden_cohort:
         excluded_ids.append(golden_cohort.cohort_id)
@@ -318,7 +355,11 @@ def build_anomaly_golden_cohort(
     training_split: Optional[Any] = None,
 ) -> EvaluationCohort:
     """Build unsupervised anomaly Golden Test cohort excluding TRAIN & VALIDATION groups."""
-    dev_groups = {a.group_key for a in training_split.assignments} if training_split is not None else set()
+    dev_groups = (
+        {a.group_key for a in training_split.assignments}
+        if training_split is not None
+        else set()
+    )
 
     groups: Dict[str, List[Dict[str, Any]]] = {}
     for r in anomaly_rows:
@@ -327,17 +368,27 @@ def build_anomaly_golden_cohort(
             groups.setdefault(gk, []).append(r)
 
     if not groups:
-        raise MlEvaluationError("NO_UNSEEN_GROUPS: No unseen target groups available for anomaly Golden Test")
+        raise MlEvaluationError(
+            "NO_UNSEEN_GROUPS: No unseen target groups available for anomaly Golden Test"
+        )
 
     sorted_group_keys = sorted(groups.keys())
     eligible_rows = [r for gk in sorted_group_keys for r in groups[gk]]
 
     manifest_sha = hashlib.sha256(
-        json.dumps(gold_manifest.to_dict(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+        json.dumps(
+            gold_manifest.to_dict(), sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
     ).hexdigest()
 
-    dview_version = training_split.dataset_view_version if training_split is not None else "anomaly-ml-view-v1"
-    dview_fp = training_split.split_fingerprint if training_split is not None else ("0" * 64)
+    dview_version = (
+        training_split.dataset_view_version
+        if training_split is not None
+        else "anomaly-ml-view-v1"
+    )
+    dview_fp = (
+        training_split.split_fingerprint if training_split is not None else ("0" * 64)
+    )
     excluded_ids = [training_split.split_id] if training_split is not None else []
 
     cohort_id, cohort_fp = derive_cohort_identity(
@@ -381,7 +432,11 @@ def build_anomaly_recent_cohort(
     training_max_sector: Optional[int] = None,
 ) -> EvaluationCohort:
     """Build anomaly Recent Holdout cohort for newer sectors, excluding all training and golden groups."""
-    dev_groups = {a.group_key for a in training_split.assignments} if training_split is not None else set()
+    dev_groups = (
+        {a.group_key for a in training_split.assignments}
+        if training_split is not None
+        else set()
+    )
     if golden_cohort:
         dev_groups.update(golden_cohort.group_keys)
 
@@ -394,7 +449,13 @@ def build_anomaly_recent_cohort(
                     if s is not None and isinstance(s, int):
                         training_max_sector = max(training_max_sector, s)
         if training_max_sector == 0:
-            all_sectors = sorted({r.get("sector") for r in anomaly_rows if r.get("sector") is not None and isinstance(r.get("sector"), int)})
+            all_sectors = sorted(
+                {
+                    r.get("sector")
+                    for r in anomaly_rows
+                    if r.get("sector") is not None and isinstance(r.get("sector"), int)
+                }
+            )
             if len(all_sectors) > 1:
                 training_max_sector = all_sectors[-2]
             elif len(all_sectors) == 1:
@@ -419,11 +480,19 @@ def build_anomaly_recent_cohort(
     eligible_rows = [r for gk in sorted_group_keys for r in groups[gk]]
 
     manifest_sha = hashlib.sha256(
-        json.dumps(gold_manifest.to_dict(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+        json.dumps(
+            gold_manifest.to_dict(), sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
     ).hexdigest()
 
-    dview_version = training_split.dataset_view_version if training_split is not None else "anomaly-ml-view-v1"
-    dview_fp = training_split.split_fingerprint if training_split is not None else ("0" * 64)
+    dview_version = (
+        training_split.dataset_view_version
+        if training_split is not None
+        else "anomaly-ml-view-v1"
+    )
+    dview_fp = (
+        training_split.split_fingerprint if training_split is not None else ("0" * 64)
+    )
     excluded_ids = [training_split.split_id] if training_split is not None else []
     if golden_cohort:
         excluded_ids.append(golden_cohort.cohort_id)
@@ -474,11 +543,15 @@ def build_evaluation_cohort(
     if task == "candidate_vetting":
         if kind in ("GOLDEN", "GOLDEN_TEST"):
             return build_candidate_golden_cohort(gold_manifest, rows, training_split)
-        return build_candidate_recent_cohort(gold_manifest, rows, training_split, golden_cohort)
+        return build_candidate_recent_cohort(
+            gold_manifest, rows, training_split, golden_cohort
+        )
     else:
         if kind in ("GOLDEN", "GOLDEN_TEST"):
             return build_anomaly_golden_cohort(gold_manifest, rows, training_split)
-        return build_anomaly_recent_cohort(gold_manifest, rows, training_split, golden_cohort)
+        return build_anomaly_recent_cohort(
+            gold_manifest, rows, training_split, golden_cohort
+        )
 
 
 def save_evaluation_cohort(
@@ -512,7 +585,9 @@ def save_evaluation_cohort(
 def load_evaluation_cohort(manifest_path: str) -> EvaluationCohort:
     """Load EvaluationCohort from JSON manifest file."""
     if not os.path.exists(manifest_path):
-        raise MlEvaluationError(f"Evaluation cohort manifest not found: {manifest_path}")
+        raise MlEvaluationError(
+            f"Evaluation cohort manifest not found: {manifest_path}"
+        )
 
     with open(manifest_path, "r", encoding="utf-8") as f:
         d = json.load(f)

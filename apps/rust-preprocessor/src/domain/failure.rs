@@ -52,19 +52,35 @@ pub struct ProcessingFailure {
 
 impl ProcessingFailure {
     pub fn retryable(kind: ErrorKind, message: impl Into<String>) -> Self {
-        Self { class: FailureClass::Retryable, kind, message: message.into() }
+        Self {
+            class: FailureClass::Retryable,
+            kind,
+            message: message.into(),
+        }
     }
 
     pub fn terminal(kind: ErrorKind, message: impl Into<String>) -> Self {
-        Self { class: FailureClass::Terminal, kind, message: message.into() }
+        Self {
+            class: FailureClass::Terminal,
+            kind,
+            message: message.into(),
+        }
     }
 
     pub fn conflict(kind: ErrorKind, message: impl Into<String>) -> Self {
-        Self { class: FailureClass::Conflict, kind, message: message.into() }
+        Self {
+            class: FailureClass::Conflict,
+            kind,
+            message: message.into(),
+        }
     }
 
     pub fn rejected(kind: ErrorKind, message: impl Into<String>) -> Self {
-        Self { class: FailureClass::Rejected, kind, message: message.into() }
+        Self {
+            class: FailureClass::Rejected,
+            kind,
+            message: message.into(),
+        }
     }
 }
 
@@ -76,10 +92,7 @@ pub fn classify_pipeline_error(err: &anyhow::Error) -> ProcessingFailure {
 
     // Bronze integrity / checksum
     if msg.contains("SHA-256 checksum mismatch") || msg.contains("Size mismatch") {
-        return ProcessingFailure::conflict(
-            ErrorKind::BronzeIntegrityMismatch,
-            msg,
-        );
+        return ProcessingFailure::conflict(ErrorKind::BronzeIntegrityMismatch, msg);
     }
 
     // Bronze not found / stat failure

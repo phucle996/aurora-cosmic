@@ -4,8 +4,6 @@ import numpy as np
 import pytest
 
 from aurora_ml.pipeline.evidence import (
-    FfiEvidenceFeatures,
-    TpfVettingFeatures,
     build_transit_masks,
     compute_ffi_features,
     compute_tpf_features,

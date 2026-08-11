@@ -1,5 +1,6 @@
 """Unit & Integration Tests for Candidate Vetting Model Training (Phase 6.2)."""
 
+from dataclasses import replace
 import json
 import os
 import tempfile
@@ -11,13 +12,11 @@ import torch
 from aurora_ml.ml.candidate.checkpoint import (
     TrainingRunCheckpoint,
     TrainingRunManifest,
-    TrainingRunSpec,
     derive_training_run_identity,
 )
 from aurora_ml.ml.candidate.model import CandidateTabularMLP
 from aurora_ml.ml.candidate.preprocessor import (
     CandidatePreprocessor,
-    PreprocessingError,
 )
 from aurora_ml.ml.candidate.train import (
     CandidateTrainingError,
@@ -48,7 +47,9 @@ def sample_gold_manifest() -> GoldSnapshotManifest:
     return manifest
 
 
-def sample_row(tic_id: int, sector: int, label: str, bls_depth_val: float = 0.01) -> dict:
+def sample_row(
+    tic_id: int, sector: int, label: str, bls_depth_val: float = 0.01
+) -> dict:
     """Fixture producing a sample row for candidate dataset."""
     return {
         "source_product_id": f"prod_{tic_id}_s{sector}",
@@ -94,7 +95,9 @@ def sample_row(tic_id: int, sector: int, label: str, bls_depth_val: float = 0.01
         "stellar_mass": 1.0,
         "logg": 4.4,
         "matched_toi_id": f"{tic_id}.01" if label in ("POSITIVE", "NEGATIVE") else None,
-        "toi_match_status": "EPHEMERIS_MATCH" if label in ("POSITIVE", "NEGATIVE") else "NO_MATCH",
+        "toi_match_status": "EPHEMERIS_MATCH"
+        if label in ("POSITIVE", "NEGATIVE")
+        else "NO_MATCH",
         "toi_period_error": 0.001 if label in ("POSITIVE", "NEGATIVE") else None,
         "matched_tce_id": None,
         "tce_match_status": "NO_MATCH",
@@ -118,6 +121,7 @@ def sample_training_rows() -> list[dict]:
 
 
 # --- Unit Tests ---
+
 
 def test_preprocessor_train_only_fit():
     """Verify preprocessor medians and scales are computed strictly on TRAIN rows."""
@@ -237,6 +241,10 @@ def test_training_spec_fingerprint_determinism():
 
 # --- Integration Tests ---
 
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="full training integration requires CUDA"
+)
 def test_full_candidate_training_flow():
     """Integration test: Execute train_candidate_model and verify artifacts."""
     manifest = sample_gold_manifest()
@@ -275,8 +283,6 @@ def test_full_candidate_training_flow():
             assert manifest_dict["dataset_view_version"] == "candidate-ml-view-v1"
             assert len(manifest_dict["feature_order"]) == 32
 
-
-from dataclasses import replace
 
 def test_mismatched_gold_snapshot_rejection():
     """Verify training rejects split manifest pointing to a different Gold snapshot ID."""

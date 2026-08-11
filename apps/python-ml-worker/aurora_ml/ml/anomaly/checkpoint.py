@@ -15,6 +15,7 @@ from aurora_ml.ml.datasets.splits import ANOMALY_MODEL_INPUT_FEATURES
 
 class AnomalyTrainingSpecError(Exception):
     """Base exception for anomaly spec/manifest errors."""
+
     pass
 
 
@@ -114,7 +115,9 @@ class AnomalyTrainingRunManifest:
     model_sha256: str = ""
     preprocessing_sha256: str = ""
     metrics_sha256: str = ""
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
     schema_version: int = 1
 
     def to_dict(self) -> Dict[str, Any]:
@@ -138,21 +141,35 @@ class AnomalyTrainingRunCheckpoint:
 
     training_run_id: str
     training_spec_fingerprint: str
-    status: str = "PLANNED"  # PLANNED -> TRAINING -> ARTIFACT_STORED -> COMPLETED | FAILED
+    status: str = (
+        "PLANNED"  # PLANNED -> TRAINING -> ARTIFACT_STORED -> COMPLETED | FAILED
+    )
     gold_snapshot_id: str = ""
     split_id: str = ""
     current_epoch: int = 0
     best_epoch: int = 0
     best_val_loss: float = float("inf")
     error_message: Optional[str] = None
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+    updated_at: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
     schema_version: int = 1
 
     def update_status(self, new_status: str, error_msg: Optional[str] = None) -> None:
-        valid_statuses = ("PLANNED", "TRAINING", "ARTIFACT_STORED", "COMPLETED", "FAILED")
+        valid_statuses = (
+            "PLANNED",
+            "TRAINING",
+            "ARTIFACT_STORED",
+            "COMPLETED",
+            "FAILED",
+        )
         if new_status not in valid_statuses:
-            raise AnomalyTrainingSpecError(f"Invalid status '{new_status}'. Must be one of {valid_statuses}")
+            raise AnomalyTrainingSpecError(
+                f"Invalid status '{new_status}'. Must be one of {valid_statuses}"
+            )
         self.status = new_status
         if error_msg:
             self.error_message = error_msg
@@ -180,7 +197,9 @@ class AnomalyTrainingRunCheckpoint:
         return path
 
     @classmethod
-    def load(cls, training_run_id: str, base_dir: str = "checkpoints/ml-training/anomaly") -> "AnomalyTrainingRunCheckpoint":
+    def load(
+        cls, training_run_id: str, base_dir: str = "checkpoints/ml-training/anomaly"
+    ) -> "AnomalyTrainingRunCheckpoint":
         path = os.path.join(base_dir, f"{training_run_id}.json")
         if not os.path.exists(path):
             raise AnomalyTrainingSpecError(f"Checkpoint file not found: '{path}'")

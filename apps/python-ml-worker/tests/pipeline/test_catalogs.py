@@ -7,13 +7,10 @@ import pytest
 from aurora_ml.pipeline.catalogs import (
     MODEL_INPUT_ALLOWLIST,
     SUPERVISION_ALLOWLIST,
-    TicCatalogRecord,
     ToiCatalogRecord,
     derive_candidate_label,
     derive_catalog_snapshot_identity,
-    derive_label_snapshot_identity,
     enrich_candidate,
-    match_tce_candidate,
     match_toi_candidate,
     normalize_tic_catalog,
     normalize_toi_catalog,
@@ -139,7 +136,9 @@ def test_toi_candidate_matching_exact():
     raw_toi = load_csv_fixture("toi-small.csv")
     toi_recs, _ = normalize_toi_catalog(raw_toi)
 
-    matched_toi, status, p_err = match_toi_candidate(lc_feat, toi_recs, period_tolerance=0.05)
+    matched_toi, status, p_err = match_toi_candidate(
+        lc_feat, toi_recs, period_tolerance=0.05
+    )
 
     assert matched_toi is not None
     assert matched_toi.toi_id == "123.01"
@@ -153,7 +152,9 @@ def test_toi_candidate_matching_harmonics():
     raw_toi = load_csv_fixture("toi-small.csv")
     toi_recs, _ = normalize_toi_catalog(raw_toi)
 
-    matched_toi, status, p_err = match_toi_candidate(lc_feat, toi_recs, period_tolerance=0.05)
+    matched_toi, status, p_err = match_toi_candidate(
+        lc_feat, toi_recs, period_tolerance=0.05
+    )
 
     assert matched_toi is not None
     assert matched_toi.toi_id == "123.01"
@@ -168,7 +169,9 @@ def test_toi_candidate_matching_ambiguous():
     toi1 = ToiCatalogRecord(toi_id="123.01", tic_id=12345678, catalog_period=3.5)
     toi2 = ToiCatalogRecord(toi_id="123.03", tic_id=12345678, catalog_period=3.5)
 
-    matched_toi, status, p_err = match_toi_candidate(lc_feat, [toi1, toi2], period_tolerance=0.05)
+    matched_toi, status, p_err = match_toi_candidate(
+        lc_feat, [toi1, toi2], period_tolerance=0.05
+    )
 
     assert matched_toi is None
     assert status == "AMBIGUOUS"
@@ -176,18 +179,30 @@ def test_toi_candidate_matching_ambiguous():
 
 def test_label_policy_conservative():
     # 1. Confirmed planet -> POSITIVE
-    toi_kp = ToiCatalogRecord(toi_id="123.01", tic_id=12345678, toi_disposition_norm="KNOWN_PLANET")
-    lbl_kp = derive_candidate_label((toi_kp, "EPHEMERIS_MATCH", 0.0), (None, "NO_MATCH"))
+    toi_kp = ToiCatalogRecord(
+        toi_id="123.01", tic_id=12345678, toi_disposition_norm="KNOWN_PLANET"
+    )
+    lbl_kp = derive_candidate_label(
+        (toi_kp, "EPHEMERIS_MATCH", 0.0), (None, "NO_MATCH")
+    )
     assert lbl_kp.training_label == "POSITIVE"
 
     # 2. False positive -> NEGATIVE
-    toi_fp = ToiCatalogRecord(toi_id="999.01", tic_id=99999999, toi_disposition_norm="FALSE_POSITIVE")
-    lbl_fp = derive_candidate_label((toi_fp, "EPHEMERIS_MATCH", 0.0), (None, "NO_MATCH"))
+    toi_fp = ToiCatalogRecord(
+        toi_id="999.01", tic_id=99999999, toi_disposition_norm="FALSE_POSITIVE"
+    )
+    lbl_fp = derive_candidate_label(
+        (toi_fp, "EPHEMERIS_MATCH", 0.0), (None, "NO_MATCH")
+    )
     assert lbl_fp.training_label == "NEGATIVE"
 
     # 3. Candidate -> UNRESOLVED
-    toi_pc = ToiCatalogRecord(toi_id="123.02", tic_id=12345678, toi_disposition_norm="CANDIDATE")
-    lbl_pc = derive_candidate_label((toi_pc, "EPHEMERIS_MATCH", 0.0), (None, "NO_MATCH"))
+    toi_pc = ToiCatalogRecord(
+        toi_id="123.02", tic_id=12345678, toi_disposition_norm="CANDIDATE"
+    )
+    lbl_pc = derive_candidate_label(
+        (toi_pc, "EPHEMERIS_MATCH", 0.0), (None, "NO_MATCH")
+    )
     assert lbl_pc.training_label == "UNRESOLVED"
 
     # 4. No match -> UNRESOLVED
@@ -205,11 +220,25 @@ def test_signal_feature_independence():
     tic_index = {r.tic_id: r for r in tic_recs}
 
     # Run 1 with KNOWN_PLANET disposition
-    toi_recs_v1 = [ToiCatalogRecord(toi_id="123.01", tic_id=12345678, catalog_period=3.5, toi_disposition_norm="KNOWN_PLANET")]
+    toi_recs_v1 = [
+        ToiCatalogRecord(
+            toi_id="123.01",
+            tic_id=12345678,
+            catalog_period=3.5,
+            toi_disposition_norm="KNOWN_PLANET",
+        )
+    ]
     enrich1, lbl1 = enrich_candidate(lc_feat, tpf_feat, tic_index, toi_recs_v1, [])
 
     # Run 2 with FALSE_POSITIVE disposition
-    toi_recs_v2 = [ToiCatalogRecord(toi_id="123.01", tic_id=12345678, catalog_period=3.5, toi_disposition_norm="FALSE_POSITIVE")]
+    toi_recs_v2 = [
+        ToiCatalogRecord(
+            toi_id="123.01",
+            tic_id=12345678,
+            catalog_period=3.5,
+            toi_disposition_norm="FALSE_POSITIVE",
+        )
+    ]
     enrich2, lbl2 = enrich_candidate(lc_feat, tpf_feat, tic_index, toi_recs_v2, [])
 
     # Labels must differ
@@ -225,7 +254,9 @@ def test_signal_feature_independence():
 def test_leakage_prevention_allowlists():
     """Verify that supervision metadata is NOT present in MODEL_INPUT_ALLOWLIST."""
     for sup_field in SUPERVISION_ALLOWLIST:
-        assert sup_field not in MODEL_INPUT_ALLOWLIST, f"Label leakage error: {sup_field} found in MODEL_INPUT_ALLOWLIST!"
+        assert sup_field not in MODEL_INPUT_ALLOWLIST, (
+            f"Label leakage error: {sup_field} found in MODEL_INPUT_ALLOWLIST!"
+        )
 
 
 def test_bronze_raw_deleted_safety():

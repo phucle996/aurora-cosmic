@@ -74,7 +74,9 @@ def compute_job_fingerprint(
         "runtime_manifest_sha256": runtime_manifest_sha256,
         "runtime_validation_id": runtime_validation_id,
     }
-    canonical_json = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    canonical_json = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
     fp = hashlib.sha256(canonical_json).hexdigest()
     job_id = f"inference-job-v1-{fp[:16]}"
     return job_id, fp
@@ -148,26 +150,38 @@ class InferenceJobPlanner:
         dry_run: bool = False,
     ) -> List[InferenceJobManifest]:
         # 1. Validate and load Gold snapshot manifest
-        gold_snapshot_dir = os.path.join(self.gold_root, gold_dir_name, gold_snapshot_id)
+        gold_snapshot_dir = os.path.join(
+            self.gold_root, gold_dir_name, gold_snapshot_id
+        )
         gold_manifest_path = os.path.join(gold_snapshot_dir, "manifest.json")
         if not os.path.exists(gold_manifest_path):
-            raise InferenceJobError(f"Committed Gold manifest not found: {gold_manifest_path}")
+            raise InferenceJobError(
+                f"Committed Gold manifest not found: {gold_manifest_path}"
+            )
 
         with open(gold_manifest_path, "r", encoding="utf-8") as f:
             gold_manifest_data = json.load(f)
 
-        gold_manifest_sha = hashlib.sha256(open(gold_manifest_path, "rb").read()).hexdigest()
+        gold_manifest_sha = hashlib.sha256(
+            open(gold_manifest_path, "rb").read()
+        ).hexdigest()
 
         # 2. Validate and load Runtime Package manifest
-        runtime_pkg_dir = os.path.join(self.runtime_root, runtime_dir_name, runtime_package_id)
+        runtime_pkg_dir = os.path.join(
+            self.runtime_root, runtime_dir_name, runtime_package_id
+        )
         runtime_manifest_path = os.path.join(runtime_pkg_dir, "manifest.json")
         if not os.path.exists(runtime_manifest_path):
-            raise InferenceJobError(f"Runtime package manifest not found: {runtime_manifest_path}")
+            raise InferenceJobError(
+                f"Runtime package manifest not found: {runtime_manifest_path}"
+            )
 
         with open(runtime_manifest_path, "r", encoding="utf-8") as f:
             runtime_manifest_data = json.load(f)
 
-        runtime_manifest_sha = hashlib.sha256(open(runtime_manifest_path, "rb").read()).hexdigest()
+        runtime_manifest_sha = hashlib.sha256(
+            open(runtime_manifest_path, "rb").read()
+        ).hexdigest()
 
         # 3. Validate and resolve runtime qualification (CPU PASS record)
         resolved_val_id = self._resolve_runtime_validation(
@@ -184,10 +198,14 @@ class InferenceJobPlanner:
                 artifacts = partitions
 
         if not artifacts:
-            raise InferenceJobError(f"NO_INFERENCE_INPUTS: No artifacts found in snapshot {gold_snapshot_id}")
+            raise InferenceJobError(
+                f"NO_INFERENCE_INPUTS: No artifacts found in snapshot {gold_snapshot_id}"
+            )
 
         planned_manifests = []
-        out_jobs_dir = os.path.join(self.manifest_root, "inference-jobs", runtime_dir_name)
+        out_jobs_dir = os.path.join(
+            self.manifest_root, "inference-jobs", runtime_dir_name
+        )
         os.makedirs(out_jobs_dir, exist_ok=True)
 
         for art in artifacts:
@@ -221,20 +239,30 @@ class InferenceJobPlanner:
                 gold_manifest_key=os.path.relpath(gold_manifest_path, self.gold_root),
                 gold_manifest_sha256=gold_manifest_sha,
                 gold_dataset=gold_dir_name,
-                gold_schema_version=gold_manifest_data.get("gold_schema_version", expected_gold_schema),
+                gold_schema_version=gold_manifest_data.get(
+                    "gold_schema_version", expected_gold_schema
+                ),
                 gold_artifact_key=art_key,
                 gold_artifact_content_sha256=art_sha,
                 gold_artifact_row_count=row_count,
                 sector=sector,
                 runtime_package_id=runtime_package_id,
-                runtime_manifest_key=os.path.relpath(runtime_manifest_path, self.runtime_root),
+                runtime_manifest_key=os.path.relpath(
+                    runtime_manifest_path, self.runtime_root
+                ),
                 runtime_manifest_sha256=runtime_manifest_sha,
                 runtime_validation_id=resolved_val_id,
                 model_id=runtime_manifest_data.get("source_model_id", "m-unknown"),
                 model_version=runtime_manifest_data.get("model_version", "v1"),
-                evaluation_run_id=runtime_manifest_data.get("source_evaluation_run_id", "e-unknown"),
-                dataset_view_version=runtime_manifest_data.get("dataset_view_version", "v1"),
-                dataset_view_fingerprint=runtime_manifest_data.get("dataset_view_fingerprint", "f" * 64),
+                evaluation_run_id=runtime_manifest_data.get(
+                    "source_evaluation_run_id", "e-unknown"
+                ),
+                dataset_view_version=runtime_manifest_data.get(
+                    "dataset_view_version", "v1"
+                ),
+                dataset_view_fingerprint=runtime_manifest_data.get(
+                    "dataset_view_fingerprint", "f" * 64
+                ),
                 feature_names=list(runtime_manifest_data.get("feature_order", [])),
                 expected_prediction_count=row_count,
                 created_at="2026-08-08T00:00:00Z",
@@ -247,7 +275,9 @@ class InferenceJobPlanner:
                     with open(job_file_path, "r", encoding="utf-8") as f:
                         existing = json.load(f)
                     if existing.get("job_fingerprint") != job_fp:
-                        raise InferenceJobError(f"INFERENCE_JOB_CONFLICT: Job {job_id} already exists with different content")
+                        raise InferenceJobError(
+                            f"INFERENCE_JOB_CONFLICT: Job {job_id} already exists with different content"
+                        )
                 else:
                     with open(job_file_path, "w", encoding="utf-8") as f:
                         json.dump(manifest.to_dict(), f, indent=2)
@@ -263,7 +293,9 @@ class InferenceJobPlanner:
     ) -> str:
         """Find matching CPU PASS validation record."""
         if not os.path.exists(self.validation_root):
-            raise InferenceJobError(f"No runtime validation records found at {self.validation_root}")
+            raise InferenceJobError(
+                f"No runtime validation records found at {self.validation_root}"
+            )
 
         candidates = []
         for root, _, files in os.walk(self.validation_root):
@@ -282,13 +314,17 @@ class InferenceJobPlanner:
                         continue
 
         if not candidates:
-            raise InferenceJobError(f"UNQUALIFIED_RUNTIME: No CPU PASS validation record found for {runtime_package_id}")
+            raise InferenceJobError(
+                f"UNQUALIFIED_RUNTIME: No CPU PASS validation record found for {runtime_package_id}"
+            )
 
         if explicit_val_id:
             for c in candidates:
                 if c.get("validation_record_id") == explicit_val_id:
                     return explicit_val_id
-            raise InferenceJobError(f"Explicit validation ID {explicit_val_id} not found among PASS records")
+            raise InferenceJobError(
+                f"Explicit validation ID {explicit_val_id} not found among PASS records"
+            )
 
         # Select deterministic smallest ID
         candidates.sort(key=lambda x: x.get("validation_record_id", ""))

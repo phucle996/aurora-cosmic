@@ -7,17 +7,21 @@ import numpy as np
 
 from aurora_ml.pipeline.analytics import GoldAnalyticsLoader, SnapshotIsolationError
 from aurora_ml.pipeline.catalogs import (
-    CandidateEnrichmentRecord,
     ToiCatalogRecord,
     derive_candidate_label,
     match_toi_candidate,
 )
-from aurora_ml.pipeline.evidence import TpfVettingFeatures, compute_tpf_features
-from aurora_ml.pipeline.feature_checkpoint import FeatureCheckpointRecord, FeatureCheckpointState
+from aurora_ml.pipeline.feature_checkpoint import (
+    FeatureCheckpointRecord,
+    FeatureCheckpointState,
+)
 from aurora_ml.pipeline.features import compute_lightcurve_features
-from aurora_ml.pipeline.gold import GoldSnapshotManifest, GoldSnapshotPlanner, SilverInputRef
+from aurora_ml.pipeline.gold import (
+    GoldSnapshotManifest,
+    GoldSnapshotPlanner,
+    SilverInputRef,
+)
 from aurora_ml.pipeline.gold_materialize import (
-    derive_partition_content_sha256,
     get_candidate_arrow_schema,
     write_partition_parquet,
 )
@@ -237,7 +241,9 @@ def test_catalog_label_change_signal_independence():
         catalog_period=5.0,
     )
     toi_match_unresolved = match_toi_candidate(lc_feats, [toi_unresolved])
-    label_A = derive_candidate_label(toi_match_unresolved, (None, "NO_MATCH")).training_label
+    label_A = derive_candidate_label(
+        toi_match_unresolved, (None, "NO_MATCH")
+    ).training_label
     assert label_A == "UNRESOLVED"
 
     # Context B: POSITIVE label
@@ -249,7 +255,9 @@ def test_catalog_label_change_signal_independence():
         catalog_period=5.0,
     )
     toi_match_confirmed = match_toi_candidate(lc_feats, [toi_confirmed])
-    label_B = derive_candidate_label(toi_match_confirmed, (None, "NO_MATCH")).training_label
+    label_B = derive_candidate_label(
+        toi_match_confirmed, (None, "NO_MATCH")
+    ).training_label
     assert label_B == "POSITIVE"
 
     # Numerical signal features remain 100% identical regardless of catalog changes

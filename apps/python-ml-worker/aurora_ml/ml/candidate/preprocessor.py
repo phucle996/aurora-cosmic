@@ -55,7 +55,9 @@ class CandidatePreprocessor:
         call (``CandidatePreprocessor.fit(rows, ...)``), which creates a new instance.
         """
         if not train_rows:
-            raise PreprocessingError("EMPTY_TRAIN_ROWS: Cannot fit preprocessor on empty train rows")
+            raise PreprocessingError(
+                "EMPTY_TRAIN_ROWS: Cannot fit preprocessor on empty train rows"
+            )
 
         if feature_order is not None:
             if isinstance(feature_order, str):
@@ -118,12 +120,20 @@ class CandidatePreprocessor:
     ) -> "CandidatePreprocessor":
         """Class-level factory: create and fit a new instance."""
         inst = cls()
-        return inst.fit(train_rows, feature_order=feature_order, split_id=split_id, **kwargs)
+        return inst.fit(
+            train_rows, feature_order=feature_order, split_id=split_id, **kwargs
+        )
 
     def transform_features(self, rows: List[Dict[str, Any]]) -> np.ndarray:
         """Transform rows to float32 feature matrix (N, 32) using fitted TRAIN stats."""
-        if not self.feature_medians or not self.feature_means or not self.feature_scales:
-            raise PreprocessingError("NOT_FITTED: Preprocessor must be fitted before transforming")
+        if (
+            not self.feature_medians
+            or not self.feature_means
+            or not self.feature_scales
+        ):
+            raise PreprocessingError(
+                "NOT_FITTED: Preprocessor must be fitted before transforming"
+            )
 
         n_rows = len(rows)
         n_feats = len(self.feature_order)
@@ -153,7 +163,9 @@ class CandidatePreprocessor:
 
         # Invariant: Output matrix contains 0 NaN/Inf
         if np.isnan(matrix).any() or np.isinf(matrix).any():
-            raise PreprocessingError("NON_FINITE_TRANSFORM: Transformed matrix contains NaN or Inf")
+            raise PreprocessingError(
+                "NON_FINITE_TRANSFORM: Transformed matrix contains NaN or Inf"
+            )
 
         return matrix
 
@@ -193,7 +205,9 @@ class CandidatePreprocessor:
         """Reconstruct preprocessor state from dictionary."""
         return cls(
             schema_version=d.get("schema_version", 1),
-            preprocessing_version=d.get("preprocessing_version", "candidate-preprocess-v1"),
+            preprocessing_version=d.get(
+                "preprocessing_version", "candidate-preprocess-v1"
+            ),
             split_id=d.get("split_id", ""),
             feature_order=tuple(d.get("feature_order", CANDIDATE_MODEL_INPUT_FEATURES)),
             feature_medians=d.get("feature_medians", {}),

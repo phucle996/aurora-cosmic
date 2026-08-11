@@ -3,8 +3,6 @@
 Executes reproducible exoplanet-candidate vetting tabular model training.
 """
 
-from dataclasses import asdict
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -20,14 +18,12 @@ from aurora_ml.ml.candidate.checkpoint import (
     TrainingRunCheckpoint,
     TrainingRunManifest,
     TrainingRunSpec,
-    TrainingSpecError,
 )
 from aurora_ml.ml.candidate.model import CandidateTabularMLP
 from aurora_ml.ml.candidate.preprocessor import CandidatePreprocessor
 from aurora_ml.ml.datasets.splits import (
     CANDIDATE_MODEL_INPUT_FEATURES,
     CandidateGroupSplit,
-    CandidateMlView,
     derive_group_key,
 )
 from aurora_ml.ml.device import require_cuda
@@ -56,7 +52,11 @@ def calculate_binary_metrics(
 
     precision = float(tp / (tp + fp)) if (tp + fp) > 0 else 0.0
     recall = float(tp / (tp + fn)) if (tp + fn) > 0 else 0.0
-    f1 = float(2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+    f1 = (
+        float(2 * precision * recall / (precision + recall))
+        if (precision + recall) > 0
+        else 0.0
+    )
 
     # Trapezoid ROC-AUC
     # Sort by descending probability score
@@ -137,7 +137,9 @@ def train_candidate_model(
     # 1. Preflight Validations
     gold_manifest.validate()
     if split_manifest.schema_version != 1:
-        raise CandidateTrainingError("INVALID_SPLIT_MANIFEST_SCHEMA: Unsupported split manifest schema version")
+        raise CandidateTrainingError(
+            "INVALID_SPLIT_MANIFEST_SCHEMA: Unsupported split manifest schema version"
+        )
 
     if split_manifest.gold_snapshot_id != gold_manifest.snapshot_id:
         raise CandidateTrainingError(
@@ -145,7 +147,9 @@ def train_candidate_model(
         )
 
     gold_manifest_sha = hashlib.sha256(
-        json.dumps(gold_manifest.to_dict(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+        json.dumps(
+            gold_manifest.to_dict(), sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
     ).hexdigest()
     if split_manifest.gold_manifest_sha256 != gold_manifest_sha:
         raise CandidateTrainingError(
@@ -153,10 +157,16 @@ def train_candidate_model(
         )
 
     # Revalidate group disjointness between TRAIN and VALIDATION
-    train_groups = {a.group_key for a in split_manifest.assignments if a.split == "TRAIN"}
-    val_groups = {a.group_key for a in split_manifest.assignments if a.split == "VALIDATION"}
+    train_groups = {
+        a.group_key for a in split_manifest.assignments if a.split == "TRAIN"
+    }
+    val_groups = {
+        a.group_key for a in split_manifest.assignments if a.split == "VALIDATION"
+    }
     if train_groups.intersection(val_groups):
-        raise CandidateTrainingError("TRAIN_VAL_GROUP_LEAKAGE: Same group key detected in both TRAIN and VALIDATION")
+        raise CandidateTrainingError(
+            "TRAIN_VAL_GROUP_LEAKAGE: Same group key detected in both TRAIN and VALIDATION"
+        )
 
     # Map split assignments
     assignment_map = {a.group_key: a.split for a in split_manifest.assignments}
@@ -178,7 +188,9 @@ def train_candidate_model(
             val_rows.append(r)
 
     if not train_rows or not val_rows:
-        raise CandidateTrainingError("EMPTY_SPLIT_PARTITION: TRAIN or VALIDATION partition contains 0 supervised rows")
+        raise CandidateTrainingError(
+            "EMPTY_SPLIT_PARTITION: TRAIN or VALIDATION partition contains 0 supervised rows"
+        )
 
     # 2. Spec & Recovery Checkpoint Initialization
     hyperparams = {
@@ -193,7 +205,9 @@ def train_candidate_model(
     }
 
     # Derive dataset_view_fingerprint from preprocessor feature order
-    view_fp_payload = json.dumps({"feature_names": list(CANDIDATE_MODEL_INPUT_FEATURES)}, sort_keys=True)
+    view_fp_payload = json.dumps(
+        {"feature_names": list(CANDIDATE_MODEL_INPUT_FEATURES)}, sort_keys=True
+    )
     dataset_view_fp = hashlib.sha256(view_fp_payload.encode("utf-8")).hexdigest()
 
     # 3. Seed Randomness
@@ -241,9 +255,13 @@ def train_candidate_model(
     n_pos_train = int(np.sum(y_train_np == 1.0))
     n_neg_train = int(np.sum(y_train_np == 0.0))
     if n_pos_train == 0 or n_neg_train == 0:
-        raise CandidateTrainingError("SINGLE_CLASS_TRAIN_SPLIT: TRAIN set must contain both POSITIVE and NEGATIVE rows")
+        raise CandidateTrainingError(
+            "SINGLE_CLASS_TRAIN_SPLIT: TRAIN set must contain both POSITIVE and NEGATIVE rows"
+        )
 
-    pos_weight = torch.tensor([n_neg_train / n_pos_train], dtype=torch.float32).to(device)
+    pos_weight = torch.tensor([n_neg_train / n_pos_train], dtype=torch.float32).to(
+        device
+    )
     loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     # DataLoaders
@@ -319,7 +337,9 @@ def train_candidate_model(
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_epoch = epoch
-            best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            best_model_state = {
+                k: v.cpu().clone() for k, v in model.state_dict().items()
+            }
             patience_counter = 0
         else:
             patience_counter += 1
@@ -359,7 +379,9 @@ def train_candidate_model(
     val_metrics["split_evaluated"] = "VALIDATION"
 
     # 8. Artifact Serialization & Manifest
-    output_dir = dest_dir or os.path.join("training-runs", "candidate", spec.training_run_id)
+    output_dir = dest_dir or os.path.join(
+        "training-runs", "candidate", spec.training_run_id
+    )
     os.makedirs(output_dir, exist_ok=True)
 
     # Save model.pt
@@ -388,7 +410,9 @@ def train_candidate_model(
 
     # Build TrainingRunManifest
     split_manifest_sha = hashlib.sha256(
-        json.dumps(split_manifest.to_dict(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+        json.dumps(
+            split_manifest.to_dict(), sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
     ).hexdigest()
 
     manifest = TrainingRunManifest(

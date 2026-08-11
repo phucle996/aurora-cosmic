@@ -94,9 +94,7 @@ def derive_snapshot_identity(
         "snapshot_type": snapshot_type.upper(),
     }
 
-    canonical_json = json.dumps(
-        canonical_obj, sort_keys=True, separators=(",", ":")
-    )
+    canonical_json = json.dumps(canonical_obj, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
     snapshot_fingerprint = digest
     snapshot_id = f"gold-v1-{digest[:12]}"
@@ -130,15 +128,10 @@ class GoldSnapshotManifest:
             )
         if not self.snapshot_id or not self.snapshot_id.startswith("gold-v1-"):
             raise ValueError(f"Invalid snapshot_id format: '{self.snapshot_id}'")
-        if (
-            not self.snapshot_fingerprint
-            or len(self.snapshot_fingerprint) != 64
-        ):
+        if not self.snapshot_fingerprint or len(self.snapshot_fingerprint) != 64:
             raise ValueError("snapshot_fingerprint must be a 64-char SHA256 hex string")
         if self.snapshot_type not in ("CANDIDATE", "ANOMALY"):
-            raise ValueError(
-                f"Unsupported snapshot_type: '{self.snapshot_type}'"
-            )
+            raise ValueError(f"Unsupported snapshot_type: '{self.snapshot_type}'")
         if self.input_count != len(self.inputs):
             raise ValueError(
                 f"input_count mismatch: expected {len(self.inputs)}, got {self.input_count}"

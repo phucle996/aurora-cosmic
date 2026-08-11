@@ -28,7 +28,9 @@ class CudaRuntimeInfo:
         return asdict(self)
 
 
-def require_cuda(device_str: str = "cuda", max_vram_mb: int = 0) -> tuple[torch.device, CudaRuntimeInfo]:
+def require_cuda(
+    device_str: str = "cuda", max_vram_mb: int = 0
+) -> tuple[torch.device, CudaRuntimeInfo]:
     """Resolve and validate the only supported training device.
 
     ``auto`` and ``cpu`` are rejected instead of being interpreted as a

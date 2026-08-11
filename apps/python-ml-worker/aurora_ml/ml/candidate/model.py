@@ -10,6 +10,8 @@ import torch.nn as nn
 
 from aurora_ml.ml.datasets.splits import CANDIDATE_MODEL_INPUT_FEATURES
 
+__all__ = ["CandidateTabularMLP", "CANDIDATE_MODEL_INPUT_FEATURES"]
+
 
 class CandidateTabularMLP(nn.Module):
     """Candidate Tabular MLP Classifier (candidate-tabular-mlp-v1).

@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Set, Tuple
 
 from aurora_ml.pipeline.gold import GoldSnapshotManifest
 
@@ -177,7 +177,9 @@ def build_candidate_ml_view(
     for row in candidate_rows:
         pid = row.get("source_product_id")
         if not pid:
-            raise MlDatasetError("Gold candidate row missing required 'source_product_id'")
+            raise MlDatasetError(
+                "Gold candidate row missing required 'source_product_id'"
+            )
         product_ids.append(str(pid))
 
         lbl = row.get("training_label", "UNRESOLVED")
@@ -191,7 +193,9 @@ def build_candidate_ml_view(
             unres_c += 1
 
     manifest_sha = hashlib.sha256(
-        json.dumps(manifest.to_dict(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+        json.dumps(manifest.to_dict(), sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
     ).hexdigest()
 
     v_fingerprint = derive_view_fingerprint(
@@ -341,13 +345,17 @@ def create_deterministic_group_split(
     ]
 
     if not eligible_rows:
-        raise MlDatasetError("NO_SUPERVISED_ROWS: No POSITIVE or NEGATIVE candidate rows found")
+        raise MlDatasetError(
+            "NO_SUPERVISED_ROWS: No POSITIVE or NEGATIVE candidate rows found"
+        )
 
     pos_rows = [r for r in eligible_rows if r.get("training_label") == "POSITIVE"]
     neg_rows = [r for r in eligible_rows if r.get("training_label") == "NEGATIVE"]
 
     if not pos_rows or not neg_rows:
-        raise MlDatasetError("SINGLE_CLASS_DATASET: Supervised dataset must contain both POSITIVE and NEGATIVE rows")
+        raise MlDatasetError(
+            "SINGLE_CLASS_DATASET: Supervised dataset must contain both POSITIVE and NEGATIVE rows"
+        )
 
     # Group rows by astronomical target identity
     groups: Dict[str, List[Dict[str, Any]]] = {}
@@ -356,29 +364,77 @@ def create_deterministic_group_split(
         groups.setdefault(gk, []).append(r)
 
     if len(groups) < 2:
-        raise MlDatasetError("INSUFFICIENT_GROUPS: Supervised dataset requires at least 2 distinct target groups")
+        raise MlDatasetError(
+            "INSUFFICIENT_GROUPS: Supervised dataset requires at least 2 distinct target groups"
+        )
 
-    # Deterministic SHA-256 assignment
+    # Deterministic SHA-256 ranking. Ranking (rather than a raw bucket
+    # threshold) guarantees that small datasets still receive both partitions.
     sorted_group_keys = sorted(groups.keys())
     assignments: List[GroupAssignmentRecord] = []
+
+    group_hashes = {
+        gk: hashlib.sha256(
+            f"{split_policy_version}:{seed}:{gk}".encode("utf-8")
+        ).hexdigest()
+        for gk in sorted_group_keys
+    }
+    ranked_group_keys = sorted(sorted_group_keys, key=lambda gk: group_hashes[gk])
+    train_group_count = min(
+        max(int(len(ranked_group_keys) * train_ratio), 1), len(ranked_group_keys) - 1
+    )
+    train_keys = set(ranked_group_keys[:train_group_count])
+
+    def class_counts(keys: set[str]) -> tuple[int, int]:
+        return (
+            sum(
+                1
+                for gk in keys
+                for r in groups[gk]
+                if r.get("training_label") == "POSITIVE"
+            ),
+            sum(
+                1
+                for gk in keys
+                for r in groups[gk]
+                if r.get("training_label") == "NEGATIVE"
+            ),
+        )
+
+    # If hashing places a class entirely in one partition, deterministically
+    # swap the first pair that restores class coverage while preserving group
+    # isolation and the requested partition size.
+    validation_keys = set(ranked_group_keys) - train_keys
+    train_pos, train_neg = class_counts(train_keys)
+    val_pos, val_neg = class_counts(validation_keys)
+    if train_pos == 0 or train_neg == 0 or val_pos == 0 or val_neg == 0:
+        for train_key in sorted(train_keys):
+            for validation_key in sorted(validation_keys):
+                candidate_train = (train_keys - {train_key}) | {validation_key}
+                candidate_validation = set(ranked_group_keys) - candidate_train
+                candidate_counts = (
+                    *class_counts(candidate_train),
+                    *class_counts(candidate_validation),
+                )
+                if all(candidate_counts):
+                    train_keys = candidate_train
+                    validation_keys = candidate_validation
+                    break
+            else:
+                continue
+            break
 
     t_g_count, v_g_count = 0, 0
     t_r_count, v_r_count = 0, 0
     t_pos, t_neg = 0, 0
     v_pos, v_neg = 0, 0
 
-    threshold_bucket = int(train_ratio * 10000)
-
     for gk in sorted_group_keys:
         g_rows = groups[gk]
         g_pos = sum(1 for r in g_rows if r.get("training_label") == "POSITIVE")
         g_neg = sum(1 for r in g_rows if r.get("training_label") == "NEGATIVE")
 
-        seed_payload = f"{split_policy_version}:{seed}:{gk}"
-        digest = hashlib.sha256(seed_payload.encode("utf-8")).hexdigest()
-        bucket = int(digest[:8], 16) % 10000
-
-        split_label = "TRAIN" if bucket < threshold_bucket else "VALIDATION"
+        split_label = "TRAIN" if gk in train_keys else "VALIDATION"
 
         if split_label == "TRAIN":
             t_g_count += 1
@@ -403,7 +459,9 @@ def create_deterministic_group_split(
 
     # Class coverage assertion
     if t_pos == 0 or t_neg == 0 or v_pos == 0 or v_neg == 0:
-        raise MlSplitError("SPLIT_CLASS_COVERAGE_ERROR: Split generated an empty class in Train or Validation")
+        raise MlSplitError(
+            "SPLIT_CLASS_COVERAGE_ERROR: Split generated an empty class in Train or Validation"
+        )
 
     # Calculate fingerprint & split_id
     fingerprint_payload = {
@@ -415,7 +473,9 @@ def create_deterministic_group_split(
         "split_policy_version": split_policy_version,
         "split_seed": seed,
     }
-    canonical_json = json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":"))
+    canonical_json = json.dumps(
+        fingerprint_payload, sort_keys=True, separators=(",", ":")
+    )
     split_fp = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
     split_id = f"split-v1-{split_fp[:16]}"
 
@@ -477,11 +537,15 @@ def build_anomaly_ml_view(
     for row in anomaly_rows:
         pid = row.get("source_product_id")
         if not pid:
-            raise MlDatasetError("Gold anomaly row missing required 'source_product_id'")
+            raise MlDatasetError(
+                "Gold anomaly row missing required 'source_product_id'"
+            )
         product_ids.append(str(pid))
 
     manifest_sha = hashlib.sha256(
-        json.dumps(manifest.to_dict(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+        json.dumps(manifest.to_dict(), sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
     ).hexdigest()
 
     v_fingerprint = derive_view_fingerprint(
@@ -525,7 +589,9 @@ def create_anomaly_group_split(
         groups.setdefault(gk, []).append(r)
 
     if len(groups) < 2:
-        raise MlDatasetError("INSUFFICIENT_GROUPS: Anomaly dataset requires at least 2 distinct target groups")
+        raise MlDatasetError(
+            "INSUFFICIENT_GROUPS: Anomaly dataset requires at least 2 distinct target groups"
+        )
 
     sorted_group_keys = sorted(groups.keys())
     assignments: List[GroupAssignmentRecord] = []
@@ -563,9 +629,13 @@ def create_anomaly_group_split(
         )
 
     if t_g_count == 0:
-        raise MlSplitError("EMPTY_TRAIN_SPLIT: Anomaly group split produced zero TRAIN groups")
+        raise MlSplitError(
+            "EMPTY_TRAIN_SPLIT: Anomaly group split produced zero TRAIN groups"
+        )
     if v_g_count == 0:
-        raise MlSplitError("EMPTY_VAL_SPLIT: Anomaly group split produced zero VALIDATION groups")
+        raise MlSplitError(
+            "EMPTY_VAL_SPLIT: Anomaly group split produced zero VALIDATION groups"
+        )
 
     fingerprint_payload = {
         "dataset_view_version": view.dataset_view_version,
@@ -576,7 +646,9 @@ def create_anomaly_group_split(
         "split_policy_version": split_policy_version,
         "split_seed": seed,
     }
-    canonical_json = json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":"))
+    canonical_json = json.dumps(
+        fingerprint_payload, sort_keys=True, separators=(",", ":")
+    )
     split_fp = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
     split_id = f"split-anom-v1-{split_fp[:16]}"
 
@@ -607,7 +679,9 @@ def create_anomaly_group_split(
     )
 
 
-def save_split_manifest(split: CandidateGroupSplit, dest_dir: str = "manifests/ml-splits") -> str:
+def save_split_manifest(
+    split: CandidateGroupSplit, dest_dir: str = "manifests/ml-splits"
+) -> str:
     """Save split manifest idempotently to manifests/ml-splits/<split-id>.json."""
     os.makedirs(dest_dir, exist_ok=True)
     out_path = os.path.join(dest_dir, f"{split.split_id}.json")
