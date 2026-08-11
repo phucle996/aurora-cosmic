@@ -155,9 +155,33 @@ def build_candidate_golden_cohort(
         else set()
     )
 
+    # Golden data is drawn from the development-era sector range. Recent
+    # sectors are reserved for the separate holdout cohort.
+    training_max_sector = None
+    if dev_groups:
+        # Use each development group's earliest observed sector so a later
+        # cross-sector appearance of a known target cannot expand the era.
+        dev_group_min_sectors: Dict[str, int] = {}
+        for r in candidate_rows:
+            sector = r.get("sector")
+            group_key = derive_group_key(r)
+            if group_key in dev_groups and isinstance(sector, int):
+                current = dev_group_min_sectors.get(group_key)
+                dev_group_min_sectors[group_key] = (
+                    sector if current is None else min(current, sector)
+                )
+        if dev_group_min_sectors:
+            training_max_sector = max(dev_group_min_sectors.values())
+
     # Filter supervised rows with labels POSITIVE / NEGATIVE
     supervised_rows = [
-        r for r in candidate_rows if r.get("training_label") in ("POSITIVE", "NEGATIVE")
+        r
+        for r in candidate_rows
+        if r.get("training_label") in ("POSITIVE", "NEGATIVE")
+        and (
+            training_max_sector is None
+            or (isinstance(r.get("sector"), int) and r["sector"] <= training_max_sector)
+        )
     ]
 
     # Group by astronomical target identity

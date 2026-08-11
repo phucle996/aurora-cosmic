@@ -210,7 +210,7 @@ def test_candidate_golden_cohort_group_isolation():
     """Verify Candidate Golden Test cohort excludes all TRAIN and VALIDATION groups."""
     manifest = sample_gold_manifest()
     all_rows = sample_candidate_rows_for_evaluation()
-    train_rows = all_rows[:4]  # TICs 101, 102, 103, 104
+    train_rows = all_rows[:10]  # All training TICs 101..110
 
     view = build_candidate_ml_view(manifest, train_rows)
     split = create_deterministic_group_split(view, seed=42, train_ratio=0.5)
@@ -234,7 +234,7 @@ def test_candidate_recent_cohort_isolation_and_sector():
     """Verify Candidate Recent Holdout excludes training groups and Golden groups, with sector > training_max."""
     manifest = sample_gold_manifest()
     all_rows = sample_candidate_rows_for_evaluation()
-    train_rows = all_rows[:4]
+    train_rows = all_rows[:10]
 
     view = build_candidate_ml_view(manifest, train_rows)
     split = create_deterministic_group_split(view, seed=42, train_ratio=0.5)
@@ -272,7 +272,7 @@ def test_cross_sector_contamination_rejection():
     }
     all_rows.append(contaminated_row)
 
-    train_rows = all_rows[:4]
+    train_rows = all_rows[:10]
     view = build_candidate_ml_view(manifest, train_rows)
     split = create_deterministic_group_split(view, seed=42, train_ratio=0.5)
     golden = build_candidate_golden_cohort(manifest, all_rows, split)
