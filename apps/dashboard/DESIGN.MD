@@ -13,7 +13,7 @@ font-family:
 Với dữ liệu kỹ thuật:
 
 font-family:
-  "JetBrains Mono",
+
   "SFMono-Regular",
   Consolas,
   monospace;

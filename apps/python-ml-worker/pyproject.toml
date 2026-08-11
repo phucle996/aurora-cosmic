@@ -15,11 +15,12 @@ dependencies = [
     "pyarrow",
     "pydantic",
     "clickhouse-connect",
-    # CUDA-enabled Linux wheels; the container is intentionally GPU-only.
-    "torch>=2.5,<3",
-    "onnx>=1.16,<2",
-    "onnxruntime-gpu>=1.18,<2",
-    "nvidia-ml-py>=12,<13",
+    # Pin the CUDA wheel generation so a future PyTorch release cannot silently
+    # pull a much larger CUDA toolkit into the production image.
+    "torch==2.5.1",
+    "onnx==1.16.2",
+    "onnxruntime-gpu==1.20.2",
+    "nvidia-ml-py==12.575.51",
     "prometheus-client>=0.20,<1",
 ]
 
