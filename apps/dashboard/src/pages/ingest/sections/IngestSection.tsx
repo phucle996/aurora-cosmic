@@ -486,15 +486,15 @@ export default function IngestSection(): JSX.Element {
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
-            <Table>
+            <Table className="w-full">
               <TableHeader>
-                <TableRow>
-                  <TableHead className="min-w-[340px]">Mã sản phẩm (ID / FITS File)</TableHead>
-                  <TableHead className="w-[140px]">Loại</TableHead>
-                  <TableHead className="w-[140px]">Trạng thái</TableHead>
-                  <TableHead className="w-[130px] text-right">Dung lượng</TableHead>
-                  <TableHead className="w-[100px] text-center">Số lần thử</TableHead>
-                  <TableHead className="w-[200px] text-right">Cập nhật lần cuối</TableHead>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="w-auto min-w-[320px] pl-4">Mã sản phẩm (ID / FITS File)</TableHead>
+                  <TableHead className="w-[130px]">Loại</TableHead>
+                  <TableHead className="w-[130px]">Trạng thái</TableHead>
+                  <TableHead className="w-[120px] text-right">Dung lượng</TableHead>
+                  <TableHead className="w-[90px] text-center">Số lần thử</TableHead>
+                  <TableHead className="w-[180px] text-right pr-4">Cập nhật lần cuối</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -512,7 +512,7 @@ export default function IngestSection(): JSX.Element {
                     const ticNum = ticMatch ? ticMatch[1].replace(/^0+/, '') : null;
                     return (
                       <TableRow key={product.id} className="hover:bg-muted/40">
-                        <TableCell className="font-mono text-xs font-medium">
+                        <TableCell className="font-mono text-xs font-medium pl-4">
                           <div className="flex items-center gap-2">
                             {ticNum && (
                               <Badge
@@ -543,7 +543,7 @@ export default function IngestSection(): JSX.Element {
                             : '—'}
                         </TableCell>
                         <TableCell className="font-mono text-xs text-center">{product.attempts}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground text-right font-mono">
+                        <TableCell className="text-xs text-muted-foreground text-right pr-4 font-mono">
                           {formatDate(product.updated_at)}
                         </TableCell>
                       </TableRow>
