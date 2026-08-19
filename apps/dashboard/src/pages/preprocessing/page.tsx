@@ -155,14 +155,13 @@ export default function PreprocessingPage(): JSX.Element {
 
           {isRunning ? (
             <Button
-              variant="destructive"
               size="sm"
               onClick={stopPreprocessing}
               disabled={stopBusy}
-              className="gap-1.5 shadow-md shadow-destructive/20"
+              className="gap-1.5 shadow-md shadow-red-600/20 bg-red-600 hover:bg-red-700 text-white font-semibold border-0"
             >
-              <Square className="size-3.5 fill-current" />
-              {stopBusy ? 'Đang dừng...' : 'Dừng Preprocessing'}
+              <Square className="size-3.5 fill-white text-white shrink-0" />
+              <span className="text-white font-semibold">{stopBusy ? 'Đang dừng...' : 'Dừng Preprocessing'}</span>
             </Button>
           ) : (
             <Button size="sm" onClick={startPreprocessing} disabled={startBusy} className="gap-1.5">

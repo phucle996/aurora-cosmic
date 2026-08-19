@@ -251,14 +251,13 @@ export default function IngestSection(): JSX.Element {
         <div className="flex flex-wrap items-center gap-2">
           {isIngesting && (
             <Button
-              variant="destructive"
               size="sm"
               onClick={handleCancel}
               disabled={controlBusy}
-              className="gap-2 shadow-sm font-semibold animate-pulse"
+              className="gap-2 shadow-md shadow-red-600/20 font-semibold bg-red-600 hover:bg-red-700 text-white border-0 animate-pulse"
             >
-              <Square className="size-3.5 fill-current" />
-              {controlBusy ? 'Đang dừng...' : 'Dừng Ingest'}
+              <Square className="size-3.5 fill-white text-white" />
+              <span className="text-white font-semibold">{controlBusy ? 'Đang dừng...' : 'Dừng Ingest'}</span>
             </Button>
           )}
           <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
@@ -325,13 +324,14 @@ export default function IngestSection(): JSX.Element {
                 {isIngesting ? (
                   <Button
                     type="button"
-                    variant="destructive"
-                    className="w-full gap-2 font-semibold shadow-md shadow-destructive/20 hover:bg-destructive/90"
+                    className="w-full gap-2 font-semibold bg-red-600 hover:bg-red-700 text-white shadow-md shadow-red-600/30 border-0"
                     onClick={handleCancel}
                     disabled={controlBusy}
                   >
-                    <Square className="size-4 fill-current" />
-                    {controlBusy ? 'Đang gửi lệnh dừng...' : 'Dừng Quá Trình Ingest (Stop)'}
+                    <Square className="size-4 fill-white text-white shrink-0" />
+                    <span className="text-white font-semibold">
+                      {controlBusy ? 'Đang gửi lệnh dừng...' : 'Dừng Quá Trình Ingest (Stop)'}
+                    </span>
                   </Button>
                 ) : (
                   <Button type="submit" className="w-full gap-2" disabled={controlBusy}>
@@ -371,14 +371,13 @@ export default function IngestSection(): JSX.Element {
                 {isIngesting && (
                   <Button
                     type="button"
-                    variant="destructive"
                     size="sm"
-                    className="gap-1.5 h-7 px-2.5 text-xs font-semibold"
+                    className="gap-1.5 h-7 px-2.5 text-xs font-semibold bg-red-600 hover:bg-red-700 text-white shadow-sm border-0"
                     onClick={handleCancel}
                     disabled={controlBusy}
                   >
-                    <Square className="size-3 fill-current" />
-                    {controlBusy ? 'Đang dừng...' : 'Dừng Ingest'}
+                    <Square className="size-3 fill-white text-white shrink-0" />
+                    <span className="text-white font-semibold">{controlBusy ? 'Đang dừng...' : 'Dừng Ingest'}</span>
                   </Button>
                 )}
                 <Badge variant={statusVariant(status?.status ?? 'idle')}>
