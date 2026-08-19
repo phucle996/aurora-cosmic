@@ -28,6 +28,12 @@ func (f fakeIngestObjects) PutObject(_ context.Context, key string, data []byte,
 	}
 	return nil
 }
+func (f fakeIngestObjects) DeleteObject(_ context.Context, key string) error {
+	if f.objects != nil {
+		delete(f.objects, key)
+	}
+	return nil
+}
 
 type fakeIngestPrometheus struct{}
 

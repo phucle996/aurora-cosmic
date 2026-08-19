@@ -1,16 +1,24 @@
 package dto
 
+const (
+	DefaultPageSize = 100
+	MaxPageSize     = 1000
+	MaxOffset       = 10_000_000
+)
+
 type CandidateQueryRequest struct {
 	Sector     int    `form:"sector" json:"sector"`
 	SnapshotID string `form:"snapshot_id" json:"snapshot_id" binding:"required"`
-	PageRequest
+	Limit      int    `form:"limit" json:"limit"`
+	Offset     int    `form:"offset" json:"offset"`
 }
 
 type AnomalyQueryRequest struct {
 	Sector      int    `form:"sector" json:"sector"`
 	SnapshotID  string `form:"snapshot_id" json:"snapshot_id" binding:"required"`
 	OnlyFlagged *bool  `form:"only_flagged" json:"only_flagged"`
-	PageRequest
+	Limit       int    `form:"limit" json:"limit"`
+	Offset      int    `form:"offset" json:"offset"`
 }
 
 type TargetQueryRequest struct {
@@ -29,11 +37,13 @@ type TargetQueryRequest struct {
 	HasCandidate   string  `form:"has_candidate" json:"has_candidate"`
 	HasAnomaly     string  `form:"has_anomaly" json:"has_anomaly"`
 	Sort           string  `form:"sort" json:"sort"`
-	PageRequest
+	Limit          int     `form:"limit" json:"limit"`
+	Offset         int     `form:"offset" json:"offset"`
 }
 
 type LightcurveQueryRequest struct {
 	TICID  int64 `form:"tic_id" json:"tic_id" binding:"required"`
 	Sector int   `form:"sector" json:"sector"`
-	PageRequest
+	Limit  int   `form:"limit" json:"limit"`
+	Offset int   `form:"offset" json:"offset"`
 }

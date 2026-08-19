@@ -51,6 +51,10 @@ func (fakeModels) StartTrainingJob(context.Context, entity.TrainingJobSpec) (*en
 	}, nil
 }
 
+func (fakeModels) SetModelDeployment(context.Context, string, string, bool) error {
+	return nil
+}
+
 type fakeInference struct{}
 
 func (fakeInference) ListJobs(context.Context, string, string) ([]entity.InferenceJob, error) {
