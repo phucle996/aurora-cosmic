@@ -95,11 +95,9 @@ services:
     build: ./apps/go-ingester
     container_name: aurora-go-ingester
     restart: unless-stopped
-    # Keep real-data ingest experiments reproducible on a 4 vCPU / 4 GiB host.
-    # memswap_limit equal to mem_limit prevents Docker from hiding pressure in swap.
-    cpus: "1.25"
-    mem_limit: 768m
-    memswap_limit: 768m
+    cpus: "0.50"
+    mem_limit: 512m
+    memswap_limit: 512m
     ports:
       - "${AURORA_INGESTER_METRICS_PORT:-8081}:8081"
     expose:
@@ -125,9 +123,9 @@ services:
     build: ./apps/rust-preprocessor
     container_name: aurora-rust-preprocessor
     restart: unless-stopped
-    cpus: "1.25"
-    mem_limit: 1536m
-    memswap_limit: 1536m
+    cpus: "0.50"
+    mem_limit: 768m
+    memswap_limit: 768m
     ports:
       - "${AURORA_PREPROCESSOR_METRICS_PORT:-8082}:8082"
     env_file:
@@ -154,9 +152,9 @@ services:
     container_name: aurora-python-ml-worker
     restart: unless-stopped
     gpus: all
-    cpus: "2.0"
-    mem_limit: 3g
-    memswap_limit: 3g
+    cpus: "1.50"
+    mem_limit: 2560m
+    memswap_limit: 2560m
     ports:
       - "${AURORA_ML_METRICS_PORT:-8083}:8083"
     environment:
@@ -187,9 +185,9 @@ services:
       dockerfile: python-gold-builder/Dockerfile
     container_name: aurora-gold-builder
     restart: unless-stopped
-    cpus: "1.0"
-    mem_limit: 1g
-    memswap_limit: 1g
+    cpus: "0.50"
+    mem_limit: 512m
+    memswap_limit: 512m
     env_file:
       - ./apps/python-gold-builder/.env.example
     networks:
@@ -208,6 +206,9 @@ services:
     container_name: aurora-rust-inference
     restart: unless-stopped
     gpus: all
+    cpus: "0.50"
+    mem_limit: 512m
+    memswap_limit: 512m
     ports:
       - "${AURORA_INFERENCE_METRICS_PORT:-8084}:8084"
     env_file:
@@ -231,7 +232,7 @@ services:
     build: ./apps/go-api
     container_name: aurora-go-api
     restart: unless-stopped
-    cpus: "0.50"
+    cpus: "0.25"
     mem_limit: 256m
     memswap_limit: 256m
     ports:
@@ -282,6 +283,9 @@ services:
     image: clickhouse/clickhouse-server:24.3-alpine
     container_name: aurora-clickhouse
     restart: unless-stopped
+    cpus: "0.50"
+    mem_limit: 1024m
+    memswap_limit: 1024m
     ports:
       - "${AURORA_CLICKHOUSE_HTTP_PORT:-8123}:8123"
       - "${AURORA_CLICKHOUSE_METRICS_PORT:-9363}:9363"
@@ -308,9 +312,9 @@ services:
     container_name: aurora-cadvisor
     restart: unless-stopped
     privileged: true
-    cpus: "0.25"
-    mem_limit: 256m
-    memswap_limit: 256m
+    cpus: "0.15"
+    mem_limit: 128m
+    memswap_limit: 128m
     command:
       - --docker_only=true
       - --housekeeping_interval=10s
@@ -329,6 +333,9 @@ services:
     image: prom/prometheus:v2.51.0
     container_name: aurora-prometheus
     restart: unless-stopped
+    cpus: "0.25"
+    mem_limit: 256m
+    memswap_limit: 256m
     ports:
       - "9090:9090"
     volumes:
