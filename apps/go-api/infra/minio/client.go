@@ -34,7 +34,7 @@ func NewClient(endpoint, bucket, accessKey, secretKey string) *Client {
 	if err != nil {
 		client = nil
 	}
-	return &Client{Endpoint: endpoint, Bucket: bucket, HTTP: &http.Client{Timeout: 10 * time.Second}, client: client}
+	return &Client{Endpoint: endpoint, Bucket: bucket, HTTP: &http.Client{Timeout: 60 * time.Second}, client: client}
 }
 
 func (c *Client) Ping(ctx context.Context) error {

@@ -160,8 +160,6 @@ export default function DatasetsPage(): JSX.Element {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const pageSize = 25;
-
   const loadTier = useCallback(async (tierPrefix: string, targetPage: number) => {
     setLoading(true);
     setError(null);
@@ -179,12 +177,28 @@ export default function DatasetsPage(): JSX.Element {
     }
   }, []);
 
-  // Initial load
+  // Initial load all 3 tiers concurrently with robust error isolation
   useEffect(() => {
-    void loadTier('bronze/', 1);
-    void loadTier('silver/', 1);
-    void loadTier('gold/', 1);
-  }, [loadTier]);
+    let mounted = true;
+    setLoading(true);
+    setError(null);
+
+    Promise.allSettled([
+      apiFetch<StorageListing>(`/v1/storage?prefix=bronze/&page=1&limit=${pageSize}`),
+      apiFetch<StorageListing>(`/v1/storage?prefix=silver/&page=1&limit=${pageSize}`),
+      apiFetch<StorageListing>(`/v1/storage?prefix=gold/&page=1&limit=${pageSize}`),
+    ]).then(([bronzeRes, silverRes, goldRes]) => {
+      if (!mounted) return;
+      if (bronzeRes.status === 'fulfilled' && bronzeRes.value) setBronzeData(bronzeRes.value);
+      if (silverRes.status === 'fulfilled' && silverRes.value) setSilverData(silverRes.value);
+      if (goldRes.status === 'fulfilled' && goldRes.value) setGoldData(goldRes.value);
+      setLoading(false);
+    });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const handleTabChange = (tab: string) => {
     const nextTab = tab as 'bronze' | 'silver' | 'gold';
