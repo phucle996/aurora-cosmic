@@ -73,3 +73,22 @@ type InferenceJob struct {
 	Status                  string
 	OutputKey               string
 }
+
+type TrainingJobRequest struct {
+	Task           string  `json:"task"`
+	GoldSnapshotID string  `json:"gold_snapshot_id"`
+	Epochs         int     `json:"epochs"`
+	LearningRate   float64 `json:"learning_rate"`
+	BatchSize      int     `json:"batch_size"`
+	Seed           int     `json:"seed"`
+	AutoPromote    bool    `json:"auto_promote"`
+}
+
+type TrainingJobResponse struct {
+	JobID          string `json:"job_id"`
+	Task           string `json:"task"`
+	GoldSnapshotID string `json:"gold_snapshot_id"`
+	Status         string `json:"status"`
+	CreatedAt      string `json:"created_at"`
+	Message        string `json:"message"`
+}

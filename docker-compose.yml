@@ -94,6 +94,7 @@ services:
     image: ghcr.io/phucle996/aurora-go-ingester:latest
     build: ./apps/go-ingester
     container_name: aurora-go-ingester
+    restart: unless-stopped
     # Keep real-data ingest experiments reproducible on a 4 vCPU / 4 GiB host.
     # memswap_limit equal to mem_limit prevents Docker from hiding pressure in swap.
     cpus: "1.25"
@@ -123,6 +124,7 @@ services:
     image: ghcr.io/phucle996/aurora-rust-preprocessor:latest
     build: ./apps/rust-preprocessor
     container_name: aurora-rust-preprocessor
+    restart: unless-stopped
     cpus: "1.25"
     mem_limit: 1536m
     memswap_limit: 1536m
@@ -150,6 +152,7 @@ services:
     image: ghcr.io/phucle996/aurora-python-ml-worker:latest
     build: ./apps/python-ml-worker
     container_name: aurora-python-ml-worker
+    restart: unless-stopped
     gpus: all
     cpus: "1.0"
     mem_limit: 1g
@@ -161,6 +164,8 @@ services:
       AURORA_METRICS_ADDR: "0.0.0.0:8083"
     env_file:
       - ./apps/python-ml-worker/.env.example
+    volumes:
+      - ./apps/python-ml-worker/aurora_ml:/app/aurora_ml
     networks:
       - aurora-net
     depends_on:
@@ -201,6 +206,7 @@ services:
     image: ghcr.io/phucle996/aurora-rust-inference:latest
     build: ./apps/rust-inference
     container_name: aurora-rust-inference
+    restart: unless-stopped
     gpus: all
     ports:
       - "${AURORA_INFERENCE_METRICS_PORT:-8084}:8084"

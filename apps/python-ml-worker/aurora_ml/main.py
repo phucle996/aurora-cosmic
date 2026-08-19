@@ -490,6 +490,54 @@ def main():
         signal.signal(signal.SIGTERM, handle_signal)
 
         logger.info("ML Worker service active and running.")
+
+        # Start NATS Training Listener in background thread
+        def run_nats_training_listener():
+            async def nats_worker():
+                import nats
+                while not stop_event:
+                    try:
+                        nc = await nats.connect(cfg.nats_url, reconnect_time_wait=2, max_reconnect_attempts=-1)
+                        logger.info("ML Worker subscribed to aurora.v1.ml.training.requested on NATS")
+
+                        async def handle_train_request(msg):
+                            try:
+                                payload = json.loads(msg.data.decode("utf-8"))
+                                logger.info("Received training job request via NATS: %s", payload)
+                                import importlib
+                                import aurora_ml.trainer
+                                importlib.reload(aurora_ml.trainer)
+                                from aurora_ml.trainer import run_training_pipeline
+                                result = run_training_pipeline(payload, cfg)
+                                await nc.publish(
+                                    "aurora.v1.ml.training.completed",
+                                    json.dumps(result, sort_keys=True).encode("utf-8"),
+                                )
+                                await nc.flush()
+                                logger.info("Published aurora.v1.ml.training.completed for job %s", result.get("job_id"))
+                            except Exception as req_err:
+                                logger.exception("Failed to execute training job: %s", req_err)
+
+                        sub = await nc.subscribe("aurora.v1.ml.training.requested", cb=handle_train_request)
+                        while not stop_event:
+                            await asyncio.sleep(1)
+                        await sub.unsubscribe()
+                        await nc.drain()
+                        break
+                    except Exception as nats_err:
+                        if not stop_event:
+                            logger.warning("NATS listener connection failed (%s); retrying in 5s...", nats_err)
+                            await asyncio.sleep(5)
+
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(nats_worker())
+
+        import threading
+        import asyncio
+        train_thread = threading.Thread(target=run_nats_training_listener, daemon=True, name="nats-training-listener")
+        train_thread.start()
+
         while not stop_event:
             time.sleep(1)
 
@@ -505,3 +553,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

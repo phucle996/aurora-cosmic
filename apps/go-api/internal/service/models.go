@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 
+	"time"
+
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/repo"
 	domainService "go-api/internal/domain/service"
@@ -21,13 +23,15 @@ import (
 // 1. Quét các package mô hình ML đã đăng ký trong MinIO (`models/runtime/...`).
 // 2. Kiểm tra tính toàn vẹn (Integrity Check) qua mã băm SHA-256 của file ONNX, preprocessing, threshold.
 // 3. Xác định trạng thái của mô hình: Champion (đang phục vụ chính), Validated (hợp lệ), hoặc Invalid (lỗi băm/parity).
+// 4. Phát lệnh huấn luyện mô hình mới tới GPU ML Worker qua NATS JetStream.
 type ModelsService struct {
-	objects repo.ObjectRepository // Repository tương tác với MinIO S3
+	objects    repo.ObjectRepository    // Repository tương tác với MinIO S3
+	dispatcher repo.InferenceDispatcher // Dispatcher phát event sang NATS JetStream
 }
 
 // NewModelsService khởi tạo thể hiện của ModelsService
-func NewModelsService(objects repo.ObjectRepository) domainService.Models {
-	return &ModelsService{objects: objects}
+func NewModelsService(objects repo.ObjectRepository, dispatcher repo.InferenceDispatcher) domainService.Models {
+	return &ModelsService{objects: objects, dispatcher: dispatcher}
 }
 
 // ============================================================================
@@ -68,9 +72,8 @@ func (s *ModelsService) ListModels(ctx context.Context, task string) ([]entity.M
 
 	models := make([]entity.Model, 0)
 	for _, object := range objects {
-		// Đường dẫn hợp lệ phải có định dạng: models/runtime/<task>/<model_id>/manifest.json (hoặc tương tự 5 cấp)
-		parts := strings.Split(object.Key, "/")
-		if len(parts) != 5 || parts[0] != "models" || parts[1] != "runtime" || parts[4] != "manifest.json" {
+		// Đường dẫn hợp lệ phải kết thúc bằng manifest.json và nằm dưới models/runtime/
+		if !strings.HasSuffix(object.Key, "manifest.json") || !strings.HasPrefix(object.Key, "models/runtime/") {
 			continue
 		}
 
@@ -131,12 +134,15 @@ func (s *ModelsService) ListModels(ctx context.Context, task string) ([]entity.M
 		if normTask == entity.TaskCandidateVetting {
 			taskDir = "candidate"
 		}
-		if champData, err := s.objects.GetObject(ctx, fmt.Sprintf("models/%s/champion.json", taskDir)); err == nil {
-			var pointer struct {
-				ModelID string `json:"model_id"`
-			}
-			if json.Unmarshal(champData, &pointer) == nil && pointer.ModelID == manifest.SourceModelID {
-				status = string(entity.ModelStatusChampion)
+		for _, candidateDir := range []string{manifest.Task, taskDir} {
+			if champData, err := s.objects.GetObject(ctx, fmt.Sprintf("models/%s/champion.json", candidateDir)); err == nil {
+				var pointer struct {
+					ModelID string `json:"model_id"`
+				}
+				if json.Unmarshal(champData, &pointer) == nil && (pointer.ModelID == manifest.SourceModelID || pointer.ModelID == manifest.RuntimePackageID) {
+					status = string(entity.ModelStatusChampion)
+					break
+				}
 			}
 		}
 
@@ -174,4 +180,59 @@ func (s *ModelsService) ListModels(ctx context.Context, task string) ([]entity.M
 		return models[i].Task < models[j].Task
 	})
 	return models, nil
+}
+
+// ============================================================================
+// HÀM KHỞI CHẠY HUẤN LUYỆN MÔ HÌNH (Start Training Job)
+// ============================================================================
+// StartTrainingJob tiếp nhận yêu cầu từ Dashboard, đóng gói cấu hình huấn luyện
+// và phát sự kiện `aurora.v1.ml.training.requested` qua NATS tới GPU ML Worker.
+func (s *ModelsService) StartTrainingJob(ctx context.Context, req entity.TrainingJobRequest) (*entity.TrainingJobResponse, error) {
+	if req.Task == "" {
+		req.Task = "candidate_vetting"
+	}
+	if req.Epochs <= 0 {
+		req.Epochs = 50
+	}
+	if req.LearningRate <= 0 {
+		req.LearningRate = 0.001
+	}
+	if req.BatchSize <= 0 {
+		req.BatchSize = 32
+	}
+	if req.Seed == 0 {
+		req.Seed = 42
+	}
+	jobID := fmt.Sprintf("train-%d", time.Now().UnixNano()/1e6)
+	createdAt := time.Now().UTC().Format(time.RFC3339)
+
+	payload, err := json.Marshal(map[string]any{
+		"training_job_id":  jobID,
+		"task":             req.Task,
+		"gold_snapshot_id": req.GoldSnapshotID,
+		"epochs":           req.Epochs,
+		"learning_rate":    req.LearningRate,
+		"batch_size":       req.BatchSize,
+		"seed":             req.Seed,
+		"auto_promote":     req.AutoPromote,
+		"created_at":       createdAt,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal training request: %w", err)
+	}
+
+	if s.dispatcher != nil {
+		if err := s.dispatcher.Dispatch(ctx, "training_start", payload); err != nil {
+			return nil, fmt.Errorf("dispatch training event: %w", err)
+		}
+	}
+
+	return &entity.TrainingJobResponse{
+		JobID:          jobID,
+		Task:           req.Task,
+		GoldSnapshotID: req.GoldSnapshotID,
+		Status:         "queued",
+		CreatedAt:      createdAt,
+		Message:        fmt.Sprintf("Training job %s successfully dispatched to PyTorch GPU worker.", jobID),
+	}, nil
 }

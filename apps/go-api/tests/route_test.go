@@ -43,6 +43,14 @@ func (fakeModels) ListModels(context.Context, string) ([]entity.Model, error) {
 	return []entity.Model{}, nil
 }
 
+func (fakeModels) StartTrainingJob(context.Context, entity.TrainingJobRequest) (*entity.TrainingJobResponse, error) {
+	return &entity.TrainingJobResponse{
+		JobID:  "train-test-1",
+		Task:   "candidate_vetting",
+		Status: "queued",
+	}, nil
+}
+
 type fakeInference struct{}
 
 func (fakeInference) ListJobs(context.Context, string, string) ([]entity.InferenceJob, error) {

@@ -1,9 +1,11 @@
 package handler
 
 import (
-	"go-api/internal/domain/service"
 	"net/http"
 	"strings"
+
+	"go-api/internal/domain/entity"
+	"go-api/internal/domain/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -95,5 +97,29 @@ func (h *ModelsHandler) RetryInferenceJob(c *gin.Context) {
 		"job_id": manifest.JobID,
 		"status": "queued",
 		"event":  event,
+	})
+}
+
+// StartTraining tiếp nhận request huấn luyện mô hình mới và dispatch tới GPU worker
+func (h *ModelsHandler) StartTraining(c *gin.Context) {
+	var req entity.TrainingJobRequest
+	if err := c.ShouldBindJSON(&req); err != nil && c.Request.ContentLength > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid training payload"})
+		return
+	}
+
+	result, err := h.models.StartTrainingJob(c.Request.Context(), req)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"job_id":           result.JobID,
+		"task":             result.Task,
+		"gold_snapshot_id": result.GoldSnapshotID,
+		"status":           result.Status,
+		"created_at":       result.CreatedAt,
+		"message":          result.Message,
 	})
 }

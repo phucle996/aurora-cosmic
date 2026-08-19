@@ -47,7 +47,7 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	if analyticsService == nil {
 		return nil, fmt.Errorf("service AnalyticsService is nil")
 	}
-	modelsService := service.NewModelsService(objectRepo)
+	modelsService := service.NewModelsService(objectRepo, infra.NATS)
 	if modelsService == nil {
 		return nil, fmt.Errorf("service ModelsService is nil")
 	}

@@ -54,6 +54,7 @@ func (r *Router) registerRoutes() {
 		api.GET("/anomalies", r.module.AnalyticsHandler.ListAnomalies)
 		api.GET("/lightcurves", r.module.AnalyticsHandler.GetLightcurve)
 		api.GET("/models", r.module.ModelsHandler.ListModels)
+		api.POST("/models/train", r.module.ModelsHandler.StartTraining)
 		api.GET("/inference/jobs", r.module.ModelsHandler.ListInferenceJobs)
 		api.POST("/inference/jobs/:job_id/retry", r.module.ModelsHandler.RetryInferenceJob)
 	}
