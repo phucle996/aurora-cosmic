@@ -67,7 +67,8 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	if preprocessingService == nil {
 		return nil, fmt.Errorf("service PreprocessingService is nil")
 	}
-	ingestService := service.NewIngestServiceWithEvents(objectRepo, infra.Prometheus, infra.MinIO.Bucket, infra.Ingester, eventBroker)
+	catalogRepo := repository.NewCatalogClickHouse(infra.ClickHouse)
+	ingestService := service.NewIngestServiceWithCatalogAndEvents(objectRepo, catalogRepo, infra.Prometheus, infra.MinIO.Bucket, infra.Ingester, eventBroker)
 	if ingestService == nil {
 		return nil, fmt.Errorf("service IngestService is nil")
 	}

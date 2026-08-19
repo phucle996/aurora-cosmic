@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -24,7 +25,7 @@ func NewClient(endpoint, database, username, password string) *Client {
 	if database == "" {
 		database = "aurora"
 	}
-	return &Client{Endpoint: endpoint, Database: database, Username: username, Password: password, HTTP: &http.Client{Timeout: 10 * time.Second}}
+	return &Client{Endpoint: endpoint, Database: database, Username: username, Password: password, HTTP: &http.Client{Timeout: 30 * time.Second}}
 }
 
 func (c *Client) Ping(ctx context.Context) error {
@@ -54,4 +55,28 @@ func (c *Client) Query(ctx context.Context, query string) ([]byte, error) {
 		return nil, fmt.Errorf("ClickHouse returned HTTP %d: %s", resp.StatusCode, string(body))
 	}
 	return body, nil
+}
+
+func (c *Client) Exec(ctx context.Context, query string) error {
+	reqURL := fmt.Sprintf("%s/?database=%s", c.Endpoint, url.QueryEscape(c.Database))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, strings.NewReader(query))
+	if err != nil {
+		return fmt.Errorf("build ClickHouse exec request: %w", err)
+	}
+	if c.Username != "" {
+		req.SetBasicAuth(c.Username, c.Password)
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return fmt.Errorf("ClickHouse exec connection failed: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read ClickHouse exec response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("ClickHouse exec returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
 }

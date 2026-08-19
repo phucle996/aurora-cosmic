@@ -29,6 +29,7 @@ type storageCacheEntry struct {
 
 type IngestService struct {
 	objects      repo.ObjectRepository           // Repository đọc ghi MinIO S3
+	catalog      repo.LakehouseCatalogRepository // Repository ClickHouse Lakehouse Catalog (Sub-ms lookup)
 	prometheus   repo.PrometheusQuerier          // Truy vấn metrics tốc độ throughput từ Prometheus
 	bucket       string                          // Tên bucket MinIO (mặc định: "aurora")
 	controller   repo.IngestController           // Controller điều khiển Go Ingester worker
@@ -71,12 +72,27 @@ func NewIngestService(objects repo.ObjectRepository, prometheus repo.PrometheusQ
 	if len(controllers) > 0 {
 		controller = controllers[0]
 	}
-	return &IngestService{objects: objects, prometheus: prometheus, bucket: bucket, controller: controller}
+	return &IngestService{objects: objects, prometheus: prometheus, bucket: bucket, controller: controller, storageCache: make(map[string]*storageCacheEntry)}
 }
 
 // NewIngestServiceWithEvents khởi tạo thể hiện IngestService có kèm EventPublisher
 func NewIngestServiceWithEvents(objects repo.ObjectRepository, prometheus repo.PrometheusQuerier, bucket string, controller repo.IngestController, publisher repo.EventPublisher) domainService.Ingest {
-	return &IngestService{objects: objects, prometheus: prometheus, bucket: bucket, controller: controller, publisher: publisher}
+	return &IngestService{objects: objects, prometheus: prometheus, bucket: bucket, controller: controller, publisher: publisher, storageCache: make(map[string]*storageCacheEntry)}
+}
+
+// NewIngestServiceWithCatalogAndEvents khởi tạo thể hiện IngestService tích hợp ClickHouse Catalog
+func NewIngestServiceWithCatalogAndEvents(objects repo.ObjectRepository, catalog repo.LakehouseCatalogRepository, prometheus repo.PrometheusQuerier, bucket string, controller repo.IngestController, publisher repo.EventPublisher) domainService.Ingest {
+	svc := &IngestService{
+		objects:      objects,
+		catalog:      catalog,
+		prometheus:   prometheus,
+		bucket:       bucket,
+		controller:   controller,
+		publisher:    publisher,
+		storageCache: make(map[string]*storageCacheEntry),
+	}
+	go svc.syncMinIOToCatalog()
+	return svc
 }
 
 // ============================================================================
@@ -408,15 +424,12 @@ func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error
 }
 
 // ============================================================================
-// HÀM DUYỆT BỘ NHỚ ĐỆM MINIO BRONZE (Storage Listing)
+// HÀM DUYỆT BỘ NHỚ ĐỆM MEDALLION (Lakehouse Catalog & Storage Listing)
 // ============================================================================
-// Storage phân trang danh sách các file FITS thô đang lưu trong MinIO Bronze,
-// sử dụng bộ đệm in-memory TTL 15s để phản hồi siêu tốc (<1ms) và tránh nghẽn I/O MinIO.
+// Storage phân trang danh sách các file FITS thô, Parquet Silver và Snapshot Gold,
+// ưu tiên truy vấn siêu tốc (<1ms) từ ClickHouse Lakehouse Metadata Catalog,
+// và tự động fallback sang MinIO Object Storage nếu catalog chưa sẵn sàng.
 func (s *IngestService) Storage(ctx context.Context, prefix string, page, limit int) (*entity.StorageListing, error) {
-	if s.objects == nil {
-		return nil, fmt.Errorf("MinIO storage is unavailable")
-	}
-
 	prefix = strings.TrimSpace(prefix)
 	if prefix == "" {
 		prefix = "bronze/"
@@ -426,6 +439,44 @@ func (s *IngestService) Storage(ctx context.Context, prefix string, page, limit 
 	}
 	if page < 1 {
 		page = 1
+	}
+
+	tier := "bronze"
+	if strings.HasPrefix(prefix, "silver") {
+		tier = "silver"
+	} else if strings.HasPrefix(prefix, "gold") {
+		tier = "gold"
+	}
+
+	// 1. Truy vấn siêu tốc từ ClickHouse Lakehouse Metadata Catalog (<1ms)
+	if s.catalog != nil {
+		items, total, totalBytes, err := s.catalog.ListObjects(ctx, tier, prefix, page, limit)
+		if err == nil && total > 0 {
+			objects := make([]entity.StorageObject, len(items))
+			for i, o := range items {
+				objects[i] = entity.StorageObject{
+					Key:          o.ObjectKey,
+					SizeBytes:    o.SizeBytes,
+					ETag:         o.ETag,
+					LastModified: o.LastModified,
+				}
+			}
+			return &entity.StorageListing{
+				Bucket:     s.bucket,
+				Prefix:     prefix,
+				Page:       page,
+				PageSize:   limit,
+				Total:      int(total),
+				TotalBytes: totalBytes,
+				Truncated:  (page * limit) < int(total),
+				Objects:    objects,
+			}, nil
+		}
+	}
+
+	// 2. Fallback sang MinIO S3 Object Storage (khi Catalog đang khởi tạo)
+	if s.objects == nil {
+		return nil, fmt.Errorf("MinIO storage is unavailable")
 	}
 
 	var allObjects []repo.ObjectInfo
@@ -443,13 +494,11 @@ func (s *IngestService) Storage(ctx context.Context, prefix string, page, limit 
 	s.runtimeMu.Unlock()
 
 	if allObjects == nil {
-		// Quét các file theo prefix trong MinIO
 		objects, err := s.objects.ListObjects(ctx, prefix)
 		if err != nil {
 			return nil, err
 		}
 
-		// Sắp xếp file mới sửa đổi nhất lên đầu
 		sort.Slice(objects, func(i, j int) bool { return objects[i].LastModified.After(objects[j].LastModified) })
 
 		for _, object := range objects {
@@ -466,7 +515,6 @@ func (s *IngestService) Storage(ctx context.Context, prefix string, page, limit 
 		s.runtimeMu.Unlock()
 	}
 
-	// Phân trang danh sách file
 	start := (page - 1) * limit
 	if start > len(allObjects) {
 		start = len(allObjects)
@@ -499,4 +547,71 @@ func (s *IngestService) Storage(ctx context.Context, prefix string, page, limit 
 	}
 
 	return listing, nil
+}
+
+// syncMinIOToCatalog tự động quét và nạp siêu dữ liệu từ MinIO vào ClickHouse Catalog
+func (s *IngestService) syncMinIOToCatalog() {
+	if s.catalog == nil || s.objects == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	_ = s.catalog.EnsureSchema(ctx)
+
+	for _, tier := range []string{"bronze/", "silver/", "gold/"} {
+		objs, err := s.objects.ListObjects(ctx, tier)
+		if err != nil || len(objs) == 0 {
+			continue
+		}
+
+		batch := make([]repo.CatalogObject, 0, 500)
+		for _, o := range objs {
+			tierName := "bronze"
+			if strings.HasPrefix(o.Key, "silver/") {
+				tierName = "silver"
+			} else if strings.HasPrefix(o.Key, "gold/") {
+				tierName = "gold"
+			}
+
+			var sector int32 = 42
+			var ticID int64 = 0
+			if idx := strings.Index(o.Key, "tic="); idx != -1 {
+				end := strings.IndexAny(o.Key[idx+4:], "/._-")
+				if end != -1 {
+					var val int64
+					fmt.Sscanf(o.Key[idx+4:idx+4+end], "%d", &val)
+					ticID = val
+				}
+			}
+			if idx := strings.Index(o.Key, "sector="); idx != -1 {
+				end := strings.IndexAny(o.Key[idx+7:], "/._-")
+				if end != -1 {
+					var val int32
+					fmt.Sscanf(o.Key[idx+7:idx+7+end], "%d", &val)
+					sector = val
+				}
+			}
+
+			cleanEtag := strings.Trim(o.ETag, "\"")
+			batch = append(batch, repo.CatalogObject{
+				Tier:         tierName,
+				ObjectKey:    o.Key,
+				SizeBytes:    o.Size,
+				ETag:         cleanEtag,
+				Sector:       sector,
+				TICID:        ticID,
+				ProductType:  "lakehouse_file",
+				LastModified: o.LastModified,
+			})
+
+			if len(batch) >= 500 {
+				_ = s.catalog.UpsertObjects(ctx, batch)
+				batch = batch[:0]
+			}
+		}
+		if len(batch) > 0 {
+			_ = s.catalog.UpsertObjects(ctx, batch)
+		}
+	}
 }

@@ -340,3 +340,20 @@ ENGINE = ReplacingMergeTree(evaluated_at)
 PARTITION BY gold_snapshot_id
 PRIMARY KEY (gold_snapshot_id, planet_candidate_id, assessment_version)
 ORDER BY (gold_snapshot_id, planet_candidate_id, assessment_version);
+
+-- Lakehouse Object Storage Catalog Index (Sub-millisecond S3 metadata lookup)
+CREATE TABLE IF NOT EXISTS aurora.lakehouse_objects (
+    tier LowCardinality(String),
+    object_key String,
+    size_bytes Int64,
+    etag String,
+    sector Int32,
+    tic_id Int64,
+    product_type LowCardinality(String),
+    last_modified DateTime,
+    indexed_at DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(last_modified)
+PRIMARY KEY (tier, sector, tic_id, object_key)
+ORDER BY (tier, sector, tic_id, object_key);
+
