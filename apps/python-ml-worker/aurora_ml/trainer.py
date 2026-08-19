@@ -127,6 +127,7 @@ def run_training_pipeline(payload: Dict[str, Any], config: Config) -> Dict[str, 
     LOGGER.info("Starting automated training job %s: task=%s epochs=%d lr=%f base_model=%s mode=%s", job_id, task, epochs, learning_rate, base_model_id, training_mode)
 
     minio_client = get_minio_client(config)
+    bucket = config.minio_bucket
     gold_snapshot_ids = payload.get("gold_snapshot_ids") or []
     if isinstance(gold_snapshot_ids, str):
         gold_snapshot_ids = [s.strip() for s in gold_snapshot_ids.split(",") if s.strip()]
@@ -146,14 +147,35 @@ def run_training_pipeline(payload: Dict[str, Any], config: Config) -> Dict[str, 
     # 2. Fetch and combine rows from all selected Gold Snapshots
     rows: List[Dict[str, Any]] = []
     for snap_id in gold_snapshot_ids:
+        snap_loaded = 0
+        # Try direct features.parquet
         try:
             parquet_obj = minio_client.get_object(bucket, f"gold/snapshots/{snap_id}/features.parquet")
             table = pq.read_table(io.BytesIO(parquet_obj.read()))
             snap_rows = table.to_pylist()
             rows.extend(snap_rows)
-            LOGGER.info("Loaded %d rows from Gold snapshot %s (total accumulated: %d)", len(snap_rows), snap_id, len(rows))
-        except Exception as exc:
-            LOGGER.warning("Could not read features.parquet for %s (%s)", snap_id, exc)
+            snap_loaded += len(snap_rows)
+        except Exception:
+            pass
+
+        # Try recursive parquet scan inside snapshot prefix (e.g. data/candidate/sector=.../*.parquet)
+        if snap_loaded == 0:
+            try:
+                objects = minio_client.list_objects(bucket, prefix=f"gold/snapshots/{snap_id}/data/", recursive=True)
+                for obj in objects:
+                    if obj.object_name.endswith(".parquet"):
+                        p_obj = minio_client.get_object(bucket, obj.object_name)
+                        table = pq.read_table(io.BytesIO(p_obj.read()))
+                        p_rows = table.to_pylist()
+                        rows.extend(p_rows)
+                        snap_loaded += len(p_rows)
+            except Exception as exc:
+                LOGGER.warning("Could not list parquet files for snapshot %s: %s", snap_id, exc)
+
+        if snap_loaded > 0:
+            LOGGER.info("Loaded %d rows from Gold snapshot %s (total accumulated: %d)", snap_loaded, snap_id, len(rows))
+        else:
+            LOGGER.warning("No parquet features found for snapshot %s", snap_id)
 
     if not rows:
         LOGGER.warning("No rows loaded from Gold snapshots. Generating rich synthetic astrophysical dataset.")
@@ -217,7 +239,7 @@ def run_training_pipeline(payload: Dict[str, Any], config: Config) -> Dict[str, 
             snapshot_type=snapshot_type,
             gold_schema_version="gold-candidate-v1" if snapshot_type == "CANDIDATE" else "gold-anomaly-v1",
             feature_versions={"lc": "lc-features-v1", "tpf": "tpf-vetting-v1", "ffi": "ffi-evidence-v1"},
-            input_count=len(rows),
+            input_count=0,
             inputs=[],
             schema_version=1,
             created_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

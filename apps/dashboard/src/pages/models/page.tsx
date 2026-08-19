@@ -487,10 +487,10 @@ export default function ModelsPage(): JSX.Element {
                           }
                         }}
                       >
-                        {/* Option 1: Huấn luyện toàn bộ các snapshot chưa chạy */}
+                        {/* Option 1: Huấn luyện gộp toàn bộ các snapshot chưa chạy thành 1 model duy nhất */}
                         {availableSnapshots.filter((s) => !s.is_trained).length > 0 && (
                           <option value="__all_unrun__" className="font-semibold text-primary">
-                            ⚡ [TẤT CẢ] Huấn luyện toàn bộ {availableSnapshots.filter((s) => !s.is_trained).length} Snapshots chưa chạy (Khuyên dùng)
+                            ⚡ [GỘP TẤT CẢ] Huấn luyện gộp toàn bộ {availableSnapshots.filter((s) => !s.is_trained).length} Snapshots thành 1 Model duy nhất (Khuyên dùng)
                           </option>
                         )}
 
