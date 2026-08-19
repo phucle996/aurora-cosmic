@@ -46,7 +46,7 @@ export function CompressionRatioChart(): JSX.Element {
         </span>
       </div>
 
-      <div className="h-[200px] w-full rounded-md border border-border/60 bg-background/50 p-2">
+      <div className="h-[270px] w-full rounded-md border border-border/60 bg-background/50 p-2">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={compressionData} layout="vertical" margin={{ top: 10, right: 30, left: 40, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" opacity={0.15} horizontal={false} />

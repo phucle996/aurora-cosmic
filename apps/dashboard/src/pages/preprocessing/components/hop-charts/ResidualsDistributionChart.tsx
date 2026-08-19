@@ -44,7 +44,7 @@ export function ResidualsDistributionChart(): JSX.Element {
         </span>
       </div>
 
-      <div className="h-[200px] w-full rounded-md border border-border/60 bg-background/50 p-2">
+      <div className="h-[270px] w-full rounded-md border border-border/60 bg-background/50 p-2">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={gaussianData} margin={{ top: 15, right: 20, left: -20, bottom: 0 }}>
             <defs>

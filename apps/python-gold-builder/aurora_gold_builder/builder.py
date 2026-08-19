@@ -125,22 +125,22 @@ class GoldBuilder:
         )
 
         row = _default_candidate_row()
+        feature_dict = features.to_dict()
+        for key in get_candidate_arrow_schema().names:
+            if key in feature_dict and feature_dict[key] is not None:
+                row[key] = feature_dict[key]
         row.update(
             {
                 "source_product_id": event.source_product_id,
                 "lineage_id": event.lineage_id,
                 "sample_id": event.effective_sample_id,
-                "tic_id": event.tic_id,
-                "sector": event.sector,
+                "tic_id": event.tic_id if event.tic_id is not None else row.get("tic_id"),
+                "sector": int(event.sector),
                 "silver_sha256": event.sha256,
                 "training_label": "UNRESOLVED",
                 "label_policy_version": "candidate-label-policy-v1",
             }
         )
-        feature_dict = features.to_dict()
-        for key in get_candidate_arrow_schema().names:
-            if key in feature_dict:
-                row[key] = feature_dict[key]
         row["lc_feature_version"] = features.feature_version
         row["lc_feature_fingerprint"] = features.feature_fingerprint
         return row
