@@ -22,6 +22,17 @@ function nasaEyesUrl(systemId: string): string {
   return `https://eyes.nasa.gov/apps/exo/#/system/${encodeURIComponent(systemId)}`;
 }
 
+const featuredSystems = [
+  { id: 'TOI_700', label: 'TOI-700', desc: 'TESS Habitable Zone Earth-size' },
+  { id: 'HD_21749', label: 'HD 21749', desc: 'TESS TOI-186 system' },
+  { id: 'LHS_3844', label: 'LHS 3844', desc: 'TESS TOI-136 rocky world' },
+  { id: 'TRAPPIST-1', label: 'TRAPPIST-1', desc: '7 Earth-sized planets' },
+  { id: 'Kepler-186', label: 'Kepler-186', desc: 'First Earth-sized in HZ' },
+  { id: 'Proxima_Centauri', label: 'Proxima Centauri', desc: 'Nearest exoplanet system' },
+  { id: '55_Cancri', label: '55 Cancri', desc: 'Super-Earth lava world' },
+  { id: 'HD_60779', label: 'HD 60779', desc: 'Host star system' },
+];
+
 export default function ExoplanetsPage(): JSX.Element {
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedSystem = normalizeSystemId(searchParams.get('system') ?? '') ?? defaultSystem;
@@ -38,9 +49,15 @@ export default function ExoplanetsPage(): JSX.Element {
     event.preventDefault();
     const systemId = normalizeSystemId(query);
     if (!systemId) {
-      setError('Nhập mã hệ hành tinh, ví dụ HD 60779.');
+      setError('Nhập mã hệ hành tinh, ví dụ TOI 700 hoặc TRAPPIST-1.');
       return;
     }
+    setError(undefined);
+    setQuery(systemId.replace(/_/g, ' '));
+    setSearchParams({ system: systemId });
+  }
+
+  function selectFeatured(systemId: string): void {
     setError(undefined);
     setQuery(systemId.replace(/_/g, ' '));
     setSearchParams({ system: systemId });
@@ -72,25 +89,45 @@ export default function ExoplanetsPage(): JSX.Element {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <CardTitle className="flex items-center gap-2"><Telescope className="size-5 text-primary" />System lookup</CardTitle>
-              <CardDescription className="mt-1">Dấu cách được tự động chuyển thành dấu gạch dưới theo URL của NASA.</CardDescription>
+              <CardDescription className="mt-1">Nhập tên hệ sao / TOI (ví dụ: TOI 700, HD 21749, TRAPPIST-1) hoặc chọn các hệ tiêu biểu bên dưới.</CardDescription>
             </div>
             <Badge variant="secondary" className="font-mono">{requestedSystem}</Badge>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           <form className="flex flex-col gap-3 sm:flex-row" onSubmit={openSystem}>
             <div className="min-w-0 flex-1">
               <Input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 aria-label="Planet or system identifier"
-                placeholder="HD 60779"
+                placeholder="TOI 700, HD 21749, TRAPPIST-1, Kepler-186..."
                 autoComplete="off"
               />
               {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
             </div>
             <Button type="submit"><Search aria-hidden="true" />Explore system</Button>
           </form>
+
+          <div>
+            <p className="mb-2 text-xs font-medium text-muted-foreground">Featured / Verified TESS & Exoplanet Systems:</p>
+            <div className="flex flex-wrap gap-2">
+              {featuredSystems.map((sys) => {
+                const isActive = requestedSystem.toLowerCase() === sys.id.toLowerCase();
+                return (
+                  <Button
+                    key={sys.id}
+                    variant={isActive ? 'default' : 'outline'}
+                    size="sm"
+                    className="h-7 text-xs font-mono"
+                    onClick={() => selectFeatured(sys.id)}
+                  >
+                    {sys.label}
+                  </Button>
+                );
+              })}
+            </div>
+          </div>
         </CardContent>
       </Card>
 
