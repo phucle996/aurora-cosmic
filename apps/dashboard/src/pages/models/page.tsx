@@ -1,123 +1,32 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { FormEvent, JSX } from 'react';
-import {
-  BrainCircuit,
-  CheckCircle2,
-  CircleAlert,
-  Clock3,
-  Database,
-  Gauge,
-  LoaderCircle,
-  Play,
-  RefreshCw,
-  Rocket,
-  ShieldCheck,
-  Sparkles,
-} from 'lucide-react';
-
-import { Badge } from '@/components/ui/badge';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { JSX } from 'react';
+import { BrainCircuit, CheckCircle2, CircleAlert, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Separator } from '@/components/ui/separator';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { apiFetch } from '@/lib/api';
 
-type ModelRecord = {
-  model_id: string;
-  runtime_package_id: string;
-  task: string;
-  model_version: string;
-  status: string;
-  runtime_manifest_key: string;
-  preprocessing_version: string;
-  feature_count: number;
-  feature_order: string[];
-  onnx_size_bytes: number;
-  onnx_sha256: string;
-  decision_threshold: number;
-  parity_status: string;
-  evaluation_run_id: string;
-  created_at: string;
-};
-
-type InferenceJob = {
-  job_id: string;
-  task: string;
-  model_id: string;
-  model_version: string;
-  runtime_package_id: string;
-  gold_snapshot_id: string;
-  gold_artifact_key: string;
-  sector: number;
-  expected_prediction_count: number;
-  created_at: string;
-  status: string;
-  output_key?: string;
-};
-
-type TrainingResponse = {
-  job_id: string;
-  task: string;
-  gold_snapshot_id: string;
-  status: string;
-  created_at: string;
-  message: string;
-};
-
-type ModelResponse = { models: ModelRecord[] };
-type JobResponse = { jobs: InferenceJob[] };
-type StorageResponse = { objects: { key: string; size_bytes?: number; last_modified?: string }[] };
-
-type GoldSnapshotItem = {
-  snapshot_id: string;
-  key: string;
-  size_bytes: number;
-  last_modified: string;
-  is_trained: boolean;
-  trained_model_id?: string;
-};
-
-const taskLabel: Record<string, string> = {
-  candidate_vetting: 'Candidate vetting (Exoplanets)',
-  astronomical_anomaly_detection: 'Anomaly detection (Autoencoder)',
-};
-
-function formatBytes(bytes: number): string {
-  if (!bytes) return '—';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function formatDate(value: string): string {
-  if (!value) return '—';
-  const date = new Date(value);
-  return Number.isNaN(date.valueOf()) ? value : date.toLocaleString();
-}
-
-function statusVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {
-  if (status === 'champion' || status === 'completed') return 'default';
-  if (status === 'invalid') return 'destructive';
-  if (status === 'validated' || status === 'planned') return 'secondary';
-  return 'outline';
-}
+import { InferenceJobsTable } from './components/InferenceJobsTable';
+import { LiveTrainingBanner } from './components/LiveTrainingBanner';
+import { MetricCards } from './components/MetricCards';
+import { ModelRegistryTable } from './components/ModelRegistryTable';
+import { SelectedModelDetails } from './components/SelectedModelDetails';
+import { TrainingModal } from './components/TrainingModal';
+import type {
+  ActiveTrainingState,
+  GoldSnapshotItem,
+  InferenceJob,
+  JobResponse,
+  ModelRecord,
+  ModelResponse,
+  StorageResponse,
+  TaskType,
+  TrainingResponse,
+} from './types';
 
 export default function ModelsPage(): JSX.Element {
   const [models, setModels] = useState<ModelRecord[]>([]);
   const [jobs, setJobs] = useState<InferenceJob[]>([]);
   const [selectedRuntimeId, setSelectedRuntimeId] = useState<string>();
-  const [taskFilter, setTaskFilter] = useState<'all' | 'candidate_vetting' | 'astronomical_anomaly_detection'>('all');
+  const [taskFilter, setTaskFilter] = useState<TaskType>('all');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string>();
@@ -126,34 +35,16 @@ export default function ModelsPage(): JSX.Element {
 
   // Training Dialog state & Snapshots
   const [trainDialogOpen, setTrainDialogOpen] = useState(false);
-  const [trainTask, setTrainTask] = useState<'candidate_vetting' | 'astronomical_anomaly_detection'>('candidate_vetting');
-  const [trainBaseModelId, setTrainBaseModelId] = useState('champion');
-  const [trainMode, setTrainMode] = useState<'fine_tune' | 'scratch'>('fine_tune');
-  const [trainSnapshotId, setTrainSnapshotId] = useState('');
-  const [isCustomSnapshot, setIsCustomSnapshot] = useState(false);
   const [availableSnapshots, setAvailableSnapshots] = useState<GoldSnapshotItem[]>([]);
   const [snapshotsLoading, setSnapshotsLoading] = useState(false);
-
-  const [trainEpochs, setTrainEpochs] = useState('50');
-  const [trainLr, setTrainLr] = useState('0.001');
-  const [trainBatchSize, setTrainBatchSize] = useState('32');
-  const [trainSeed, setTrainSeed] = useState('42');
-  const [trainAutoPromote, setTrainAutoPromote] = useState(true);
   const [trainingSubmitting, setTrainingSubmitting] = useState(false);
 
-  // Live GPU Training State
-  interface ActiveTrainingState {
-    jobId: string;
-    task: string;
-    snapshotCount: number;
-    baseModel: string;
-    epochs: number;
-    startedAt: number;
-  }
+  // Live GPU Training Monitor State
   const [activeTraining, setActiveTraining] = useState<ActiveTrainingState | null>(null);
   const [trainingElapsed, setTrainingElapsed] = useState(0);
   const initialModelCountRef = useRef(0);
 
+  // Load Model Registry and Inference Jobs
   const loadData = useCallback(async (isRefresh = false) => {
     setError(undefined);
     if (isRefresh) setRefreshing(true);
@@ -182,36 +73,7 @@ export default function ModelsPage(): JSX.Element {
     void loadData();
   }, [loadData]);
 
-  // Live Training Polling & Elapsed Timer
-  useEffect(() => {
-    if (!activeTraining) return;
-    const timer = setInterval(() => {
-      setTrainingElapsed(Math.floor((Date.now() - activeTraining.startedAt) / 1000));
-    }, 1000);
-
-    const poll = setInterval(async () => {
-      try {
-        const res = await apiFetch<ModelResponse>('/v1/models');
-        const list = res.models ?? [];
-        if (list.length > initialModelCountRef.current || Date.now() - activeTraining.startedAt > 60000) {
-          setModels(list);
-          const finishedSnapCount = activeTraining.snapshotCount;
-          setActiveTraining(null);
-          setNotice(`🎉 Huấn luyện thành công! Mô hình Deep Learning mới đã được tạo từ ${finishedSnapCount} Gold Snapshots, vượt qua kiểm thử Python-ONNX Parity và thăng hạng thành 👑 Champion!`);
-          void loadAvailableSnapshots();
-        }
-      } catch {
-        // ignore network error while polling
-      }
-    }, 2000);
-
-    return () => {
-      clearInterval(timer);
-      clearInterval(poll);
-    };
-  }, [activeTraining]);
-
-  // Load danh sách toàn bộ Gold Snapshots và phân loại Chưa chạy / Đã chạy
+  // Load Gold Snapshots from Lakehouse
   const loadAvailableSnapshots = useCallback(async () => {
     setSnapshotsLoading(true);
     try {
@@ -252,25 +114,41 @@ export default function ModelsPage(): JSX.Element {
       });
 
       setAvailableSnapshots(list);
-
-      const unrunList = list.filter((s) => !s.is_trained);
-      if (unrunList.length > 1) {
-        // Mặc định chọn huấn luyện toàn bộ các snapshots chưa chạy
-        setTrainSnapshotId('__all_unrun__');
-        setIsCustomSnapshot(false);
-      } else if (unrunList.length === 1) {
-        setTrainSnapshotId(unrunList[0].snapshot_id);
-        setIsCustomSnapshot(false);
-      } else if (list.length > 0) {
-        setTrainSnapshotId(list[0].snapshot_id);
-        setIsCustomSnapshot(false);
-      }
     } catch {
       setAvailableSnapshots([]);
     } finally {
       setSnapshotsLoading(false);
     }
   }, [models]);
+
+  // Live Training Polling & Elapsed Timer
+  useEffect(() => {
+    if (!activeTraining) return;
+    const timer = setInterval(() => {
+      setTrainingElapsed(Math.floor((Date.now() - activeTraining.startedAt) / 1000));
+    }, 1000);
+
+    const poll = setInterval(async () => {
+      try {
+        const res = await apiFetch<ModelResponse>('/v1/models');
+        const list = res.models ?? [];
+        if (list.length > initialModelCountRef.current || Date.now() - activeTraining.startedAt > 60000) {
+          setModels(list);
+          const finishedSnapCount = activeTraining.snapshotCount;
+          setActiveTraining(null);
+          setNotice(`🎉 Huấn luyện thành công! Mô hình Deep Learning mới đã được tạo từ ${finishedSnapCount} Gold Snapshots, vượt qua kiểm thử Python-ONNX Parity và thăng hạng thành 👑 Champion!`);
+          void loadAvailableSnapshots();
+        }
+      } catch {
+        // ignore network error while polling
+      }
+    }, 2000);
+
+    return () => {
+      clearInterval(timer);
+      clearInterval(poll);
+    };
+  }, [activeTraining, loadAvailableSnapshots]);
 
   const handleOpenDialog = (open: boolean) => {
     setTrainDialogOpen(open);
@@ -279,40 +157,46 @@ export default function ModelsPage(): JSX.Element {
     }
   };
 
-  const handleStartTraining = async (e: FormEvent) => {
-    e.preventDefault();
+  const handleStartTraining = async (params: {
+    task: 'candidate_vetting' | 'astronomical_anomaly_detection';
+    baseModelId: string;
+    mode: 'fine_tune' | 'scratch';
+    snapshotId: string;
+    epochs: number;
+    learningRate: number;
+    batchSize: number;
+    seed: number;
+    autoPromote: boolean;
+    unrunSnapshots: GoldSnapshotItem[];
+  }) => {
     setTrainingSubmitting(true);
     setError(undefined);
     setNotice(undefined);
     try {
-      const effectiveBaseModel = trainBaseModelId === '__scratch__' ? '' : trainBaseModelId;
-      const effectiveMode = trainBaseModelId === '__scratch__' ? 'scratch' : trainMode;
       initialModelCountRef.current = models.length;
-
       let snapshotCount = 1;
       let targetJobId = '';
 
-      if (trainSnapshotId === '__all_unrun__') {
-        const unrunList = availableSnapshots.filter((s) => !s.is_trained);
-        if (unrunList.length === 0) {
+      if (params.snapshotId === '__all_unrun__') {
+        if (params.unrunSnapshots.length === 0) {
           throw new Error('Không có Gold Snapshot nào chưa chạy để huấn luyện.');
         }
 
-        const snapshotIds = unrunList.map((s) => s.snapshot_id);
+        const snapshotIds = params.unrunSnapshots.map((s) => s.snapshot_id);
         snapshotCount = snapshotIds.length;
         const res = await apiFetch<TrainingResponse>('/v1/models/train', {
           method: 'POST',
           body: JSON.stringify({
-            task: trainTask,
+            task: params.task,
             gold_snapshot_id: snapshotIds[0],
             gold_snapshot_ids: snapshotIds,
-            base_model_id: effectiveBaseModel,
-            training_mode: effectiveMode,
-            epochs: Number(trainEpochs) || 50,
-            learning_rate: Number(trainLr) || 0.001,
-            batch_size: Number(trainBatchSize) || 32,
-            seed: Number(trainSeed) || 42,
-            auto_promote: trainAutoPromote,
+            base_model_id: params.baseModelId,
+            training_mode: params.mode,
+            epochs: params.epochs,
+            learning_rate: params.learningRate,
+            batch_size: params.batchSize,
+            seed: params.seed,
+            auto_promote: params.autoPromote,
           }),
         });
         targetJobId = res.job_id;
@@ -321,27 +205,27 @@ export default function ModelsPage(): JSX.Element {
         const res = await apiFetch<TrainingResponse>('/v1/models/train', {
           method: 'POST',
           body: JSON.stringify({
-            task: trainTask,
-            gold_snapshot_id: trainSnapshotId.trim(),
-            base_model_id: effectiveBaseModel,
-            training_mode: effectiveMode,
-            epochs: Number(trainEpochs) || 50,
-            learning_rate: Number(trainLr) || 0.001,
-            batch_size: Number(trainBatchSize) || 32,
-            seed: Number(trainSeed) || 42,
-            auto_promote: trainAutoPromote,
+            task: params.task,
+            gold_snapshot_id: params.snapshotId.trim(),
+            base_model_id: params.baseModelId,
+            training_mode: params.mode,
+            epochs: params.epochs,
+            learning_rate: params.learningRate,
+            batch_size: params.batchSize,
+            seed: params.seed,
+            auto_promote: params.autoPromote,
           }),
         });
         targetJobId = res.job_id;
-        setNotice(`🚀 Training Job ${res.job_id} đã được gửi tới GPU Worker thành công với Gold Snapshot [${trainSnapshotId}]...`);
+        setNotice(`🚀 Training Job ${res.job_id} đã được gửi tới GPU Worker thành công với Gold Snapshot [${params.snapshotId}]...`);
       }
 
       setActiveTraining({
         jobId: targetJobId,
-        task: trainTask,
+        task: params.task,
         snapshotCount,
-        baseModel: effectiveBaseModel,
-        epochs: Number(trainEpochs) || 50,
+        baseModel: params.baseModelId,
+        epochs: params.epochs,
         startedAt: Date.now(),
       });
       setTrainingElapsed(0);
@@ -352,41 +236,6 @@ export default function ModelsPage(): JSX.Element {
       setTrainingSubmitting(false);
     }
   };
-
-  // Models search and pagination
-  const [modelSearch, setModelSearch] = useState('');
-  const [modelPage, setModelPage] = useState(1);
-  const MODEL_PAGE_SIZE = 8;
-
-  const filteredModels = useMemo(() => {
-    let list = taskFilter === 'all' ? models : models.filter((model) => model.task === taskFilter);
-    if (modelSearch.trim()) {
-      const q = modelSearch.toLowerCase();
-      list = list.filter(
-        (m) =>
-          m.model_id.toLowerCase().includes(q) ||
-          m.runtime_package_id.toLowerCase().includes(q) ||
-          (taskLabel[m.task] ?? m.task).toLowerCase().includes(q),
-      );
-    }
-    return list;
-  }, [models, taskFilter, modelSearch]);
-
-  const totalModelPages = Math.ceil(filteredModels.length / MODEL_PAGE_SIZE) || 1;
-  const pagedModels = useMemo(() => {
-    const start = (modelPage - 1) * MODEL_PAGE_SIZE;
-    return filteredModels.slice(start, start + MODEL_PAGE_SIZE);
-  }, [filteredModels, modelPage]);
-
-  const selectedModel = models.find((model) => model.runtime_package_id === selectedRuntimeId) ?? filteredModels[0];
-  const selectedJobs = selectedModel
-    ? jobs.filter(
-      (job) => job.model_id === selectedModel.model_id || job.runtime_package_id === selectedModel.runtime_package_id,
-    )
-    : [];
-  const validatedCount = models.filter((model) => model.status === 'validated' || model.status === 'champion').length;
-  const championCount = models.filter((model) => model.status === 'champion').length;
-  const plannedCount = jobs.filter((job) => job.status === 'planned').length;
 
   async function queueJob(job: InferenceJob): Promise<void> {
     setQueueingJob(job.job_id);
@@ -400,6 +249,11 @@ export default function ModelsPage(): JSX.Element {
       setQueueingJob(undefined);
     }
   }
+
+  const selectedModel = models.find((model) => model.runtime_package_id === selectedRuntimeId) ?? models[0];
+  const validatedCount = models.filter((model) => model.status === 'validated' || model.status === 'champion').length;
+  const championCount = models.filter((model) => model.status === 'champion').length;
+  const plannedCount = jobs.filter((job) => job.status === 'planned').length;
 
   return (
     <div className="space-y-6">
@@ -416,343 +270,16 @@ export default function ModelsPage(): JSX.Element {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Dialog open={trainDialogOpen} onOpenChange={handleOpenDialog}>
-            <DialogTrigger asChild>
-              <Button size="sm" className="gap-2 bg-gradient-to-r from-amber-500 to-primary text-primary-foreground font-semibold shadow-md">
-                <Sparkles className="size-4" />
-                Train New Model
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-[560px]">
-              <form onSubmit={handleStartTraining}>
-                <DialogHeader>
-                  <DialogTitle className="flex items-center gap-2 text-base font-semibold">
-                    <Rocket className="size-5 text-primary" />
-                    Huấn luyện Mô hình Học máy Mới (GPU)
-                  </DialogTitle>
-                  <DialogDescription className="text-xs">
-                    Khởi chạy quy trình huấn luyện PyTorch trên GPU NVIDIA từ các Gold Snapshots trong Lakehouse.
-                  </DialogDescription>
-                </DialogHeader>
-
-                <div className="grid gap-4 py-4 text-xs">
-                  {/* Task Selection */}
-                  <div className="space-y-1.5">
-                    <Label htmlFor="train-task" className="text-xs font-medium">
-                      Tác vụ Học máy (ML Task)
-                    </Label>
-                    <select
-                      id="train-task"
-                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      value={trainTask}
-                      onChange={(e) => setTrainTask(e.target.value as any)}
-                    >
-                      <option value="candidate_vetting">Candidate Vetting (Phân loại ứng viên Ngoại hành tinh - Tabular MLP)</option>
-                      <option value="astronomical_anomaly_detection">Astronomical Anomaly Detection (Phát hiện dị thường - Autoencoder)</option>
-                    </select>
-                  </div>
-
-                  {/* Base Model Selection (Continual Learning & Transfer Learning) */}
-                  <div className="space-y-2 rounded-md border border-primary/20 bg-primary/5 p-3">
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="train-base-model" className="text-xs font-semibold text-primary flex items-center gap-1.5">
-                        <BrainCircuit className="size-3.5" />
-                        Mô hình Nền tảng (Continual Learning / Transfer Learning)
-                      </Label>
-                      <Badge variant="outline" className="text-[10px] bg-primary/10 text-primary border-primary/30 font-medium">
-                        {trainBaseModelId === '__scratch__' ? 'Random Init' : 'Kế thừa tri thức'}
-                      </Badge>
-                    </div>
-
-                    <select
-                      id="train-base-model"
-                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      value={trainBaseModelId}
-                      onChange={(e) => {
-                        setTrainBaseModelId(e.target.value);
-                        if (e.target.value === '__scratch__') {
-                          setTrainMode('scratch');
-                        } else {
-                          setTrainMode('fine_tune');
-                        }
-                      }}
-                    >
-                      <option value="champion">👑 Champion Model Hiện Tại (Khuyên dùng — Kế thừa tri thức tốt nhất)</option>
-                      {models.filter((m) => m.task === trainTask).length > 0 && (
-                        <optgroup label="📦 CHỌN MODEL CỤ THỂ TRONG REGISTRY">
-                          {models
-                            .filter((m) => m.task === trainTask)
-                            .map((m) => (
-                              <option key={m.model_id} value={m.model_id}>
-                                {m.model_id} ({m.status === 'champion' ? '👑 Champion' : m.status}) — Ver {m.model_version}
-                              </option>
-                            ))}
-                        </optgroup>
-                      )}
-                      <option value="__scratch__">🆕 Huấn luyện từ đầu (Train from scratch / Random weights)</option>
-                    </select>
-
-                    <p className="text-[10.5px] text-muted-foreground pt-0.5 leading-relaxed">
-                      {trainBaseModelId === '__scratch__'
-                        ? '⚡ Khởi tạo ngẫu nhiên toàn bộ trọng số mạng nơ-ron (không kế thừa tri thức trước).'
-                        : '🎯 Kế thừa toàn bộ đặc trưng đã học từ Base Model và tiến hành tinh chỉnh (Fine-tuning) trên các Gold Snapshots mới để mô hình liên tục thông minh và chính xác hơn.'}
-                    </p>
-                  </div>
-
-                  {/* Dynamic Gold Snapshot Selector */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Label htmlFor="train-snapshot" className="text-xs font-medium">
-                          Gold Snapshot Nguồn (Feature Store)
-                        </Label>
-                        {availableSnapshots.filter((s) => !s.is_trained).length > 0 && (
-                          <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30 text-[10px] py-0 px-1.5 font-mono">
-                            {availableSnapshots.filter((s) => !s.is_trained).length} mới chưa chạy
-                          </Badge>
-                        )}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => void loadAvailableSnapshots()}
-                        disabled={snapshotsLoading}
-                        className="flex items-center gap-1 text-[11px] text-primary hover:underline disabled:opacity-50"
-                      >
-                        <RefreshCw className={`size-3 ${snapshotsLoading ? 'animate-spin' : ''}`} />
-                        Làm mới danh sách
-                      </button>
-                    </div>
-
-                    {snapshotsLoading ? (
-                      <div className="flex items-center justify-center p-3 border rounded-md text-xs text-muted-foreground bg-muted/20">
-                        <LoaderCircle className="size-3.5 animate-spin mr-2" />
-                        Đang nạp danh sách Gold Snapshots chưa chạy từ Lakehouse...
-                      </div>
-                    ) : (
-                      <select
-                        id="train-snapshot-select"
-                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        value={isCustomSnapshot ? '__custom__' : trainSnapshotId}
-                        onChange={(e) => {
-                          if (e.target.value === '__custom__') {
-                            setIsCustomSnapshot(true);
-                          } else {
-                            setIsCustomSnapshot(false);
-                            setTrainSnapshotId(e.target.value);
-                          }
-                        }}
-                      >
-                        {/* Option 1: Huấn luyện gộp toàn bộ các snapshot chưa chạy thành 1 model duy nhất */}
-                        {availableSnapshots.filter((s) => !s.is_trained).length > 0 && (
-                          <option value="__all_unrun__" className="font-semibold text-primary">
-                            ⚡ [GỘP TẤT CẢ] Huấn luyện gộp toàn bộ {availableSnapshots.filter((s) => !s.is_trained).length} Snapshots thành 1 Model duy nhất (Khuyên dùng)
-                          </option>
-                        )}
-
-                        {/* Group 2: Danh sách từng Snapshot Chưa Chạy */}
-                        <optgroup label={`🌟 SNAPSHOTS MỚI CHƯA CHẠY (${availableSnapshots.filter((s) => !s.is_trained).length})`}>
-                          {availableSnapshots
-                            .filter((s) => !s.is_trained)
-                            .map((snap) => (
-                              <option key={snap.snapshot_id} value={snap.snapshot_id}>
-                                [Chưa chạy] {snap.snapshot_id} ({formatBytes(snap.size_bytes)}) — {formatDate(snap.last_modified)}
-                              </option>
-                            ))}
-                        </optgroup>
-
-                        {/* Group 3: Snapshots Đã Huấn Luyện (đặt ở dưới cùng) */}
-                        {availableSnapshots.filter((s) => s.is_trained).length > 0 && (
-                          <optgroup label={`✅ SNAPSHOTS ĐÃ HUẤN LUYỆN (${availableSnapshots.filter((s) => s.is_trained).length})`}>
-                            {availableSnapshots
-                              .filter((s) => s.is_trained)
-                              .map((snap) => (
-                                <option key={snap.snapshot_id} value={snap.snapshot_id}>
-                                  [Đã train: {snap.trained_model_id}] {snap.snapshot_id}
-                                </option>
-                              ))}
-                          </optgroup>
-                        )}
-
-                        <optgroup label="⚙️ TÙY CHỌN">
-                          <option value="__custom__">✏️ Nhập Snapshot ID thủ công...</option>
-                        </optgroup>
-                      </select>
-                    )}
-
-                    {/* Custom Snapshot Input */}
-                    {isCustomSnapshot && (
-                      <Input
-                        id="train-snapshot-custom"
-                        placeholder="gold-v1-xxxxxxxxxxxx (hoặc tên snapshot bất kỳ)"
-                        value={trainSnapshotId}
-                        onChange={(e) => setTrainSnapshotId(e.target.value)}
-                        className="text-xs font-mono mt-1.5"
-                      />
-                    )}
-
-                    {/* Snapshot Metadata Preview Card */}
-                    {(() => {
-                      if (trainSnapshotId === '__all_unrun__') {
-                        const unrun = availableSnapshots.filter((s) => !s.is_trained);
-                        const totalBytes = unrun.reduce((acc, s) => acc + s.size_bytes, 0);
-                        return (
-                          <div className="rounded-md border border-primary/40 bg-primary/5 p-2.5 space-y-1 text-[11px]">
-                            <div className="flex items-center justify-between">
-                              <span className="font-semibold text-primary flex items-center gap-1">
-                                <Sparkles className="size-3.5" />
-                                Chế độ: Huấn luyện Hàng loạt (Batch All Unrun)
-                              </span>
-                              <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30 text-[10px]">
-                                {unrun.length} Snapshots
-                              </Badge>
-                            </div>
-                            <div className="flex items-center justify-between text-muted-foreground">
-                              <span>Tổng dung lượng Parquet:</span>
-                              <span className="font-mono text-foreground font-medium">{formatBytes(totalBytes)}</span>
-                            </div>
-                            <p className="text-muted-foreground text-[10.5px] pt-1 border-t border-border/50">
-                              Hệ thống sẽ tự động xếp hàng và dispatch lần lượt toàn bộ {unrun.length} Gold Snapshots chưa chạy tới GPU PyTorch Worker.
-                            </p>
-                          </div>
-                        );
-                      }
-
-                      const snap = availableSnapshots.find((s) => s.snapshot_id === trainSnapshotId);
-                      if (!snap) return null;
-                      return (
-                        <div className="rounded-md border border-border/70 bg-muted/20 p-2.5 space-y-1 text-[11px]">
-                          <div className="flex items-center justify-between">
-                            <span className="text-muted-foreground font-medium">Trạng thái Snapshot:</span>
-                            {snap.is_trained ? (
-                              <Badge variant="outline" className="text-[10px] text-muted-foreground">
-                                Đã train với model: {snap.trained_model_id}
-                              </Badge>
-                            ) : (
-                              <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30 text-[10px]">
-                                🟢 Sẵn sàng huấn luyện (Chưa chạy)
-                              </Badge>
-                            )}
-                          </div>
-                          <div className="flex items-center justify-between text-muted-foreground">
-                            <span>Dung lượng Parquet:</span>
-                            <span className="font-mono text-foreground font-medium">{formatBytes(snap.size_bytes)}</span>
-                          </div>
-                          <div className="flex items-center justify-between text-muted-foreground">
-                            <span>Thời gian tạo:</span>
-                            <span className="font-mono text-foreground">{formatDate(snap.last_modified)}</span>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </div>
-
-                  {/* Hyperparameters Grid */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="train-epochs" className="text-xs font-medium">
-                        Số Epochs
-                      </Label>
-                      <Input
-                        id="train-epochs"
-                        type="number"
-                        min="5"
-                        max="500"
-                        value={trainEpochs}
-                        onChange={(e) => setTrainEpochs(e.target.value)}
-                        className="text-xs"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="train-lr" className="text-xs font-medium">
-                        Learning Rate (Tốc độ học)
-                      </Label>
-                      <Input
-                        id="train-lr"
-                        type="number"
-                        step="0.0001"
-                        min="0.00001"
-                        max="0.1"
-                        value={trainLr}
-                        onChange={(e) => setTrainLr(e.target.value)}
-                        className="text-xs"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="train-batch" className="text-xs font-medium">
-                        Batch Size
-                      </Label>
-                      <Input
-                        id="train-batch"
-                        type="number"
-                        min="8"
-                        max="256"
-                        value={trainBatchSize}
-                        onChange={(e) => setTrainBatchSize(e.target.value)}
-                        className="text-xs"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="train-seed" className="text-xs font-medium">
-                        Random Seed (Khởi tạo ngẫu nhiên)
-                      </Label>
-                      <Input
-                        id="train-seed"
-                        type="number"
-                        value={trainSeed}
-                        onChange={(e) => setTrainSeed(e.target.value)}
-                        className="text-xs"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Auto-promote Checkbox */}
-                  <div className="flex items-center gap-2 rounded-md border border-border/60 bg-muted/20 p-3">
-                    <input
-                      type="checkbox"
-                      id="auto-promote"
-                      checked={trainAutoPromote}
-                      onChange={(e) => setTrainAutoPromote(e.target.checked)}
-                      className="size-4 rounded border-gray-300 text-primary focus:ring-primary"
-                    />
-                    <label htmlFor="auto-promote" className="cursor-pointer text-xs">
-                      <span className="font-medium text-foreground">Tự động nâng cấp làm Champion Model</span>
-                      <p className="text-[11px] text-muted-foreground">
-                        Nếu mô hình vượt qua kiểm thử đối sánh Python-ONNX Parity, tự động chuyển hướng suy luận chính sang model mới này.
-                      </p>
-                    </label>
-                  </div>
-                </div>
-
-                <DialogFooter>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setTrainDialogOpen(false)}
-                    disabled={trainingSubmitting}
-                  >
-                    Hủy
-                  </Button>
-                  <Button type="submit" size="sm" disabled={trainingSubmitting} className="gap-2">
-                    {trainingSubmitting ? (
-                      <>
-                        <LoaderCircle className="size-4 animate-spin" />
-                        Đang phát lệnh GPU...
-                      </>
-                    ) : (
-                      <>
-                        <Play className="size-4" />
-                        Bắt đầu Huấn luyện
-                      </>
-                    )}
-                  </Button>
-                </DialogFooter>
-              </form>
-            </DialogContent>
-          </Dialog>
+          <TrainingModal
+            open={trainDialogOpen}
+            onOpenChange={handleOpenDialog}
+            models={models}
+            availableSnapshots={availableSnapshots}
+            snapshotsLoading={snapshotsLoading}
+            onRefreshSnapshots={() => void loadAvailableSnapshots()}
+            onSubmitTraining={handleStartTraining}
+            submitting={trainingSubmitting}
+          />
 
           <Button variant="outline" size="sm" onClick={() => void loadData(true)} disabled={loading || refreshing}>
             <RefreshCw className={`size-3.5 ${refreshing ? 'animate-spin' : ''}`} />
@@ -761,6 +288,7 @@ export default function ModelsPage(): JSX.Element {
         </div>
       </div>
 
+      {/* Error Alert */}
       {error && (
         <div className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
           <CircleAlert className="mt-0.5 size-4 shrink-0" />
@@ -771,6 +299,7 @@ export default function ModelsPage(): JSX.Element {
         </div>
       )}
 
+      {/* Notice / Success Alert */}
       {notice && (
         <div className="flex items-start gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-300">
           <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-400" />
@@ -778,331 +307,43 @@ export default function ModelsPage(): JSX.Element {
         </div>
       )}
 
-      {/* Live GPU Training Active Banner */}
+      {/* Live GPU Training Active Monitor Banner */}
       {activeTraining && (
-        <div className="relative overflow-hidden rounded-xl border border-primary/50 bg-gradient-to-r from-primary/15 via-purple-500/10 to-primary/5 p-4 shadow-lg shadow-primary/5">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-start sm:items-center gap-3">
-              <div className="relative flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/20 text-primary border border-primary/40">
-                <BrainCircuit className="size-5 animate-pulse text-primary" />
-                <span className="absolute -top-1 -right-1 flex size-3">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full size-3 bg-emerald-500"></span>
-                </span>
-              </div>
-              <div className="space-y-0.5">
-                <div className="flex items-center gap-2">
-                  <h4 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
-                    ⚡ GPU Worker đang trong quá trình huấn luyện Deep Neural Network
-                  </h4>
-                  <Badge variant="outline" className="bg-primary/20 text-primary border-primary/40 text-[10px] animate-pulse font-mono">
-                    Đang chạy: {trainingElapsed}s
-                  </Badge>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Đang xử lý & gộp <strong className="text-foreground">{activeTraining.snapshotCount} Gold Snapshots</strong> • Epochs: <strong className="text-foreground">{activeTraining.epochs}</strong> • Base: <span className="font-mono text-primary">{activeTraining.baseModel || 'Scratch'}</span> • AdamW + Cosine Annealing LR
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <LoaderCircle className="size-4 animate-spin text-primary" />
-              <span className="text-xs text-muted-foreground font-mono">Tự động nạp khi hoàn tất...</span>
-            </div>
-          </div>
-          {/* Subtle animated progress indicator */}
-          <div className="absolute bottom-0 left-0 h-1 bg-gradient-to-r from-primary via-emerald-400 to-primary w-full animate-pulse opacity-80" />
-        </div>
+        <LiveTrainingBanner
+          activeTraining={activeTraining}
+          trainingElapsed={trainingElapsed}
+        />
       )}
 
       {/* Metric Cards */}
-      <div className="grid min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-2 2xl:grid-cols-4">
-        <MetricCard icon={BrainCircuit} label="Runtime packages" value={models.length} detail="Đã đăng ký trong MinIO" />
-        <MetricCard icon={ShieldCheck} label="Validated" value={validatedCount} detail="Parity status PASS" />
-        <MetricCard icon={Sparkles} label="Champions" value={championCount} detail="Mô hình phục vụ chính" />
-        <MetricCard icon={Clock3} label="Planned jobs" value={plannedCount} detail="Sẵn sàng cho GPU Inference" />
-      </div>
+      <MetricCards
+        totalModels={models.length}
+        validatedCount={validatedCount}
+        championCount={championCount}
+        plannedCount={plannedCount}
+      />
 
       {/* Main Grid: Registry Table & Details */}
       <div className="grid min-w-0 gap-6 2xl:grid-cols-[minmax(0,1.25fr)_minmax(0,0.75fr)]">
-        <Card className="min-w-0 overflow-hidden">
-          <CardHeader className="gap-4 md:flex-row md:items-center md:justify-between">
-            <div className="min-w-0">
-              <CardTitle className="text-base font-semibold">Model Registry & ONNX Packages</CardTitle>
-              <CardDescription>Danh sách các package mô hình ML đã được đóng gói và kiểm thử đối sánh.</CardDescription>
-            </div>
-            <div className="flex shrink-0 flex-wrap gap-1 rounded-md border border-border p-1 text-xs">
-              {(['all', 'candidate_vetting', 'astronomical_anomaly_detection'] as const).map((filter) => (
-                <button
-                  key={filter}
-                  type="button"
-                  onClick={() => setTaskFilter(filter)}
-                  className={`whitespace-nowrap rounded px-2.5 py-1 transition-colors ${taskFilter === filter ? 'bg-primary text-primary-foreground font-medium' : 'text-muted-foreground hover:bg-muted'
-                    }`}
-                >
-                  {filter === 'all' ? 'All' : filter === 'candidate_vetting' ? 'Candidate Vetting' : 'Anomaly Autoencoder'}
-                </button>
-              ))}
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Search filter bar */}
-            <div className="flex items-center justify-between gap-3">
-              <div className="relative flex-1 max-w-sm">
-                <Input
-                  placeholder="Tìm theo Model ID, Package ID hoặc Task..."
-                  value={modelSearch}
-                  onChange={(e) => {
-                    setModelSearch(e.target.value);
-                    setModelPage(1);
-                  }}
-                  className="h-8 text-xs pl-3"
-                />
-              </div>
-              <div className="text-xs text-muted-foreground font-mono">
-                Hiển thị {pagedModels.length} / {filteredModels.length} models
-              </div>
-            </div>
+        <ModelRegistryTable
+          models={models}
+          selectedRuntimeId={selectedRuntimeId}
+          onSelectRuntimeId={setSelectedRuntimeId}
+          taskFilter={taskFilter}
+          onTaskFilterChange={setTaskFilter}
+          loading={loading}
+        />
 
-            {loading ? (
-              <LoadingState />
-            ) : filteredModels.length === 0 ? (
-              <EmptyState label="Chưa có runtime package phù hợp với bộ lọc." />
-            ) : (
-              <>
-                <div className="overflow-x-auto">
-                  <Table className="min-w-[650px]">
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Mô hình (Model ID)</TableHead>
-                        <TableHead>Tác vụ (Task)</TableHead>
-                        <TableHead>Trạng thái</TableHead>
-                        <TableHead>Runtime Package</TableHead>
-                        <TableHead className="text-right">Dung lượng ONNX</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {pagedModels.map((model) => (
-                        <TableRow
-                          key={`${model.runtime_package_id}-${model.model_id}`}
-                          data-state={selectedModel?.runtime_package_id === model.runtime_package_id ? 'selected' : undefined}
-                          className="cursor-pointer"
-                          onClick={() => setSelectedRuntimeId(model.runtime_package_id)}
-                        >
-                          <TableCell>
-                            <div className="min-w-44">
-                              <p className="font-medium text-foreground">{model.model_id}</p>
-                              <p className="mt-0.5 text-xs text-muted-foreground font-mono">{model.model_version}</p>
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-xs text-muted-foreground">{taskLabel[model.task] ?? model.task}</TableCell>
-                          <TableCell>
-                            <Badge variant={statusVariant(model.status)}>
-                              {model.status === 'champion' ? '👑 Champion' : model.status}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="font-mono text-xs text-muted-foreground">{model.runtime_package_id}</TableCell>
-                          <TableCell className="text-right font-mono text-xs text-muted-foreground">
-                            {formatBytes(model.onnx_size_bytes)}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-
-                {/* Pagination Controls */}
-                {totalModelPages > 1 && (
-                  <div className="flex items-center justify-between border-t border-border/60 pt-3 text-xs">
-                    <span className="text-muted-foreground">
-                      Trang <span className="font-medium text-foreground">{modelPage}</span> / {totalModelPages}
-                    </span>
-                    <div className="flex items-center gap-1.5">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 px-2.5 text-xs"
-                        onClick={() => setModelPage((p) => Math.max(1, p - 1))}
-                        disabled={modelPage <= 1}
-                      >
-                        Trước
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 px-2.5 text-xs"
-                        onClick={() => setModelPage((p) => Math.min(totalModelPages, p + 1))}
-                        disabled={modelPage >= totalModelPages}
-                      >
-                        Sau
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Selected Model Details */}
-        <Card className="min-w-0 overflow-hidden">
-          <CardHeader>
-            <CardTitle className="text-base font-semibold">Chi tiết Mô hình được chọn</CardTitle>
-            <CardDescription>Thông số kỹ thuật, tính toàn vẹn SHA-256 và lineage.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {!selectedModel ? (
-              <EmptyState label="Chọn một model để xem chi tiết thông số." />
-            ) : (
-              <div className="space-y-4">
-                <div className="rounded-lg border border-border bg-muted/30 p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-medium">{selectedModel.model_id}</p>
-                      <p className="mt-1 text-xs text-muted-foreground font-mono">{selectedModel.model_version}</p>
-                    </div>
-                    <Badge variant={statusVariant(selectedModel.status)}>
-                      {selectedModel.status === 'champion' ? '👑 Champion Model' : selectedModel.status}
-                    </Badge>
-                  </div>
-                  <Separator className="my-3" />
-                  <dl className="grid grid-cols-2 gap-3 text-xs">
-                    <InfoItem label="Task" value={taskLabel[selectedModel.task] ?? selectedModel.task} />
-                    <InfoItem label="Số đặc trưng" value={`${selectedModel.feature_count} features`} />
-                    <InfoItem label="Kích thước ONNX" value={formatBytes(selectedModel.onnx_size_bytes)} />
-                    <InfoItem label="Parity Test" value={selectedModel.parity_status || 'PASS'} />
-                    <InfoItem label="Ngưỡng Threshold" value={selectedModel.decision_threshold.toFixed(4)} />
-                    <InfoItem label="Ngày tạo" value={formatDate(selectedModel.created_at)} />
-                  </dl>
-                </div>
-                <div className="min-w-0">
-                  <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Thứ tự đặc trưng (Feature Order)</p>
-                  <p className="max-h-24 overflow-y-auto break-words font-mono text-[11px] leading-5 text-muted-foreground rounded bg-muted/20 p-2">
-                    {selectedModel.feature_order.join(' · ') || 'Not provided'}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <Gauge className="size-4 text-primary" />
-                  GPU-only Rust Inference Engine · ONNX Runtime v1.20
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        <SelectedModelDetails selectedModel={selectedModel} />
       </div>
 
       {/* Inference Jobs Table */}
-      <Card className="min-w-0 overflow-hidden">
-        <CardHeader>
-          <CardTitle className="text-base font-semibold">Danh sách Inference Jobs</CardTitle>
-          <CardDescription>Đưa các snapshot dữ liệu vào hàng đợi để GPU Rust Inference Engine chấm điểm hàng loạt.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {!selectedModel ? (
-            <EmptyState label="Chọn model để xem các Gold jobs tương thích." />
-          ) : selectedJobs.length === 0 ? (
-            <EmptyState label="Không có Gold job nào đã pin vào runtime này." />
-          ) : (
-            <div className="overflow-x-auto">
-              <Table className="min-w-[800px]">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Mã Job</TableHead>
-                    <TableHead>Gold Snapshot</TableHead>
-                    <TableHead>Sector</TableHead>
-                    <TableHead>Số lượng mẫu</TableHead>
-                    <TableHead>Trạng thái</TableHead>
-                    <TableHead className="text-right">Hành động</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {selectedJobs.map((job) => (
-                    <TableRow key={job.job_id}>
-                      <TableCell>
-                        <p className="font-mono text-xs font-medium">{job.job_id}</p>
-                        <p className="mt-1 text-xs text-muted-foreground">{formatDate(job.created_at)}</p>
-                      </TableCell>
-                      <TableCell>
-                        <p className="font-mono text-xs">{job.gold_snapshot_id}</p>
-                        <p className="mt-1 max-w-64 truncate text-xs text-muted-foreground">{job.gold_artifact_key}</p>
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">{job.sector}</TableCell>
-                      <TableCell className="font-mono text-xs">{job.expected_prediction_count.toLocaleString()}</TableCell>
-                      <TableCell>
-                        <Badge variant={statusVariant(job.status)}>{job.status}</Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          size="sm"
-                          variant={job.status === 'completed' ? 'outline' : 'default'}
-                          onClick={() => void queueJob(job)}
-                          disabled={queueingJob === job.job_id || selectedModel.status === 'invalid'}
-                        >
-                          {queueingJob === job.job_id ? <LoaderCircle className="animate-spin size-3.5" /> : <Play className="size-3.5" />}
-                          {queueingJob === job.job_id ? 'Đang xếp hàng…' : job.status === 'completed' ? 'Chạy lại' : 'Queue GPU'}
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-function MetricCard({
-  icon: Icon,
-  label,
-  value,
-  detail,
-}: {
-  icon: typeof BrainCircuit;
-  label: string;
-  value: number;
-  detail: string;
-}): JSX.Element {
-  return (
-    <Card>
-      <CardContent className="flex items-center gap-3 p-4">
-        <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-          <Icon className="size-5" />
-        </div>
-        <div>
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
-          <p className="mt-0.5 text-xl font-semibold">{value}</p>
-          <p className="text-xs text-muted-foreground">{detail}</p>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function InfoItem({ label, value }: { label: string; value: string }): JSX.Element {
-  return (
-    <div>
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="mt-0.5 truncate font-medium text-foreground">{value}</dd>
-    </div>
-  );
-}
-
-function LoadingState(): JSX.Element {
-  return (
-    <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
-      <LoaderCircle className="size-4 animate-spin" />
-      Loading registry…
-    </div>
-  );
-}
-
-function EmptyState({ label }: { label: string }): JSX.Element {
-  return (
-    <div className="flex flex-col items-center justify-center gap-2 py-12 text-center text-sm text-muted-foreground">
-      <Database className="size-6 opacity-60" />
-      <p>{label}</p>
+      <InferenceJobsTable
+        selectedModel={selectedModel}
+        jobs={jobs}
+        onQueueJob={queueJob}
+        queueingJobId={queueingJob}
+      />
     </div>
   );
 }
