@@ -13,6 +13,7 @@ import (
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/repo"
 	domainService "go-api/internal/domain/service"
+	"go-api/internal/taxonomy"
 )
 
 // ============================================================================
@@ -92,13 +93,13 @@ func (s *InferenceService) ListJobs(ctx context.Context, task, model string) ([]
 		}
 
 		// 2. Chuẩn hóa tên task (candidate_vetting hoặc anomaly_detection)
-		normTask := entity.TaskAnomalyDetection
-		if strings.EqualFold(strings.TrimSpace(manifest.Task), "candidate") || strings.EqualFold(strings.TrimSpace(manifest.Task), string(entity.TaskCandidateVetting)) {
-			normTask = entity.TaskCandidateVetting
+		normTask := taxonomy.TaskAnomalyDetection
+		if strings.EqualFold(strings.TrimSpace(manifest.Task), "candidate") || strings.EqualFold(strings.TrimSpace(manifest.Task), taxonomy.TaskCandidateVetting) {
+			normTask = taxonomy.TaskCandidateVetting
 		}
 
 		// Lọc theo task nếu người dùng có truyền tham số
-		if task != "" && string(normTask) != task {
+		if task != "" && normTask != task {
 			continue
 		}
 
@@ -109,9 +110,9 @@ func (s *InferenceService) ListJobs(ctx context.Context, task, model string) ([]
 
 		// 3. Kiểm tra file output trong MinIO để suy luận trạng thái hoàn thành
 		outputKey := fmt.Sprintf("predictions/%s/%s/%s/part-00000.jsonl", manifest.Task, manifest.GoldSnapshotID, manifest.JobID)
-		status := string(entity.JobStatusPlanned)
+		status := taxonomy.JobStatusPlanned
 		if outputs, listErr := s.objects.ListObjects(ctx, outputKey); listErr == nil && len(outputs) > 0 {
-			status = string(entity.JobStatusCompleted)
+			status = taxonomy.JobStatusCompleted
 		}
 
 		// 4. Bổ sung job vào danh sách kết quả
@@ -176,7 +177,7 @@ func (s *InferenceService) RetryJob(ctx context.Context, jobID string) (entity.I
 
 	// 2. Xác định loại event NATS tương ứng với task
 	eventType := "aurora.v1.inference.anomaly.requested"
-	if manifest.Task == string(entity.TaskCandidateVetting) || manifest.Task == "candidate" {
+	if manifest.Task == taxonomy.TaskCandidateVetting || manifest.Task == "candidate" {
 		eventType = "aurora.v1.inference.candidate.requested"
 	}
 

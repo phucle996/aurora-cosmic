@@ -14,6 +14,7 @@ import (
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/repo"
 	domainService "go-api/internal/domain/service"
+	"go-api/internal/taxonomy"
 )
 
 // ============================================================================
@@ -89,11 +90,11 @@ func (s *ModelsService) ListModels(ctx context.Context, task string) ([]entity.M
 		}
 
 		// 2. Chuẩn hóa task và lọc theo yêu cầu
-		normTask := entity.TaskAnomalyDetection
-		if strings.EqualFold(strings.TrimSpace(manifest.Task), "candidate") || strings.EqualFold(strings.TrimSpace(manifest.Task), string(entity.TaskCandidateVetting)) {
-			normTask = entity.TaskCandidateVetting
+		normTask := taxonomy.TaskAnomalyDetection
+		if strings.EqualFold(strings.TrimSpace(manifest.Task), "candidate") || strings.EqualFold(strings.TrimSpace(manifest.Task), taxonomy.TaskCandidateVetting) {
+			normTask = taxonomy.TaskCandidateVetting
 		}
-		if task != "" && string(normTask) != task {
+		if task != "" && normTask != task {
 			continue
 		}
 
@@ -124,14 +125,14 @@ func (s *ModelsService) ListModels(ctx context.Context, task string) ([]entity.M
 		}
 
 		// 4. Xác định trạng thái mô hình
-		status := string(entity.ModelStatusValidated)
+		status := taxonomy.ModelStatusValidated
 		if manifest.PythonParityStatus != "PASS" || !integrityOK {
-			status = string(entity.ModelStatusInvalid)
+			status = taxonomy.ModelStatusInvalid
 		}
 
 		// 5. Kiểm tra xem model này có đang là Champion hay không (đọc từ models/<task>/champion.json)
 		taskDir := "anomaly"
-		if normTask == entity.TaskCandidateVetting {
+		if normTask == taxonomy.TaskCandidateVetting {
 			taskDir = "candidate"
 		}
 		for _, candidateDir := range []string{manifest.Task, taskDir} {
@@ -140,7 +141,7 @@ func (s *ModelsService) ListModels(ctx context.Context, task string) ([]entity.M
 					ModelID string `json:"model_id"`
 				}
 				if json.Unmarshal(champData, &pointer) == nil && (pointer.ModelID == manifest.SourceModelID || pointer.ModelID == manifest.RuntimePackageID) {
-					status = string(entity.ModelStatusChampion)
+					status = taxonomy.ModelStatusChampion
 					break
 				}
 			}

@@ -15,14 +15,14 @@ type ObjectInfo struct {
 }
 
 type CatalogObject struct {
-	Tier         string    `json:"tier"`
-	ObjectKey    string    `json:"object_key"`
-	SizeBytes    int64     `json:"size_bytes"`
-	ETag         string    `json:"etag"`
-	Sector       int32     `json:"sector"`
-	TICID        int64     `json:"tic_id"`
-	ProductType  string    `json:"product_type"`
-	LastModified time.Time `json:"last_modified"`
+	Tier         string
+	ObjectKey    string
+	SizeBytes    int64
+	ETag         string
+	Sector       int32
+	TICID        int64
+	ProductType  string
+	LastModified time.Time
 }
 
 type LakehouseCatalogRepository interface {
