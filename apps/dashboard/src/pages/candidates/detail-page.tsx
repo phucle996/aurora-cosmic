@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
-import { ArrowLeft, CircleAlert, Database, ExternalLink, FlaskConical, LoaderCircle, Orbit, Sparkles, Star, ThermometerSun } from 'lucide-react';
+import { ArrowLeft, CircleAlert, Database, ExternalLink, FlaskConical, LoaderCircle, Orbit, Rotate3D, Sparkles, Star, ThermometerSun } from 'lucide-react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
+import { OrbitViewer3D } from '@/components/OrbitViewer3D';
 import { apiFetch } from '@/lib/api';
 import type { CandidateDetailResponse, LightcurveResponse } from '@/lib/analytics-types';
 
@@ -85,6 +86,51 @@ export default function CandidateDetailPage(): JSX.Element {
           <PhysicsMetric icon={Star} label="Stellar luminosity" value={`${number(physics.stellar_luminosity_solar)} L☉`} source="derived" />
         </CardContent></Card>
       </div>
+
+      {/* 3D Planetary Orbit & System Simulation */}
+      <Card className="overflow-hidden border-primary/25 bg-card shadow-lg">
+        <CardHeader className="bg-muted/15 border-b border-border/60 pb-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Rotate3D className="size-5 text-primary" />
+                3D Planetary Orbit & System Simulation
+              </CardTitle>
+              <CardDescription className="mt-0.5">
+                Mô hình quỹ đạo không gian 3D tương tác của ứng viên {physics.planet_candidate_id} quay quanh sao chủ TIC {candidate.tic_id}.
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="font-mono text-xs text-primary border-primary/40">
+                Keplerian 3D Model
+              </Badge>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          <OrbitViewer3D
+            star={{
+              name: `TIC ${candidate.tic_id}`,
+              teff: evidence.teff || 5778,
+              radius: evidence.stellar_radius || 1.0,
+              mass: evidence.stellar_mass || 1.0,
+              mag: evidence.tmag || 10.0,
+            }}
+            planets={[
+              {
+                name: physics.planet_candidate_id || `Candidate b`,
+                radiusEarth: physics.planet_radius_earth || 1.2,
+                periodDays: physics.orbital_period_days || 10.0,
+                semiMajorAxisAu: physics.semi_major_axis_au || 0.08,
+                tempK: physics.equilibrium_temperature_k || 280,
+                habitabilityTier: habitability.tier,
+                habitabilityScore: habitability.physics_score ?? undefined,
+              },
+            ]}
+            height="500px"
+          />
+        </CardContent>
+      </Card>
 
       <div className="grid gap-6 xl:grid-cols-2">
         <Card><CardHeader><CardTitle>Score breakdown</CardTitle><CardDescription>Mỗi thành phần cho biết điểm đến từ đâu và dữ liệu nào còn thiếu.</CardDescription></CardHeader><CardContent className="space-y-4">{habitability.components.map((component) => <div key={component.key}><div className="mb-1.5 flex items-center justify-between gap-3 text-sm"><span className={component.available ? 'font-medium' : 'text-muted-foreground'}>{component.label}</span><span className="font-mono">{component.available ? component.score.toFixed(1) : '—'} / {component.max_score}</span></div><Progress value={component.available ? component.score / component.max_score * 100 : 0} /><p className="mt-1.5 text-xs text-muted-foreground">{component.reason}</p></div>)}</CardContent></Card>
