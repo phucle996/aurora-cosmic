@@ -76,38 +76,36 @@ func (p *Pipeline) ingestProduct(ctx context.Context, prod model.ManifestProduct
 		}
 	}
 
-	// Check if existing valid object can be skipped.
+	// Check if an existing valid object in MinIO can be reused (cross-run resume).
+	// MAST catalog sizes are advisory estimates — a non-empty stored object is
+	// always accepted even when its size diverges from the catalog manifest.
 	info, exists, err := p.minioClient.StatObject(ctx, p.bucket, objectKey)
 	if err != nil {
 		p.log.Warn("ingest: stat existing object failed",
 			slog.String("object_key", objectKey),
 			slog.Any("error", err),
 		)
-	} else if exists {
-		if existingObjectMatchesExpected(info.Size, prod.SizeBytes) {
-			p.log.Info("ingest: skipping existing valid object",
+	} else if exists && info.Size > 0 {
+		// Accept any non-empty stored object. Log a warning if the MAST catalog
+		// advertised a specific size that doesn't match so operators can audit.
+		if prod.SizeBytes > 0 && info.Size != prod.SizeBytes {
+			p.log.Warn("ingest: reusing existing Bronze object with size divergence from MAST estimate (resume)",
+				slog.String("object_key", objectKey),
+				slog.Int64("stored_size", info.Size),
+				slog.Int64("mast_estimate", prod.SizeBytes),
+			)
+		} else {
+			p.log.Info("ingest: skipping existing valid Bronze object (resume)",
 				slog.String("object_key", objectKey),
 				slog.Int64("size", info.Size),
 			)
-			sha := info.UserMetadata["sha256"]
-			res := p.publishOnly(ctx, prod, objectKey, info.Size, sha)
-			if res.Status == model.StatusStored {
-				res.Status = model.StatusSkipped
-			}
-			return res
 		}
-		p.log.Error("ingest: existing object size mismatch",
-			slog.String("object_key", objectKey),
-			slog.Int64("existing_size", info.Size),
-			slog.Int64("expected_size", prod.SizeBytes),
-		)
-		return model.ProductResult{
-			SourceProductID: prod.SourceProductID,
-			ObjectKey:       objectKey,
-			SizeBytes:       info.Size,
-			Status:          model.StatusFailed,
-			Error:           fmt.Errorf("existing size %d != expected %d", info.Size, prod.SizeBytes),
+		sha := info.UserMetadata["sha256"]
+		res := p.publishOnly(ctx, prod, objectKey, info.Size, sha)
+		if res.Status == model.StatusStored {
+			res.Status = model.StatusSkipped
 		}
+		return res
 	}
 
 	// Stream product from MAST API.
@@ -176,16 +174,14 @@ func (p *Pipeline) ingestProduct(ctx context.Context, prod model.ManifestProduct
 
 	sha256Hex := hr.SumHex()
 
-	// Size verification: check uploaded bytes match expected bytes.
+	// Size advisory check: MAST catalog sizes are estimates. Log divergence but
+	// do not fail — the actual bytes written to MinIO are authoritative.
 	if prod.SizeBytes > 0 && hr.BytesRead() != prod.SizeBytes {
-		return model.ProductResult{
-			SourceProductID: prod.SourceProductID,
-			ObjectKey:       objectKey,
-			SizeBytes:       hr.BytesRead(),
-			SHA256:          sha256Hex,
-			Status:          model.StatusFailed,
-			Error:           fmt.Errorf("stream size mismatch: read %d != expected %d", hr.BytesRead(), prod.SizeBytes),
-		}
+		p.log.Warn("ingest: stream size diverges from MAST catalog estimate (non-fatal)",
+			slog.String("object_key", objectKey),
+			slog.Int64("bytes_read", hr.BytesRead()),
+			slog.Int64("mast_estimate", prod.SizeBytes),
+		)
 	}
 
 	// Post-upload StatObject verification.
@@ -201,14 +197,11 @@ func (p *Pipeline) ingestProduct(ctx context.Context, prod model.ManifestProduct
 		}
 	}
 	if prod.SizeBytes > 0 && statInfo.Size != prod.SizeBytes {
-		return model.ProductResult{
-			SourceProductID: prod.SourceProductID,
-			ObjectKey:       objectKey,
-			SizeBytes:       statInfo.Size,
-			SHA256:          sha256Hex,
-			Status:          model.StatusFailed,
-			Error:           fmt.Errorf("post-upload size mismatch: %d != expected %d", statInfo.Size, prod.SizeBytes),
-		}
+		p.log.Warn("ingest: post-upload size diverges from MAST catalog estimate (non-fatal)",
+			slog.String("object_key", objectKey),
+			slog.Int64("stored_size", statInfo.Size),
+			slog.Int64("mast_estimate", prod.SizeBytes),
+		)
 	}
 
 	p.log.Info("ingest: product stored and verified in MinIO",
