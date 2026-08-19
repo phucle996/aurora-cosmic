@@ -199,8 +199,16 @@ func (s *controlServer) jobs(w http.ResponseWriter, r *http.Request) {
 				manifestHash := model.ComputeManifestHash(manifest)
 				if !request.Fresh {
 					existing, exists, loadErr := cpStore.LoadCurrent(ctx)
-					if loadErr == nil && exists && existing != nil && (existing.ManifestHash == manifestHash || request.Resume) {
-						cpManager = checkpoint.NewManager(cpStore, existing)
+					if loadErr == nil && exists && existing != nil {
+						if existing.ManifestHash == manifestHash || request.Resume {
+							// Same manifest or explicit resume: reuse the existing run checkpoint in-place.
+							cpManager = checkpoint.NewManager(cpStore, existing)
+						} else {
+							// Different manifest (new sector/run): create fresh run but attach
+							// previous checkpoint so pipeline can verify & skip already-stored files.
+							cpManager = checkpoint.NewManager(cpStore, model.CreateNewInitialCheckpoint("ingest-"+uuid.NewString()[:8], resolvedManifestPath, manifestHash, manifest.Products()))
+							cpManager.SetPreviousCheckpoint(existing)
+						}
 					}
 				}
 				if cpManager == nil {

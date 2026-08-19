@@ -10,9 +10,10 @@ import (
 
 // Manager provides thread-safe access and persistence for an active ingestion Checkpoint.
 type Manager struct {
-	mu    sync.RWMutex
-	cp    *model.Checkpoint
-	store *Store
+	mu     sync.RWMutex
+	cp     *model.Checkpoint
+	prevCp *model.Checkpoint // previous run's checkpoint, used for cross-run resume
+	store  *Store
 }
 
 // NewManager creates or wraps a Checkpoint Manager.
@@ -21,6 +22,21 @@ func NewManager(store *Store, cp *model.Checkpoint) *Manager {
 		cp:    cp,
 		store: store,
 	}
+}
+
+// SetPreviousCheckpoint attaches the previous run's checkpoint for cross-run resume.
+func (m *Manager) SetPreviousCheckpoint(prev *model.Checkpoint) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.prevCp = prev
+}
+
+// PreviousCheckpoint returns the previous run's checkpoint (read-only). Returns nil
+// if no previous checkpoint was loaded or the manager was not configured for resume.
+func (m *Manager) PreviousCheckpoint() *model.Checkpoint {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.prevCp
 }
 
 // GetProductCheckpoint returns a thread-safe copy of a product's checkpoint state.

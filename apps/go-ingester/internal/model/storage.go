@@ -29,6 +29,9 @@ type Client interface {
 	PutObject(ctx context.Context, bucket, objectKey string, reader io.Reader, objectSize int64, userMetadata map[string]string) error
 	StatObject(ctx context.Context, bucket, objectKey string) (*ObjectInfo, bool, error)
 	GetObject(ctx context.Context, bucket, objectKey string) (io.ReadCloser, error)
+	// ListObjectsWithPrefix lists all objects under a key prefix. Used for
+	// bulk existence checks so a resume run avoids per-file StatObject calls.
+	ListObjectsWithPrefix(ctx context.Context, bucket, prefix string) ([]ObjectInfo, error)
 }
 
 // BuildObjectKey constructs a deterministic MinIO Bronze object key for a product.

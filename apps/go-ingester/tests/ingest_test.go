@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -68,6 +69,18 @@ func (m *mockStorageClient) GetObject(ctx context.Context, bucket, objectKey str
 		return nil, model.ErrObjectNotFound
 	}
 	return io.NopCloser(bytes.NewReader(data)), nil
+}
+
+func (m *mockStorageClient) ListObjectsWithPrefix(_ context.Context, _ string, prefix string) ([]model.ObjectInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var result []model.ObjectInfo
+	for key, info := range m.objects {
+		if info != nil && strings.HasPrefix(key, prefix) {
+			result = append(result, *info)
+		}
+	}
+	return result, nil
 }
 
 func TestPipelineDryRun(t *testing.T) {
@@ -294,7 +307,11 @@ func TestPipelineSkipExistingObjectWithUnknownExpectedSize(t *testing.T) {
 	}
 }
 
-func TestPipelineSizeMismatchFailure(t *testing.T) {
+// TestPipelineSizeMismatchAdvisory verifies that a divergence between the
+// MAST catalog estimate and actual stream bytes is treated as advisory:
+// the product is stored successfully with a warning log, not failed.
+// MAST catalog sizes are estimates and routinely diverge from actual file sizes.
+func TestPipelineSizeMismatchAdvisory(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/fits")
 		w.WriteHeader(http.StatusOK)
@@ -323,7 +340,7 @@ func TestPipelineSizeMismatchFailure(t *testing.T) {
 					Kind:            model.KindTargetPixel,
 					Filename:        "mismatch_tp.fits",
 					DataURI:         ts.URL + "/short.fits",
-					SizeBytes:       1000,
+					SizeBytes:       1000, // MAST estimate — actual stream is 5 bytes
 					Sector:          1,
 					TICID:           888,
 				},
@@ -336,11 +353,15 @@ func TestPipelineSizeMismatchFailure(t *testing.T) {
 		t.Fatalf("unexpected pipeline execution error: %v", err)
 	}
 
-	if summary.FailedCount != 1 {
-		t.Errorf("expected 1 failed product due to size mismatch, got %d", summary.FailedCount)
+	// MAST size estimates are advisory — divergence must not cause a failure.
+	if summary.FailedCount != 0 {
+		t.Errorf("expected 0 failures for MAST size estimate divergence, got %d", summary.FailedCount)
 	}
-	if len(results) != 1 || results[0].Status != model.StatusFailed {
-		t.Errorf("expected FAILED status in result, got %v", results[0].Status)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Status == model.StatusFailed {
+		t.Errorf("product should not be FAILED for advisory size divergence, got %v", results[0].Status)
 	}
 }
 

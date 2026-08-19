@@ -214,8 +214,55 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun
 		})
 	}
 
-	// 2. Checkpoint recovery & filtering before queueing downloads.
+	// Cross-run resume: load previous checkpoint to skip already-stored products.
+	// Products that were STORED/PUBLISHED in the previous run are verified with
+	// a single StatObject call — much faster than downloading from MAST again.
+	// Products absent from the previous checkpoint are queued for fresh download.
+	type prevEntry struct {
+		objectKey string
+		size      int64
+		sha256    string
+	}
+	prevDone := make(map[string]prevEntry) // productID → stored object info
+	if !dryRun && p.cpManager != nil {
+		if prev := p.cpManager.PreviousCheckpoint(); prev != nil {
+			for id, pc := range prev.Products {
+				if pc != nil && (pc.State == model.StatePublished || pc.State == model.StateStored) && pc.ObjectKey != "" {
+					prevDone[id] = prevEntry{objectKey: pc.ObjectKey, size: pc.SizeBytes, sha256: pc.SHA256}
+				}
+			}
+			p.log.Info("ingest: previous checkpoint loaded for cross-run resume",
+				slog.Int("prev_done_count", len(prevDone)),
+			)
+		}
+	}
+
+	// 2. Filter pass: resolve each product against previous checkpoint or current run checkpoint.
 	for _, prod := range allProducts {
+		// Fast path A: product was STORED/PUBLISHED in a previous run.
+		// Verify the Bronze object still exists with one StatObject — if valid, skip download.
+		if prev, ok := prevDone[prod.SourceProductID]; ok {
+			info, exists, statErr := p.minioClient.StatObject(ctx, p.bucket, prev.objectKey)
+			if statErr == nil && exists && info.Size > 0 {
+				res := p.publishOnly(ctx, prod, prev.objectKey, info.Size, prev.sha256)
+				if res.Status == model.StatusStored {
+					res.Status = model.StatusSkipped
+				}
+				if p.metrics != nil {
+					p.metrics.ProductStarted()
+				}
+				resultsChan <- res
+				reportProgress(res)
+				continue
+			}
+			// Object missing or stat error — checkpoint invalid, log and re-download.
+			p.log.Warn("ingest: previous checkpoint entry invalid, will re-download",
+				slog.String("product_id", prod.SourceProductID),
+				slog.String("object_key", prev.objectKey),
+			)
+		}
+
+		// Fast path B: current-run checkpoint (within-run crash recovery).
 		if p.cpManager != nil {
 			pc, ok := p.cpManager.GetProductCheckpoint(prod.SourceProductID)
 			if ok {
@@ -236,6 +283,7 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun
 			}
 		}
 
+		// Slow path: product not in any checkpoint — queue for fresh download.
 		allProducts[pendingCount] = prod
 		pendingCount++
 	}
