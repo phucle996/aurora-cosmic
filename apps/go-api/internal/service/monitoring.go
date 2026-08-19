@@ -254,7 +254,7 @@ func (s *MonitoringService) queryComponent(ctx context.Context, spec componentSp
 
 // selectComponents lọc danh sách component dựa trên tab người dùng đang chọn trên UI
 func selectComponents(tab string) ([]componentSpec, error) {
-	if tab == "" || tab == entity.MonitoringAllTab {
+	if tab == "" || tab == "all" {
 		return components, nil
 	}
 	for _, component := range components {

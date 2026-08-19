@@ -28,22 +28,3 @@ type MonitoringWindow struct {
 	Duration time.Duration
 	Step     time.Duration
 }
-
-const MonitoringAllTab = "all"
-
-func IsMonitoringTab(tab string) bool {
-	switch tab {
-	case MonitoringAllTab,
-		"go-ingester",
-		"rust-preprocessor",
-		"python-ml-worker",
-		"rust-inference",
-		"go-api",
-		"minio",
-		"nats",
-		"clickhouse":
-		return true
-	default:
-		return false
-	}
-}

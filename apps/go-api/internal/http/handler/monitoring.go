@@ -41,9 +41,9 @@ func (h *MonitoringHandler) Query(c *gin.Context) {
 	window := entity.MonitoringWindow{Duration: duration, Step: step}
 	tab := strings.TrimSpace(c.Query("tab"))
 	if tab == "" {
-		tab = entity.MonitoringAllTab
+		tab = "all"
 	}
-	if !entity.IsMonitoringTab(tab) {
+	if !isMonitoringTab(tab) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown monitoring tab"})
 		return
 	}
@@ -95,4 +95,21 @@ func (h *MonitoringHandler) Query(c *gin.Context) {
 		"step_seconds": int64(window.Step / time.Second),
 		"components":   items,
 	})
+}
+
+func isMonitoringTab(tab string) bool {
+	switch tab {
+	case "all",
+		"go-ingester",
+		"rust-preprocessor",
+		"python-ml-worker",
+		"rust-inference",
+		"go-api",
+		"minio",
+		"nats",
+		"clickhouse":
+		return true
+	default:
+		return false
+	}
 }
