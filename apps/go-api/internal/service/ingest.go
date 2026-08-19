@@ -91,7 +91,7 @@ func NewIngestServiceWithCatalogAndEvents(objects repo.ObjectRepository, catalog
 		publisher:    publisher,
 		storageCache: make(map[string]*storageCacheEntry),
 	}
-	go svc.syncMinIOToCatalog()
+	go svc.runPeriodicCatalogSync()
 	return svc
 }
 
@@ -613,5 +613,20 @@ func (s *IngestService) syncMinIOToCatalog() {
 		if len(batch) > 0 {
 			_ = s.catalog.UpsertObjects(ctx, batch)
 		}
+	}
+}
+
+// runPeriodicCatalogSync runs syncMinIOToCatalog immediately on startup, then
+// every 2 minutes so the Datasets page always reflects the current lakehouse state.
+func (s *IngestService) runPeriodicCatalogSync() {
+	const interval = 2 * time.Minute
+	s.syncMinIOToCatalog()
+	for range time.Tick(interval) {
+		s.syncMinIOToCatalog()
+		// Invalidate the MinIO fallback cache so the next Storage() call
+		// re-reads from ClickHouse (or fresh MinIO list) instead of stale data.
+		s.runtimeMu.Lock()
+		s.storageCache = make(map[string]*storageCacheEntry)
+		s.runtimeMu.Unlock()
 	}
 }
