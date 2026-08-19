@@ -127,7 +127,7 @@ export default function CandidateDetailPage(): JSX.Element {
                 habitabilityScore: habitability.physics_score ?? undefined,
               },
             ]}
-            height="500px"
+            height="620px"
           />
         </CardContent>
       </Card>

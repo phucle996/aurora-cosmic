@@ -172,7 +172,7 @@ export default function ExoplanetsPage(): JSX.Element {
               <OrbitViewer3D
                 star={currentSim.star}
                 planets={currentSim.planets}
-                height="560px"
+                height="680px"
               />
             </CardContent>
           </Card>

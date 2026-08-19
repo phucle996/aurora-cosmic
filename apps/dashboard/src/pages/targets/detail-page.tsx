@@ -123,7 +123,7 @@ export default function TargetDetailPage(): JSX.Element {
                   ]
                 : []
             }
-            height="440px"
+            height="580px"
           />
         </CardContent>
       </Card>
