@@ -73,24 +73,23 @@ type InferenceJob struct {
 	Status                  string
 	OutputKey               string
 }
-
-type TrainingJobRequest struct {
-	Task           string  `json:"task"`
-	GoldSnapshotID string  `json:"gold_snapshot_id"`
-	BaseModelID    string  `json:"base_model_id,omitempty"`   // Model ID gốc làm nền tảng (e.g. "champion", "model-cand-v1-...", hoặc "" để train từ đầu)
-	TrainingMode   string  `json:"training_mode,omitempty"`   // "fine_tune" (kế thừa trọng số) hoặc "scratch" (tạo mới ngẫu nhiên)
-	Epochs         int     `json:"epochs"`
-	LearningRate   float64 `json:"learning_rate"`
-	BatchSize      int     `json:"batch_size"`
-	Seed           int     `json:"seed"`
-	AutoPromote    bool    `json:"auto_promote"`
+type TrainingJobSpec struct {
+	Task           string
+	GoldSnapshotID string
+	BaseModelID    string
+	TrainingMode   string
+	Epochs         int
+	LearningRate   float64
+	BatchSize      int
+	Seed           int
+	AutoPromote    bool
 }
 
-type TrainingJobResponse struct {
-	JobID          string `json:"job_id"`
-	Task           string `json:"task"`
-	GoldSnapshotID string `json:"gold_snapshot_id"`
-	Status         string `json:"status"`
-	CreatedAt      string `json:"created_at"`
-	Message        string `json:"message"`
+type TrainingJobResult struct {
+	JobID          string
+	Task           string
+	GoldSnapshotID string
+	Status         string
+	CreatedAt      string
+	Message        string
 }

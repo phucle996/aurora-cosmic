@@ -43,8 +43,8 @@ func (fakeModels) ListModels(context.Context, string) ([]entity.Model, error) {
 	return []entity.Model{}, nil
 }
 
-func (fakeModels) StartTrainingJob(context.Context, entity.TrainingJobRequest) (*entity.TrainingJobResponse, error) {
-	return &entity.TrainingJobResponse{
+func (fakeModels) StartTrainingJob(context.Context, entity.TrainingJobSpec) (*entity.TrainingJobResult, error) {
+	return &entity.TrainingJobResult{
 		JobID:  "train-test-1",
 		Task:   "candidate_vetting",
 		Status: "queued",

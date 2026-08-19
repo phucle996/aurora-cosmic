@@ -6,6 +6,7 @@ import (
 
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/service"
+	"go-api/internal/http/dto"
 
 	"github.com/gin-gonic/gin"
 )
@@ -102,24 +103,36 @@ func (h *ModelsHandler) RetryInferenceJob(c *gin.Context) {
 
 // StartTraining tiếp nhận request huấn luyện mô hình mới và dispatch tới GPU worker
 func (h *ModelsHandler) StartTraining(c *gin.Context) {
-	var req entity.TrainingJobRequest
+	var req dto.TrainingJobRequest
 	if err := c.ShouldBindJSON(&req); err != nil && c.Request.ContentLength > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid training payload"})
 		return
 	}
 
-	result, err := h.models.StartTrainingJob(c.Request.Context(), req)
+	spec := entity.TrainingJobSpec{
+		Task:           req.Task,
+		GoldSnapshotID: req.GoldSnapshotID,
+		BaseModelID:    req.BaseModelID,
+		TrainingMode:   req.TrainingMode,
+		Epochs:         req.Epochs,
+		LearningRate:   req.LearningRate,
+		BatchSize:      req.BatchSize,
+		Seed:           req.Seed,
+		AutoPromote:    req.AutoPromote,
+	}
+
+	result, err := h.models.StartTrainingJob(c.Request.Context(), spec)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusAccepted, gin.H{
-		"job_id":           result.JobID,
-		"task":             result.Task,
-		"gold_snapshot_id": result.GoldSnapshotID,
-		"status":           result.Status,
-		"created_at":       result.CreatedAt,
-		"message":          result.Message,
+	c.JSON(http.StatusAccepted, dto.TrainingJobResponse{
+		JobID:          result.JobID,
+		Task:           result.Task,
+		GoldSnapshotID: result.GoldSnapshotID,
+		Status:         result.Status,
+		CreatedAt:      result.CreatedAt,
+		Message:        result.Message,
 	})
 }

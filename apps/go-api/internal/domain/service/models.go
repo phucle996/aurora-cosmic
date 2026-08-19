@@ -7,5 +7,5 @@ import (
 
 type Models interface {
 	ListModels(context.Context, string) ([]entity.Model, error)
-	StartTrainingJob(context.Context, entity.TrainingJobRequest) (*entity.TrainingJobResponse, error)
+	StartTrainingJob(context.Context, entity.TrainingJobSpec) (*entity.TrainingJobResult, error)
 }

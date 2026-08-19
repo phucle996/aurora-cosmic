@@ -187,7 +187,7 @@ func (s *ModelsService) ListModels(ctx context.Context, task string) ([]entity.M
 // ============================================================================
 // StartTrainingJob tiếp nhận yêu cầu từ Dashboard, đóng gói cấu hình huấn luyện
 // và phát sự kiện `aurora.v1.ml.training.requested` qua NATS tới GPU ML Worker.
-func (s *ModelsService) StartTrainingJob(ctx context.Context, req entity.TrainingJobRequest) (*entity.TrainingJobResponse, error) {
+func (s *ModelsService) StartTrainingJob(ctx context.Context, req entity.TrainingJobSpec) (*entity.TrainingJobResult, error) {
 	if req.Task == "" {
 		req.Task = "candidate_vetting"
 	}
@@ -236,7 +236,7 @@ func (s *ModelsService) StartTrainingJob(ctx context.Context, req entity.Trainin
 		}
 	}
 
-	return &entity.TrainingJobResponse{
+	return &entity.TrainingJobResult{
 		JobID:          jobID,
 		Task:           req.Task,
 		GoldSnapshotID: req.GoldSnapshotID,
