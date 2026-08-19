@@ -9,6 +9,7 @@ SERVICES=(
   "go-ingester"
   "rust-preprocessor"
   "python-ml-worker"
+  "python-gold-builder"
   "rust-inference"
   "go-api"
   "dashboard"
@@ -20,15 +21,28 @@ echo "${GHCR_TOKEN}" | docker login ghcr.io -u phucle996 --password-stdin
 for svc in "${SERVICES[@]}"; do
   IMAGE="${REGISTRY}/${svc}:${TAG}"
   LATEST="${REGISTRY}/${svc}:latest"
-  CTX="${REPO_ROOT}/apps/${svc}"
-
-  echo ""
-  echo "==> Building ${svc} -> ${IMAGE}"
-  docker build \
-    --platform linux/amd64 \
-    -t "${IMAGE}" \
-    -t "${LATEST}" \
-    "${CTX}"
+  
+  if [ "${svc}" = "python-gold-builder" ]; then
+    CTX="${REPO_ROOT}/apps"
+    DOCKERFILE="${REPO_ROOT}/apps/python-gold-builder/Dockerfile"
+    echo ""
+    echo "==> Building ${svc} -> ${IMAGE}"
+    docker build \
+      --platform linux/amd64 \
+      -f "${DOCKERFILE}" \
+      -t "${IMAGE}" \
+      -t "${LATEST}" \
+      "${CTX}"
+  else
+    CTX="${REPO_ROOT}/apps/${svc}"
+    echo ""
+    echo "==> Building ${svc} -> ${IMAGE}"
+    docker build \
+      --platform linux/amd64 \
+      -t "${IMAGE}" \
+      -t "${LATEST}" \
+      "${CTX}"
+  fi
 
   echo "==> Pushing ${IMAGE}"
   docker push "${IMAGE}"
@@ -37,4 +51,4 @@ for svc in "${SERVICES[@]}"; do
 done
 
 echo ""
-echo "All 6 images pushed to ${REGISTRY} with tag ${TAG}"
+echo "All 7 images pushed to ${REGISTRY} with tag ${TAG} and latest"
