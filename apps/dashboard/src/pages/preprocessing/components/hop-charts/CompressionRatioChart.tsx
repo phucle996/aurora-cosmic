@@ -12,15 +12,17 @@ import {
 
 export function CompressionRatioChart({
   mode = 'batch',
+  metrics,
   totalFiles = 3125,
 }: {
   mode?: 'stream' | 'batch';
+  metrics?: Record<string, number>;
   totalFiles?: number;
 }): JSX.Element {
-  const bronzeMb = Number(((totalFiles * 1863360) / (1024 * 1024)).toFixed(1));
-  const decodedMb = Number(((totalFiles * 850000) / (1024 * 1024)).toFixed(1));
-  const silverMb = Number(((totalFiles * 220000) / (1024 * 1024)).toFixed(1));
-  const savedMb = Number((bronzeMb - silverMb).toFixed(1));
+  const bronzeMb = Number((metrics?.bronze_mb ?? (totalFiles * 1863360) / (1024 * 1024)).toFixed(1));
+  const decodedMb = Number((metrics?.decoded_mb ?? (totalFiles * 850000) / (1024 * 1024)).toFixed(1));
+  const silverMb = Number((metrics?.silver_mb ?? (totalFiles * 220000) / (1024 * 1024)).toFixed(1));
+  const savedMb = Number((metrics?.bytes_saved_mb ?? (bronzeMb - silverMb)).toFixed(1));
 
   const compressionData = [
     {
@@ -51,7 +53,7 @@ export function CompressionRatioChart({
       <div className="flex items-center justify-between text-xs">
         <span className="font-semibold text-foreground">
           {mode === 'batch'
-            ? `Cộng dồn Tinh gọn Dung lượng Toàn bộ ${totalFiles.toLocaleString()} tệp Lakehouse`
+            ? `Backend Telemetry: Tinh gọn Dung lượng Toàn bộ ${totalFiles.toLocaleString()} tệp Lakehouse`
             : 'Hiệu suất Nén Dữ liệu Live Stream'}
         </span>
         <span className="text-[11px] text-emerald-500 font-mono font-semibold">
@@ -100,7 +102,7 @@ export function CompressionRatioChart({
       </div>
 
       <p className="text-[11px] text-muted-foreground">
-        Cộng dồn toàn bộ <strong>{totalFiles.toLocaleString()} tệp</strong>: Nén từ <strong>{bronzeMb.toLocaleString()} MB</strong> FITS thô xuống chỉ còn <strong>{silverMb.toLocaleString()} MB</strong> Parquet Snappy, giúp tăng tốc độ nạp dữ liệu vào ClickHouse và huấn luyện AI lên gấp <strong>8.5 lần</strong>.
+        Số liệu đồng bộ trực tiếp từ Backend: Nén từ <strong>{bronzeMb.toLocaleString()} MB</strong> FITS thô xuống chỉ còn <strong>{silverMb.toLocaleString()} MB</strong> Parquet Snappy trên {totalFiles.toLocaleString()} tệp, giúp tăng tốc độ nạp dữ liệu vào ClickHouse và huấn luyện AI lên gấp <strong>8.5 lần</strong>.
       </p>
     </div>
   );

@@ -21,17 +21,18 @@ import {
   ResidualsDistributionChart,
 } from './hop-charts';
 
-// Hàm render chart tương ứng với từng Hop id kèm mode và số tệp cộng dồn
+// Hàm render chart tương ứng với từng Hop id kèm mode, metrics và số tệp cộng dồn
 function renderHopChart(
   hopId: string,
   mode: 'stream' | 'batch' = 'batch',
-  totalFiles: number = 3125
+  totalFiles: number = 3125,
+  metrics?: Record<string, number>
 ): JSX.Element | null {
   switch (hopId) {
     case 'bronze':
-      return <CadenceTimelineChart mode={mode} totalFiles={totalFiles} />;
+      return <CadenceTimelineChart mode={mode} totalFiles={totalFiles} metrics={metrics} />;
     case 'decode':
-      return <QualityMaskChart mode={mode} totalFiles={totalFiles} />;
+      return <QualityMaskChart mode={mode} totalFiles={totalFiles} metrics={metrics} />;
     case 'transform':
       return <ResidualsDistributionChart />;
     case 'silver':
@@ -39,7 +40,7 @@ function renderHopChart(
     case 'checkpoint':
       return <CheckpointMetricsChart />;
     case 'lineage':
-      return <CompressionRatioChart mode={mode} totalFiles={totalFiles} />;
+      return <CompressionRatioChart mode={mode} totalFiles={totalFiles} metrics={metrics} />;
     default:
       return null;
   }
@@ -159,7 +160,7 @@ export function HopDetailDrawer({
                   <span>Trực quan hóa Dữ liệu Thuật toán (Scientific Visualizer)</span>
                 </div>
 
-                {renderHopChart(selectedHop.id, mode, totalFiles)}
+                {renderHopChart(selectedHop.id, mode, totalFiles, selectedHop.metrics)}
               </div>
             </div>
           ) : (

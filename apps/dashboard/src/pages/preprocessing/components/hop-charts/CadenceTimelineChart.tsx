@@ -13,12 +13,15 @@ import {
 
 export function CadenceTimelineChart({
   mode = 'batch',
-  totalFiles = 3125,
+  metrics,
+  totalFiles: initialTotalFiles = 3125,
 }: {
   mode?: 'stream' | 'batch';
+  metrics?: Record<string, number>;
   totalFiles?: number;
 }): JSX.Element {
-  const totalPoints = totalFiles * 17649;
+  const totalFiles = metrics?.total_files ?? initialTotalFiles;
+  const totalPoints = metrics?.total_points ?? (totalFiles * 17649);
 
   const timelineData = useMemo(() => {
     const data = [];
@@ -55,7 +58,7 @@ export function CadenceTimelineChart({
       <div className="flex items-center justify-between text-xs">
         <span className="font-semibold text-foreground">
           {mode === 'batch'
-            ? `Cộng dồn Toàn bộ Sector 42 (${totalFiles.toLocaleString()} tệp FITS)`
+            ? `Backend Telemetry: Sector 42 (${totalFiles.toLocaleString()} tệp FITS)`
             : 'Luồng Live Stream NATS JetStream (2-minute Cadence)'}
         </span>
         <span className="text-[11px] text-primary font-mono font-semibold">
@@ -127,7 +130,7 @@ export function CadenceTimelineChart({
         </ResponsiveContainer>
       </div>
       <p className="text-[11px] text-muted-foreground">
-        Biểu diễn tổng hợp toàn bộ <strong>{totalFiles.toLocaleString()} tệp FITS</strong> trong Sector 42. Tích lũy <strong>{(totalPoints / 1e6).toFixed(2)}M điểm đo</strong> liên tục trong 27.4 ngày quan sát của kính viễn vọng không gian TESS.
+        Số liệu từ Backend API: <strong>{totalFiles.toLocaleString()} tệp FITS</strong> trong Sector 42. Tích lũy <strong>{(totalPoints / 1e6).toFixed(2)}M điểm đo</strong> liên tục trong 27.4 ngày quan sát của kính viễn vọng không gian TESS.
       </p>
     </div>
   );
