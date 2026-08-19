@@ -181,20 +181,34 @@ def run_training_pipeline(payload: Dict[str, Any], config: Config) -> Dict[str, 
         LOGGER.warning("No rows loaded from Gold snapshots. Generating rich synthetic astrophysical dataset.")
         rows = generate_synthetic_features(max(200, len(gold_snapshot_ids) * 50))
 
-    # Ensure training labels and unique product IDs exist
+    # Ensure supervised training labels, non-null features, and unique product IDs exist
     for i, r in enumerate(rows):
         if not r.get("source_product_id"):
             r["source_product_id"] = f"tess-product-{i + 1:05d}"
-        if not r.get("training_label"):
-            r["training_label"] = "POSITIVE" if (i % 4 == 0) else "NEGATIVE"
-        if not r.get("anomaly_label"):
-            r["anomaly_label"] = "ANOMALOUS" if (i % 8 == 0) else "NOMINAL"
-        if not r.get("bls_available"):
-            r["bls_available"] = 1
-        if not r.get("tic_available"):
-            r["tic_available"] = 1
-        if not r.get("tpf_evidence_available"):
-            r["tpf_evidence_available"] = 1
+        
+        curr_label = r.get("training_label")
+        if curr_label not in ("POSITIVE", "NEGATIVE"):
+            bls_power = float(r.get("bls_power") or 0.0)
+            bls_depth = float(r.get("bls_depth") or 0.0)
+            if bls_power >= 10.0 and bls_depth >= 0.0002:
+                r["training_label"] = "POSITIVE"
+            elif i % 5 == 0:
+                r["training_label"] = "POSITIVE"
+            else:
+                r["training_label"] = "NEGATIVE"
+
+        curr_ano = r.get("anomaly_label")
+        if curr_ano not in ("ANOMALOUS", "NOMINAL"):
+            flux_kurt = abs(float(r.get("flux_kurtosis") or 0.0))
+            flux_skew = abs(float(r.get("flux_skewness") or 0.0))
+            if flux_kurt > 2.0 or flux_skew > 1.5 or (i % 8 == 0):
+                r["anomaly_label"] = "ANOMALOUS"
+            else:
+                r["anomaly_label"] = "NOMINAL"
+
+        r["bls_available"] = 1 if r.get("bls_available") else 0
+        r["tic_available"] = 1 if r.get("tic_available") else 0
+        r["tpf_evidence_available"] = 1 if r.get("tpf_evidence_available") else 0
 
     # 3. Setup temporary working directory for training artifacts
     with tempfile.TemporaryDirectory(prefix="aurora_train_") as temp_dir:
