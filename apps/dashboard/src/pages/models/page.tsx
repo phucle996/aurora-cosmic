@@ -291,11 +291,32 @@ export default function ModelsPage(): JSX.Element {
     }
   };
 
-  const visibleModels = useMemo(
-    () => (taskFilter === 'all' ? models : models.filter((model) => model.task === taskFilter)),
-    [models, taskFilter],
-  );
-  const selectedModel = models.find((model) => model.runtime_package_id === selectedRuntimeId) ?? visibleModels[0];
+  // Models search and pagination
+  const [modelSearch, setModelSearch] = useState('');
+  const [modelPage, setModelPage] = useState(1);
+  const MODEL_PAGE_SIZE = 8;
+
+  const filteredModels = useMemo(() => {
+    let list = taskFilter === 'all' ? models : models.filter((model) => model.task === taskFilter);
+    if (modelSearch.trim()) {
+      const q = modelSearch.toLowerCase();
+      list = list.filter(
+        (m) =>
+          m.model_id.toLowerCase().includes(q) ||
+          m.runtime_package_id.toLowerCase().includes(q) ||
+          (taskLabel[m.task] ?? m.task).toLowerCase().includes(q),
+      );
+    }
+    return list;
+  }, [models, taskFilter, modelSearch]);
+
+  const totalModelPages = Math.ceil(filteredModels.length / MODEL_PAGE_SIZE) || 1;
+  const pagedModels = useMemo(() => {
+    const start = (modelPage - 1) * MODEL_PAGE_SIZE;
+    return filteredModels.slice(start, start + MODEL_PAGE_SIZE);
+  }, [filteredModels, modelPage]);
+
+  const selectedModel = models.find((model) => model.runtime_package_id === selectedRuntimeId) ?? filteredModels[0];
   const selectedJobs = selectedModel
     ? jobs.filter(
       (job) => job.model_id === selectedModel.model_id || job.runtime_package_id === selectedModel.runtime_package_id,
@@ -678,52 +699,101 @@ export default function ModelsPage(): JSX.Element {
               ))}
             </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
+            {/* Search filter bar */}
+            <div className="flex items-center justify-between gap-3">
+              <div className="relative flex-1 max-w-sm">
+                <Input
+                  placeholder="Tìm theo Model ID, Package ID hoặc Task..."
+                  value={modelSearch}
+                  onChange={(e) => {
+                    setModelSearch(e.target.value);
+                    setModelPage(1);
+                  }}
+                  className="h-8 text-xs pl-3"
+                />
+              </div>
+              <div className="text-xs text-muted-foreground font-mono">
+                Hiển thị {pagedModels.length} / {filteredModels.length} models
+              </div>
+            </div>
+
             {loading ? (
               <LoadingState />
-            ) : visibleModels.length === 0 ? (
-              <EmptyState label="Chưa có runtime package hợp lệ trong MinIO. Hãy bấm 'Train New Model' để tạo mô hình đầu tiên." />
+            ) : filteredModels.length === 0 ? (
+              <EmptyState label="Chưa có runtime package phù hợp với bộ lọc." />
             ) : (
-              <div className="overflow-x-auto">
-                <Table className="min-w-[650px]">
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Mô hình (Model ID)</TableHead>
-                      <TableHead>Tác vụ (Task)</TableHead>
-                      <TableHead>Trạng thái</TableHead>
-                      <TableHead>Runtime Package</TableHead>
-                      <TableHead className="text-right">Dung lượng ONNX</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {visibleModels.map((model) => (
-                      <TableRow
-                        key={`${model.runtime_package_id}-${model.model_id}`}
-                        data-state={selectedModel?.runtime_package_id === model.runtime_package_id ? 'selected' : undefined}
-                        className="cursor-pointer"
-                        onClick={() => setSelectedRuntimeId(model.runtime_package_id)}
-                      >
-                        <TableCell>
-                          <div className="min-w-44">
-                            <p className="font-medium text-foreground">{model.model_id}</p>
-                            <p className="mt-0.5 text-xs text-muted-foreground font-mono">{model.model_version}</p>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-xs text-muted-foreground">{taskLabel[model.task] ?? model.task}</TableCell>
-                        <TableCell>
-                          <Badge variant={statusVariant(model.status)}>
-                            {model.status === 'champion' ? '👑 Champion' : model.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">{model.runtime_package_id}</TableCell>
-                        <TableCell className="text-right font-mono text-xs text-muted-foreground">
-                          {formatBytes(model.onnx_size_bytes)}
-                        </TableCell>
+              <>
+                <div className="overflow-x-auto">
+                  <Table className="min-w-[650px]">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Mô hình (Model ID)</TableHead>
+                        <TableHead>Tác vụ (Task)</TableHead>
+                        <TableHead>Trạng thái</TableHead>
+                        <TableHead>Runtime Package</TableHead>
+                        <TableHead className="text-right">Dung lượng ONNX</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {pagedModels.map((model) => (
+                        <TableRow
+                          key={`${model.runtime_package_id}-${model.model_id}`}
+                          data-state={selectedModel?.runtime_package_id === model.runtime_package_id ? 'selected' : undefined}
+                          className="cursor-pointer"
+                          onClick={() => setSelectedRuntimeId(model.runtime_package_id)}
+                        >
+                          <TableCell>
+                            <div className="min-w-44">
+                              <p className="font-medium text-foreground">{model.model_id}</p>
+                              <p className="mt-0.5 text-xs text-muted-foreground font-mono">{model.model_version}</p>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground">{taskLabel[model.task] ?? model.task}</TableCell>
+                          <TableCell>
+                            <Badge variant={statusVariant(model.status)}>
+                              {model.status === 'champion' ? '👑 Champion' : model.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="font-mono text-xs text-muted-foreground">{model.runtime_package_id}</TableCell>
+                          <TableCell className="text-right font-mono text-xs text-muted-foreground">
+                            {formatBytes(model.onnx_size_bytes)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                {/* Pagination Controls */}
+                {totalModelPages > 1 && (
+                  <div className="flex items-center justify-between border-t border-border/60 pt-3 text-xs">
+                    <span className="text-muted-foreground">
+                      Trang <span className="font-medium text-foreground">{modelPage}</span> / {totalModelPages}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 px-2.5 text-xs"
+                        onClick={() => setModelPage((p) => Math.max(1, p - 1))}
+                        disabled={modelPage <= 1}
+                      >
+                        Trước
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 px-2.5 text-xs"
+                        onClick={() => setModelPage((p) => Math.min(totalModelPages, p + 1))}
+                        disabled={modelPage >= totalModelPages}
+                      >
+                        Sau
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </CardContent>
         </Card>
