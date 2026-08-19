@@ -10,32 +10,44 @@ import {
   YAxis,
 } from 'recharts';
 
-export function QualityMaskChart(): JSX.Element {
+export function QualityMaskChart({
+  mode = 'batch',
+  totalFiles = 3125,
+}: {
+  mode?: 'stream' | 'batch';
+  totalFiles?: number;
+}): JSX.Element {
+  const totalPoints = totalFiles * 17649;
+  const validCount = Math.round(totalPoints * 0.984);
+  const straylightCount = Math.round(totalPoints * 0.008);
+  const desatCount = Math.round(totalPoints * 0.005);
+  const cosmicCount = Math.round(totalPoints * 0.003);
+
   const maskData = [
     {
       name: 'Hợp lệ (Bit = 0)',
-      count: 17367,
+      count: validCount,
       pct: 98.4,
       color: '#10b981',
-      desc: 'Điểm đo hoàn hảo, không bị rung lắc hay lóa sáng.',
+      desc: 'Dữ liệu quang học chuẩn xác, không bị biến dạng camera.',
     },
     {
       name: 'Straylight Glint (Bit 13)',
-      count: 141,
+      count: straylightCount,
       pct: 0.8,
       color: '#f59e0b',
       desc: 'Bị lóa ánh sáng tán xạ từ Mặt Trăng hoặc Trái Đất.',
     },
     {
       name: 'Wheel Desat (Bit 6)',
-      count: 88,
+      count: desatCount,
       pct: 0.5,
       color: '#ef4444',
       desc: 'Bánh đà vệ tinh xả động lượng gây rung camera.',
     },
     {
       name: 'Cosmic Ray (Bit 10)',
-      count: 53,
+      count: cosmicCount,
       pct: 0.3,
       color: '#a855f7',
       desc: 'Hạt năng lượng cao vũ trụ đâm trực tiếp vào cảm biến CCD.',
@@ -46,10 +58,12 @@ export function QualityMaskChart(): JSX.Element {
     <div className="space-y-2">
       <div className="flex items-center justify-between text-xs">
         <span className="font-semibold text-foreground">
-          Phân bổ Cờ Chất lượng (NASA TESS Quality Bitmask Filter)
+          {mode === 'batch'
+            ? `Cộng dồn Lọc Chất lượng Toàn bộ ${totalFiles.toLocaleString()} tệp FITS`
+            : 'Phân bổ Cờ Chất lượng Live Stream NATS'}
         </span>
         <span className="text-[11px] text-emerald-500 font-mono font-semibold">
-          98.4% Dữ liệu Đạt Chuẩn (17,367/17,649 pts)
+          {(validCount / 1e6).toFixed(2)}M / {(totalPoints / 1e6).toFixed(2)}M Điểm Đạt Chuẩn (98.4%)
         </span>
       </div>
 
@@ -62,7 +76,7 @@ export function QualityMaskChart(): JSX.Element {
               type="category"
               dataKey="name"
               tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
-              width={130}
+              width={140}
             />
             <Tooltip
               content={({ active, payload }) => {
@@ -72,7 +86,7 @@ export function QualityMaskChart(): JSX.Element {
                   <div className="rounded border border-border bg-popover p-2 text-xs shadow-md space-y-1">
                     <p className="font-semibold text-foreground">{d.name}</p>
                     <p className="text-primary font-mono">
-                      {d.count.toLocaleString()} điểm ({d.pct}%)
+                      Cộng dồn: {d.count.toLocaleString()} điểm ({d.pct}%)
                     </p>
                     <p className="text-muted-foreground text-[11px]">{d.desc}</p>
                   </div>
@@ -89,7 +103,7 @@ export function QualityMaskChart(): JSX.Element {
       </div>
 
       <p className="text-[11px] text-muted-foreground">
-        Bộ lọc Bitmask <code>Flag &amp; 0b1011111111111111 == 0</code> của Rust Engine loại bỏ các điểm đo dị thường để ngăn ngừa mô hình AI học sai tín hiệu giả.
+        Bộ lọc Bitmask <code>Flag &amp; 0b1011111111111111 == 0</code> của Rust Engine đã loại bỏ tổng cộng <strong>{((totalPoints - validCount) / 1e3).toFixed(1)}k điểm lỗi</strong> trên toàn bộ {totalFiles.toLocaleString()} ngôi sao.
       </p>
     </div>
   );

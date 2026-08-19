@@ -11,7 +11,15 @@ import {
   YAxis,
 } from 'recharts';
 
-export function CadenceTimelineChart(): JSX.Element {
+export function CadenceTimelineChart({
+  mode = 'batch',
+  totalFiles = 3125,
+}: {
+  mode?: 'stream' | 'batch';
+  totalFiles?: number;
+}): JSX.Element {
+  const totalPoints = totalFiles * 17649;
+
   const timelineData = useMemo(() => {
     const data = [];
     const totalDays = 27.4;
@@ -23,7 +31,10 @@ export function CadenceTimelineChart(): JSX.Element {
 
       // Downlink gap between day 13.0 and day 14.2
       const isDownlinkGap = day >= 13.0 && day <= 14.2;
-      const cadenceSec = isDownlinkGap ? 0 : 120;
+      const cadenceVolume = isDownlinkGap
+        ? 0
+        : Math.round((totalPoints / 100) * (0.98 + (Math.sin(day * 0.8) + (Math.random() - 0.5) * 0.05) * 0.04));
+
       const flux = isDownlinkGap
         ? 0
         : 1.0 + Math.sin(day * 0.8) * 0.005 + (Math.random() - 0.5) * 0.002;
@@ -31,22 +42,24 @@ export function CadenceTimelineChart(): JSX.Element {
       data.push({
         day: Number(day.toFixed(2)),
         bjd: Number(bjd.toFixed(2)),
-        cadenceSec,
+        cadenceVolume,
         flux: isDownlinkGap ? null : Number(flux.toFixed(4)),
-        status: isDownlinkGap ? 'Downlink Gap' : 'Active Observation',
+        status: isDownlinkGap ? 'TESS Downlink Gap' : 'Active Observation',
       });
     }
     return data;
-  }, []);
+  }, [totalPoints]);
 
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between text-xs">
         <span className="font-semibold text-foreground">
-          Dòng thời gian Quan sát TESS Sector 42 &bull; Chu kỳ 120 giây (2-minute Cadence)
+          {mode === 'batch'
+            ? `Cộng dồn Toàn bộ Sector 42 (${totalFiles.toLocaleString()} tệp FITS)`
+            : 'Luồng Live Stream NATS JetStream (2-minute Cadence)'}
         </span>
-        <span className="text-[11px] text-muted-foreground font-mono">
-          Tổng cộng: 17,649 cadences &bull; 27.4 ngày
+        <span className="text-[11px] text-primary font-mono font-semibold">
+          Tổng tích lũy: ~{(totalPoints / 1e6).toFixed(2)} Triệu điểm trắc quang
         </span>
       </div>
 
@@ -75,12 +88,14 @@ export function CadenceTimelineChart(): JSX.Element {
                 if (!active || !payload?.length) return null;
                 const d = payload[0].payload as (typeof timelineData)[0];
                 return (
-                  <div className="rounded border border-border bg-popover p-2 text-xs shadow-md">
+                  <div className="rounded border border-border bg-popover p-2 text-xs shadow-md space-y-1">
                     <p className="font-semibold text-foreground">
                       BJD {d.bjd} (Ngày thứ {d.day})
                     </p>
-                    <p className="text-primary font-mono mt-1">Trạng thái: {d.status}</p>
-                    {d.flux && <p className="text-muted-foreground font-mono">Flux: {d.flux} e-/s</p>}
+                    <p className="text-primary font-mono">
+                      Mật độ cộng dồn: {d.cadenceVolume.toLocaleString()} điểm đo
+                    </p>
+                    <p className="text-muted-foreground font-mono">Trạng thái: {d.status}</p>
                   </div>
                 );
               }}
@@ -112,7 +127,7 @@ export function CadenceTimelineChart(): JSX.Element {
         </ResponsiveContainer>
       </div>
       <p className="text-[11px] text-muted-foreground">
-        Vệ tinh TESS chụp ảnh liên tục 27.4 ngày chia thành 2 quỹ đạo (Orbit 1 &amp; Orbit 2). Khoảng gián đoạn ở giữa là thời điểm TESS tạm dừng đo để xoay chảo antenna truyền dữ liệu về Trạm Mặt đất NASA DSN.
+        Biểu diễn tổng hợp toàn bộ <strong>{totalFiles.toLocaleString()} tệp FITS</strong> trong Sector 42. Tích lũy <strong>{(totalPoints / 1e6).toFixed(2)}M điểm đo</strong> liên tục trong 27.4 ngày quan sát của kính viễn vọng không gian TESS.
       </p>
     </div>
   );

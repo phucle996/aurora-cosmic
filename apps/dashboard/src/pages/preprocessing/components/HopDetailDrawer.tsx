@@ -21,13 +21,17 @@ import {
   ResidualsDistributionChart,
 } from './hop-charts';
 
-// Hàm render chart tương ứng với từng Hop id
-function renderHopChart(hopId: string): JSX.Element | null {
+// Hàm render chart tương ứng với từng Hop id kèm mode và số tệp cộng dồn
+function renderHopChart(
+  hopId: string,
+  mode: 'stream' | 'batch' = 'batch',
+  totalFiles: number = 3125
+): JSX.Element | null {
   switch (hopId) {
     case 'bronze':
-      return <CadenceTimelineChart />;
+      return <CadenceTimelineChart mode={mode} totalFiles={totalFiles} />;
     case 'decode':
-      return <QualityMaskChart />;
+      return <QualityMaskChart mode={mode} totalFiles={totalFiles} />;
     case 'transform':
       return <ResidualsDistributionChart />;
     case 'silver':
@@ -35,7 +39,7 @@ function renderHopChart(hopId: string): JSX.Element | null {
     case 'checkpoint':
       return <CheckpointMetricsChart />;
     case 'lineage':
-      return <CompressionRatioChart />;
+      return <CompressionRatioChart mode={mode} totalFiles={totalFiles} />;
     default:
       return null;
   }
@@ -44,9 +48,13 @@ function renderHopChart(hopId: string): JSX.Element | null {
 export function HopDetailDrawer({
   selectedHop,
   onClose,
+  mode = 'batch',
+  totalFiles = 3125,
 }: {
   selectedHop: Hop | undefined;
   onClose: () => void;
+  mode?: 'stream' | 'batch';
+  totalFiles?: number;
 }): JSX.Element {
   return (
     <Drawer
@@ -68,6 +76,9 @@ export function HopDetailDrawer({
                     {selectedHop.status}
                   </Badge>
                 )}
+                <Badge variant="secondary" className="font-mono text-[10px] uppercase">
+                  {mode === 'stream' ? 'Live Stream Mode (NATS)' : 'Batch Backlog Mode (MinIO)'}
+                </Badge>
               </DrawerTitle>
               <DrawerDescription className="text-xs mt-0.5">
                 {selectedHop?.description ?? 'Đặc tả hợp đồng và dữ liệu đầu vào/đầu ra.'}
@@ -148,7 +159,7 @@ export function HopDetailDrawer({
                   <span>Trực quan hóa Dữ liệu Thuật toán (Scientific Visualizer)</span>
                 </div>
 
-                {renderHopChart(selectedHop.id)}
+                {renderHopChart(selectedHop.id, mode, totalFiles)}
               </div>
             </div>
           ) : (

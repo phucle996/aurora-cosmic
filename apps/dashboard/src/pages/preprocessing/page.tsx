@@ -275,7 +275,12 @@ export default function PreprocessingPage(): JSX.Element {
       </Tabs>
 
       {/* Drawer for Hop/DAG Node Inspection */}
-      <HopDetailDrawer selectedHop={selectedHop} onClose={() => setSelectedHopId(null)} />
+      <HopDetailDrawer
+        selectedHop={selectedHop}
+        onClose={() => setSelectedHopId(null)}
+        mode={startMode}
+        totalFiles={3125}
+      />
     </div>
   );
 }

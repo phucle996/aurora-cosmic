@@ -10,28 +10,39 @@ import {
   YAxis,
 } from 'recharts';
 
-export function CompressionRatioChart(): JSX.Element {
+export function CompressionRatioChart({
+  mode = 'batch',
+  totalFiles = 3125,
+}: {
+  mode?: 'stream' | 'batch';
+  totalFiles?: number;
+}): JSX.Element {
+  const bronzeMb = Number(((totalFiles * 1863360) / (1024 * 1024)).toFixed(1));
+  const decodedMb = Number(((totalFiles * 850000) / (1024 * 1024)).toFixed(1));
+  const silverMb = Number(((totalFiles * 220000) / (1024 * 1024)).toFixed(1));
+  const savedMb = Number((bronzeMb - silverMb).toFixed(1));
+
   const compressionData = [
     {
-      stage: '1. Bronze FITS Thô',
-      sizeKb: 1863,
+      stage: '1. Bronze FITS Thô (S3)',
+      sizeMb: bronzeMb,
       pct: 100,
       color: '#ef4444',
-      format: 'FITS Binary Table HDU (Uncompressed)',
+      format: `${totalFiles.toLocaleString()} tệp FITS nhị phân nguyên bản từ NASA`,
     },
     {
-      stage: '2. Decoded Raw Arrays',
-      sizeKb: 850,
-      pct: 45.6,
+      stage: '2. Decoded Time Series',
+      sizeMb: decodedMb,
+      pct: Number(((decodedMb / bronzeMb) * 100).toFixed(1)),
       color: '#f59e0b',
-      format: 'In-memory Time Series Float64',
+      format: 'Bóc tách HDU Time Series mảng nhị phân trong RAM',
     },
     {
       stage: '3. Silver Parquet (Snappy)',
-      sizeKb: 220,
-      pct: 11.8,
+      sizeMb: silverMb,
+      pct: Number(((silverMb / bronzeMb) * 100).toFixed(1)),
       color: '#10b981',
-      format: 'Columnar Parquet + Snappy Compression',
+      format: 'Cột Apache Parquet nén Snappy tối ưu I/O',
     },
   ];
 
@@ -39,10 +50,12 @@ export function CompressionRatioChart(): JSX.Element {
     <div className="space-y-2">
       <div className="flex items-center justify-between text-xs">
         <span className="font-semibold text-foreground">
-          Hiệu suất Tinh gọn Dữ liệu Lakehouse (Data Reduction Ratio)
+          {mode === 'batch'
+            ? `Cộng dồn Tinh gọn Dung lượng Toàn bộ ${totalFiles.toLocaleString()} tệp Lakehouse`
+            : 'Hiệu suất Nén Dữ liệu Live Stream'}
         </span>
         <span className="text-[11px] text-emerald-500 font-mono font-semibold">
-          Tiết kiệm: 88.2% Dung lượng Lưu trữ
+          Tiết kiệm cộng dồn: {savedMb.toLocaleString()} MB (88.2%)
         </span>
       </div>
 
@@ -52,15 +65,15 @@ export function CompressionRatioChart(): JSX.Element {
             <CartesianGrid strokeDasharray="3 3" opacity={0.15} horizontal={false} />
             <XAxis
               type="number"
-              domain={[0, 2000]}
+              domain={[0, Math.ceil(bronzeMb * 1.1)]}
               tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
-              tickFormatter={(v: number) => `${v} KB`}
+              tickFormatter={(v: number) => `${v.toLocaleString()} MB`}
             />
             <YAxis
               type="category"
               dataKey="stage"
               tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
-              width={140}
+              width={160}
             />
             <Tooltip
               content={({ active, payload }) => {
@@ -70,14 +83,14 @@ export function CompressionRatioChart(): JSX.Element {
                   <div className="rounded border border-border bg-popover p-2 text-xs shadow-md space-y-1">
                     <p className="font-semibold text-foreground">{d.stage}</p>
                     <p className="text-primary font-mono">
-                      {d.sizeKb} KB ({d.pct}% dung lượng gốc)
+                      Tổng dung lượng: {d.sizeMb.toLocaleString()} MB ({d.pct}%)
                     </p>
                     <p className="text-muted-foreground text-[11px]">{d.format}</p>
                   </div>
                 );
               }}
             />
-            <Bar dataKey="sizeKb" radius={[0, 4, 4, 0]} isAnimationActive={false}>
+            <Bar dataKey="sizeMb" radius={[0, 4, 4, 0]} isAnimationActive={false}>
               {compressionData.map((entry) => (
                 <Cell key={entry.stage} fill={entry.color} />
               ))}
@@ -87,7 +100,7 @@ export function CompressionRatioChart(): JSX.Element {
       </div>
 
       <p className="text-[11px] text-muted-foreground">
-        Chuyển đổi từ định dạng FITS thô sang Apache Parquet nén Snappy giúp tối ưu hóa $8.5\times$ I/O khi nạp vào ClickHouse hoặc huấn luyện mạng nơ-ron Deep Learning.
+        Cộng dồn toàn bộ <strong>{totalFiles.toLocaleString()} tệp</strong>: Nén từ <strong>{bronzeMb.toLocaleString()} MB</strong> FITS thô xuống chỉ còn <strong>{silverMb.toLocaleString()} MB</strong> Parquet Snappy, giúp tăng tốc độ nạp dữ liệu vào ClickHouse và huấn luyện AI lên gấp <strong>8.5 lần</strong>.
       </p>
     </div>
   );
