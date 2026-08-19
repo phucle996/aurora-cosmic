@@ -209,10 +209,16 @@ export default function ModelsPage(): JSX.Element {
 
       setAvailableSnapshots(list);
 
-      // Tự động chọn snapshot mới nhất chưa từng huấn luyện
-      const firstUnrun = list.find((s) => !s.is_trained) || list[0];
-      if (firstUnrun) {
-        setTrainSnapshotId(firstUnrun.snapshot_id);
+      const unrunList = list.filter((s) => !s.is_trained);
+      if (unrunList.length > 1) {
+        // Mặc định chọn huấn luyện toàn bộ các snapshots chưa chạy
+        setTrainSnapshotId('__all_unrun__');
+        setIsCustomSnapshot(false);
+      } else if (unrunList.length === 1) {
+        setTrainSnapshotId(unrunList[0].snapshot_id);
+        setIsCustomSnapshot(false);
+      } else if (list.length > 0) {
+        setTrainSnapshotId(list[0].snapshot_id);
         setIsCustomSnapshot(false);
       }
     } catch {
@@ -235,21 +241,46 @@ export default function ModelsPage(): JSX.Element {
     setError(undefined);
     setNotice(undefined);
     try {
-      const res = await apiFetch<TrainingResponse>('/v1/models/train', {
-        method: 'POST',
-        body: JSON.stringify({
-          task: trainTask,
-          gold_snapshot_id: trainSnapshotId.trim(),
-          epochs: Number(trainEpochs) || 50,
-          learning_rate: Number(trainLr) || 0.001,
-          batch_size: Number(trainBatchSize) || 32,
-          seed: Number(trainSeed) || 42,
-          auto_promote: trainAutoPromote,
-        }),
-      });
-      setNotice(`🚀 Training Job ${res.job_id} đã được gửi tới GPU Worker thành công với Gold Snapshot [${trainSnapshotId}]!`);
-      setTrainDialogOpen(false);
+      if (trainSnapshotId === '__all_unrun__') {
+        const unrunList = availableSnapshots.filter((s) => !s.is_trained);
+        if (unrunList.length === 0) {
+          throw new Error('Không có Gold Snapshot nào chưa chạy để huấn luyện.');
+        }
 
+        let count = 0;
+        for (const snap of unrunList) {
+          await apiFetch<TrainingResponse>('/v1/models/train', {
+            method: 'POST',
+            body: JSON.stringify({
+              task: trainTask,
+              gold_snapshot_id: snap.snapshot_id,
+              epochs: Number(trainEpochs) || 50,
+              learning_rate: Number(trainLr) || 0.001,
+              batch_size: Number(trainBatchSize) || 32,
+              seed: Number(trainSeed) || 42,
+              auto_promote: trainAutoPromote,
+            }),
+          });
+          count++;
+        }
+        setNotice(`🚀 Đã gửi thành công toàn bộ ${count} Gold Snapshots chưa chạy tới GPU Worker để huấn luyện hàng loạt!`);
+      } else {
+        const res = await apiFetch<TrainingResponse>('/v1/models/train', {
+          method: 'POST',
+          body: JSON.stringify({
+            task: trainTask,
+            gold_snapshot_id: trainSnapshotId.trim(),
+            epochs: Number(trainEpochs) || 50,
+            learning_rate: Number(trainLr) || 0.001,
+            batch_size: Number(trainBatchSize) || 32,
+            seed: Number(trainSeed) || 42,
+            auto_promote: trainAutoPromote,
+          }),
+        });
+        setNotice(`🚀 Training Job ${res.job_id} đã được gửi tới GPU Worker thành công với Gold Snapshot [${trainSnapshotId}]!`);
+      }
+
+      setTrainDialogOpen(false);
       setTimeout(() => {
         void loadData(true);
       }, 3000);
@@ -365,7 +396,7 @@ export default function ModelsPage(): JSX.Element {
                     {snapshotsLoading ? (
                       <div className="flex items-center justify-center p-3 border rounded-md text-xs text-muted-foreground bg-muted/20">
                         <LoaderCircle className="size-3.5 animate-spin mr-2" />
-                        Đang nạp danh sách Gold Snapshots từ Lakehouse...
+                        Đang nạp danh sách Gold Snapshots chưa chạy từ Lakehouse...
                       </div>
                     ) : (
                       <select
@@ -381,18 +412,25 @@ export default function ModelsPage(): JSX.Element {
                           }
                         }}
                       >
-                        {/* Group 1: Snapshots Mới Chưa Chạy */}
+                        {/* Option 1: Huấn luyện toàn bộ các snapshot chưa chạy */}
+                        {availableSnapshots.filter((s) => !s.is_trained).length > 0 && (
+                          <option value="__all_unrun__" className="font-semibold text-primary">
+                            ⚡ [TẤT CẢ] Huấn luyện toàn bộ {availableSnapshots.filter((s) => !s.is_trained).length} Snapshots chưa chạy (Khuyên dùng)
+                          </option>
+                        )}
+
+                        {/* Group 2: Danh sách từng Snapshot Chưa Chạy */}
                         <optgroup label={`🌟 SNAPSHOTS MỚI CHƯA CHẠY (${availableSnapshots.filter((s) => !s.is_trained).length})`}>
                           {availableSnapshots
                             .filter((s) => !s.is_trained)
                             .map((snap) => (
                               <option key={snap.snapshot_id} value={snap.snapshot_id}>
-                                [Mới] {snap.snapshot_id} ({formatBytes(snap.size_bytes)}) — {formatDate(snap.last_modified)}
+                                [Chưa chạy] {snap.snapshot_id} ({formatBytes(snap.size_bytes)}) — {formatDate(snap.last_modified)}
                               </option>
                             ))}
                         </optgroup>
 
-                        {/* Group 2: Snapshots Đã Huấn Luyện */}
+                        {/* Group 3: Snapshots Đã Huấn Luyện (đặt ở dưới cùng) */}
                         {availableSnapshots.filter((s) => s.is_trained).length > 0 && (
                           <optgroup label={`✅ SNAPSHOTS ĐÃ HUẤN LUYỆN (${availableSnapshots.filter((s) => s.is_trained).length})`}>
                             {availableSnapshots
@@ -424,6 +462,31 @@ export default function ModelsPage(): JSX.Element {
 
                     {/* Snapshot Metadata Preview Card */}
                     {(() => {
+                      if (trainSnapshotId === '__all_unrun__') {
+                        const unrun = availableSnapshots.filter((s) => !s.is_trained);
+                        const totalBytes = unrun.reduce((acc, s) => acc + s.size_bytes, 0);
+                        return (
+                          <div className="rounded-md border border-primary/40 bg-primary/5 p-2.5 space-y-1 text-[11px]">
+                            <div className="flex items-center justify-between">
+                              <span className="font-semibold text-primary flex items-center gap-1">
+                                <Sparkles className="size-3.5" />
+                                Chế độ: Huấn luyện Hàng loạt (Batch All Unrun)
+                              </span>
+                              <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30 text-[10px]">
+                                {unrun.length} Snapshots
+                              </Badge>
+                            </div>
+                            <div className="flex items-center justify-between text-muted-foreground">
+                              <span>Tổng dung lượng Parquet:</span>
+                              <span className="font-mono text-foreground font-medium">{formatBytes(totalBytes)}</span>
+                            </div>
+                            <p className="text-muted-foreground text-[10.5px] pt-1 border-t border-border/50">
+                              Hệ thống sẽ tự động xếp hàng và dispatch lần lượt toàn bộ {unrun.length} Gold Snapshots chưa chạy tới GPU PyTorch Worker.
+                            </p>
+                          </div>
+                        );
+                      }
+
                       const snap = availableSnapshots.find((s) => s.snapshot_id === trainSnapshotId);
                       if (!snap) return null;
                       return (
