@@ -37,6 +37,31 @@ func (value *clickHouseInt64) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+type clickHouseBool bool
+
+func (b *clickHouseBool) UnmarshalJSON(data []byte) error {
+	s := strings.Trim(string(data), `"`)
+	switch s {
+	case "true", "1", "t", "T":
+		*b = true
+	case "false", "0", "f", "F", "null", "":
+		*b = false
+	default:
+		var n int
+		if err := json.Unmarshal(data, &n); err == nil {
+			*b = clickHouseBool(n != 0)
+			return nil
+		}
+		var bv bool
+		if err := json.Unmarshal(data, &bv); err == nil {
+			*b = clickHouseBool(bv)
+			return nil
+		}
+		*b = false
+	}
+	return nil
+}
+
 func boolInt(value bool) int {
 	if value {
 		return 1
@@ -77,7 +102,7 @@ func (r *AnalyticsClickHouse) ListCandidates(ctx context.Context, sector int, sn
 			RawLogit        float64         `json:"raw_logit"`
 			CandidateScore  float64         `json:"candidate_score"`
 			Threshold       float64         `json:"decision_threshold"`
-			AboveThreshold  bool            `json:"above_threshold"`
+			AboveThreshold  clickHouseBool  `json:"above_threshold"`
 			ModelVersion    string          `json:"model_version"`
 			RegisteredModel string          `json:"registered_model_id"`
 			SnapshotID      string          `json:"gold_snapshot_id"`
@@ -100,7 +125,7 @@ func (r *AnalyticsClickHouse) ListCandidates(ctx context.Context, sector int, sn
 			RawLogit:        row.RawLogit,
 			CandidateScore:  row.CandidateScore,
 			Threshold:       row.Threshold,
-			AboveThreshold:  row.AboveThreshold,
+			AboveThreshold:  bool(row.AboveThreshold),
 			ModelVersion:    row.ModelVersion,
 			RegisteredModel: row.RegisteredModel,
 			SnapshotID:      row.SnapshotID,
@@ -250,7 +275,7 @@ func (r *AnalyticsClickHouse) ListAnomalies(ctx context.Context, sector int, sna
 			Sector            int             `json:"sector"`
 			ReconstructionMSE float64         `json:"reconstruction_mse"`
 			Threshold         float64         `json:"decision_threshold"`
-			AboveThreshold    bool            `json:"above_threshold"`
+			AboveThreshold    clickHouseBool  `json:"above_threshold"`
 			ModelVersion      string          `json:"model_version"`
 			RegisteredModel   string          `json:"registered_model_id"`
 			SnapshotID        string          `json:"gold_snapshot_id"`
@@ -272,7 +297,7 @@ func (r *AnalyticsClickHouse) ListAnomalies(ctx context.Context, sector int, sna
 			Sector:            row.Sector,
 			ReconstructionMSE: row.ReconstructionMSE,
 			Threshold:         row.Threshold,
-			AboveThreshold:    row.AboveThreshold,
+			AboveThreshold:    bool(row.AboveThreshold),
 			ModelVersion:      row.ModelVersion,
 			RegisteredModel:   row.RegisteredModel,
 			SnapshotID:        row.SnapshotID,
@@ -403,7 +428,7 @@ LEFT JOIN (
 		orderBy = "ap.anomaly_score DESC, t.tic_id ASC"
 	}
 	query := `SELECT
-		t.tic_id, t.tess_mag, t.ra, t.dec, t.effective_t, t.surface_grav, t.radius, t.sector, t.matched_toi, t.disposition,
+		t.tic_id AS tic_id, t.tess_mag AS tess_mag, t.ra AS ra, t.dec AS dec, t.effective_t AS effective_t, t.surface_grav AS surface_grav, t.radius AS radius, t.sector AS sector, t.matched_toi AS matched_toi, t.disposition AS disposition,
 		ifNull(lc.lightcurve_points, 0) AS lightcurve_points, ifNull(lc.lightcurve_time_span, 0) AS lightcurve_time_span,
 		if(lc.lightcurve_points > 0, 1, 0) AS has_lightcurve,
 		if(cp.candidate_prediction_id != '', 1, 0) AS has_candidate, ifNull(cp.candidate_prediction_id, '') AS candidate_prediction_id,
@@ -435,7 +460,7 @@ LEFT JOIN (
 			HasCandidate            uint8           `json:"has_candidate"`
 			CandidatePredictionID   string          `json:"candidate_prediction_id"`
 			CandidateScore          float64         `json:"candidate_score"`
-			CandidateAboveThreshold uint8           `json:"candidate_above_threshold"`
+			CandidateAboveThreshold clickHouseBool  `json:"candidate_above_threshold"`
 			HasAnomaly              uint8           `json:"has_anomaly"`
 			AnomalyPredictionID     string          `json:"anomaly_prediction_id"`
 			AnomalyScore            float64         `json:"anomaly_score"`
@@ -453,7 +478,7 @@ LEFT JOIN (
 			SurfaceGrav: row.SurfaceGrav, Radius: row.Radius, Sector: row.Sector, TOI: row.TOI, Disposition: row.Disposition,
 			HasLightcurve: row.HasLightcurve == 1, LightcurvePoints: int64(row.LightcurvePoints), LightcurveTimeSpan: row.LightcurveTimeSpan,
 			HasCandidate: row.HasCandidate == 1, CandidatePredictionID: row.CandidatePredictionID, CandidateScore: row.CandidateScore,
-			CandidateAboveThreshold: row.CandidateAboveThreshold == 1, HasAnomaly: row.HasAnomaly == 1,
+			CandidateAboveThreshold: bool(row.CandidateAboveThreshold), HasAnomaly: row.HasAnomaly == 1,
 			AnomalyPredictionID: row.AnomalyPredictionID, AnomalyScore: row.AnomalyScore, PipelineStatus: row.PipelineStatus,
 		}
 	}

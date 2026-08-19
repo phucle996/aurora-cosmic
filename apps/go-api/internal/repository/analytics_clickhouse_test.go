@@ -1,7 +1,10 @@
 package repository
 
 import (
+	"context"
 	"encoding/json"
+	"go-api/infra/clickhouse"
+	"go-api/internal/domain/entity"
 	"testing"
 )
 
@@ -96,4 +99,23 @@ func TestUnmarshalClickHouseTargetsJSON(t *testing.T) {
 		t.Fatalf("Expected Sector 42, got %d", response.Data[0].Sector)
 	}
 	t.Logf("Successfully unmarshaled: TICID=%d, Sector=%d", response.Data[0].TICID, response.Data[0].Sector)
+}
+
+func TestLiveClickHouseListTargets(t *testing.T) {
+	client := clickhouse.NewClient("http://localhost:8123", "aurora", "aurora", "aurora-dev-password")
+	if err := client.Ping(context.Background()); err != nil {
+		t.Skipf("ClickHouse not reachable, skipping live test: %v", err)
+	}
+
+	repo := NewAnalyticsClickHouse(client)
+	page, err := repo.ListTargets(context.Background(), entity.TargetQuery{
+		Page: entity.PageRequest{Limit: 2},
+	})
+	if err != nil {
+		t.Fatalf("Live ListTargets error: %v", err)
+	}
+	if len(page.Items) > 0 && page.Items[0].TICID == 0 {
+		t.Fatalf("Expected non-zero TICID, got 0")
+	}
+	t.Logf("Got total=%d, items=%d, first TICID=%d", page.Count, len(page.Items), page.Items[0].TICID)
 }
