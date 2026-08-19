@@ -129,6 +129,17 @@ func (s *IngestService) Cancel(ctx context.Context, jobID string) (*entity.Inges
 		return nil, fmt.Errorf("ingester control is unavailable")
 	}
 
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" || jobID == "current" || jobID == "active" {
+		s.runtimeMu.RLock()
+		if s.runtimeJob != nil && s.runtimeJob.JobID != "" {
+			jobID = s.runtimeJob.JobID
+		} else {
+			jobID = "active"
+		}
+		s.runtimeMu.RUnlock()
+	}
+
 	job, err := s.controller.Cancel(ctx, jobID)
 	if err != nil {
 		return nil, err

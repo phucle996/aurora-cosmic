@@ -252,7 +252,7 @@ func (s *controlServer) jobAction(w http.ResponseWriter, r *http.Request) {
 	id := strings.Trim(strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/ingest/jobs/"), "/cancel"), "/")
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.active == nil || s.active.ID != id {
+	if s.active == nil || (id != "active" && id != "current" && id != "" && s.active.ID != id) {
 		http.Error(w, "ingest job not found", http.StatusNotFound)
 		return
 	}

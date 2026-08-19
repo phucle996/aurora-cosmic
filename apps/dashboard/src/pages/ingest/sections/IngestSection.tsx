@@ -167,6 +167,22 @@ export default function IngestSection(): JSX.Element {
     };
   }, [load]);
 
+  const isIngesting = useMemo(() => {
+    const s = (status?.status ?? '').toLowerCase();
+    const c = (controlJob?.status ?? '').toLowerCase();
+    return (
+      s === 'running' ||
+      s === 'downloading' ||
+      s === 'cancelling' ||
+      c === 'running' ||
+      c === 'cancelling' ||
+      (status?.downloading ?? 0) > 0 ||
+      (status?.inflight_products ?? 0) > 0
+    );
+  }, [status?.status, status?.downloading, status?.inflight_products, controlJob?.status]);
+
+  const activeJobId = controlJob?.job_id || status?.control_job_id || status?.run_id || 'active';
+
   const handleStart = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
     setControlBusy(true);
@@ -186,15 +202,15 @@ export default function IngestSection(): JSX.Element {
   };
 
   const handleCancel = async (): Promise<void> => {
-    if (!controlJob?.job_id) return;
     setControlBusy(true);
     setError(null);
     try {
-      const job = await apiFetch<IngestControlJob>(`/v1/ingest/jobs/${encodeURIComponent(controlJob.job_id)}/cancel`, { method: 'POST' });
+      const jobId = activeJobId;
+      const job = await apiFetch<IngestControlJob>(`/v1/ingest/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });
       setControlJob(job);
       await load();
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Không thể hủy ingestion job');
+      setError(requestError instanceof Error ? requestError.message : 'Không thể dừng ingestion job');
     } finally {
       setControlBusy(false);
     }
@@ -234,6 +250,18 @@ export default function IngestSection(): JSX.Element {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {isIngesting && (
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={handleCancel}
+              disabled={controlBusy}
+              className="gap-2 shadow-sm font-semibold animate-pulse"
+            >
+              <Square className="size-3.5 fill-current" />
+              {controlBusy ? 'Đang dừng...' : 'Dừng Ingest'}
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
             <RefreshCw className={`size-3.5 ${loading ? 'animate-spin' : ''}`} />
             Refresh
@@ -259,7 +287,7 @@ export default function IngestSection(): JSX.Element {
       <div className="grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-1">
           <CardHeader>
-            <CardTitle className="text-base font-semibold">Khởi chạy Ingestion Job</CardTitle>
+            <CardTitle className="text-base font-semibold">Khởi chạy / Điều khiển Ingest</CardTitle>
             <CardDescription>Cấu hình Sector và số luồng worker tải song song.</CardDescription>
           </CardHeader>
           <CardContent>
@@ -276,7 +304,7 @@ export default function IngestSection(): JSX.Element {
                   value={sector}
                   onChange={(e) => setSector(e.target.value)}
                   placeholder="42"
-                  disabled={controlBusy}
+                  disabled={controlBusy || isIngesting}
                 />
               </div>
               <div className="space-y-2">
@@ -291,32 +319,41 @@ export default function IngestSection(): JSX.Element {
                   value={concurrency}
                   onChange={(e) => setConcurrency(e.target.value)}
                   placeholder="8"
-                  disabled={controlBusy}
+                  disabled={controlBusy || isIngesting}
                 />
               </div>
               <div className="flex items-center gap-2 pt-2">
-                <Button type="submit" className="flex-1 gap-2" disabled={controlBusy}>
-                  <Play className="size-4" />
-                  Bắt đầu Ingest
-                </Button>
-                {controlJob?.status === 'running' && (
-                  <Button type="button" variant="destructive" onClick={handleCancel} disabled={controlBusy}>
-                    <Square className="size-4" />
-                    Hủy Job
+                {isIngesting ? (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    className="w-full gap-2 font-semibold shadow-md shadow-destructive/20 hover:bg-destructive/90"
+                    onClick={handleCancel}
+                    disabled={controlBusy}
+                  >
+                    <Square className="size-4 fill-current" />
+                    {controlBusy ? 'Đang gửi lệnh dừng...' : 'Dừng Quá Trình Ingest (Stop)'}
+                  </Button>
+                ) : (
+                  <Button type="submit" className="w-full gap-2" disabled={controlBusy}>
+                    <Play className="size-4 fill-current" />
+                    {controlBusy ? 'Đang khởi động...' : 'Bắt đầu Ingest'}
                   </Button>
                 )}
               </div>
             </form>
 
-            {controlJob && (
+            {(controlJob || isIngesting) && (
               <div className="mt-4 border-t border-border/60 pt-4 text-xs space-y-1">
                 <div className="flex justify-between text-muted-foreground">
                   <span>Job ID:</span>
-                  <span className="font-mono text-foreground truncate max-w-[160px]">{controlJob.job_id}</span>
+                  <span className="font-mono text-foreground truncate max-w-[160px]">{activeJobId}</span>
                 </div>
                 <div className="flex justify-between text-muted-foreground">
                   <span>Trạng thái:</span>
-                  <Badge variant={statusVariant(controlJob.status)}>{controlJob.status}</Badge>
+                  <Badge variant={statusVariant(controlJob?.status || status?.status || 'running')}>
+                    {controlJob?.status || status?.status || 'running'}
+                  </Badge>
                 </div>
               </div>
             )}
@@ -331,9 +368,24 @@ export default function IngestSection(): JSX.Element {
                 <CardTitle className="text-base font-semibold">Tiến độ & Thông lượng tải</CardTitle>
                 <CardDescription>Trạng thái thực thi và dữ liệu telemetry nhận từ NATS/Prometheus.</CardDescription>
               </div>
-              <Badge variant={statusVariant(status?.status ?? 'idle')}>
-                {status?.status ?? 'not_observed'}
-              </Badge>
+              <div className="flex items-center gap-2">
+                {isIngesting && (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    className="gap-1.5 h-7 px-2.5 text-xs font-semibold"
+                    onClick={handleCancel}
+                    disabled={controlBusy}
+                  >
+                    <Square className="size-3 fill-current" />
+                    {controlBusy ? 'Đang dừng...' : 'Dừng Ingest'}
+                  </Button>
+                )}
+                <Badge variant={statusVariant(status?.status ?? 'idle')}>
+                  {status?.status ?? 'not_observed'}
+                </Badge>
+              </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-6">
