@@ -24,6 +24,7 @@ export function OrbitViewer3D({
   planets,
   className = '',
   height = '640px',
+  onTimeUpdate,
 }: OrbitViewer3DProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -320,6 +321,30 @@ export function OrbitViewer3D({
         }
       });
 
+      // Notify Transit Sync Event for Synchronized Light Curve
+      const activePlanet = planets[selectedPlanetIndex] ?? planets[0];
+      if (activePlanet && onTimeUpdate) {
+        const period = Math.max(0.1, activePlanet.periodDays);
+        const theta = ((timeRef.current / period) * Math.PI * 2) % (Math.PI * 2);
+        let phase = (theta - Math.PI / 2) / (Math.PI * 2);
+        while (phase < -0.5) phase += 1.0;
+        while (phase > 0.5) phase -= 1.0;
+
+        const transitThreshold = 0.05;
+        const isTransit = Math.abs(phase) < transitThreshold;
+        const transitDepthRatio = isTransit
+          ? 1.0 - Math.pow(Math.abs(phase) / transitThreshold, 2)
+          : 0;
+
+        onTimeUpdate({
+          time: timeRef.current,
+          phase,
+          isTransit,
+          transitDepthRatio,
+          planetName: activePlanet.name,
+        });
+      }
+
       animationFrameId = requestAnimationFrame(render);
     };
 
@@ -339,6 +364,7 @@ export function OrbitViewer3D({
     hz,
     radius,
     starStyle,
+    onTimeUpdate,
   ]);
 
   const selectedPlanet = planets[selectedPlanetIndex] ?? planets[0];

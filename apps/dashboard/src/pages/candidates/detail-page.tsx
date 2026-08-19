@@ -2,13 +2,14 @@ import { useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
 import { ArrowLeft, CircleAlert, Database, ExternalLink, FlaskConical, LoaderCircle, Orbit, Rotate3D, Sparkles, Star, ThermometerSun } from 'lucide-react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { OrbitViewer3D } from '@/components/OrbitViewer3D';
+import { SynchronizedLightCurve } from '@/components/SynchronizedLightCurve';
+import type { TransitSyncEvent } from '@/components/orbit-viewer/types';
 import { apiFetch } from '@/lib/api';
 import type { CandidateDetailResponse, LightcurveResponse } from '@/lib/analytics-types';
 
@@ -27,6 +28,7 @@ export default function CandidateDetailPage(): JSX.Element {
   const [detail, setDetail] = useState<CandidateDetailResponse>();
   const [curve, setCurve] = useState<LightcurveResponse>();
   const [error, setError] = useState<string>();
+  const [transitSync, setTransitSync] = useState<TransitSyncEvent>();
 
   useEffect(() => {
     if (!predictionId || !snapshot) return;
@@ -46,8 +48,6 @@ export default function CandidateDetailPage(): JSX.Element {
       .catch((reason: unknown) => active && setError(reason instanceof Error ? reason.message : 'Unable to load candidate'));
     return () => { active = false; };
   }, [predictionId, snapshot]);
-
-  const chartData = useMemo(() => curve?.time.map((time, index) => ({ time, flux: curve.flux[index] ?? 0 })) ?? [], [curve]);
 
   if (!snapshot) return <Message title="Thiếu snapshot" detail="Candidate detail cần snapshot_id để bảo đảm dữ liệu và model result cùng một phiên bản." />;
   if (error) return <Message title="Không tải được candidate" detail={error} destructive />;
@@ -128,6 +128,7 @@ export default function CandidateDetailPage(): JSX.Element {
               },
             ]}
             height="620px"
+            onTimeUpdate={setTransitSync}
           />
         </CardContent>
       </Card>
@@ -137,7 +138,15 @@ export default function CandidateDetailPage(): JSX.Element {
         <Card><CardHeader><CardTitle>Transit & host evidence</CardTitle><CardDescription>Catalog context used to derive the physical read model.</CardDescription></CardHeader><CardContent><dl className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm"><Info label="Transit depth" value={evidence.bls_available ? number(evidence.bls_depth, 6) : '—'} /><Info label="BLS power" value={number(evidence.bls_power, 3)} /><Info label="Stellar Teff" value={`${number(evidence.teff, 0)} K`} /><Info label="Stellar radius" value={`${number(evidence.stellar_radius)} R☉`} /><Info label="Stellar mass" value={`${number(evidence.stellar_mass)} M☉`} /><Info label="TESS magnitude" value={number(evidence.tmag)} /><Info label="TOI match" value={evidence.matched_toi_id || evidence.toi_match_status || 'unmatched'} /><Info label="TCE match" value={evidence.matched_tce_id || evidence.tce_match_status || 'unmatched'} /></dl>{physics.warnings.length > 0 && <div className="mt-5 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">{physics.warnings.map((warning) => warning.replace(/_/g, ' ')).join(' · ')}</div>}</CardContent></Card>
       </div>
 
-      <Card><CardHeader className="flex-row items-center justify-between"><div><CardTitle>Light curve</CardTitle><CardDescription>{chartData.length ? `${chartData.length.toLocaleString()} indexed samples` : 'No indexed samples available.'}</CardDescription></div>{evidence.matched_toi_id && <Button asChild variant="outline" size="sm"><Link to={`/exoplanets?system=${encodeURIComponent(evidence.matched_toi_id)}`}>NASA Eyes <ExternalLink /></Link></Button>}</CardHeader><CardContent>{chartData.length === 0 ? <div className="py-16 text-center text-sm text-muted-foreground">Light curve is not available in the query index.</div> : <div className="h-72"><ResponsiveContainer width="100%" height="100%"><LineChart data={chartData}><CartesianGrid vertical={false} strokeDasharray="3 3" /><XAxis dataKey="time" tickLine={false} axisLine={false} tickFormatter={(value: number) => value.toFixed(1)} /><YAxis width={58} tickLine={false} axisLine={false} tickFormatter={(value: number) => value.toFixed(3)} /><Tooltip formatter={(value) => [Number(value).toFixed(6), 'flux']} /><Line dataKey="flux" stroke="var(--primary)" dot={false} strokeWidth={1.5} isAnimationActive={false} /></LineChart></ResponsiveContainer></div>}</CardContent></Card>
+      {/* SYNCHRONIZED LIGHT CURVE WITH 3D SCANNER & AI TRANSIT EVENT FLAGS */}
+      <SynchronizedLightCurve
+        time={curve?.time ?? []}
+        flux={curve?.flux ?? []}
+        blsPeriod={physics.orbital_period_days || evidence.bls_period || 10.0}
+        blsDepth={evidence.bls_depth || 0.0015}
+        transitInfo={transitSync}
+        planetName={physics.planet_candidate_id || `Candidate b`}
+      />
     </div>
   );
 }

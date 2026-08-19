@@ -2,12 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
 import { Activity, ArrowLeft, CircleAlert, Database, Gauge, LoaderCircle, MapPin, Orbit, Rotate3D, Sparkles, Star, Telescope, ThermometerSun } from 'lucide-react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { OrbitViewer3D } from '@/components/OrbitViewer3D';
+import { SynchronizedLightCurve } from '@/components/SynchronizedLightCurve';
+import type { TransitSyncEvent } from '@/components/orbit-viewer/types';
 import { apiFetch } from '@/lib/api';
 import type { LightcurveResponse, TargetRecord } from '@/lib/analytics-types';
 
@@ -20,6 +21,7 @@ export default function TargetDetailPage(): JSX.Element {
   const [target, setTarget] = useState<TargetRecord>();
   const [curve, setCurve] = useState<LightcurveResponse>();
   const [error, setError] = useState<string>();
+  const [transitSync, setTransitSync] = useState<TransitSyncEvent>();
 
   useEffect(() => {
     if (!ticId) return;
@@ -42,7 +44,6 @@ export default function TargetDetailPage(): JSX.Element {
     return () => { active = false; };
   }, [sector, ticId]);
 
-  const chartData = useMemo(() => curve?.time.map((time, index) => ({ time, flux: curve.flux[index] ?? 0 })) ?? [], [curve]);
   if (error) return <StateMessage title="Không tải được target" detail={error} />;
   if (!target) return <div className="flex items-center justify-center gap-2 py-24 text-sm text-muted-foreground"><LoaderCircle className="animate-spin" />Loading target detail…</div>;
 
@@ -124,13 +125,23 @@ export default function TargetDetailPage(): JSX.Element {
                 : []
             }
             height="580px"
+            onTimeUpdate={setTransitSync}
           />
         </CardContent>
       </Card>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,0.72fr)_minmax(0,1.28fr)]">
         <Card><CardHeader><CardTitle>Catalog & pipeline</CardTitle><CardDescription>Identity and current processing coverage.</CardDescription></CardHeader><CardContent><dl className="grid grid-cols-2 gap-x-6 gap-y-5 text-sm"><Info label="TESS magnitude" value={number(target.tess_mag)} /><Info label="TOI" value={target.matched_toi || 'unmatched'} /><Info label="Disposition" value={target.disposition || '—'} /><Info label="Sector" value={`${target.sector}`} /><Info label="Light curve" value={target.has_lightcurve ? `${target.lightcurve_points.toLocaleString()} points` : 'not indexed'} /><Info label="Time span" value={target.has_lightcurve ? `${number(target.lightcurve_time_span, 1)} days` : '—'} /></dl><div className="mt-6 grid grid-cols-2 gap-3"><Signal label="Transit candidate" value={target.has_candidate ? `${(target.candidate_score * 100).toFixed(1)}%` : 'not scored'} active={target.candidate_above_threshold} /><Signal label="Anomaly" value={target.has_anomaly ? number(target.anomaly_score, 4) : 'not scored'} active={target.has_anomaly} /></div></CardContent></Card>
-        <Card><CardHeader><CardTitle>Observation light curve</CardTitle><CardDescription>{chartData.length ? `${chartData.length.toLocaleString()} samples loaded from the ClickHouse query index.` : 'No indexed light curve for this target.'}</CardDescription></CardHeader><CardContent>{chartData.length === 0 ? <div className="flex flex-col items-center py-20 text-sm text-muted-foreground"><Database className="mb-2 size-6" />No indexed samples</div> : <div className="h-80"><ResponsiveContainer width="100%" height="100%"><LineChart data={chartData}><CartesianGrid vertical={false} strokeDasharray="3 3" /><XAxis dataKey="time" tickLine={false} axisLine={false} tickFormatter={(value: number) => value.toFixed(1)} /><YAxis width={58} tickLine={false} axisLine={false} tickFormatter={(value: number) => value.toFixed(3)} /><Tooltip formatter={(value) => [Number(value).toFixed(6), 'flux']} /><Line dataKey="flux" stroke="var(--primary)" dot={false} strokeWidth={1.5} isAnimationActive={false} /></LineChart></ResponsiveContainer></div>}</CardContent></Card>
+        
+        {/* SYNCHRONIZED OBSERVATION LIGHT CURVE */}
+        <SynchronizedLightCurve
+          time={curve?.time ?? []}
+          flux={curve?.flux ?? []}
+          blsPeriod={12.5}
+          blsDepth={target.candidate_score > 0 ? 0.0018 : 0.0008}
+          transitInfo={transitSync}
+          planetName={`TIC ${target.tic_id}`}
+        />
       </div>
     </div>
   );

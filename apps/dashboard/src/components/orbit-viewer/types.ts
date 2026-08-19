@@ -17,11 +17,20 @@ export interface PlanetParams {
   eccentricity?: number; // 0 - 0.5
 }
 
+export interface TransitSyncEvent {
+  time: number;
+  phase: number; // 0.0 to 1.0 (or -0.5 to +0.5)
+  isTransit: boolean;
+  transitDepthRatio?: number;
+  planetName?: string;
+}
+
 export interface OrbitViewer3DProps {
   star: StarParams;
   planets: PlanetParams[];
   className?: string;
   height?: string;
+  onTimeUpdate?: (event: TransitSyncEvent) => void;
 }
 
 export interface StarStyle {
