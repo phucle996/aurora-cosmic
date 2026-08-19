@@ -435,7 +435,7 @@ LEFT JOIN (
 			HasCandidate            uint8           `json:"has_candidate"`
 			CandidatePredictionID   string          `json:"candidate_prediction_id"`
 			CandidateScore          float64         `json:"candidate_score"`
-			CandidateAboveThreshold bool            `json:"candidate_above_threshold"`
+			CandidateAboveThreshold uint8           `json:"candidate_above_threshold"`
 			HasAnomaly              uint8           `json:"has_anomaly"`
 			AnomalyPredictionID     string          `json:"anomaly_prediction_id"`
 			AnomalyScore            float64         `json:"anomaly_score"`
@@ -453,7 +453,7 @@ LEFT JOIN (
 			SurfaceGrav: row.SurfaceGrav, Radius: row.Radius, Sector: row.Sector, TOI: row.TOI, Disposition: row.Disposition,
 			HasLightcurve: row.HasLightcurve == 1, LightcurvePoints: int64(row.LightcurvePoints), LightcurveTimeSpan: row.LightcurveTimeSpan,
 			HasCandidate: row.HasCandidate == 1, CandidatePredictionID: row.CandidatePredictionID, CandidateScore: row.CandidateScore,
-			CandidateAboveThreshold: row.CandidateAboveThreshold, HasAnomaly: row.HasAnomaly == 1,
+			CandidateAboveThreshold: row.CandidateAboveThreshold == 1, HasAnomaly: row.HasAnomaly == 1,
 			AnomalyPredictionID: row.AnomalyPredictionID, AnomalyScore: row.AnomalyScore, PipelineStatus: row.PipelineStatus,
 		}
 	}
