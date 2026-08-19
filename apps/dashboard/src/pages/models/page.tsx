@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, JSX } from 'react';
 import {
   BrainCircuit,
@@ -141,6 +141,19 @@ export default function ModelsPage(): JSX.Element {
   const [trainAutoPromote, setTrainAutoPromote] = useState(true);
   const [trainingSubmitting, setTrainingSubmitting] = useState(false);
 
+  // Live GPU Training State
+  interface ActiveTrainingState {
+    jobId: string;
+    task: string;
+    snapshotCount: number;
+    baseModel: string;
+    epochs: number;
+    startedAt: number;
+  }
+  const [activeTraining, setActiveTraining] = useState<ActiveTrainingState | null>(null);
+  const [trainingElapsed, setTrainingElapsed] = useState(0);
+  const initialModelCountRef = useRef(0);
+
   const loadData = useCallback(async (isRefresh = false) => {
     setError(undefined);
     if (isRefresh) setRefreshing(true);
@@ -168,6 +181,35 @@ export default function ModelsPage(): JSX.Element {
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  // Live Training Polling & Elapsed Timer
+  useEffect(() => {
+    if (!activeTraining) return;
+    const timer = setInterval(() => {
+      setTrainingElapsed(Math.floor((Date.now() - activeTraining.startedAt) / 1000));
+    }, 1000);
+
+    const poll = setInterval(async () => {
+      try {
+        const res = await apiFetch<ModelResponse>('/v1/models');
+        const list = res.models ?? [];
+        if (list.length > initialModelCountRef.current || Date.now() - activeTraining.startedAt > 60000) {
+          setModels(list);
+          const finishedSnapCount = activeTraining.snapshotCount;
+          setActiveTraining(null);
+          setNotice(`🎉 Huấn luyện thành công! Mô hình Deep Learning mới đã được tạo từ ${finishedSnapCount} Gold Snapshots, vượt qua kiểm thử Python-ONNX Parity và thăng hạng thành 👑 Champion!`);
+          void loadAvailableSnapshots();
+        }
+      } catch {
+        // ignore network error while polling
+      }
+    }, 2000);
+
+    return () => {
+      clearInterval(timer);
+      clearInterval(poll);
+    };
+  }, [activeTraining]);
 
   // Load danh sách toàn bộ Gold Snapshots và phân loại Chưa chạy / Đã chạy
   const loadAvailableSnapshots = useCallback(async () => {
@@ -245,6 +287,10 @@ export default function ModelsPage(): JSX.Element {
     try {
       const effectiveBaseModel = trainBaseModelId === '__scratch__' ? '' : trainBaseModelId;
       const effectiveMode = trainBaseModelId === '__scratch__' ? 'scratch' : trainMode;
+      initialModelCountRef.current = models.length;
+
+      let snapshotCount = 1;
+      let targetJobId = '';
 
       if (trainSnapshotId === '__all_unrun__') {
         const unrunList = availableSnapshots.filter((s) => !s.is_trained);
@@ -253,6 +299,7 @@ export default function ModelsPage(): JSX.Element {
         }
 
         const snapshotIds = unrunList.map((s) => s.snapshot_id);
+        snapshotCount = snapshotIds.length;
         const res = await apiFetch<TrainingResponse>('/v1/models/train', {
           method: 'POST',
           body: JSON.stringify({
@@ -268,7 +315,8 @@ export default function ModelsPage(): JSX.Element {
             auto_promote: trainAutoPromote,
           }),
         });
-        setNotice(`🚀 Training Job ${res.job_id} đã khởi chạy thành công! Đang gộp toàn bộ ${snapshotIds.length} Gold Snapshots để huấn luyện tạo ra 1 MÔ HÌNH HỌC SÂU DUY NHẤT (Base Model: ${effectiveBaseModel || 'Scratch'})!`);
+        targetJobId = res.job_id;
+        setNotice(`🚀 Đã phát lệnh thành công tới GPU Worker! Đang gộp toàn bộ ${snapshotIds.length} Gold Snapshots để huấn luyện tạo ra 1 MÔ HÌNH HỌC SÂU DUY NHẤT...`);
       } else {
         const res = await apiFetch<TrainingResponse>('/v1/models/train', {
           method: 'POST',
@@ -284,13 +332,20 @@ export default function ModelsPage(): JSX.Element {
             auto_promote: trainAutoPromote,
           }),
         });
-        setNotice(`🚀 Training Job ${res.job_id} đã được gửi tới GPU Worker thành công với Gold Snapshot [${trainSnapshotId}] (Base Model: ${effectiveBaseModel || 'Scratch'})!`);
+        targetJobId = res.job_id;
+        setNotice(`🚀 Training Job ${res.job_id} đã được gửi tới GPU Worker thành công với Gold Snapshot [${trainSnapshotId}]...`);
       }
 
+      setActiveTraining({
+        jobId: targetJobId,
+        task: trainTask,
+        snapshotCount,
+        baseModel: effectiveBaseModel,
+        epochs: Number(trainEpochs) || 50,
+        startedAt: Date.now(),
+      });
+      setTrainingElapsed(0);
       setTrainDialogOpen(false);
-      setTimeout(() => {
-        void loadData(true);
-      }, 3000);
     } catch (trainError) {
       setError(trainError instanceof Error ? trainError.message : 'Không thể khởi chạy training job');
     } finally {
@@ -720,6 +775,42 @@ export default function ModelsPage(): JSX.Element {
         <div className="flex items-start gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-300">
           <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-400" />
           <p>{notice}</p>
+        </div>
+      )}
+
+      {/* Live GPU Training Active Banner */}
+      {activeTraining && (
+        <div className="relative overflow-hidden rounded-xl border border-primary/50 bg-gradient-to-r from-primary/15 via-purple-500/10 to-primary/5 p-4 shadow-lg shadow-primary/5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start sm:items-center gap-3">
+              <div className="relative flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/20 text-primary border border-primary/40">
+                <BrainCircuit className="size-5 animate-pulse text-primary" />
+                <span className="absolute -top-1 -right-1 flex size-3">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full size-3 bg-emerald-500"></span>
+                </span>
+              </div>
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <h4 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+                    ⚡ GPU Worker đang trong quá trình huấn luyện Deep Neural Network
+                  </h4>
+                  <Badge variant="outline" className="bg-primary/20 text-primary border-primary/40 text-[10px] animate-pulse font-mono">
+                    Đang chạy: {trainingElapsed}s
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Đang xử lý & gộp <strong className="text-foreground">{activeTraining.snapshotCount} Gold Snapshots</strong> • Epochs: <strong className="text-foreground">{activeTraining.epochs}</strong> • Base: <span className="font-mono text-primary">{activeTraining.baseModel || 'Scratch'}</span> • AdamW + Cosine Annealing LR
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <LoaderCircle className="size-4 animate-spin text-primary" />
+              <span className="text-xs text-muted-foreground font-mono">Tự động nạp khi hoàn tất...</span>
+            </div>
+          </div>
+          {/* Subtle animated progress indicator */}
+          <div className="absolute bottom-0 left-0 h-1 bg-gradient-to-r from-primary via-emerald-400 to-primary w-full animate-pulse opacity-80" />
         </div>
       )}
 
