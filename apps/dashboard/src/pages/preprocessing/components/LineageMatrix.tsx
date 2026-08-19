@@ -52,9 +52,8 @@ export function LineageMatrix(): JSX.Element {
                 key={rec.tic_id}
                 type="button"
                 onClick={() => setSelectedLineageRecord(rec)}
-                className={`w-full text-left p-3 rounded-md transition ${
-                  isSelected ? 'bg-primary/10 border-l-2 border-primary' : 'hover:bg-muted/30'
-                }`}
+                className={`w-full text-left p-3 rounded-md transition ${isSelected ? 'bg-primary/10 border-l-2 border-primary' : 'hover:bg-muted/30'
+                  }`}
               >
                 <div className="flex items-center justify-between text-xs">
                   <span className="font-mono font-bold text-foreground">TIC {rec.tic_id}</span>

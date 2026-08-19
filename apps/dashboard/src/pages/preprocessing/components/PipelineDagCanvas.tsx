@@ -30,11 +30,10 @@ function PreprocessNode({ data, selected }: NodeProps): JSX.Element {
         event.stopPropagation();
         hop.onSelect?.();
       }}
-      className={`relative w-[230px] rounded-lg border-2 bg-card/95 p-3.5 text-left shadow-lg backdrop-blur transition-all ${
-        selected
+      className={`relative w-[230px] rounded-lg border-2 bg-card/95 p-3.5 text-left shadow-lg backdrop-blur transition-all ${selected
           ? 'border-primary ring-2 ring-primary/30 shadow-primary/20'
           : 'border-border/80 hover:border-primary/60'
-      }`}
+        }`}
     >
       <Handle type="target" position={Position.Left} className="!size-2.5 !border-0 !bg-primary" />
       <div className="flex items-center justify-between gap-2 border-b border-border/60 pb-2">
@@ -46,8 +45,8 @@ function PreprocessNode({ data, selected }: NodeProps): JSX.Element {
             hop.status === 'completed' || hop.status === 'running'
               ? 'default'
               : hop.status === 'failed'
-              ? 'destructive'
-              : 'outline'
+                ? 'destructive'
+                : 'outline'
           }
           className="text-[10px] px-1.5 py-0"
         >
@@ -183,8 +182,8 @@ export function PipelineDagCanvas({
                 n.data?.status === 'running' || n.data?.status === 'completed'
                   ? '#10b981'
                   : n.data?.status === 'failed'
-                  ? '#ef4444'
-                  : '#64748b'
+                    ? '#ef4444'
+                    : '#64748b'
               }
               maskColor="rgb(15 23 42 / 0.15)"
             />
