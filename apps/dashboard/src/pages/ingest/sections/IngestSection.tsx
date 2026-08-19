@@ -489,12 +489,12 @@ export default function IngestSection(): JSX.Element {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[180px]">Mã sản phẩm (ID)</TableHead>
-                  <TableHead>Loại</TableHead>
-                  <TableHead>Trạng thái</TableHead>
-                  <TableHead>Dung lượng</TableHead>
-                  <TableHead>Số lần thử</TableHead>
-                  <TableHead>Cập nhật lần cuối</TableHead>
+                  <TableHead className="min-w-[340px]">Mã sản phẩm (ID / FITS File)</TableHead>
+                  <TableHead className="w-[140px]">Loại</TableHead>
+                  <TableHead className="w-[140px]">Trạng thái</TableHead>
+                  <TableHead className="w-[130px] text-right">Dung lượng</TableHead>
+                  <TableHead className="w-[100px] text-center">Số lần thử</TableHead>
+                  <TableHead className="w-[200px] text-right">Cập nhật lần cuối</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -507,28 +507,48 @@ export default function IngestSection(): JSX.Element {
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filteredProducts.slice(0, 50).map((product) => (
-                    <TableRow key={product.id}>
-                      <TableCell className="font-mono text-xs font-medium truncate max-w-[200px]" title={product.id}>
-                        {product.id}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="text-[11px] font-mono">
-                          {product.kind}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={statusVariant(product.state)}>
-                          {product.state}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">
-                        {formatBytes(product.size_bytes > 0 ? product.size_bytes : product.expected_size_bytes)}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">{product.attempts}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{formatDate(product.updated_at)}</TableCell>
-                    </TableRow>
-                  ))
+                  filteredProducts.slice(0, 50).map((product) => {
+                    const ticMatch = product.id.match(/-(\d{8,16})-/);
+                    const ticNum = ticMatch ? ticMatch[1].replace(/^0+/, '') : null;
+                    return (
+                      <TableRow key={product.id} className="hover:bg-muted/40">
+                        <TableCell className="font-mono text-xs font-medium">
+                          <div className="flex items-center gap-2">
+                            {ticNum && (
+                              <Badge
+                                variant="outline"
+                                className="font-mono text-[10px] bg-primary/10 text-primary border-primary/25 shrink-0"
+                              >
+                                TIC {ticNum}
+                              </Badge>
+                            )}
+                            <span className="text-foreground select-all break-all" title={product.id}>
+                              {product.id}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-[11px] font-mono">
+                            {product.kind}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={statusVariant(product.state)}>
+                            {product.state}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs text-right">
+                          {product.size_bytes > 0 || product.expected_size_bytes > 0
+                            ? formatBytes(product.size_bytes > 0 ? product.size_bytes : product.expected_size_bytes)
+                            : '—'}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs text-center">{product.attempts}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground text-right font-mono">
+                          {formatDate(product.updated_at)}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
                 )}
               </TableBody>
             </Table>
