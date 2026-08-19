@@ -16,13 +16,14 @@ This document describes the immutable ONNX runtime package layout, Opset 17 expo
 
 * **Opset**: Explicitly pinned to Opset `17`.
 * **Dynamic Batching**: Axis 0 is dynamic (`batch`), feature dimension is fixed.
-* **Preprocessing Outside ONNX**: Imputation and standardization are performed outside the ONNX graph for transparency and exact Python/Rust parity.
-* **Candidate Graph**:
-  * Input: `features` (`[-1, 7]` of type `float32`).
-  * Output: `logits` (`[-1]` of type `float32`).
-* **Anomaly Graph**:
-  * Input: `features` (`[-1, 16]` of type `float32`).
-  * Output: `reconstruction` (`[-1, 16]` of type `float32`).
+* **Candidate Graph (`candidate-deep-resmlp-v1`)**:
+  * Input: `features` (`[-1, 32]` of type `float32`).
+  * Output: `logits` (`[-1, 1]` of type `float32`).
+  * Operations: Linear, LayerNorm, GELU, Squeeze-and-Excitation Attention, Residual Add, Dropout.
+* **Anomaly Graph (`anomaly-deep-autoencoder-v1`)**:
+  * Input: `features` (`[-1, 14]` of type `float32`).
+  * Output: `reconstruction` (`[-1, 14]` of type `float32`).
+  * Operations: Deep Bottleneck Linear, LayerNorm, GELU.
 
 ---
 

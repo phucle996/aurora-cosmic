@@ -1,7 +1,7 @@
-"""Anomaly Tabular Autoencoder Model Architecture (anomaly-lightcurve-autoencoder-v1).
+"""Anomaly Deep Bottleneck Autoencoder Model Architecture (anomaly-deep-autoencoder-v1).
 
-PyTorch Autoencoder for light-curve scalar features:
-  Input (dim) -> Linear(32) -> ReLU -> Linear(8) -> ReLU -> Linear(32) -> ReLU -> Linear(dim) -> Output (dim)
+PyTorch Deep Residual Bottleneck Autoencoder with LayerNorm and GELU for astronomical
+light-curve anomaly detection and rare transient phenomenon discovery.
 """
 
 from typing import Tuple
@@ -11,35 +11,41 @@ import torch.nn as nn
 
 from aurora_ml.ml.datasets.splits import ANOMALY_MODEL_INPUT_FEATURES
 
-__all__ = ["AnomalyLightcurveAutoencoder", "ANOMALY_MODEL_INPUT_FEATURES"]
+__all__ = ["AnomalyLightcurveAutoencoder", "AnomalyAutoencoderV1", "ANOMALY_MODEL_INPUT_FEATURES", "compute_reconstruction_mse"]
 
 
 class AnomalyLightcurveAutoencoder(nn.Module):
-    """PyTorch Tabular Autoencoder for astronomical light-curve anomaly detection."""
+    """PyTorch Deep Tabular Autoencoder for astronomical light-curve anomaly detection."""
 
-    model_version: str = "anomaly-lightcurve-autoencoder-v1"
+    model_version: str = "anomaly-deep-autoencoder-v1"
     score_definition_version: str = "reconstruction-mse-v1"
 
-    def __init__(self, input_dim: int = 14, hidden_dims: Tuple[int, int] = (32, 8)):
+    def __init__(self, input_dim: int = 14, hidden_dims: Tuple[int, int, int] = (64, 32, 16)):
         super().__init__()
         self.input_dim = input_dim
         self.hidden_dims = hidden_dims
 
-        h1, latent = hidden_dims
-
-        # Encoder: input_dim -> 32 -> 8 (latent)
+        # Encoder: input_dim -> 64 -> 32 -> 16 (Deep compressed latent space)
         self.encoder = nn.Sequential(
-            nn.Linear(input_dim, h1),
-            nn.ReLU(),
-            nn.Linear(h1, latent),
-            nn.ReLU(),
+            nn.Linear(input_dim, 64),
+            nn.LayerNorm(64),
+            nn.GELU(),
+            nn.Linear(64, 32),
+            nn.LayerNorm(32),
+            nn.GELU(),
+            nn.Linear(32, 16),
+            nn.LayerNorm(16),
         )
 
-        # Decoder: 8 (latent) -> 32 -> input_dim
+        # Decoder: 16 (latent) -> 32 -> 64 -> input_dim
         self.decoder = nn.Sequential(
-            nn.Linear(latent, h1),
-            nn.ReLU(),
-            nn.Linear(h1, input_dim),
+            nn.Linear(16, 32),
+            nn.LayerNorm(32),
+            nn.GELU(),
+            nn.Linear(32, 64),
+            nn.LayerNorm(64),
+            nn.GELU(),
+            nn.Linear(64, input_dim),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -49,7 +55,7 @@ class AnomalyLightcurveAutoencoder(nn.Module):
         return reconstructed
 
     def encode(self, x: torch.Tensor) -> torch.Tensor:
-        """Extract bottleneck latent representation of shape (N, 8)."""
+        """Extract bottleneck latent representation of shape (N, 16)."""
         return self.encoder(x)
 
 

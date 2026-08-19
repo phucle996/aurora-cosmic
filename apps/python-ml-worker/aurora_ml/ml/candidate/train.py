@@ -298,9 +298,10 @@ def train_candidate_model(
         except Exception as exc:
             print(f"[aurora-ml] Warning: Could not load base weights: {exc}. Training with random init.")
 
-    optimizer = torch.optim.Adam(
-        model.parameters(), lr=learning_rate, weight_decay=weight_decay
+    optimizer = torch.optim.AdamW(
+        model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.999)
     )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
 
     checkpoint.update_status("TRAINING")
     checkpoint_path = os.path.join(
@@ -327,6 +328,8 @@ def train_candidate_model(
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
+
+        scheduler.step()
 
         # Evaluate on VALIDATION split
         model.eval()
