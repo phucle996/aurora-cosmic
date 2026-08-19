@@ -39,7 +39,7 @@ export function OrbitViewer3D({
   const [selectedPlanetIndex, setSelectedPlanetIndex] = useState(0);
   const [cameraMode, setCameraMode] = useState<CameraMode>('free');
 
-  // Smooth camera state
+  // Smooth camera state with ultra deep zoom range (0.015 to 4.5)
   const cameraRef = useRef<CameraState>({
     pitch: 0.7,
     yaw: 0.4,
@@ -64,17 +64,24 @@ export function OrbitViewer3D({
   const hz = calculateHabitableZone(radius, teff);
   const starStyle = getStarColor(teff);
 
-  // Mouse Interaction handlers for smooth 3D orbit
+  // Mouse Interaction handlers (Left Drag: Rotate, Shift/Right Drag: Pan, Wheel: Ultra Zoom)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+
+    let isRightDrag = false;
+
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+    };
 
     const handleMouseDown = (e: MouseEvent) => {
       cameraRef.current.isDragging = true;
       cameraRef.current.startX = e.clientX;
       cameraRef.current.startY = e.clientY;
       cameraRef.current.autoRotate = false;
-      if (cameraMode !== 'free') setCameraMode('free');
+      isRightDrag = e.button === 2 || e.shiftKey;
+      if (cameraMode === 'polar' || cameraMode === 'transit') setCameraMode('free');
     };
 
     const handleMouseMove = (e: MouseEvent) => {
@@ -84,32 +91,46 @@ export function OrbitViewer3D({
       cameraRef.current.startX = e.clientX;
       cameraRef.current.startY = e.clientY;
 
-      cameraRef.current.targetYaw += dx * 0.007;
-      cameraRef.current.targetPitch = Math.max(
-        0.02,
-        Math.min(Math.PI / 2 - 0.01, cameraRef.current.targetPitch + dy * 0.007)
-      );
+      if (isRightDrag || e.shiftKey) {
+        // Pan camera
+        cameraRef.current.panX += dx;
+        cameraRef.current.panY += dy;
+      } else {
+        // Rotate camera
+        cameraRef.current.targetYaw += dx * 0.007;
+        cameraRef.current.targetPitch = Math.max(
+          0.02,
+          Math.min(Math.PI / 2 - 0.01, cameraRef.current.targetPitch + dy * 0.007)
+        );
+      }
     };
 
     const handleMouseUp = () => {
       cameraRef.current.isDragging = false;
+      isRightDrag = false;
     };
 
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
-      const zoomFactor = e.deltaY > 0 ? 1.12 : 0.88;
+      // Smooth exponential zoom scaling with ultra-deep zoom support (down to 0.015)
+      const zoomFactor = e.deltaY > 0 ? 1.15 : 0.86;
       cameraRef.current.targetDistance = Math.max(
-        0.2,
+        0.015,
         Math.min(4.5, cameraRef.current.targetDistance * zoomFactor)
       );
+      if (cameraMode === 'focus_planet' && e.deltaY > 0) {
+        setCameraMode('free');
+      }
     };
 
+    canvas.addEventListener('contextmenu', handleContextMenu);
     canvas.addEventListener('mousedown', handleMouseDown);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
     canvas.addEventListener('wheel', handleWheel, { passive: false });
 
     return () => {
+      canvas.removeEventListener('contextmenu', handleContextMenu);
       canvas.removeEventListener('mousedown', handleMouseDown);
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
@@ -145,13 +166,40 @@ export function OrbitViewer3D({
       // Camera Damping
       cameraRef.current.yaw += (cameraRef.current.targetYaw - cameraRef.current.yaw) * 0.1;
       cameraRef.current.pitch += (cameraRef.current.targetPitch - cameraRef.current.pitch) * 0.1;
-      cameraRef.current.distance += (cameraRef.current.targetDistance - cameraRef.current.distance) * 0.12;
+      cameraRef.current.distance += (cameraRef.current.targetDistance - cameraRef.current.distance) * 0.14;
+
+      // Calculate Extent & Scale
+      const maxAu = Math.max(0.18, hz.optOuterAu * 1.3, ...planets.map((p) => p.semiMajorAxisAu * 1.3));
+      const baseScale = (Math.min(width, height) * 0.42) / (maxAu * cameraRef.current.distance);
+
+      // Handle Focus Planet Tracking Cam
+      let targetPanX = 0;
+      let targetPanY = 0;
+      const selectedPlanet = planets[selectedPlanetIndex] ?? planets[0];
+
+      if (cameraMode === 'focus_planet' && selectedPlanet) {
+        const period = Math.max(0.1, selectedPlanet.periodDays);
+        const theta = (timeRef.current / period) * Math.PI * 2;
+        const orbX = Math.cos(theta) * selectedPlanet.semiMajorAxisAu;
+        const orbZ = Math.sin(theta) * selectedPlanet.semiMajorAxisAu;
+
+        const cosYaw = Math.cos(cameraRef.current.yaw);
+        const sinYaw = Math.sin(cameraRef.current.yaw);
+        const rx = orbX * cosYaw - orbZ * sinYaw;
+        const rz = orbX * sinYaw + orbZ * cosYaw;
+        const cosPitch = Math.cos(cameraRef.current.pitch);
+
+        targetPanX = -rx * baseScale;
+        targetPanY = -rz * cosPitch * baseScale;
+      }
+
+      if (cameraMode === 'focus_planet') {
+        cameraRef.current.panX += (targetPanX - cameraRef.current.panX) * 0.15;
+        cameraRef.current.panY += (targetPanY - cameraRef.current.panY) * 0.15;
+      }
 
       const cx = width / 2 + cameraRef.current.panX;
       const cy = height / 2 + cameraRef.current.panY;
-
-      const maxAu = Math.max(0.18, hz.optOuterAu * 1.3, ...planets.map((p) => p.semiMajorAxisAu * 1.3));
-      const baseScale = (Math.min(width, height) * 0.42) / (maxAu * cameraRef.current.distance);
 
       const project = createProjector(cx, cy, baseScale, cameraRef.current);
 
@@ -186,7 +234,20 @@ export function OrbitViewer3D({
       // 6. Orbit Rings
       if (showOrbits) drawOrbits(ctx, project, planets, selectedPlanetIndex);
 
-      // 7. Depth-Sorted Objects
+      // 7. Dynamic Adaptive Sizing for Star & Planets
+      // Ensures close-in orbits are never swallowed by the star
+      const minOrbitAu = planets.length > 0
+        ? Math.min(...planets.map((p) => p.semiMajorAxisAu))
+        : hz.consInnerAu;
+      const minOrbitScreenR = minOrbitAu * baseScale;
+      const maxStarR = Math.max(8, minOrbitScreenR * 0.42);
+      const desiredStarR = Math.max(8, (16 * Math.sqrt(radius)) / Math.pow(cameraRef.current.distance, 0.22));
+      const starScreenR = Math.min(maxStarR, desiredStarR);
+
+      // Current Zoom Multiplier for Close-Up Detail Expansion
+      const zoomMultiplier = 1 / Math.max(0.015, cameraRef.current.distance);
+
+      // 8. Depth-Sorted Objects
       const renderObjects: {
         type: 'star' | 'planet';
         planet?: (typeof planets)[0];
@@ -197,7 +258,6 @@ export function OrbitViewer3D({
         screenRadius: number;
       }[] = [];
 
-      const starScreenR = Math.max(16, Math.min(48, 22 * Math.sqrt(radius)));
       renderObjects.push({ type: 'star', x: cx, y: cy, depth: 0, screenRadius: starScreenR });
 
       planets.forEach((p, idx) => {
@@ -206,7 +266,13 @@ export function OrbitViewer3D({
         const orbX = Math.cos(theta) * p.semiMajorAxisAu;
         const orbZ = Math.sin(theta) * p.semiMajorAxisAu;
         const proj = project(orbX, orbZ);
-        const planetScreenR = Math.max(5, Math.min(18, 4.2 * Math.pow(p.radiusEarth, 0.55)));
+
+        // Planet radius expands smoothly when zoomed in close!
+        const basePlanetR = 4.2 * Math.pow(p.radiusEarth, 0.55);
+        const planetScreenR = Math.max(
+          5,
+          Math.min(150, basePlanetR * Math.pow(zoomMultiplier, 0.42))
+        );
 
         renderObjects.push({
           type: 'planet',
@@ -239,7 +305,7 @@ export function OrbitViewer3D({
         }
       });
 
-      // 8. Transit Eclipse Ray
+      // 9. Transit Eclipse Ray
       const transitThreshold = 0.05;
       planets.forEach((p) => {
         const period = Math.max(0.1, p.periodDays);
@@ -277,6 +343,7 @@ export function OrbitViewer3D({
 
   const selectedPlanet = planets[selectedPlanetIndex] ?? planets[0];
 
+  // Camera Actions
   const resetCamera = () => {
     cameraRef.current.targetPitch = 0.7;
     cameraRef.current.targetYaw = 0.4;
@@ -287,17 +354,39 @@ export function OrbitViewer3D({
     setCameraMode('free');
   };
 
+  const focusPlanet = () => {
+    cameraRef.current.targetDistance = 0.06; // 16x zoom-in directly on planet
+    cameraRef.current.targetPitch = 0.35;
+    cameraRef.current.autoRotate = false;
+    setCameraMode('focus_planet');
+  };
+
   const setTopDownView = () => {
     cameraRef.current.targetPitch = 0.02;
     cameraRef.current.autoRotate = false;
+    cameraRef.current.panX = 0;
+    cameraRef.current.panY = 0;
     setCameraMode('polar');
   };
 
   const setTransitView = () => {
     cameraRef.current.targetPitch = Math.PI / 2 - 0.02;
     cameraRef.current.autoRotate = false;
+    cameraRef.current.panX = 0;
+    cameraRef.current.panY = 0;
     setCameraMode('transit');
   };
+
+  const zoomIn = () => {
+    cameraRef.current.targetDistance = Math.max(0.015, cameraRef.current.targetDistance * 0.65);
+  };
+
+  const zoomOut = () => {
+    cameraRef.current.targetDistance = Math.min(4.5, cameraRef.current.targetDistance * 1.5);
+    if (cameraMode === 'focus_planet') setCameraMode('free');
+  };
+
+  const currentZoomLevel = 1 / cameraRef.current.distance;
 
   return (
     <div
@@ -312,13 +401,18 @@ export function OrbitViewer3D({
       {/* Top Left System HUD */}
       <SystemHud star={star} starStyle={starStyle} hz={hz} selectedPlanet={selectedPlanet} />
 
-      {/* Top Right Camera Controls */}
+      {/* Top Right Camera Controls with Deep Zoom & Focus Planet */}
       <CameraControls
         cameraMode={cameraMode}
         isFullscreen={isFullscreen}
+        zoomLevel={currentZoomLevel}
+        hasPlanets={planets.length > 0}
         onResetCamera={resetCamera}
+        onFocusPlanet={focusPlanet}
         onSetTopDownView={setTopDownView}
         onSetTransitView={setTransitView}
+        onZoomIn={zoomIn}
+        onZoomOut={zoomOut}
         onToggleFullscreen={() => setIsFullscreen(!isFullscreen)}
       />
 
@@ -333,7 +427,10 @@ export function OrbitViewer3D({
         selectedPlanetIndex={selectedPlanetIndex}
         onTogglePlay={() => setIsPlaying(!isPlaying)}
         onChangeSpeed={setSpeedMultiplier}
-        onSelectPlanet={setSelectedPlanetIndex}
+        onSelectPlanet={(idx) => {
+          setSelectedPlanetIndex(idx);
+          if (cameraMode === 'focus_planet') focusPlanet();
+        }}
         onToggleHabitableZone={() => setShowHabitableZone(!showHabitableZone)}
         onToggleTrails={() => setShowTrails(!showTrails)}
         onToggleGrid={() => setShowGrid(!showGrid)}

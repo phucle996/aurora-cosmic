@@ -67,7 +67,7 @@ export interface CameraState {
   autoRotate: boolean;
 }
 
-export type CameraMode = 'free' | 'track' | 'polar' | 'transit';
+export type CameraMode = 'free' | 'track' | 'polar' | 'transit' | 'focus_planet' | 'focus_star';
 
 export interface BackgroundStar {
   x: number;
