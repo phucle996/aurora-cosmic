@@ -115,6 +115,8 @@ def run_training_pipeline(payload: Dict[str, Any], config: Config) -> Dict[str, 
     """Execute end-to-end training and export model package to MinIO."""
     task = payload.get("task", "candidate_vetting")
     gold_snapshot_id = payload.get("gold_snapshot_id", "")
+    base_model_id = payload.get("base_model_id", "champion")
+    training_mode = payload.get("training_mode", "fine_tune")
     epochs = int(payload.get("epochs", 50))
     learning_rate = float(payload.get("learning_rate", 0.001))
     batch_size = int(payload.get("batch_size", 32))
@@ -122,7 +124,7 @@ def run_training_pipeline(payload: Dict[str, Any], config: Config) -> Dict[str, 
     auto_promote = bool(payload.get("auto_promote", True))
     job_id = payload.get("training_job_id", f"train-{int(time.time())}")
 
-    LOGGER.info("Starting automated training job %s: task=%s epochs=%d lr=%f", job_id, task, epochs, learning_rate)
+    LOGGER.info("Starting automated training job %s: task=%s epochs=%d lr=%f base_model=%s mode=%s", job_id, task, epochs, learning_rate, base_model_id, training_mode)
 
     minio_client = get_minio_client(config)
     bucket = config.minio_bucket
@@ -170,6 +172,35 @@ def run_training_pipeline(payload: Dict[str, Any], config: Config) -> Dict[str, 
         os.makedirs(registry_dir, exist_ok=True)
         os.makedirs(runtime_dir, exist_ok=True)
 
+        # Resolve Base Model Weights for Fine-Tuning / Transfer Learning
+        base_model_path = None
+        if training_mode != "scratch" and base_model_id:
+            target_model_id = base_model_id
+            if base_model_id == "champion":
+                try:
+                    champ_task = "candidate" if task == "candidate_vetting" else "anomaly"
+                    champ_obj = minio_client.get_object(bucket, f"models/{champ_task}/champion.json")
+                    champ_data = json.loads(champ_obj.read().decode("utf-8"))
+                    target_model_id = champ_data.get("model_id") or champ_data.get("runtime_package_id")
+                except Exception as exc:
+                    LOGGER.info("No active champion pointer found for task %s (%s).", task, exc)
+
+            if target_model_id:
+                possible_keys = [
+                    f"models/registry/{task}/{target_model_id}/model.pt",
+                    f"models/runtime/{task}/{target_model_id}/model.pt",
+                ]
+                for key in possible_keys:
+                    try:
+                        obj = minio_client.get_object(bucket, key)
+                        base_model_path = os.path.join(temp_dir, "base_model_weights.pt")
+                        with open(base_model_path, "wb") as f:
+                            f.write(obj.read())
+                        LOGGER.info("Successfully loaded base model weights from s3://%s/%s for continual fine-tuning", bucket, key)
+                        break
+                    except Exception:
+                        pass
+
         snapshot_type = "CANDIDATE" if task == "candidate_vetting" else "ANOMALY"
         gold_manifest = GoldSnapshotManifest(
             snapshot_id="gold-v1-000000000001",
@@ -192,7 +223,7 @@ def run_training_pipeline(payload: Dict[str, Any], config: Config) -> Dict[str, 
             candidate_temp_dir = os.path.join(temp_dir, "train_out")
             os.makedirs(candidate_temp_dir, exist_ok=True)
 
-            LOGGER.info("Training PyTorch candidate vetting model on GPU...")
+            LOGGER.info("Training PyTorch candidate vetting model on GPU (fine_tune=%s)...", bool(base_model_path))
             training_manifest, checkpoint = train_candidate_model(
                 gold_manifest=gold_manifest,
                 split_manifest=split_manifest,
@@ -203,6 +234,7 @@ def run_training_pipeline(payload: Dict[str, Any], config: Config) -> Dict[str, 
                 dest_dir=candidate_temp_dir,
                 device_str="cuda" if config.device == "cuda" else "cpu",
                 max_vram_mb=config.max_vram_mb,
+                base_model_path=base_model_path,
             )
 
             eval_manifest_path = os.path.join(candidate_temp_dir, "evaluation_manifest.json")

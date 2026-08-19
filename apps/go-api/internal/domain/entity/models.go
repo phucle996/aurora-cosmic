@@ -77,6 +77,8 @@ type InferenceJob struct {
 type TrainingJobRequest struct {
 	Task           string  `json:"task"`
 	GoldSnapshotID string  `json:"gold_snapshot_id"`
+	BaseModelID    string  `json:"base_model_id,omitempty"`   // Model ID gốc làm nền tảng (e.g. "champion", "model-cand-v1-...", hoặc "" để train từ đầu)
+	TrainingMode   string  `json:"training_mode,omitempty"`   // "fine_tune" (kế thừa trọng số) hoặc "scratch" (tạo mới ngẫu nhiên)
 	Epochs         int     `json:"epochs"`
 	LearningRate   float64 `json:"learning_rate"`
 	BatchSize      int     `json:"batch_size"`

@@ -127,6 +127,8 @@ export default function ModelsPage(): JSX.Element {
   // Training Dialog state & Snapshots
   const [trainDialogOpen, setTrainDialogOpen] = useState(false);
   const [trainTask, setTrainTask] = useState<'candidate_vetting' | 'astronomical_anomaly_detection'>('candidate_vetting');
+  const [trainBaseModelId, setTrainBaseModelId] = useState('champion');
+  const [trainMode, setTrainMode] = useState<'fine_tune' | 'scratch'>('fine_tune');
   const [trainSnapshotId, setTrainSnapshotId] = useState('');
   const [isCustomSnapshot, setIsCustomSnapshot] = useState(false);
   const [availableSnapshots, setAvailableSnapshots] = useState<GoldSnapshotItem[]>([]);
@@ -241,6 +243,9 @@ export default function ModelsPage(): JSX.Element {
     setError(undefined);
     setNotice(undefined);
     try {
+      const effectiveBaseModel = trainBaseModelId === '__scratch__' ? '' : trainBaseModelId;
+      const effectiveMode = trainBaseModelId === '__scratch__' ? 'scratch' : trainMode;
+
       if (trainSnapshotId === '__all_unrun__') {
         const unrunList = availableSnapshots.filter((s) => !s.is_trained);
         if (unrunList.length === 0) {
@@ -254,6 +259,8 @@ export default function ModelsPage(): JSX.Element {
             body: JSON.stringify({
               task: trainTask,
               gold_snapshot_id: snap.snapshot_id,
+              base_model_id: effectiveBaseModel,
+              training_mode: effectiveMode,
               epochs: Number(trainEpochs) || 50,
               learning_rate: Number(trainLr) || 0.001,
               batch_size: Number(trainBatchSize) || 32,
@@ -263,13 +270,15 @@ export default function ModelsPage(): JSX.Element {
           });
           count++;
         }
-        setNotice(`🚀 Đã gửi thành công toàn bộ ${count} Gold Snapshots chưa chạy tới GPU Worker để huấn luyện hàng loạt!`);
+        setNotice(`🚀 Đã gửi thành công toàn bộ ${count} Gold Snapshots tới GPU Worker để huấn luyện tinh chỉnh (Base Model: ${effectiveBaseModel || 'Scratch'})!`);
       } else {
         const res = await apiFetch<TrainingResponse>('/v1/models/train', {
           method: 'POST',
           body: JSON.stringify({
             task: trainTask,
             gold_snapshot_id: trainSnapshotId.trim(),
+            base_model_id: effectiveBaseModel,
+            training_mode: effectiveMode,
             epochs: Number(trainEpochs) || 50,
             learning_rate: Number(trainLr) || 0.001,
             batch_size: Number(trainBatchSize) || 32,
@@ -277,7 +286,7 @@ export default function ModelsPage(): JSX.Element {
             auto_promote: trainAutoPromote,
           }),
         });
-        setNotice(`🚀 Training Job ${res.job_id} đã được gửi tới GPU Worker thành công với Gold Snapshot [${trainSnapshotId}]!`);
+        setNotice(`🚀 Training Job ${res.job_id} đã được gửi tới GPU Worker thành công với Gold Snapshot [${trainSnapshotId}] (Base Model: ${effectiveBaseModel || 'Scratch'})!`);
       }
 
       setTrainDialogOpen(false);
@@ -388,6 +397,53 @@ export default function ModelsPage(): JSX.Element {
                       <option value="candidate_vetting">Candidate Vetting (Phân loại ứng viên Ngoại hành tinh - Tabular MLP)</option>
                       <option value="astronomical_anomaly_detection">Astronomical Anomaly Detection (Phát hiện dị thường - Autoencoder)</option>
                     </select>
+                  </div>
+
+                  {/* Base Model Selection (Continual Learning & Transfer Learning) */}
+                  <div className="space-y-2 rounded-md border border-primary/20 bg-primary/5 p-3">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="train-base-model" className="text-xs font-semibold text-primary flex items-center gap-1.5">
+                        <BrainCircuit className="size-3.5" />
+                        Mô hình Nền tảng (Continual Learning / Transfer Learning)
+                      </Label>
+                      <Badge variant="outline" className="text-[10px] bg-primary/10 text-primary border-primary/30 font-medium">
+                        {trainBaseModelId === '__scratch__' ? 'Random Init' : 'Kế thừa tri thức'}
+                      </Badge>
+                    </div>
+
+                    <select
+                      id="train-base-model"
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      value={trainBaseModelId}
+                      onChange={(e) => {
+                        setTrainBaseModelId(e.target.value);
+                        if (e.target.value === '__scratch__') {
+                          setTrainMode('scratch');
+                        } else {
+                          setTrainMode('fine_tune');
+                        }
+                      }}
+                    >
+                      <option value="champion">👑 Champion Model Hiện Tại (Khuyên dùng — Kế thừa tri thức tốt nhất)</option>
+                      {models.filter((m) => m.task === trainTask).length > 0 && (
+                        <optgroup label="📦 CHỌN MODEL CỤ THỂ TRONG REGISTRY">
+                          {models
+                            .filter((m) => m.task === trainTask)
+                            .map((m) => (
+                              <option key={m.model_id} value={m.model_id}>
+                                {m.model_id} ({m.status === 'champion' ? '👑 Champion' : m.status}) — Ver {m.model_version}
+                              </option>
+                            ))}
+                        </optgroup>
+                      )}
+                      <option value="__scratch__">🆕 Huấn luyện từ đầu (Train from scratch / Random weights)</option>
+                    </select>
+
+                    <p className="text-[10.5px] text-muted-foreground pt-0.5 leading-relaxed">
+                      {trainBaseModelId === '__scratch__'
+                        ? '⚡ Khởi tạo ngẫu nhiên toàn bộ trọng số mạng nơ-ron (không kế thừa tri thức trước).'
+                        : '🎯 Kế thừa toàn bộ đặc trưng đã học từ Base Model và tiến hành tinh chỉnh (Fine-tuning) trên các Gold Snapshots mới để mô hình liên tục thông minh và chính xác hơn.'}
+                    </p>
                   </div>
 
                   {/* Dynamic Gold Snapshot Selector */}

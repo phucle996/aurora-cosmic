@@ -206,10 +206,19 @@ func (s *ModelsService) StartTrainingJob(ctx context.Context, req entity.Trainin
 	jobID := fmt.Sprintf("train-%d", time.Now().UnixNano()/1e6)
 	createdAt := time.Now().UTC().Format(time.RFC3339)
 
+	if req.TrainingMode == "" {
+		req.TrainingMode = "fine_tune"
+	}
+	if req.BaseModelID == "" {
+		req.BaseModelID = "champion"
+	}
+
 	payload, err := json.Marshal(map[string]any{
 		"training_job_id":  jobID,
 		"task":             req.Task,
 		"gold_snapshot_id": req.GoldSnapshotID,
+		"base_model_id":    req.BaseModelID,
+		"training_mode":    req.TrainingMode,
 		"epochs":           req.Epochs,
 		"learning_rate":    req.LearningRate,
 		"batch_size":       req.BatchSize,

@@ -127,12 +127,12 @@ def train_candidate_model(
     dest_dir: Optional[str] = None,
     device_str: str = "cuda",
     max_vram_mb: int = 0,
+    base_model_path: Optional[str] = None,
 ) -> Tuple[TrainingRunManifest, TrainingRunCheckpoint]:
     """Execute Phase 6.2 Candidate Tabular Model Training Run.
 
     Accepts committed Gold manifest, split manifest, and rows dataset.
-    Fits preprocessor and class-weights strictly on TRAIN split.
-    Saves model.pt, preprocessing.json, metrics.json, manifest.json.
+    Supports transfer learning and continual fine-tuning from a base model.
     """
     # 1. Preflight Validations
     gold_manifest.validate()
@@ -202,6 +202,7 @@ def train_candidate_model(
         "weight_decay": weight_decay,
         "device": "cuda",
         "amp_dtype": "float16",
+        "fine_tune_base_model": bool(base_model_path),
     }
 
     # Derive dataset_view_fingerprint from preprocessor feature order
@@ -287,6 +288,15 @@ def train_candidate_model(
         hidden_dims=(64, 32),
         dropout_rate=0.2,
     ).to(device)
+
+    # Load base model weights for fine-tuning if provided
+    if base_model_path and os.path.exists(base_model_path):
+        try:
+            state_dict = torch.load(base_model_path, map_location=device, weights_only=True)
+            model.load_state_dict(state_dict, strict=False)
+            print(f"[aurora-ml] Transfer Learning: Initialized CandidateTabularMLP with base weights from {base_model_path}")
+        except Exception as exc:
+            print(f"[aurora-ml] Warning: Could not load base weights: {exc}. Training with random init.")
 
     optimizer = torch.optim.Adam(
         model.parameters(), lr=learning_rate, weight_decay=weight_decay
