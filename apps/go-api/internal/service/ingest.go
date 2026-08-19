@@ -14,37 +14,51 @@ import (
 	domainService "go-api/internal/domain/service"
 )
 
+// ============================================================================
+// INGEST SERVICE (Dịch vụ điều phối & giám sát quá trình thu thập dữ liệu)
+// ============================================================================
+// IngestService chịu trách nhiệm:
+// 1. Kích hoạt (Start) hoặc Hủy bỏ (Cancel) tiến trình tải dữ liệu thiên văn từ NASA MAST.
+// 2. Theo dõi trạng thái tiến trình thời gian thực qua Checkpoint MinIO và Metrics Prometheus.
+// 3. Quản lý danh sách đối tượng lưu trữ trong vùng đệm MinIO Bronze (~50 GiB).
 type IngestService struct {
-	objects    repo.ObjectRepository
-	prometheus repo.PrometheusQuerier
-	bucket     string
-	controller repo.IngestController
-	publisher  repo.EventPublisher
-	runtimeMu  sync.RWMutex
-	runtimeJob *entity.IngestControlJob
-	runtime    *entity.IngestStatus
+	objects    repo.ObjectRepository   // Repository đọc ghi MinIO S3
+	prometheus repo.PrometheusQuerier  // Truy vấn metrics tốc độ throughput từ Prometheus
+	bucket     string                  // Tên bucket MinIO (mặc định: "aurora")
+	controller repo.IngestController   // Controller điều khiển Go Ingester worker
+	publisher  repo.EventPublisher     // Publisher phát sự kiện lifecycle workflow
+	runtimeMu  sync.RWMutex            // Khóa đồng bộ trạng thái runtime trong bộ nhớ
+	runtimeJob *entity.IngestControlJob // Thông tin job điều khiển đang chạy
+	runtime    *entity.IngestStatus    // Snapshot trạng thái thu thập gần nhất
 }
 
+// ============================================================================
+// DTO CHECKPOINT TIẾN TRÌNH THU THẬP (Ingestion Checkpoint DTO)
+// ============================================================================
+// ingestionCheckpoint ánh xạ nội dung file JSON checkpoint lưu tại:
+// s3://aurora/checkpoints/ingestion/runs/<run_id>.json
 type ingestionCheckpoint struct {
-	RunID        string                      `json:"run_id"`
-	Status       string                      `json:"status"`
-	ManifestPath string                      `json:"manifest_path"`
-	StartedAt    time.Time                   `json:"started_at"`
-	UpdatedAt    time.Time                   `json:"updated_at"`
-	Products     map[string]ingestionProduct `json:"products"`
+	RunID        string                      `json:"run_id"`        // Mã định danh đợt thu thập (VD: run-2026-s42)
+	Status       string                      `json:"status"`        // Trạng thái: RUNNING, COMPLETED, FAILED, CANCELED
+	ManifestPath string                      `json:"manifest_path"` // Đường dẫn tới manifest kế hoạch thu thập
+	StartedAt    time.Time                   `json:"started_at"`    // Thời điểm bắt đầu
+	UpdatedAt    time.Time                   `json:"updated_at"`    // Thời điểm cập nhật checkpoint gần nhất
+	Products     map[string]ingestionProduct `json:"products"`      // Danh sách trạng thái từng file FITS đang tải
 }
 
+// ingestionProduct lưu trạng thái chi tiết của từng file dữ liệu (Light Curve / TPF FITS)
 type ingestionProduct struct {
-	ProductKind       string    `json:"product_kind"`
-	ObjectKey         string    `json:"object_key"`
-	ExpectedSizeBytes int64     `json:"expected_size_bytes"`
-	SizeBytes         int64     `json:"size_bytes"`
-	State             string    `json:"state"`
-	Attempts          int       `json:"attempts"`
-	LastError         string    `json:"last_error,omitempty"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	ProductKind       string    `json:"product_kind"`        // Loại sản phẩm: light_curve, target_pixel, ffi
+	ObjectKey         string    `json:"object_key"`          // Khóa lưu trữ S3 (VD: bronze/sector-42/..._lc.fits)
+	ExpectedSizeBytes int64     `json:"expected_size_bytes"` // Kích thước dự kiến từ catalog MAST
+	SizeBytes         int64     `json:"size_bytes"`          // Số bytes thực tế đã tải về
+	State             string    `json:"state"`               // Trạng thái: DOWNLOADING, STORED, PUBLISHED, FAILED
+	Attempts          int       `json:"attempts"`            // Số lần đã thử tải lại
+	LastError         string    `json:"last_error,omitempty"`// Lỗi chi tiết nếu thất bại
+	UpdatedAt         time.Time `json:"updated_at"`          // Thời gian cập nhật trạng thái
 }
 
+// NewIngestService khởi tạo thể hiện của IngestService
 func NewIngestService(objects repo.ObjectRepository, prometheus repo.PrometheusQuerier, bucket string, controllers ...repo.IngestController) domainService.Ingest {
 	var controller repo.IngestController
 	if len(controllers) > 0 {
@@ -53,41 +67,85 @@ func NewIngestService(objects repo.ObjectRepository, prometheus repo.PrometheusQ
 	return &IngestService{objects: objects, prometheus: prometheus, bucket: bucket, controller: controller}
 }
 
+// NewIngestServiceWithEvents khởi tạo thể hiện IngestService có kèm EventPublisher
 func NewIngestServiceWithEvents(objects repo.ObjectRepository, prometheus repo.PrometheusQuerier, bucket string, controller repo.IngestController, publisher repo.EventPublisher) domainService.Ingest {
 	return &IngestService{objects: objects, prometheus: prometheus, bucket: bucket, controller: controller, publisher: publisher}
 }
 
+// ============================================================================
+// HÀM KHỞI CHẠY TIẾN TRÌNH THU THẬP (Start Ingestion)
+// ============================================================================
+// Start gửi lệnh khởi động một đợt thu thập dữ liệu mới tới Go Ingester
+// và phát sự kiện workflow vào event bus.
 func (s *IngestService) Start(ctx context.Context, request entity.IngestStartRequest) (*entity.IngestControlJob, error) {
 	if s.controller == nil {
 		return nil, fmt.Errorf("ingester control is unavailable")
 	}
+
+	// 1. Gọi controller để kích hoạt Ingester worker
 	job, err := s.controller.Start(ctx, request)
 	if err != nil {
 		return nil, err
 	}
+
+	// 2. Phát sự kiện workflow (nếu có publisher)
 	if s.publisher != nil {
 		payload, _ := json.Marshal(job)
-		_ = s.publisher.Publish(ctx, entity.WorkflowEvent{Type: "workflow", Workflow: "ingest", Status: job.Status, JobID: job.JobID, OccurredAt: job.UpdatedAt, Payload: payload})
+		_ = s.publisher.Publish(ctx, entity.WorkflowEvent{
+			Type:       "workflow",
+			Workflow:   "ingest",
+			Status:     job.Status,
+			JobID:      job.JobID,
+			OccurredAt: job.UpdatedAt,
+			Payload:    payload,
+		})
 	}
+
+	// 3. Cập nhật trạng thái runtime trong bộ nhớ
 	s.runtimeMu.Lock()
 	s.runtimeJob = job
-	s.runtime = &entity.IngestStatus{Observed: true, Source: "api-runtime", ControlJobID: job.JobID, Status: strings.ToLower(job.Status), ManifestPath: job.ManifestPath, StartedAt: job.StartedAt, UpdatedAt: job.UpdatedAt, ObservedAt: time.Now().UTC(), Products: []entity.IngestProduct{}}
+	s.runtime = &entity.IngestStatus{
+		Observed:     true,
+		Source:       "api-runtime",
+		ControlJobID: job.JobID,
+		Status:       strings.ToLower(job.Status),
+		ManifestPath: job.ManifestPath,
+		StartedAt:    job.StartedAt,
+		UpdatedAt:    job.UpdatedAt,
+		ObservedAt:   time.Now().UTC(),
+		Products:     []entity.IngestProduct{},
+	}
 	s.runtimeMu.Unlock()
+
 	return job, nil
 }
 
+// ============================================================================
+// HÀM HỦY BỎ TIẾN TRÌNH (Cancel Ingestion)
+// ============================================================================
+// Cancel gửi tín hiệu dừng khẩn cấp một tác vụ thu thập đang chạy.
 func (s *IngestService) Cancel(ctx context.Context, jobID string) (*entity.IngestControlJob, error) {
 	if s.controller == nil {
 		return nil, fmt.Errorf("ingester control is unavailable")
 	}
+
 	job, err := s.controller.Cancel(ctx, jobID)
 	if err != nil {
 		return nil, err
 	}
+
 	if s.publisher != nil {
 		payload, _ := json.Marshal(job)
-		_ = s.publisher.Publish(ctx, entity.WorkflowEvent{Type: "workflow", Workflow: "ingest", Status: job.Status, JobID: job.JobID, OccurredAt: job.UpdatedAt, Payload: payload})
+		_ = s.publisher.Publish(ctx, entity.WorkflowEvent{
+			Type:       "workflow",
+			Workflow:   "ingest",
+			Status:     job.Status,
+			JobID:      job.JobID,
+			OccurredAt: job.UpdatedAt,
+			Payload:    payload,
+		})
 	}
+
 	s.runtimeMu.Lock()
 	s.runtimeJob = job
 	if s.runtime != nil {
@@ -96,13 +154,22 @@ func (s *IngestService) Cancel(ctx context.Context, jobID string) (*entity.Inges
 		s.runtime.ObservedAt = time.Now().UTC()
 	}
 	s.runtimeMu.Unlock()
+
 	return job, nil
 }
 
+// ============================================================================
+// HÀM TRUY VẤN TRẠNG THÁI TIẾN TRÌNH (Ingestion Status & Telemetry)
+// ============================================================================
+// Status tổng hợp trạng thái từ:
+// 1. Runtime controller hiện tại.
+// 2. File checkpoint bền vững trong MinIO (`checkpoints/ingestion/current.json`).
+// 3. Prometheus metrics tốc độ tải (throughput pts/s, bytes/s, hàng đợi).
 func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error) {
 	if s.objects == nil {
 		return nil, fmt.Errorf("MinIO ingestion checkpoint is unavailable")
 	}
+
 	var controlJob *entity.IngestControlJob
 	if runtimeController, ok := s.controller.(repo.IngestRuntimeController); ok {
 		if current, currentErr := runtimeController.Current(ctx); currentErr == nil && current != nil && current.Status != "not_observed" {
@@ -110,7 +177,18 @@ func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error
 			s.runtimeMu.Lock()
 			s.runtimeJob = current
 			if s.runtime == nil || current.StartedAt.After(s.runtime.StartedAt) {
-				s.runtime = &entity.IngestStatus{Observed: true, Source: "ingester-control", ControlJobID: current.JobID, Status: strings.ToLower(current.Status), Error: current.Error, ManifestPath: current.ManifestPath, StartedAt: current.StartedAt, UpdatedAt: current.UpdatedAt, ObservedAt: time.Now().UTC(), Products: []entity.IngestProduct{}}
+				s.runtime = &entity.IngestStatus{
+					Observed:     true,
+					Source:       "ingester-control",
+					ControlJobID: current.JobID,
+					Status:       strings.ToLower(current.Status),
+					Error:        current.Error,
+					ManifestPath: current.ManifestPath,
+					StartedAt:    current.StartedAt,
+					UpdatedAt:    current.UpdatedAt,
+					ObservedAt:   time.Now().UTC(),
+					Products:     []entity.IngestProduct{},
+				}
 			} else {
 				s.runtime.Status = strings.ToLower(current.Status)
 				s.runtime.Error = current.Error
@@ -120,6 +198,8 @@ func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error
 			s.runtimeMu.Unlock()
 		}
 	}
+
+	// 1. Đọc con trỏ checkpoint hiện tại từ MinIO: checkpoints/ingestion/current.json
 	data, err := s.objects.GetObject(ctx, "checkpoints/ingestion/current.json")
 	if err != nil {
 		s.runtimeMu.RLock()
@@ -132,31 +212,62 @@ func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error
 		s.runtimeMu.RUnlock()
 		return &entity.IngestStatus{Observed: false, Source: "minio-checkpoint", Status: "not_observed", ObservedAt: time.Now().UTC()}, nil
 	}
+
+	// 2. Đọc run_id đang hoạt động
 	var pointer struct {
 		ActiveRunID string `json:"active_run_id"`
 	}
 	if err := json.Unmarshal(data, &pointer); err != nil || pointer.ActiveRunID == "" {
 		return nil, fmt.Errorf("decode ingestion checkpoint pointer: %w", err)
 	}
+
+	// 3. Đọc chi tiết checkpoint đợt thu thập: checkpoints/ingestion/runs/<run_id>.json
 	data, err = s.objects.GetObject(ctx, "checkpoints/ingestion/runs/"+pointer.ActiveRunID+".json")
 	if err != nil {
 		return nil, fmt.Errorf("load ingestion run %s: %w", pointer.ActiveRunID, err)
 	}
+
 	var checkpoint ingestionCheckpoint
 	if err := json.Unmarshal(data, &checkpoint); err != nil {
 		return nil, fmt.Errorf("decode ingestion run %s: %w", pointer.ActiveRunID, err)
 	}
-	status := &entity.IngestStatus{Observed: true, Source: "minio-checkpoint", RunID: checkpoint.RunID, Status: strings.ToLower(checkpoint.Status), ManifestPath: checkpoint.ManifestPath, StartedAt: checkpoint.StartedAt, UpdatedAt: checkpoint.UpdatedAt, ObservedAt: time.Now().UTC(), Products: make([]entity.IngestProduct, 0, len(checkpoint.Products))}
+
+	// 4. Tổng hợp các thông số sản phẩm tải về (bytes, số file thành công/thất bại)
+	status := &entity.IngestStatus{
+		Observed:     true,
+		Source:       "minio-checkpoint",
+		RunID:        checkpoint.RunID,
+		Status:       strings.ToLower(checkpoint.Status),
+		ManifestPath: checkpoint.ManifestPath,
+		StartedAt:    checkpoint.StartedAt,
+		UpdatedAt:    checkpoint.UpdatedAt,
+		ObservedAt:   time.Now().UTC(),
+		Products:     make([]entity.IngestProduct, 0, len(checkpoint.Products)),
+	}
+
 	if controlJob != nil {
 		status.ControlJobID = controlJob.JobID
 	}
+
 	usingRuntimeState := false
 	s.runtimeMu.RLock()
 	if s.runtime != nil && controlJob != nil && s.runtime.StartedAt.After(checkpoint.UpdatedAt) {
 		usingRuntimeState = true
-		status = &entity.IngestStatus{Observed: true, Source: "api-runtime", ControlJobID: s.runtime.ControlJobID, Status: s.runtime.Status, Error: s.runtime.Error, ManifestPath: s.runtime.ManifestPath, StartedAt: s.runtime.StartedAt, UpdatedAt: s.runtime.UpdatedAt, ObservedAt: time.Now().UTC(), Products: []entity.IngestProduct{}}
+		status = &entity.IngestStatus{
+			Observed:     true,
+			Source:       "api-runtime",
+			ControlJobID: s.runtime.ControlJobID,
+			Status:       s.runtime.Status,
+			Error:        s.runtime.Error,
+			ManifestPath: s.runtime.ManifestPath,
+			StartedAt:    s.runtime.StartedAt,
+			UpdatedAt:    s.runtime.UpdatedAt,
+			ObservedAt:   time.Now().UTC(),
+			Products:     []entity.IngestProduct{},
+		}
 	}
 	s.runtimeMu.RUnlock()
+
 	if !usingRuntimeState {
 		for id, product := range checkpoint.Products {
 			status.TotalProducts++
@@ -170,14 +281,22 @@ func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error
 			case "FAILED":
 				status.FailedProducts++
 			}
-			status.Products = append(status.Products, entity.IngestProduct{ID: id, Kind: string(product.ProductKind), ObjectKey: product.ObjectKey, State: strings.ToLower(product.State), SizeBytes: product.SizeBytes, Expected: product.ExpectedSizeBytes, Attempts: product.Attempts, LastError: product.LastError, UpdatedAt: product.UpdatedAt})
+			status.Products = append(status.Products, entity.IngestProduct{
+				ID:        id,
+				Kind:      string(product.ProductKind),
+				ObjectKey: product.ObjectKey,
+				State:     strings.ToLower(product.State),
+				SizeBytes: product.SizeBytes,
+				Expected:  product.ExpectedSizeBytes,
+				Attempts:  product.Attempts,
+				LastError: product.LastError,
+				UpdatedAt: product.UpdatedAt,
+			})
 		}
 		sort.Slice(status.Products, func(i, j int) bool { return status.Products[i].UpdatedAt.After(status.Products[j].UpdatedAt) })
 	}
-	// The control plane is authoritative for lifecycle state. A cancellation
-	// can leave the durable checkpoint in RUNNING until the worker has flushed
-	// its final snapshot; exposing that stale checkpoint state keeps the UI on
-	// the Cancel button after the control job is already canceled.
+
+	// Đảm bảo trạng thái hủy bỏ (Cancel) từ control plane được ưu tiên hiển thị ngay
 	if controlJob != nil {
 		status.ControlJobID = controlJob.JobID
 		status.Status = strings.ToLower(controlJob.Status)
@@ -186,6 +305,8 @@ func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error
 			status.UpdatedAt = controlJob.UpdatedAt
 		}
 	}
+
+	// 5. Truy vấn telemetry từ Prometheus nếu tiến trình đang chạy
 	if s.prometheus != nil && status.Status == "running" {
 		end := time.Now().UTC()
 		start := end.Add(-5 * time.Minute)
@@ -218,6 +339,7 @@ func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error
 		status.QueueDepth = values["queue"]
 		status.InflightProducts = values["inflight"]
 	}
+
 	s.runtimeMu.Lock()
 	s.runtime = status
 	if controlJob != nil {
@@ -227,10 +349,16 @@ func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error
 	return status, nil
 }
 
+// ============================================================================
+// HÀM DUYỆT BỘ NHỚ ĐỆM MINIO BRONZE (Storage Listing)
+// ============================================================================
+// Storage phân trang danh sách các file FITS thô đang lưu trong MinIO Bronze,
+// giúp theo dõi hạn mức dung lượng ~50 GiB.
 func (s *IngestService) Storage(ctx context.Context, prefix string, page, limit int) (*entity.StorageListing, error) {
 	if s.objects == nil {
 		return nil, fmt.Errorf("MinIO storage is unavailable")
 	}
+
 	prefix = strings.TrimSpace(prefix)
 	if prefix == "" {
 		prefix = "bronze/"
@@ -241,15 +369,22 @@ func (s *IngestService) Storage(ctx context.Context, prefix string, page, limit 
 	if page < 1 {
 		page = 1
 	}
+
+	// Quét các file theo prefix trong MinIO
 	objects, err := s.objects.ListObjects(ctx, prefix)
 	if err != nil {
 		return nil, err
 	}
+
+	// Sắp xếp file mới sửa đổi nhất lên đầu
 	sort.Slice(objects, func(i, j int) bool { return objects[i].LastModified.After(objects[j].LastModified) })
+
 	var totalBytes int64
 	for _, object := range objects {
 		totalBytes += object.Size
 	}
+
+	// Phân trang danh sách file
 	start := (page - 1) * limit
 	if start > len(objects) {
 		start = len(objects)
@@ -258,9 +393,26 @@ func (s *IngestService) Storage(ctx context.Context, prefix string, page, limit 
 	if end > len(objects) {
 		end = len(objects)
 	}
-	listing := &entity.StorageListing{Bucket: s.bucket, Prefix: prefix, Page: page, PageSize: limit, Total: len(objects), TotalBytes: totalBytes, Truncated: end < len(objects), Objects: make([]entity.StorageObject, 0, end-start)}
-	for _, object := range objects[start:end] {
-		listing.Objects = append(listing.Objects, entity.StorageObject{Key: object.Key, SizeBytes: object.Size, ETag: object.ETag, LastModified: object.LastModified})
+
+	listing := &entity.StorageListing{
+		Bucket:     s.bucket,
+		Prefix:     prefix,
+		Page:       page,
+		PageSize:   limit,
+		Total:      len(objects),
+		TotalBytes: totalBytes,
+		Truncated:  end < len(objects),
+		Objects:    make([]entity.StorageObject, 0, end-start),
 	}
+
+	for _, object := range objects[start:end] {
+		listing.Objects = append(listing.Objects, entity.StorageObject{
+			Key:          object.Key,
+			SizeBytes:    object.Size,
+			ETag:         object.ETag,
+			LastModified: object.LastModified,
+		})
+	}
+
 	return listing, nil
 }

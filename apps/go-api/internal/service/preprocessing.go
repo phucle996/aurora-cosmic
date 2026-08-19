@@ -16,6 +16,9 @@ import (
 	"github.com/google/uuid"
 )
 
+// ============================================================================
+// HẰNG SỐ & ĐẶC TẢ METRICS TIỀN XỬ LÝ
+// ============================================================================
 const preprocessingObservationWindow = 5 * time.Minute
 
 type preprocessingMetric struct {
@@ -23,6 +26,7 @@ type preprocessingMetric struct {
 	query string
 }
 
+// Danh sách các metrics PromQL giám sát Rust Preprocessor
 var preprocessingMetrics = []preprocessingMetric{
 	{key: "inflight", query: "aurora_preprocessor_inflight_workers"},
 	{key: "queue", query: "aurora_preprocessor_queue_depth"},
@@ -33,19 +37,27 @@ var preprocessingMetrics = []preprocessingMetric{
 	{key: "last_success", query: "max(aurora_preprocessor_last_success_timestamp_seconds)"},
 }
 
+// ============================================================================
+// PREPROCESSING SERVICE (Dịch vụ điều phối & giám sát tiền xử lý FITS -> Silver/Gold)
+// ============================================================================
+// PreprocessingService chịu trách nhiệm:
+// 1. Điều khiển bắt đầu (Start) / dừng (Stop) tác vụ Rust Preprocessor qua workflow dispatcher.
+// 2. Dựng đồ thị luồng xử lý (DAG Pipeline Hops: Bronze -> Decode -> Transform -> Silver -> Checkpoint -> Lineage -> Event -> ACK).
+// 3. Quét bất đồng bộ tiến độ checkpoint từ MinIO (`checkpoints/preprocessing/objects/...`).
 type PreprocessingService struct {
-	prometheus         repo.PrometheusQuerier
-	dispatcher         repo.WorkflowDispatcher
-	publisher          repo.EventPublisher
-	objects            repo.ObjectRepository
-	runtimeMu          sync.RWMutex
-	runtimeJob         *entity.PreprocessingControlJob
-	progress           entity.PreprocessingProgress
-	checkpointDetails  map[string]string
-	progressAt         time.Time
-	progressRefreshing bool
+	prometheus         repo.PrometheusQuerier        // Truy vấn metrics telemetry từ Prometheus
+	dispatcher         repo.WorkflowDispatcher       // Gửi lệnh điều khiển (start/stop) tới Rust Preprocessor
+	publisher          repo.EventPublisher           // Phát sự kiện workflow
+	objects            repo.ObjectRepository         // Đọc checkpoint từ MinIO S3
+	runtimeMu          sync.RWMutex                  // Khóa đồng bộ dữ liệu runtime trong RAM
+	runtimeJob         *entity.PreprocessingControlJob // Thông tin job tiền xử lý hiện tại
+	progress           entity.PreprocessingProgress  // Tiến độ xử lý (tổng số checkpoint, đã xong, còn lại)
+	checkpointDetails  map[string]string             // Chi tiết checkpoint đối tượng FITS mới nhất
+	progressAt         time.Time                     // Thời điểm quét checkpoint gần nhất
+	progressRefreshing bool                          // Cờ đánh dấu đang quét nền checkpoint
 }
 
+// NewPreprocessingService khởi tạo PreprocessingService cơ bản
 func NewPreprocessingService(prometheus repo.PrometheusQuerier, dispatchers ...repo.WorkflowDispatcher) domainService.Preprocessing {
 	var dispatcher repo.WorkflowDispatcher
 	if len(dispatchers) > 0 {
@@ -54,18 +66,26 @@ func NewPreprocessingService(prometheus repo.PrometheusQuerier, dispatchers ...r
 	return &PreprocessingService{prometheus: prometheus, dispatcher: dispatcher}
 }
 
+// NewPreprocessingServiceWithEvents khởi tạo PreprocessingService có EventPublisher
 func NewPreprocessingServiceWithEvents(prometheus repo.PrometheusQuerier, dispatcher repo.WorkflowDispatcher, publisher repo.EventPublisher) domainService.Preprocessing {
 	return &PreprocessingService{prometheus: prometheus, dispatcher: dispatcher, publisher: publisher}
 }
 
+// NewPreprocessingServiceWithEventsAndObjects khởi tạo PreprocessingService đầy đủ chức năng
 func NewPreprocessingServiceWithEventsAndObjects(prometheus repo.PrometheusQuerier, dispatcher repo.WorkflowDispatcher, publisher repo.EventPublisher, objects repo.ObjectRepository) domainService.Preprocessing {
 	return &PreprocessingService{prometheus: prometheus, dispatcher: dispatcher, publisher: publisher, objects: objects}
 }
 
+// ============================================================================
+// HÀM KHỞI CHẠY TIỀN XỬ LÝ (Start Preprocessing)
+// ============================================================================
+// Start gửi lệnh khởi động chế độ tiền xử lý (Stream hoặc Batch) tới Rust Preprocessor.
 func (s *PreprocessingService) Start(ctx context.Context, request entity.PreprocessingStartRequest) (*entity.PreprocessingControlJob, error) {
 	if s.dispatcher == nil {
 		return nil, fmt.Errorf("preprocessing control is unavailable")
 	}
+
+	// 1. Kiểm tra xem đã có job nào đang chạy chưa
 	s.runtimeMu.RLock()
 	if s.runtimeJob != nil && (s.runtimeJob.Status == "running" || s.runtimeJob.Status == "accepted" || s.runtimeJob.Status == "cancelling") {
 		activeJobID := s.runtimeJob.JobID
@@ -73,6 +93,7 @@ func (s *PreprocessingService) Start(ctx context.Context, request entity.Preproc
 		return nil, fmt.Errorf("preprocessing job %s is still active", activeJobID)
 	}
 	s.runtimeMu.RUnlock()
+
 	request.Mode = strings.ToLower(strings.TrimSpace(request.Mode))
 	if request.Mode == "" {
 		request.Mode = "stream"
@@ -80,56 +101,94 @@ func (s *PreprocessingService) Start(ctx context.Context, request entity.Preproc
 	if request.Mode != "stream" && request.Mode != "batch" {
 		return nil, fmt.Errorf("preprocessing mode must be stream or batch")
 	}
-	job := &entity.PreprocessingControlJob{JobID: "preprocess-job-" + uuid.NewString()[:8], Status: "accepted", Mode: request.Mode, IngestRunID: strings.TrimSpace(request.IngestRunID), Prefix: strings.TrimSpace(request.Prefix), StartedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+
+	// 2. Tạo đối tượng job điều khiển mới
+	job := &entity.PreprocessingControlJob{
+		JobID:       "preprocess-job-" + uuid.NewString()[:8],
+		Status:      "accepted",
+		Mode:        request.Mode,
+		IngestRunID: strings.TrimSpace(request.IngestRunID),
+		Prefix:      request.Prefix,
+		StartedAt:   time.Now().UTC(),
+		UpdatedAt:   time.Now().UTC(),
+	}
+
+	// 3. Đóng gói và phát lệnh qua dispatcher
 	command, err := json.Marshal(struct {
 		Action      string `json:"action"`
 		JobID       string `json:"job_id"`
 		Mode        string `json:"mode"`
 		IngestRunID string `json:"ingest_run_id,omitempty"`
 		Prefix      string `json:"prefix,omitempty"`
-	}{Action: "start", JobID: job.JobID, Mode: job.Mode, IngestRunID: job.IngestRunID, Prefix: job.Prefix})
+	}{
+		Action:      "start",
+		JobID:       job.JobID,
+		Mode:        job.Mode,
+		IngestRunID: job.IngestRunID,
+		Prefix:      job.Prefix,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("encode preprocessing command: %w", err)
 	}
+
 	if err := s.dispatcher.Dispatch(ctx, "preprocessing_start", command); err != nil {
 		return nil, fmt.Errorf("dispatch preprocessing command: %w", err)
 	}
+
 	job.Status = "running"
 	s.runtimeMu.Lock()
 	s.runtimeJob = job
 	s.progress = entity.PreprocessingProgress{ObservedAt: job.UpdatedAt}
 	s.runtimeMu.Unlock()
+
 	if s.publisher != nil {
 		payload, _ := json.Marshal(job)
-		_ = s.publisher.Publish(ctx, entity.WorkflowEvent{Type: "workflow", Workflow: "preprocessing", Status: job.Status, JobID: job.JobID, OccurredAt: job.UpdatedAt, Payload: payload})
+		_ = s.publisher.Publish(ctx, entity.WorkflowEvent{
+			Type:       "workflow",
+			Workflow:   "preprocessing",
+			Status:     job.Status,
+			JobID:      job.JobID,
+			OccurredAt: job.UpdatedAt,
+			Payload:    payload,
+		})
 	}
 	return job, nil
 }
 
+// ============================================================================
+// HÀM DỪNG TIỀN XỬ LÝ (Stop Preprocessing)
+// ============================================================================
+// Stop gửi lệnh dừng an toàn tới Rust Preprocessor worker.
 func (s *PreprocessingService) Stop(ctx context.Context, jobID string) (*entity.PreprocessingControlJob, error) {
 	jobID = strings.TrimSpace(jobID)
 	if s.dispatcher == nil || jobID == "" {
 		return nil, fmt.Errorf("preprocessing control is unavailable")
 	}
+
 	s.runtimeMu.Lock()
 	if s.runtimeJob != nil && s.runtimeJob.JobID != jobID {
 		s.runtimeMu.Unlock()
 		return nil, fmt.Errorf("preprocessing job is not active")
 	}
+
 	var job entity.PreprocessingControlJob
 	if s.runtimeJob != nil {
 		job = *s.runtimeJob
 	} else {
 		job = entity.PreprocessingControlJob{JobID: jobID, Mode: "stream", StartedAt: time.Now().UTC()}
 	}
+
 	if job.Status == "completed" || job.Status == "failed" || job.Status == "canceled" || job.Status == "cancelled" {
 		s.runtimeMu.Unlock()
 		return &job, nil
 	}
+
 	job.Status = "cancelling"
 	job.UpdatedAt = time.Now().UTC()
 	s.runtimeJob = &job
 	s.runtimeMu.Unlock()
+
+	// Gửi lệnh stop qua dispatcher
 	command, err := json.Marshal(struct {
 		Action string `json:"action"`
 		JobID  string `json:"job_id"`
@@ -137,6 +196,7 @@ func (s *PreprocessingService) Stop(ctx context.Context, jobID string) (*entity.
 	if err != nil {
 		return nil, fmt.Errorf("encode preprocessing stop command: %w", err)
 	}
+
 	if err := s.dispatcher.Dispatch(ctx, "preprocessing_stop", command); err != nil {
 		s.runtimeMu.Lock()
 		if s.runtimeJob != nil && s.runtimeJob.JobID == job.JobID {
@@ -146,13 +206,26 @@ func (s *PreprocessingService) Stop(ctx context.Context, jobID string) (*entity.
 		s.runtimeMu.Unlock()
 		return nil, fmt.Errorf("dispatch preprocessing stop command: %w", err)
 	}
+
 	if s.publisher != nil {
 		payload, _ := json.Marshal(&job)
-		_ = s.publisher.Publish(ctx, entity.WorkflowEvent{Type: "workflow", Workflow: "preprocessing", Status: job.Status, JobID: job.JobID, OccurredAt: job.UpdatedAt, Payload: payload})
+		_ = s.publisher.Publish(ctx, entity.WorkflowEvent{
+			Type:       "workflow",
+			Workflow:   "preprocessing",
+			Status:     job.Status,
+			JobID:      job.JobID,
+			OccurredAt: job.UpdatedAt,
+			Payload:    payload,
+		})
 	}
 	return &job, nil
 }
 
+// ============================================================================
+// HÀM TRUY VẤN ĐỒ THỊ TIẾN TRÌNH (Query Preprocessing Graph & Pipeline DAG)
+// ============================================================================
+// Query trả về cấu trúc Pipeline DAG hoàn chỉnh (8 bước hops) cùng trạng thái và metrics
+// để Dashboard hiển thị trực quan sơ đồ luồng dữ liệu thời gian thực.
 func (s *PreprocessingService) Query(ctx context.Context) (*entity.PreprocessingGraph, error) {
 	s.runtimeMu.RLock()
 	runtimeJob := s.runtimeJob
@@ -168,8 +241,7 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 	progressAt := s.progressAt
 	s.runtimeMu.RUnlock()
 
-	// Rehydrate state after an API restart. RAM serves refreshes quickly, while
-	// the current run/checkpoints in MinIO remain the durable source of truth.
+	// 1. Phục hồi trạng thái từ MinIO checkpoint nếu API vừa khởi động lại
 	end := time.Now().UTC()
 	if s.objects != nil {
 		if data, err := s.objects.GetObject(ctx, "checkpoints/preprocessing/current.json"); err == nil && len(data) > 0 {
@@ -190,14 +262,24 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 					if json.Unmarshal(runData, &checkpoint) == nil && checkpoint.RunID != "" && (runtimeJob == nil || runtimeJob.JobID == checkpoint.RunID) {
 						durableStatus := strings.ToLower(checkpoint.Status)
 						if runtimeJob != nil && runtimeJob.JobID == checkpoint.RunID && runtimeJob.Status == "cancelling" && durableStatus == "running" {
-							// Preserve the in-memory stop request while the worker drains.
+							// Giữ nguyên trạng thái cancelling trong RAM trong khi worker đang drain
 						} else {
-							runtimeJob = &entity.PreprocessingControlJob{JobID: checkpoint.RunID, Status: durableStatus, Mode: strings.ToLower(checkpoint.Mode), IngestRunID: checkpoint.IngestRunID, Prefix: checkpoint.Prefix, StartedAt: checkpoint.StartedAt, UpdatedAt: checkpoint.UpdatedAt}
+							runtimeJob = &entity.PreprocessingControlJob{
+								JobID:       checkpoint.RunID,
+								Status:      durableStatus,
+								Mode:        strings.ToLower(checkpoint.Mode),
+								IngestRunID: checkpoint.IngestRunID,
+								Prefix:      checkpoint.Prefix,
+								StartedAt:   checkpoint.StartedAt,
+								UpdatedAt:   checkpoint.UpdatedAt,
+							}
 						}
 					}
 				}
 			}
 		}
+
+		// Kích hoạt quét nền cập nhật tiến độ checkpoint nếu dữ liệu cũ hơn 10 giây
 		s.runtimeMu.Lock()
 		stale := progressAt.IsZero() || end.Sub(progressAt) >= 10*time.Second
 		if stale && !s.progressRefreshing {
@@ -206,10 +288,13 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 		}
 		s.runtimeMu.Unlock()
 	}
+
+	// 2. Truy vấn song song metrics từ Prometheus
 	observations := make(map[string][]entity.MonitoringPoint, len(preprocessingMetrics))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	var queryErrors int
+
 	if s.prometheus != nil {
 		start := end.Add(-preprocessingObservationWindow)
 		for _, metric := range preprocessingMetrics {
@@ -229,10 +314,12 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 		}
 	}
 	wg.Wait()
+
 	if (s.prometheus == nil || queryErrors == len(preprocessingMetrics)) && runtimeJob == nil {
 		return nil, fmt.Errorf("Prometheus preprocessing observation is unavailable")
 	}
 
+	// 3. Trích xuất giá trị quan sát gần nhất
 	values := make(map[string]float64, len(observations))
 	observed := false
 	for key, points := range observations {
@@ -242,6 +329,7 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 		observed = true
 		values[key] = lastPoint(points).Value
 	}
+
 	runtimeProgress.BacklogPending = int(values["backlog_pending"])
 	runtimeProgress.BacklogAckPending = int(values["backlog_ack_pending"])
 	runtimeProgress.ItemsToProcess = runtimeProgress.BacklogPending + runtimeProgress.BacklogAckPending
@@ -249,6 +337,8 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 		runtimeProgress.ItemsToProcess = runtimeProgress.CheckpointPending
 	}
 	runtimeProgress.ObservedAt = end
+
+	// 4. Suy luận trạng thái tổng thể (running, completed, failed, retry)
 	status := preprocessingStatus(values, observed, end)
 	if runtimeJob != nil && strings.EqualFold(runtimeJob.Status, "running") {
 		if runtimeJob.Mode == "batch" && runtimeProgress.ItemsToProcess == 0 && values["inflight"] == 0 {
@@ -267,20 +357,40 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 	if runtimeJob != nil && (runtimeJob.Status == "cancelling" || runtimeJob.Status == "canceled" || runtimeJob.Status == "cancelled") {
 		status = runtimeJob.Status
 	}
+
+	// 5. Dựng 8 bước Pipeline DAG Hops và các cạnh kết nối (Edges)
 	hops := preprocessingHops(status, values, end, checkpointDetails)
 	edges := make([]entity.PreprocessingEdge, 0, len(hops)-1)
 	for i := 0; i < len(hops)-1; i++ {
-		edges = append(edges, entity.PreprocessingEdge{ID: fmt.Sprintf("edge-%d", i), Source: hops[i].ID, Target: hops[i+1].ID, Status: status, ObservedAt: end})
+		edges = append(edges, entity.PreprocessingEdge{
+			ID:         fmt.Sprintf("edge-%d", i),
+			Source:     hops[i].ID,
+			Target:     hops[i+1].ID,
+			Status:     status,
+			ObservedAt: end,
+		})
 	}
+
 	s.runtimeMu.Lock()
 	s.progress = runtimeProgress
 	if runtimeJob != nil {
 		s.runtimeJob = runtimeJob
 	}
 	s.runtimeMu.Unlock()
-	return &entity.PreprocessingGraph{Source: "prometheus", ObservationScope: "preprocessor_service", Status: status, ObservedAt: end, Run: runtimeJob, Progress: runtimeProgress, Hops: hops, Edges: edges}, nil
+
+	return &entity.PreprocessingGraph{
+		Source:           "prometheus",
+		ObservationScope: "preprocessor_service",
+		Status:           status,
+		ObservedAt:       end,
+		Run:              runtimeJob,
+		Progress:         runtimeProgress,
+		Hops:             hops,
+		Edges:            edges,
+	}, nil
 }
 
+// refreshCheckpointProgress quét danh sách checkpoint từng file FITS trong MinIO với semaphore giới hạn 32 luồng
 func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 	objects, err := s.objects.ListObjects(ctx, "checkpoints/preprocessing/objects/")
 	if err != nil {
@@ -289,12 +399,14 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 		s.runtimeMu.Unlock()
 		return
 	}
+
 	completed := 0
 	var countMu sync.Mutex
 	var countWG sync.WaitGroup
 	var latestAt time.Time
 	var latestDetails map[string]string
 	semaphore := make(chan struct{}, 32)
+
 	for _, object := range objects {
 		object := object
 		countWG.Add(1)
@@ -306,10 +418,12 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 				return
 			}
 			defer func() { <-semaphore }()
+
 			data, getErr := s.objects.GetObject(ctx, object.Key)
 			if getErr != nil || len(data) == 0 {
 				return
 			}
+
 			var checkpoint struct {
 				CheckpointID        string  `json:"checkpoint_id"`
 				SourceProductID     string  `json:"source_product_id"`
@@ -331,6 +445,7 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 				CreatedAt           string  `json:"created_at"`
 				UpdatedAt           string  `json:"updated_at"`
 			}
+
 			if json.Unmarshal(data, &checkpoint) == nil {
 				updatedAt, _ := time.Parse(time.RFC3339Nano, checkpoint.UpdatedAt)
 				if updatedAt.IsZero() {
@@ -370,6 +485,7 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 		}()
 	}
 	countWG.Wait()
+
 	s.runtimeMu.Lock()
 	s.progress.CheckpointTotal = len(objects)
 	s.progress.CheckpointCompleted = completed
@@ -385,6 +501,7 @@ func lastPoint(points []entity.MonitoringPoint) entity.MonitoringPoint {
 	return points[len(points)-1]
 }
 
+// preprocessingStatus tính toán trạng thái hoạt động dựa trên metrics
 func preprocessingStatus(values map[string]float64, observed bool, now time.Time) string {
 	if !observed {
 		return "not_observed"
@@ -408,6 +525,17 @@ func preprocessingStatus(values map[string]float64, observed bool, now time.Time
 	return "not_observed"
 }
 
+// ============================================================================
+// ĐỊNH NGHĨA 8 BƯỚC HOPS TRONG PIPELINE DAG
+// ============================================================================
+// 1. bronze: Lưu FITS thô vào MinIO Bronze
+// 2. decode: Đọc FITS, giải mã cấu trúc trắc quang
+// 3. transform: Detrending, lọc outlier, chuẩn hóa khoa học
+// 4. silver: Ghi Parquet vào MinIO Silver
+// 5. checkpoint: Lưu checkpoint an toàn chống crash
+// 6. lineage: Ghi nhận vết dữ liệu nguồn -> đích
+// 7. event: Phát sự kiện Silver ready cho ML worker
+// 8. ack: Xác nhận hoàn tất tin nhắn Bronze trên NATS
 func preprocessingHops(status string, values map[string]float64, observedAt time.Time, details map[string]string) []entity.PreprocessingHop {
 	metrics := make(map[string]float64, len(values))
 	for key, value := range values {
@@ -430,6 +558,7 @@ func preprocessingHops(status string, values map[string]float64, observedAt time
 	return hops
 }
 
+// hopDetails lọc các trường chi tiết checkpoint phù hợp cho từng bước hop trong DAG
 func hopDetails(id string, checkpoint map[string]string) map[string]string {
 	details := make(map[string]string)
 	for key, value := range checkpoint {

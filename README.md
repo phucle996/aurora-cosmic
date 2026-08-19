@@ -6,8 +6,9 @@
 
 ## 📚 System Architecture & Specifications
 
-* **Architecture**: [ARCH.MD](file:///home/phucle/Desktop/aurora-cosmic/ARCH.MD)
-* **Configuration Specification**: [docs/CONFIGURATION.md](file:///home/phucle/Desktop/aurora-cosmic/docs/CONFIGURATION.md)
+* **Architecture Blueprint**: [ARCH.MD](./ARCH.MD)
+* **Configuration Specification**: [docs/CONFIGURATION.md](./docs/CONFIGURATION.md)
+* **Data & Event Contracts**: [contracts/README.md](./contracts/README.md)
 
 ---
 
@@ -19,8 +20,8 @@ Latest release: **`v1.0.0-beta`** — published to [GitHub Container Registry](h
 |---|---|
 | Go Ingester | `ghcr.io/phucle996/aurora-cosmic/go-ingester:v1.0.0-beta` |
 | Rust Preprocessor | `ghcr.io/phucle996/aurora-cosmic/rust-preprocessor:v1.0.0-beta` |
-| Python ML Worker | `ghcr.io/phucle996/aurora-cosmic/python-ml-worker:v1.0.0-beta` |
 | Python Gold Builder | `ghcr.io/phucle996/aurora-gold-builder:latest` |
+| Python ML Worker | `ghcr.io/phucle996/aurora-cosmic/python-ml-worker:v1.0.0-beta` |
 | Rust Inference | `ghcr.io/phucle996/aurora-cosmic/rust-inference:v1.0.0-beta` |
 | Go API | `ghcr.io/phucle996/aurora-cosmic/go-api:v1.0.0-beta` |
 | Dashboard | `ghcr.io/phucle996/aurora-cosmic/dashboard:v1.0.0-beta` |
@@ -60,10 +61,13 @@ make clean
 ## 🛠 Tech Stack
 
 * **Ingestion**: Go 1.26
-* **Preprocessing**: Rust 1.89
-* **ML Worker**: Python >=3.12 (`python:3.12-slim`, PyTorch/CUDA)
-* **Inference Runtime**: Rust 1.89
-* **API Gateway**: Go 1.26
-* **Dashboard**: Python >=3.12 (Streamlit)
-* **Data Plane**: MinIO (S3 compatible)
+* **Preprocessing**: Rust 1.89 (Tokio, Rayon)
+* **Gold Builder**: Python >=3.12 (Polars, DuckDB)
+* **ML Worker**: Python >=3.12 (PyTorch, CUDA, ONNX Export)
+* **Inference Runtime**: Rust 1.89 (ONNX Runtime CPU / CUDA)
+* **API Gateway**: Go 1.26 (Chi / Gin, SSE, Astrophysics Engine)
+* **Dashboard**: React 19, TypeScript, Vite, Tailwind CSS, Radix UI
+* **Data Plane**: MinIO (S3 compatible object storage)
+* **Analytics Store**: ClickHouse 24.3
 * **Event / Control Plane**: NATS JetStream
+* **Observability**: Prometheus & Grafana

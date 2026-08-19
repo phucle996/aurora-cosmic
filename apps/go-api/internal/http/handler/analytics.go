@@ -1,27 +1,45 @@
 package handler
 
 import (
-	"go-api/internal/domain/entity"
-	"go-api/internal/domain/service"
-	"go-api/internal/http/dto"
-	"go-api/internal/taxonomy"
 	"math"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"go-api/internal/domain/entity"
+	"go-api/internal/domain/service"
+	"go-api/internal/http/dto"
+	"go-api/internal/taxonomy"
+
 	"github.com/gin-gonic/gin"
 )
 
 var snapshotPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 
-type AnalyticsHandler struct{ analytics service.Analytics }
+// ============================================================================
+// ANALYTICS HTTP HANDLER (Bộ xử lý HTTP REST cho các API phân tích thiên văn)
+// ============================================================================
+// AnalyticsHandler cung cấp các endpoint phục vụ Dashboard và Client:
+// 1. GET /candidates: Liệt kê các ứng viên ngoại hành tinh đã được chấm điểm ML.
+// 2. GET /candidates/:prediction_id: Xem chi tiết Candidate kèm đánh giá vật lý Habitability.
+// 3. GET /anomalies: Liệt kê các dị thường quang học (Autoencoder reconstruction error).
+// 4. GET /targets: Tìm kiếm & phân trang danh sách các ngôi sao mục tiêu TIC.
+// 5. GET /targets/:tic_id: Xem chi tiết một ngôi sao mục tiêu.
+// 6. GET /targets/:tic_id/lightcurve: Lấy chuỗi thời gian đường cong ánh sáng (Flux time-series).
+type AnalyticsHandler struct {
+	analytics service.Analytics
+}
 
 func NewAnalyticsHandler(analytics service.Analytics) *AnalyticsHandler {
 	return &AnalyticsHandler{analytics: analytics}
 }
 
+// ============================================================================
+// ENDPOINT: LIST CANDIDATES (GET /candidates)
+// ============================================================================
+// ListCandidates phân trang danh sách các ứng viên ngoại hành tinh đã được mô hình ML
+// (Candidate Vetting CNN) phân tích và dự đoán xác suất `candidate_score`.
 func (h *AnalyticsHandler) ListCandidates(c *gin.Context) {
 	page := entity.PageRequest{Limit: dto.DefaultPageSize}
 	if raw := c.Query("limit"); raw != "" {
@@ -100,6 +118,14 @@ func (h *AnalyticsHandler) ListCandidates(c *gin.Context) {
 	})
 }
 
+// ============================================================================
+// ENDPOINT: GET CANDIDATE DETAIL (GET /candidates/:prediction_id)
+// ============================================================================
+// GetCandidate trả về toàn bộ thông tin về một ứng viên hành tinh, bao gồm:
+// - Dự đoán ML (`candidate`)
+// - Bằng chứng quan sát & trắc quang (`evidence`)
+// - Các đặc tính vật lý thiên văn giải tích (`planet_physics`)
+// - Đánh giá khả năng sống được (`habitability`)
 func (h *AnalyticsHandler) GetCandidate(c *gin.Context) {
 	predictionID := c.Param("prediction_id")
 	if predictionID == "" || !snapshotPattern.MatchString(predictionID) {
@@ -187,6 +213,11 @@ func (h *AnalyticsHandler) GetCandidate(c *gin.Context) {
 	})
 }
 
+// ============================================================================
+// ENDPOINT: LIST ANOMALIES (GET /anomalies)
+// ============================================================================
+// ListAnomalies phân trang danh sách các dị thường trắc quang được phát hiện
+// bởi mô hình Autoencoder (Reconstruction MSE vượt ngưỡng threshold).
 func (h *AnalyticsHandler) ListAnomalies(c *gin.Context) {
 	page := entity.PageRequest{Limit: dto.DefaultPageSize}
 	if raw := c.Query("limit"); raw != "" {
@@ -274,6 +305,11 @@ func (h *AnalyticsHandler) ListAnomalies(c *gin.Context) {
 	})
 }
 
+// ============================================================================
+// ENDPOINT: LIST TARGETS (GET /targets)
+// ============================================================================
+// ListTargets lọc và phân trang danh sách các ngôi sao mục tiêu trong TESS Input Catalog (TIC),
+// hỗ trợ các bộ lọc tọa độ RA/Dec, cấp sao TMag, nhiệt độ Teff, và trạng thái pipeline.
 func (h *AnalyticsHandler) ListTargets(c *gin.Context) {
 	page := entity.PageRequest{Limit: dto.DefaultPageSize}
 	if raw := c.Query("limit"); raw != "" {
@@ -413,6 +449,9 @@ func (h *AnalyticsHandler) ListTargets(c *gin.Context) {
 	})
 }
 
+// ============================================================================
+// ENDPOINT: GET TARGET (GET /targets/:tic_id)
+// ============================================================================
 func (h *AnalyticsHandler) GetTarget(c *gin.Context) {
 	ticID, err := strconv.ParseInt(c.Param("tic_id"), 10, 64)
 	if err != nil || ticID < 1 {
@@ -450,6 +489,9 @@ func (h *AnalyticsHandler) GetTarget(c *gin.Context) {
 	})
 }
 
+// ============================================================================
+// ENDPOINT: GET TARGET LIGHTCURVE (GET /targets/:tic_id/lightcurve)
+// ============================================================================
 func (h *AnalyticsHandler) GetLightcurve(c *gin.Context) {
 	page := entity.PageRequest{Limit: dto.DefaultPageSize}
 	if raw := c.Query("limit"); raw != "" {

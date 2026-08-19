@@ -7,17 +7,31 @@ import (
 	"go-api/internal/domain/repo"
 )
 
-// ObjectMinIO is the repository adapter for raw object access. Business
-// workflows such as model integrity and champion selection stay in services.
-type ObjectMinIO struct{ client *minio.Client }
+// ============================================================================
+// OBJECT MINIO REPOSITORY (Adapter truy cập MinIO Object Storage)
+// ============================================================================
+// ObjectMinIO thực thi interface repo.ObjectRepository, cung cấp các thao tác
+// cơ bản (Ping, ListObjects, GetObject) tới MinIO S3 bucket mà không chứa logic nghiệp vụ.
+type ObjectMinIO struct {
+	client *minio.Client // MinIO S3 Client
+}
 
+// NewObjectMinIO khởi tạo thể hiện ObjectMinIO repository adapter
 func NewObjectMinIO(client *minio.Client) repo.ObjectRepository {
 	return &ObjectMinIO{client: client}
 }
-func (r *ObjectMinIO) Ping(ctx context.Context) error { return r.client.Ping(ctx) }
+
+// Ping kiểm tra kết nối tới máy chủ MinIO
+func (r *ObjectMinIO) Ping(ctx context.Context) error {
+	return r.client.Ping(ctx)
+}
+
+// ListObjects liệt kê danh sách đối tượng có tiền tố (prefix) trong bucket MinIO
 func (r *ObjectMinIO) ListObjects(ctx context.Context, prefix string) ([]repo.ObjectInfo, error) {
 	return r.client.ListObjects(ctx, prefix)
 }
+
+// GetObject tải về toàn bộ nội dung dạng bytes của một object theo key trong bucket MinIO
 func (r *ObjectMinIO) GetObject(ctx context.Context, key string) ([]byte, error) {
 	return r.client.GetObject(ctx, key)
 }
