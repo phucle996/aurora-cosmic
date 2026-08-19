@@ -64,27 +64,27 @@ func TestUnmarshalClickHouseTargetsJSON(t *testing.T) {
 
 	var response struct {
 		Data []struct {
-			TICID                   clickHouseInt64 `json:"tic_id"`
-			TessMag                 float64         `json:"tess_mag"`
-			RA                      float64         `json:"ra"`
-			Dec                     float64         `json:"dec"`
-			EffectiveT              float64         `json:"effective_t"`
-			SurfaceGrav             float64         `json:"surface_grav"`
-			Radius                  float64         `json:"radius"`
-			Sector                  int             `json:"sector"`
-			TOI                     string          `json:"matched_toi"`
-			Disposition             string          `json:"disposition"`
-			LightcurvePoints        clickHouseInt64 `json:"lightcurve_points"`
-			LightcurveTimeSpan      float64         `json:"lightcurve_time_span"`
-			HasLightcurve           uint8           `json:"has_lightcurve"`
-			HasCandidate            uint8           `json:"has_candidate"`
-			CandidatePredictionID   string          `json:"candidate_prediction_id"`
-			CandidateScore          float64         `json:"candidate_score"`
-			CandidateAboveThreshold uint8           `json:"candidate_above_threshold"`
-			HasAnomaly              uint8           `json:"has_anomaly"`
-			AnomalyPredictionID     string          `json:"anomaly_prediction_id"`
-			AnomalyScore            float64         `json:"anomaly_score"`
-			PipelineStatus          string          `json:"pipeline_status"`
+			TICID                   any     `json:"tic_id"`
+			TessMag                 float64 `json:"tess_mag"`
+			RA                      float64 `json:"ra"`
+			Dec                     float64 `json:"dec"`
+			EffectiveT              float64 `json:"effective_t"`
+			SurfaceGrav             float64 `json:"surface_grav"`
+			Radius                  float64 `json:"radius"`
+			Sector                  int     `json:"sector"`
+			TOI                     string  `json:"matched_toi"`
+			Disposition             string  `json:"disposition"`
+			LightcurvePoints        any     `json:"lightcurve_points"`
+			LightcurveTimeSpan      float64 `json:"lightcurve_time_span"`
+			HasLightcurve           uint8   `json:"has_lightcurve"`
+			HasCandidate            uint8   `json:"has_candidate"`
+			CandidatePredictionID   string  `json:"candidate_prediction_id"`
+			CandidateScore          float64 `json:"candidate_score"`
+			CandidateAboveThreshold any     `json:"candidate_above_threshold"`
+			HasAnomaly              uint8   `json:"has_anomaly"`
+			AnomalyPredictionID     string  `json:"anomaly_prediction_id"`
+			AnomalyScore            float64 `json:"anomaly_score"`
+			PipelineStatus          string  `json:"pipeline_status"`
 		} `json:"data"`
 	}
 
@@ -92,13 +92,17 @@ func TestUnmarshalClickHouseTargetsJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unmarshal error: %v", err)
 	}
-	if int64(response.Data[0].TICID) != 318707089 {
-		t.Fatalf("Expected TICID 318707089, got %d", response.Data[0].TICID)
+	ticID := toInt64(response.Data[0].TICID)
+	if ticID != 318707089 {
+		t.Fatalf("Expected TICID 318707089, got %d", ticID)
 	}
 	if response.Data[0].Sector != 42 {
 		t.Fatalf("Expected Sector 42, got %d", response.Data[0].Sector)
 	}
-	t.Logf("Successfully unmarshaled: TICID=%d, Sector=%d", response.Data[0].TICID, response.Data[0].Sector)
+	if !toBool(response.Data[0].CandidateAboveThreshold) {
+		t.Fatalf("Expected CandidateAboveThreshold true")
+	}
+	t.Logf("Successfully unmarshaled: TICID=%d, Sector=%d", ticID, response.Data[0].Sector)
 }
 
 func TestLiveClickHouseListTargets(t *testing.T) {

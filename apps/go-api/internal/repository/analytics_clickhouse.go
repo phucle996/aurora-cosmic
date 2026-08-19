@@ -14,59 +14,29 @@ import (
 
 type AnalyticsClickHouse struct{ client *clickhouse.Client }
 
-type clickHouseInt64 int64
-
-func (value *clickHouseInt64) UnmarshalJSON(data []byte) error {
-	if len(data) > 0 && data[0] == '"' {
-		var quoted string
-		if err := json.Unmarshal(data, &quoted); err != nil {
-			return err
-		}
-		parsed, err := strconv.ParseInt(quoted, 10, 64)
-		if err != nil {
-			return err
-		}
-		*value = clickHouseInt64(parsed)
-		return nil
-	}
-	var parsed int64
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		return err
-	}
-	*value = clickHouseInt64(parsed)
-	return nil
-}
-
-type clickHouseBool bool
-
-func (b *clickHouseBool) UnmarshalJSON(data []byte) error {
-	s := strings.Trim(string(data), `"`)
-	switch s {
-	case "true", "1", "t", "T":
-		*b = true
-	case "false", "0", "f", "F", "null", "":
-		*b = false
+func toInt64(v any) int64 {
+	switch val := v.(type) {
+	case float64:
+		return int64(val)
+	case string:
+		n, _ := strconv.ParseInt(val, 10, 64)
+		return n
 	default:
-		var n int
-		if err := json.Unmarshal(data, &n); err == nil {
-			*b = clickHouseBool(n != 0)
-			return nil
-		}
-		var bv bool
-		if err := json.Unmarshal(data, &bv); err == nil {
-			*b = clickHouseBool(bv)
-			return nil
-		}
-		*b = false
+		return 0
 	}
-	return nil
 }
 
-func boolInt(value bool) int {
-	if value {
-		return 1
+func toBool(v any) bool {
+	switch val := v.(type) {
+	case bool:
+		return val
+	case float64:
+		return val != 0
+	case string:
+		return val == "true" || val == "1"
+	default:
+		return false
 	}
-	return 0
 }
 
 func NewAnalyticsClickHouse(client *clickhouse.Client) repo.AnalyticsRepository {
@@ -95,20 +65,20 @@ func (r *AnalyticsClickHouse) ListCandidates(ctx context.Context, sector int, sn
 	}
 	var response struct {
 		Data []struct {
-			PredictionID    string          `json:"prediction_id"`
-			SourceProductID string          `json:"source_product_id"`
-			TICID           clickHouseInt64 `json:"tic_id"`
-			Sector          int             `json:"sector"`
-			RawLogit        float64         `json:"raw_logit"`
-			CandidateScore  float64         `json:"candidate_score"`
-			Threshold       float64         `json:"decision_threshold"`
-			AboveThreshold  clickHouseBool  `json:"above_threshold"`
-			ModelVersion    string          `json:"model_version"`
-			RegisteredModel string          `json:"registered_model_id"`
-			SnapshotID      string          `json:"gold_snapshot_id"`
-			ValidationID    string          `json:"runtime_validation_id"`
-			RuntimePkgID    string          `json:"runtime_package_id"`
-			PredictedAt     string          `json:"predicted_at"`
+			PredictionID    string  `json:"prediction_id"`
+			SourceProductID string  `json:"source_product_id"`
+			TICID           any     `json:"tic_id"`
+			Sector          int     `json:"sector"`
+			RawLogit        float64 `json:"raw_logit"`
+			CandidateScore  float64 `json:"candidate_score"`
+			Threshold       float64 `json:"decision_threshold"`
+			AboveThreshold  any     `json:"above_threshold"`
+			ModelVersion    string  `json:"model_version"`
+			RegisteredModel string  `json:"registered_model_id"`
+			SnapshotID      string  `json:"gold_snapshot_id"`
+			ValidationID    string  `json:"runtime_validation_id"`
+			RuntimePkgID    string  `json:"runtime_package_id"`
+			PredictedAt     string  `json:"predicted_at"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
@@ -120,12 +90,12 @@ func (r *AnalyticsClickHouse) ListCandidates(ctx context.Context, sector int, sn
 		items[i] = entity.Candidate{
 			PredictionID:    row.PredictionID,
 			SourceProductID: row.SourceProductID,
-			TICID:           int64(row.TICID),
+			TICID:           toInt64(row.TICID),
 			Sector:          row.Sector,
 			RawLogit:        row.RawLogit,
 			CandidateScore:  row.CandidateScore,
 			Threshold:       row.Threshold,
-			AboveThreshold:  bool(row.AboveThreshold),
+			AboveThreshold:  toBool(row.AboveThreshold),
 			ModelVersion:    row.ModelVersion,
 			RegisteredModel: row.RegisteredModel,
 			SnapshotID:      row.SnapshotID,
@@ -169,54 +139,54 @@ func (r *AnalyticsClickHouse) GetCandidate(ctx context.Context, predictionID str
 	}
 	var response struct {
 		Data []struct {
-			PredictionID               string          `json:"prediction_id"`
-			SourceProductID            string          `json:"source_product_id"`
-			TICID                      clickHouseInt64 `json:"tic_id"`
-			Sector                     int             `json:"sector"`
-			RawLogit                   float64         `json:"raw_logit"`
-			CandidateScore             float64         `json:"candidate_score"`
-			Threshold                  float64         `json:"decision_threshold"`
-			AboveThreshold             bool            `json:"above_threshold"`
-			ModelVersion               string          `json:"model_version"`
-			RegisteredModel            string          `json:"registered_model_id"`
-			SnapshotID                 string          `json:"gold_snapshot_id"`
-			ValidationID               string          `json:"runtime_validation_id"`
-			RuntimePkgID               string          `json:"runtime_package_id"`
-			PredictedAt                string          `json:"predicted_at"`
-			LineageID                  string          `json:"lineage_id"`
-			FeatureVersion             string          `json:"lc_feature_version"`
-			FeatureFingerprint         string          `json:"lc_feature_fingerprint"`
-			NPoints                    clickHouseInt64 `json:"n_points"`
-			TimeSpan                   float64         `json:"time_span"`
-			MedianCadence              float64         `json:"median_cadence"`
-			MaxGap                     float64         `json:"max_gap"`
-			FluxMean                   float64         `json:"flux_mean"`
-			FluxStd                    float64         `json:"flux_std"`
-			FluxAmplitude              float64         `json:"flux_amplitude"`
-			FluxRMS                    float64         `json:"flux_rms"`
-			MedianFluxErr              float64         `json:"median_flux_err"`
-			BLSAvailable               uint8           `json:"bls_available"`
-			BLSPeriod                  float64         `json:"bls_period"`
-			BLSDuration                float64         `json:"bls_duration"`
-			BLSTransitTime             float64         `json:"bls_transit_time"`
-			BLSDepth                   float64         `json:"bls_depth"`
-			BLSPower                   float64         `json:"bls_power"`
-			TPFEvidenceAvailable       uint8           `json:"tpf_evidence_available"`
-			PixelMADMedian             float64         `json:"pixel_mad_median"`
-			VariabilityPeakFraction    float64         `json:"variability_peak_fraction"`
-			TransitEvidenceAvailable   uint8           `json:"transit_evidence_available"`
-			TransitDeficitSum          float64         `json:"transit_deficit_sum"`
-			TransitDeficitCenterOffset float64         `json:"transit_deficit_center_offset_pixels"`
-			TICAvailable               uint8           `json:"tic_available"`
-			TMag                       float64         `json:"tmag"`
-			Teff                       float64         `json:"teff"`
-			StellarRadius              float64         `json:"stellar_radius"`
-			StellarMass                float64         `json:"stellar_mass"`
-			LogG                       float64         `json:"logg"`
-			MatchedTOIID               string          `json:"matched_toi_id"`
-			TOIMatchStatus             string          `json:"toi_match_status"`
-			MatchedTCEID               string          `json:"matched_tce_id"`
-			TCEMatchStatus             string          `json:"tce_match_status"`
+			PredictionID               string  `json:"prediction_id"`
+			SourceProductID            string  `json:"source_product_id"`
+			TICID                      any     `json:"tic_id"`
+			Sector                     int     `json:"sector"`
+			RawLogit                   float64 `json:"raw_logit"`
+			CandidateScore             float64 `json:"candidate_score"`
+			Threshold                  float64 `json:"decision_threshold"`
+			AboveThreshold             any     `json:"above_threshold"`
+			ModelVersion               string  `json:"model_version"`
+			RegisteredModel            string  `json:"registered_model_id"`
+			SnapshotID                 string  `json:"gold_snapshot_id"`
+			ValidationID               string  `json:"runtime_validation_id"`
+			RuntimePkgID               string  `json:"runtime_package_id"`
+			PredictedAt                string  `json:"predicted_at"`
+			LineageID                  string  `json:"lineage_id"`
+			FeatureVersion             string  `json:"lc_feature_version"`
+			FeatureFingerprint         string  `json:"lc_feature_fingerprint"`
+			NPoints                    any     `json:"n_points"`
+			TimeSpan                   float64 `json:"time_span"`
+			MedianCadence              float64 `json:"median_cadence"`
+			MaxGap                     float64 `json:"max_gap"`
+			FluxMean                   float64 `json:"flux_mean"`
+			FluxStd                    float64 `json:"flux_std"`
+			FluxAmplitude              float64 `json:"flux_amplitude"`
+			FluxRMS                    float64 `json:"flux_rms"`
+			MedianFluxErr              float64 `json:"median_flux_err"`
+			BLSAvailable               uint8   `json:"bls_available"`
+			BLSPeriod                  float64 `json:"bls_period"`
+			BLSDuration                float64 `json:"bls_duration"`
+			BLSTransitTime             float64 `json:"bls_transit_time"`
+			BLSDepth                   float64 `json:"bls_depth"`
+			BLSPower                   float64 `json:"bls_power"`
+			TPFEvidenceAvailable       uint8   `json:"tpf_evidence_available"`
+			PixelMADMedian             float64 `json:"pixel_mad_median"`
+			VariabilityPeakFraction    float64 `json:"variability_peak_fraction"`
+			TransitEvidenceAvailable   uint8   `json:"transit_evidence_available"`
+			TransitDeficitSum          float64 `json:"transit_deficit_sum"`
+			TransitDeficitCenterOffset float64 `json:"transit_deficit_center_offset_pixels"`
+			TICAvailable               uint8   `json:"tic_available"`
+			TMag                       float64 `json:"tmag"`
+			Teff                       float64 `json:"teff"`
+			StellarRadius              float64 `json:"stellar_radius"`
+			StellarMass                float64 `json:"stellar_mass"`
+			LogG                       float64 `json:"logg"`
+			MatchedTOIID               string  `json:"matched_toi_id"`
+			TOIMatchStatus             string  `json:"toi_match_status"`
+			MatchedTCEID               string  `json:"matched_tce_id"`
+			TCEMatchStatus             string  `json:"tce_match_status"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
@@ -228,14 +198,14 @@ func (r *AnalyticsClickHouse) GetCandidate(ctx context.Context, predictionID str
 	row := response.Data[0]
 	return &entity.CandidateDetail{
 		Candidate: entity.Candidate{
-			PredictionID: row.PredictionID, SourceProductID: row.SourceProductID, TICID: int64(row.TICID), Sector: row.Sector,
-			RawLogit: row.RawLogit, CandidateScore: row.CandidateScore, Threshold: row.Threshold, AboveThreshold: row.AboveThreshold,
+			PredictionID: row.PredictionID, SourceProductID: row.SourceProductID, TICID: toInt64(row.TICID), Sector: row.Sector,
+			RawLogit: row.RawLogit, CandidateScore: row.CandidateScore, Threshold: row.Threshold, AboveThreshold: toBool(row.AboveThreshold),
 			ModelVersion: row.ModelVersion, RegisteredModel: row.RegisteredModel, SnapshotID: row.SnapshotID,
 			ValidationID: row.ValidationID, RuntimePkgID: row.RuntimePkgID, PredictedAt: row.PredictedAt,
 		},
 		Evidence: entity.CandidateEvidence{
 			LineageID: row.LineageID, FeatureVersion: row.FeatureVersion, FeatureFingerprint: row.FeatureFingerprint,
-			NPoints: int64(row.NPoints), TimeSpan: row.TimeSpan, MedianCadence: row.MedianCadence, MaxGap: row.MaxGap,
+			NPoints: toInt64(row.NPoints), TimeSpan: row.TimeSpan, MedianCadence: row.MedianCadence, MaxGap: row.MaxGap,
 			FluxMean: row.FluxMean, FluxStd: row.FluxStd, FluxAmplitude: row.FluxAmplitude, FluxRMS: row.FluxRMS, MedianFluxErr: row.MedianFluxErr,
 			BLSAvailable: row.BLSAvailable == 1, BLSPeriod: row.BLSPeriod, BLSDuration: row.BLSDuration, BLSTransitTime: row.BLSTransitTime, BLSDepth: row.BLSDepth, BLSPower: row.BLSPower,
 			TPFEvidenceAvailable: row.TPFEvidenceAvailable == 1, PixelMADMedian: row.PixelMADMedian, VariabilityPeakFraction: row.VariabilityPeakFraction,
@@ -269,19 +239,19 @@ func (r *AnalyticsClickHouse) ListAnomalies(ctx context.Context, sector int, sna
 	}
 	var response struct {
 		Data []struct {
-			PredictionID      string          `json:"prediction_id"`
-			SourceProductID   string          `json:"source_product_id"`
-			TICID             clickHouseInt64 `json:"tic_id"`
-			Sector            int             `json:"sector"`
-			ReconstructionMSE float64         `json:"reconstruction_mse"`
-			Threshold         float64         `json:"decision_threshold"`
-			AboveThreshold    clickHouseBool  `json:"above_threshold"`
-			ModelVersion      string          `json:"model_version"`
-			RegisteredModel   string          `json:"registered_model_id"`
-			SnapshotID        string          `json:"gold_snapshot_id"`
-			ValidationID      string          `json:"runtime_validation_id"`
-			RuntimePkgID      string          `json:"runtime_package_id"`
-			PredictedAt       string          `json:"predicted_at"`
+			PredictionID      string  `json:"prediction_id"`
+			SourceProductID   string  `json:"source_product_id"`
+			TICID             any     `json:"tic_id"`
+			Sector            int     `json:"sector"`
+			ReconstructionMSE float64 `json:"reconstruction_mse"`
+			Threshold         float64 `json:"decision_threshold"`
+			AboveThreshold    any     `json:"above_threshold"`
+			ModelVersion      string  `json:"model_version"`
+			RegisteredModel   string  `json:"registered_model_id"`
+			SnapshotID        string  `json:"gold_snapshot_id"`
+			ValidationID      string  `json:"runtime_validation_id"`
+			RuntimePkgID      string  `json:"runtime_package_id"`
+			PredictedAt       string  `json:"predicted_at"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
@@ -293,11 +263,11 @@ func (r *AnalyticsClickHouse) ListAnomalies(ctx context.Context, sector int, sna
 		items[i] = entity.Anomaly{
 			PredictionID:      row.PredictionID,
 			SourceProductID:   row.SourceProductID,
-			TICID:             int64(row.TICID),
+			TICID:             toInt64(row.TICID),
 			Sector:            row.Sector,
 			ReconstructionMSE: row.ReconstructionMSE,
 			Threshold:         row.Threshold,
-			AboveThreshold:    bool(row.AboveThreshold),
+			AboveThreshold:    toBool(row.AboveThreshold),
 			ModelVersion:      row.ModelVersion,
 			RegisteredModel:   row.RegisteredModel,
 			SnapshotID:        row.SnapshotID,
@@ -375,13 +345,25 @@ LEFT JOIN (
 		conditions = append(conditions, fmt.Sprintf("t.dec <= %.12f", *filter.DecMax))
 	}
 	if filter.HasLightcurve != nil {
-		conditions = append(conditions, fmt.Sprintf("if(lc.lightcurve_points > 0, 1, 0) = %d", boolInt(*filter.HasLightcurve)))
+		flag := 0
+		if *filter.HasLightcurve {
+			flag = 1
+		}
+		conditions = append(conditions, fmt.Sprintf("if(lc.lightcurve_points > 0, 1, 0) = %d", flag))
 	}
 	if filter.HasCandidate != nil {
-		conditions = append(conditions, fmt.Sprintf("if(cp.candidate_prediction_id != '', 1, 0) = %d", boolInt(*filter.HasCandidate)))
+		flag := 0
+		if *filter.HasCandidate {
+			flag = 1
+		}
+		conditions = append(conditions, fmt.Sprintf("if(cp.candidate_prediction_id != '', 1, 0) = %d", flag))
 	}
 	if filter.HasAnomaly != nil {
-		conditions = append(conditions, fmt.Sprintf("if(ap.anomaly_prediction_id != '', 1, 0) = %d", boolInt(*filter.HasAnomaly)))
+		flag := 0
+		if *filter.HasAnomaly {
+			flag = 1
+		}
+		conditions = append(conditions, fmt.Sprintf("if(ap.anomaly_prediction_id != '', 1, 0) = %d", flag))
 	}
 	if filter.PipelineStatus != "" {
 		conditions = append(conditions, fmt.Sprintf("multiIf(ap.anomaly_prediction_id != '' OR cp.candidate_prediction_id != '', 'scored', lc.lightcurve_points > 0, 'ingested', 'discovered') = '%s'", strings.ReplaceAll(filter.PipelineStatus, "'", "''")))
@@ -444,27 +426,27 @@ LEFT JOIN (
 	}
 	var response struct {
 		Data []struct {
-			TICID                   clickHouseInt64 `json:"tic_id"`
-			TessMag                 float64         `json:"tess_mag"`
-			RA                      float64         `json:"ra"`
-			Dec                     float64         `json:"dec"`
-			EffectiveT              float64         `json:"effective_t"`
-			SurfaceGrav             float64         `json:"surface_grav"`
-			Radius                  float64         `json:"radius"`
-			Sector                  int             `json:"sector"`
-			TOI                     string          `json:"matched_toi"`
-			Disposition             string          `json:"disposition"`
-			LightcurvePoints        clickHouseInt64 `json:"lightcurve_points"`
-			LightcurveTimeSpan      float64         `json:"lightcurve_time_span"`
-			HasLightcurve           uint8           `json:"has_lightcurve"`
-			HasCandidate            uint8           `json:"has_candidate"`
-			CandidatePredictionID   string          `json:"candidate_prediction_id"`
-			CandidateScore          float64         `json:"candidate_score"`
-			CandidateAboveThreshold clickHouseBool  `json:"candidate_above_threshold"`
-			HasAnomaly              uint8           `json:"has_anomaly"`
-			AnomalyPredictionID     string          `json:"anomaly_prediction_id"`
-			AnomalyScore            float64         `json:"anomaly_score"`
-			PipelineStatus          string          `json:"pipeline_status"`
+			TICID                   any     `json:"tic_id"`
+			TessMag                 float64 `json:"tess_mag"`
+			RA                      float64 `json:"ra"`
+			Dec                     float64 `json:"dec"`
+			EffectiveT              float64 `json:"effective_t"`
+			SurfaceGrav             float64 `json:"surface_grav"`
+			Radius                  float64 `json:"radius"`
+			Sector                  int     `json:"sector"`
+			TOI                     string  `json:"matched_toi"`
+			Disposition             string  `json:"disposition"`
+			LightcurvePoints        any     `json:"lightcurve_points"`
+			LightcurveTimeSpan      float64 `json:"lightcurve_time_span"`
+			HasLightcurve           uint8   `json:"has_lightcurve"`
+			HasCandidate            uint8   `json:"has_candidate"`
+			CandidatePredictionID   string  `json:"candidate_prediction_id"`
+			CandidateScore          float64 `json:"candidate_score"`
+			CandidateAboveThreshold any     `json:"candidate_above_threshold"`
+			HasAnomaly              uint8   `json:"has_anomaly"`
+			AnomalyPredictionID     string  `json:"anomaly_prediction_id"`
+			AnomalyScore            float64 `json:"anomaly_score"`
+			PipelineStatus          string  `json:"pipeline_status"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
@@ -474,11 +456,11 @@ LEFT JOIN (
 	items := make([]entity.Target, len(response.Data))
 	for i, row := range response.Data {
 		items[i] = entity.Target{
-			TICID: int64(row.TICID), TessMag: row.TessMag, RA: row.RA, Dec: row.Dec, EffectiveT: row.EffectiveT,
+			TICID: toInt64(row.TICID), TessMag: row.TessMag, RA: row.RA, Dec: row.Dec, EffectiveT: row.EffectiveT,
 			SurfaceGrav: row.SurfaceGrav, Radius: row.Radius, Sector: row.Sector, TOI: row.TOI, Disposition: row.Disposition,
-			HasLightcurve: row.HasLightcurve == 1, LightcurvePoints: int64(row.LightcurvePoints), LightcurveTimeSpan: row.LightcurveTimeSpan,
+			HasLightcurve: row.HasLightcurve == 1, LightcurvePoints: toInt64(row.LightcurvePoints), LightcurveTimeSpan: row.LightcurveTimeSpan,
 			HasCandidate: row.HasCandidate == 1, CandidatePredictionID: row.CandidatePredictionID, CandidateScore: row.CandidateScore,
-			CandidateAboveThreshold: bool(row.CandidateAboveThreshold), HasAnomaly: row.HasAnomaly == 1,
+			CandidateAboveThreshold: toBool(row.CandidateAboveThreshold), HasAnomaly: row.HasAnomaly == 1,
 			AnomalyPredictionID: row.AnomalyPredictionID, AnomalyScore: row.AnomalyScore, PipelineStatus: row.PipelineStatus,
 		}
 	}
