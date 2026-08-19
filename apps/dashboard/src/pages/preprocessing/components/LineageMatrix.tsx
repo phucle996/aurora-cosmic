@@ -91,18 +91,14 @@ export function LineageMatrix(): JSX.Element {
   const loadLineageFromStorage = useCallback(async (targetPage: number, targetPageSize: number) => {
     setLoading(true);
     try {
-      // 1. Kiểm tra xem có file Silver Parquet nào trong MinIO chưa
-      const silverRes = await apiFetch<StorageResponse>(
-        '/v1/storage?prefix=silver/tess/lightcurve/&page=1&limit=1'
-      ).catch(() => null);
+      // 1. Fetch Silver status and Bronze page in parallel
+      const [silverRes, res] = await Promise.all([
+        apiFetch<StorageResponse>('/v1/storage?prefix=silver/tess/lightcurve/&page=1&limit=1').catch(() => null),
+        apiFetch<StorageResponse>(`/v1/storage?prefix=bronze/tess/lightcurve/&page=${targetPage}&limit=${targetPageSize}`).catch(() => null),
+      ]);
 
       const silverTotal = silverRes?.total ?? 0;
       setTotalSilverCount(silverTotal);
-
-      // 2. Lấy danh sách file Bronze FITS thực tế
-      const res = await apiFetch<StorageResponse>(
-        `/v1/storage?prefix=bronze/tess/lightcurve/&page=${targetPage}&limit=${targetPageSize}`
-      );
 
       if (res && Array.isArray(res.objects) && res.objects.length > 0) {
         const mapped: AccurateLineageRecord[] = res.objects.map((obj) => {
