@@ -114,4 +114,11 @@ export type TargetRecord = {
   pipeline_status: string;
 };
 
+export type TargetDetailResponse = {
+  target: TargetRecord;
+  planet_physics?: PlanetPhysics;
+  habitability?: HabitabilityAssessment;
+  evidence?: CandidateEvidence;
+};
+
 export type LightcurveResponse = { tic_id: number; sector: number; time: number[]; flux: number[] };

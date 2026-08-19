@@ -114,6 +114,10 @@ func (r *AnalyticsClickHouse) ListCandidates(ctx context.Context, sector int, sn
 }
 
 func (r *AnalyticsClickHouse) GetCandidate(ctx context.Context, predictionID string, snapshotID string) (*entity.CandidateDetail, error) {
+	whereClause := fmt.Sprintf("p.prediction_id = '%s'", strings.ReplaceAll(predictionID, "'", "''"))
+	if snapshotID != "" {
+		whereClause += fmt.Sprintf(" AND p.gold_snapshot_id = '%s'", strings.ReplaceAll(snapshotID, "'", "''"))
+	}
 	query := fmt.Sprintf(`SELECT
 		p.prediction_id, p.source_product_id, p.tic_id, p.sector, p.raw_logit,
 		p.candidate_score, p.decision_threshold, p.above_threshold, p.model_version,
@@ -130,8 +134,8 @@ func (r *AnalyticsClickHouse) GetCandidate(ctx context.Context, predictionID str
 	FROM candidate_predictions AS p
 	LEFT JOIN candidate_features_v1 AS f
 		ON f.snapshot_id = p.gold_snapshot_id AND f.source_product_id = p.source_product_id
-	WHERE p.prediction_id = '%s' AND p.gold_snapshot_id = '%s'
-	LIMIT 1 FORMAT JSON`, strings.ReplaceAll(predictionID, "'", "''"), strings.ReplaceAll(snapshotID, "'", "''"))
+	WHERE %s
+	LIMIT 1 FORMAT JSON`, whereClause)
 
 	body, err := r.client.Query(ctx, query)
 	if err != nil {

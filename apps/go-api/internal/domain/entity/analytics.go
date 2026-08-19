@@ -180,7 +180,10 @@ type TargetQuery struct {
 }
 
 type TargetDetail struct {
-	Target Target
+	Target       Target
+	Physics      *PlanetPhysics
+	Habitability *HabitabilityAssessment
+	Evidence     *CandidateEvidence
 }
 
 type Lightcurve struct {

@@ -53,9 +53,23 @@ func (s *AnalyticsService) ListTargets(ctx context.Context, query entity.TargetQ
 	return s.repository.ListTargets(ctx, query)
 }
 
-// GetTarget truy vấn thông tin chi tiết một ngôi sao mục tiêu theo TIC ID và Sector
+// GetTarget truy vấn thông tin chi tiết một ngôi sao mục tiêu theo TIC ID và Sector,
+// đồng thời tự động liên kết dữ liệu vật lý thực tế của ứng viên ngoại hành tinh nếu có.
 func (s *AnalyticsService) GetTarget(ctx context.Context, ticID int64, sector int) (*entity.TargetDetail, error) {
-	return s.repository.GetTarget(ctx, ticID, sector)
+	detail, err := s.repository.GetTarget(ctx, ticID, sector)
+	if err != nil {
+		return nil, err
+	}
+	if detail.Target.HasCandidate && detail.Target.CandidatePredictionID != "" {
+		candDetail, candErr := s.repository.GetCandidate(ctx, detail.Target.CandidatePredictionID, "")
+		if candErr == nil && candDetail != nil {
+			phys, hab := physics.DeriveCandidate(candDetail.Candidate, candDetail.Evidence)
+			detail.Physics = &phys
+			detail.Habitability = &hab
+			detail.Evidence = &candDetail.Evidence
+		}
+	}
+	return detail, nil
 }
 
 // GetLightcurve phân trang chuỗi dữ liệu đường cong ánh sáng (Flux time-series) của một ngôi sao

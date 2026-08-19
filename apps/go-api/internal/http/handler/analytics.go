@@ -476,7 +476,7 @@ func (h *AnalyticsHandler) GetTarget(c *gin.Context) {
 		return
 	}
 	item := target.Target
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"target": gin.H{
 			"tic_id": item.TICID, "tess_mag": item.TessMag, "ra": item.RA, "dec": item.Dec,
 			"effective_t": item.EffectiveT, "surface_grav": item.SurfaceGrav, "radius": item.Radius,
@@ -486,7 +486,57 @@ func (h *AnalyticsHandler) GetTarget(c *gin.Context) {
 			"has_anomaly": item.HasAnomaly, "anomaly_prediction_id": item.AnomalyPredictionID, "anomaly_score": item.AnomalyScore,
 			"pipeline_status": item.PipelineStatus,
 		},
-	})
+	}
+	if target.Physics != nil {
+		resp["planet_physics"] = gin.H{
+			"planet_candidate_id":       target.Physics.PlanetCandidateID,
+			"model_version":             target.Physics.ModelVersion,
+			"orbital_period_days":       target.Physics.OrbitalPeriodDays,
+			"transit_depth_fraction":    target.Physics.TransitDepthFraction,
+			"planet_radius_earth":       target.Physics.PlanetRadiusEarth,
+			"semi_major_axis_au":        target.Physics.SemiMajorAxisAU,
+			"stellar_luminosity_solar":  target.Physics.StellarLuminositySolar,
+			"insolation_earth":          target.Physics.InsolationEarth,
+			"equilibrium_temperature_k": target.Physics.EquilibriumTemperatureK,
+			"bond_albedo_assumption":    target.Physics.BondAlbedoAssumption,
+			"hz_classification":         target.Physics.HZClassification,
+			"hz_flux_boundaries": gin.H{
+				"conservative_inner": target.Physics.ConservativeHZInnerFlux,
+				"conservative_outer": target.Physics.ConservativeHZOuterFlux,
+				"optimistic_inner":   target.Physics.OptimisticHZInnerFlux,
+				"optimistic_outer":   target.Physics.OptimisticHZOuterFlux,
+			},
+			"completeness": target.Physics.Completeness,
+			"warnings":     target.Physics.Warnings,
+		}
+	}
+	if target.Habitability != nil {
+		resp["habitability"] = gin.H{
+			"assessment_version": target.Habitability.AssessmentVersion,
+			"status":             target.Habitability.Status,
+			"physics_score":      target.Habitability.PhysicsScore,
+			"confidence":         target.Habitability.Confidence,
+			"tier":               target.Habitability.Tier,
+			"components":         target.Habitability.Components,
+			"ml_score":           target.Habitability.MLScore,
+			"ml_status":          target.Habitability.MLStatus,
+			"disclaimer":         target.Habitability.Disclaimer,
+		}
+	}
+	if target.Evidence != nil {
+		resp["evidence"] = gin.H{
+			"bls_available":  target.Evidence.BLSAvailable,
+			"bls_period":     target.Evidence.BLSPeriod,
+			"bls_duration":   target.Evidence.BLSDuration,
+			"bls_depth":      target.Evidence.BLSDepth,
+			"bls_power":      target.Evidence.BLSPower,
+			"teff":           target.Evidence.Teff,
+			"stellar_radius": target.Evidence.StellarRadius,
+			"stellar_mass":   target.Evidence.StellarMass,
+			"tmag":           target.Evidence.TMag,
+		}
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // ============================================================================
