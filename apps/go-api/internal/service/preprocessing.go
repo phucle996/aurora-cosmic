@@ -340,13 +340,16 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 
 	// 4. Suy luận trạng thái tổng thể (running, completed, failed, retry)
 	status := preprocessingStatus(values, observed, end)
+	var stateChangedJob *entity.PreprocessingControlJob
 	if runtimeJob != nil && strings.EqualFold(runtimeJob.Status, "running") {
 		if runtimeJob.Mode == "batch" && runtimeProgress.ItemsToProcess == 0 && values["inflight"] == 0 {
 			runtimeJob.Status = "completed"
 			runtimeJob.UpdatedAt = end
+			stateChangedJob = runtimeJob
 		} else if status == "failed" {
 			runtimeJob.Status = "failed"
 			runtimeJob.UpdatedAt = end
+			stateChangedJob = runtimeJob
 		} else if status == "not_observed" {
 			status = "running"
 		}
@@ -377,6 +380,19 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 		s.runtimeJob = runtimeJob
 	}
 	s.runtimeMu.Unlock()
+
+	// 6. Phát sự kiện SSE khi hoàn tất tác vụ batch
+	if stateChangedJob != nil && s.publisher != nil {
+		payload, _ := json.Marshal(stateChangedJob)
+		_ = s.publisher.Publish(ctx, entity.WorkflowEvent{
+			Type:       "workflow",
+			Workflow:   "preprocessing",
+			Status:     stateChangedJob.Status,
+			JobID:      stateChangedJob.JobID,
+			OccurredAt: stateChangedJob.UpdatedAt,
+			Payload:    payload,
+		})
+	}
 
 	return &entity.PreprocessingGraph{
 		Source:           "prometheus",
