@@ -1,7 +1,7 @@
 import type { JSX } from 'react';
 
-import IngestStorageSection from './sections/IngestStorageSection';
+import IngestSection from './sections/IngestSection';
 
 export default function IngestPage(): JSX.Element {
-  return <IngestStorageSection />;
+  return <IngestSection />;
 }

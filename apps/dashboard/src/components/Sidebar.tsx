@@ -2,6 +2,7 @@ import {
   Activity,
   AlertTriangle,
   BrainCircuit,
+  Database,
   DownloadCloud,
   LayoutDashboard,
   Orbit,
@@ -30,12 +31,13 @@ const menuItems = [
   { path: '/', label: 'Platform Overview', icon: LayoutDashboard },
   { path: '/targets', label: 'TESS Target Discovery', icon: Target },
   { path: '/exoplanets', label: '3D Exoplanet Explorer', icon: Orbit },
+  { path: '/ingest', label: 'Ingest Pipeline', icon: DownloadCloud },
   { path: '/preprocessing', label: 'Preprocessing & Lineage', icon: Workflow },
-  { path: '/ingest', label: 'Ingest & Storage', icon: DownloadCloud },
+  { path: '/datasets', label: 'Datasets (Lakehouse)', icon: Database },
   { path: '/candidates', label: 'ML Transit Candidates', icon: Sparkles },
   { path: '/anomalies', label: 'Anomaly Engine', icon: AlertTriangle },
-  { path: '/monitoring', label: 'Monitoring', icon: Server },
   { path: '/models', label: 'Models & Inference', icon: BrainCircuit },
+  { path: '/monitoring', label: 'Monitoring', icon: Server },
 ];
 
 export default function Sidebar(): JSX.Element {
@@ -70,7 +72,7 @@ export default function Sidebar(): JSX.Element {
                   <SidebarMenuItem key={item.path}>
                     <SidebarMenuButton asChild isActive={isActive} tooltip={item.label} className="font-medium">
                       <NavLink to={item.path}>
-                        <Icon aria-hidden="true" />
+                        <Icon className="size-4" aria-hidden="true" />
                         <span>{item.label}</span>
                       </NavLink>
                     </SidebarMenuButton>
@@ -80,13 +82,12 @@ export default function Sidebar(): JSX.Element {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-
       </SidebarContent>
 
-      <SidebarFooter className="border-t border-sidebar-border">
-        <div className="flex items-center gap-2 px-2 py-2 text-xs text-sidebar-foreground/60">
-          <span className="size-2 rounded-full bg-emerald-500" aria-hidden="true" />
-          <span className="group-data-[collapsible=icon]:hidden">AURORA workspace</span>
+      <SidebarFooter className="border-t border-sidebar-border p-3 group-data-[collapsible=icon]:hidden">
+        <div className="rounded-md border border-sidebar-border bg-sidebar-accent/50 p-2.5 text-xs text-sidebar-foreground/70">
+          <p className="font-medium text-sidebar-foreground">AURORA Production v1.0</p>
+          <p className="mt-0.5 text-[11px]">NASA TESS / Kepler High-Throughput Stream</p>
         </div>
       </SidebarFooter>
     </UISidebar>

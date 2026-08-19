@@ -17,6 +17,7 @@ import ExoplanetsPage from '@/pages/exoplanets/page';
 import ModelsPage from '@/pages/models/page';
 import PreprocessingPage from '@/pages/preprocessing/page';
 import IngestPage from '@/pages/ingest/page';
+import DatasetsPage from '@/pages/datasets/page';
 
 export default function App(): JSX.Element {
   return (
@@ -34,13 +35,14 @@ export default function App(): JSX.Element {
                     <Route path="/targets" element={<TargetsPage />} />
                     <Route path="/targets/:ticId" element={<TargetDetailPage />} />
                     <Route path="/exoplanets" element={<ExoplanetsPage />} />
-                    <Route path="/preprocessing" element={<PreprocessingPage />} />
                     <Route path="/ingest" element={<IngestPage />} />
+                    <Route path="/preprocessing" element={<PreprocessingPage />} />
+                    <Route path="/datasets" element={<DatasetsPage />} />
                     <Route path="/candidates" element={<CandidatesPage />} />
                     <Route path="/candidates/:predictionId" element={<CandidateDetailPage />} />
                     <Route path="/anomalies" element={<AnomaliesPage />} />
-                    <Route path="/monitoring" element={<MonitoringPage />} />
                     <Route path="/models" element={<ModelsPage />} />
+                    <Route path="/monitoring" element={<MonitoringPage />} />
                   </Routes>
                 </main>
               </SidebarInset>
