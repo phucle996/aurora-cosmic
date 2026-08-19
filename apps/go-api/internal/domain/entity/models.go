@@ -74,22 +74,24 @@ type InferenceJob struct {
 	OutputKey               string
 }
 type TrainingJobSpec struct {
-	Task           string
-	GoldSnapshotID string
-	BaseModelID    string
-	TrainingMode   string
-	Epochs         int
-	LearningRate   float64
-	BatchSize      int
-	Seed           int
-	AutoPromote    bool
+	Task            string
+	GoldSnapshotID  string
+	GoldSnapshotIDs []string
+	BaseModelID     string
+	TrainingMode    string
+	Epochs          int
+	LearningRate    float64
+	BatchSize       int
+	Seed            int
+	AutoPromote     bool
 }
 
 type TrainingJobResult struct {
-	JobID          string
-	Task           string
-	GoldSnapshotID string
-	Status         string
-	CreatedAt      string
-	Message        string
+	JobID           string
+	Task            string
+	GoldSnapshotID  string
+	GoldSnapshotIDs []string
+	Status          string
+	CreatedAt       string
+	Message         string
 }

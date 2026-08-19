@@ -252,25 +252,23 @@ export default function ModelsPage(): JSX.Element {
           throw new Error('Không có Gold Snapshot nào chưa chạy để huấn luyện.');
         }
 
-        let count = 0;
-        for (const snap of unrunList) {
-          await apiFetch<TrainingResponse>('/v1/models/train', {
-            method: 'POST',
-            body: JSON.stringify({
-              task: trainTask,
-              gold_snapshot_id: snap.snapshot_id,
-              base_model_id: effectiveBaseModel,
-              training_mode: effectiveMode,
-              epochs: Number(trainEpochs) || 50,
-              learning_rate: Number(trainLr) || 0.001,
-              batch_size: Number(trainBatchSize) || 32,
-              seed: Number(trainSeed) || 42,
-              auto_promote: trainAutoPromote,
-            }),
-          });
-          count++;
-        }
-        setNotice(`🚀 Đã gửi thành công toàn bộ ${count} Gold Snapshots tới GPU Worker để huấn luyện tinh chỉnh (Base Model: ${effectiveBaseModel || 'Scratch'})!`);
+        const snapshotIds = unrunList.map((s) => s.snapshot_id);
+        const res = await apiFetch<TrainingResponse>('/v1/models/train', {
+          method: 'POST',
+          body: JSON.stringify({
+            task: trainTask,
+            gold_snapshot_id: snapshotIds[0],
+            gold_snapshot_ids: snapshotIds,
+            base_model_id: effectiveBaseModel,
+            training_mode: effectiveMode,
+            epochs: Number(trainEpochs) || 50,
+            learning_rate: Number(trainLr) || 0.001,
+            batch_size: Number(trainBatchSize) || 32,
+            seed: Number(trainSeed) || 42,
+            auto_promote: trainAutoPromote,
+          }),
+        });
+        setNotice(`🚀 Training Job ${res.job_id} đã khởi chạy thành công! Đang gộp toàn bộ ${snapshotIds.length} Gold Snapshots để huấn luyện tạo ra 1 MÔ HÌNH HỌC SÂU DUY NHẤT (Base Model: ${effectiveBaseModel || 'Scratch'})!`);
       } else {
         const res = await apiFetch<TrainingResponse>('/v1/models/train', {
           method: 'POST',

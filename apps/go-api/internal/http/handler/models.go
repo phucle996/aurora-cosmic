@@ -110,15 +110,16 @@ func (h *ModelsHandler) StartTraining(c *gin.Context) {
 	}
 
 	spec := entity.TrainingJobSpec{
-		Task:           req.Task,
-		GoldSnapshotID: req.GoldSnapshotID,
-		BaseModelID:    req.BaseModelID,
-		TrainingMode:   req.TrainingMode,
-		Epochs:         req.Epochs,
-		LearningRate:   req.LearningRate,
-		BatchSize:      req.BatchSize,
-		Seed:           req.Seed,
-		AutoPromote:    req.AutoPromote,
+		Task:            req.Task,
+		GoldSnapshotID:  req.GoldSnapshotID,
+		GoldSnapshotIDs: req.GoldSnapshotIDs,
+		BaseModelID:     req.BaseModelID,
+		TrainingMode:    req.TrainingMode,
+		Epochs:          req.Epochs,
+		LearningRate:    req.LearningRate,
+		BatchSize:       req.BatchSize,
+		Seed:            req.Seed,
+		AutoPromote:     req.AutoPromote,
 	}
 
 	result, err := h.models.StartTrainingJob(c.Request.Context(), spec)
@@ -128,11 +129,12 @@ func (h *ModelsHandler) StartTraining(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusAccepted, dto.TrainingJobResponse{
-		JobID:          result.JobID,
-		Task:           result.Task,
-		GoldSnapshotID: result.GoldSnapshotID,
-		Status:         result.Status,
-		CreatedAt:      result.CreatedAt,
-		Message:        result.Message,
+		JobID:           result.JobID,
+		Task:            result.Task,
+		GoldSnapshotID:  result.GoldSnapshotID,
+		GoldSnapshotIDs: result.GoldSnapshotIDs,
+		Status:          result.Status,
+		CreatedAt:       result.CreatedAt,
+		Message:         result.Message,
 	})
 }

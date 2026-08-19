@@ -127,33 +127,42 @@ def run_training_pipeline(payload: Dict[str, Any], config: Config) -> Dict[str, 
     LOGGER.info("Starting automated training job %s: task=%s epochs=%d lr=%f base_model=%s mode=%s", job_id, task, epochs, learning_rate, base_model_id, training_mode)
 
     minio_client = get_minio_client(config)
-    bucket = config.minio_bucket
+    gold_snapshot_ids = payload.get("gold_snapshot_ids") or []
+    if isinstance(gold_snapshot_ids, str):
+        gold_snapshot_ids = [s.strip() for s in gold_snapshot_ids.split(",") if s.strip()]
+    if not gold_snapshot_ids and gold_snapshot_id:
+        gold_snapshot_ids = [gold_snapshot_id]
 
-    # 1. Resolve Gold Snapshot
-    if not gold_snapshot_id:
+    if not gold_snapshot_ids:
         latest = find_latest_gold_snapshot(minio_client, bucket)
         if latest:
-            gold_snapshot_id = latest
+            gold_snapshot_ids = [latest]
         else:
-            gold_snapshot_id = "gold-v1-000000000001"
+            gold_snapshot_ids = ["gold-v1-000000000001"]
 
-    LOGGER.info("Using gold snapshot ID: %s", gold_snapshot_id)
+    primary_gold_snapshot_id = gold_snapshot_ids[0]
+    LOGGER.info("Aggregating %d Gold snapshots for single unified training: %s", len(gold_snapshot_ids), gold_snapshot_ids[:5])
 
-    # 2. Fetch rows
+    # 2. Fetch and combine rows from all selected Gold Snapshots
     rows: List[Dict[str, Any]] = []
-    try:
-        parquet_obj = minio_client.get_object(bucket, f"gold/snapshots/{gold_snapshot_id}/features.parquet")
-        table = pq.read_table(io.BytesIO(parquet_obj.read()))
-        rows = table.to_pylist()
-        LOGGER.info("Loaded %d rows from MinIO gold snapshot %s", len(rows), gold_snapshot_id)
-    except Exception as exc:
-        LOGGER.warning("Could not read features.parquet for %s (%s). Using synthetic astrophysical dataset.", gold_snapshot_id, exc)
-        rows = generate_synthetic_features(150)
+    for snap_id in gold_snapshot_ids:
+        try:
+            parquet_obj = minio_client.get_object(bucket, f"gold/snapshots/{snap_id}/features.parquet")
+            table = pq.read_table(io.BytesIO(parquet_obj.read()))
+            snap_rows = table.to_pylist()
+            rows.extend(snap_rows)
+            LOGGER.info("Loaded %d rows from Gold snapshot %s (total accumulated: %d)", len(snap_rows), snap_id, len(rows))
+        except Exception as exc:
+            LOGGER.warning("Could not read features.parquet for %s (%s)", snap_id, exc)
 
-    # Ensure training labels exist
+    if not rows:
+        LOGGER.warning("No rows loaded from Gold snapshots. Generating rich synthetic astrophysical dataset.")
+        rows = generate_synthetic_features(max(200, len(gold_snapshot_ids) * 50))
+
+    # Ensure training labels and unique product IDs exist
     for i, r in enumerate(rows):
         if not r.get("source_product_id"):
-            r["source_product_id"] = f"tess-product-{i + 1:04d}"
+            r["source_product_id"] = f"tess-product-{i + 1:05d}"
         if not r.get("training_label"):
             r["training_label"] = "POSITIVE" if (i % 4 == 0) else "NEGATIVE"
         if not r.get("anomaly_label"):
@@ -203,12 +212,12 @@ def run_training_pipeline(payload: Dict[str, Any], config: Config) -> Dict[str, 
 
         snapshot_type = "CANDIDATE" if task == "candidate_vetting" else "ANOMALY"
         gold_manifest = GoldSnapshotManifest(
-            snapshot_id="gold-v1-000000000001",
+            snapshot_id=primary_gold_snapshot_id,
             snapshot_fingerprint="0" * 64,
             snapshot_type=snapshot_type,
             gold_schema_version="gold-candidate-v1" if snapshot_type == "CANDIDATE" else "gold-anomaly-v1",
             feature_versions={"lc": "lc-features-v1", "tpf": "tpf-vetting-v1", "ffi": "ffi-evidence-v1"},
-            input_count=0,
+            input_count=len(rows),
             inputs=[],
             schema_version=1,
             created_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

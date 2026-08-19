@@ -213,18 +213,23 @@ func (s *ModelsService) StartTrainingJob(ctx context.Context, req entity.Trainin
 		req.BaseModelID = "champion"
 	}
 
+	if len(req.GoldSnapshotIDs) > 0 && req.GoldSnapshotID == "" {
+		req.GoldSnapshotID = req.GoldSnapshotIDs[0]
+	}
+
 	payload, err := json.Marshal(map[string]any{
-		"training_job_id":  jobID,
-		"task":             req.Task,
-		"gold_snapshot_id": req.GoldSnapshotID,
-		"base_model_id":    req.BaseModelID,
-		"training_mode":    req.TrainingMode,
-		"epochs":           req.Epochs,
-		"learning_rate":    req.LearningRate,
-		"batch_size":       req.BatchSize,
-		"seed":             req.Seed,
-		"auto_promote":     req.AutoPromote,
-		"created_at":       createdAt,
+		"training_job_id":   jobID,
+		"task":              req.Task,
+		"gold_snapshot_id":  req.GoldSnapshotID,
+		"gold_snapshot_ids": req.GoldSnapshotIDs,
+		"base_model_id":     req.BaseModelID,
+		"training_mode":     req.TrainingMode,
+		"epochs":            req.Epochs,
+		"learning_rate":     req.LearningRate,
+		"batch_size":        req.BatchSize,
+		"seed":              req.Seed,
+		"auto_promote":      req.AutoPromote,
+		"created_at":        createdAt,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal training request: %w", err)
@@ -237,11 +242,12 @@ func (s *ModelsService) StartTrainingJob(ctx context.Context, req entity.Trainin
 	}
 
 	return &entity.TrainingJobResult{
-		JobID:          jobID,
-		Task:           req.Task,
-		GoldSnapshotID: req.GoldSnapshotID,
-		Status:         "queued",
-		CreatedAt:      createdAt,
-		Message:        fmt.Sprintf("Training job %s successfully dispatched to PyTorch GPU worker.", jobID),
+		JobID:           jobID,
+		Task:            req.Task,
+		GoldSnapshotID:  req.GoldSnapshotID,
+		GoldSnapshotIDs: req.GoldSnapshotIDs,
+		Status:          "queued",
+		CreatedAt:       createdAt,
+		Message:         fmt.Sprintf("Training job %s successfully dispatched to PyTorch GPU worker.", jobID),
 	}, nil
 }
