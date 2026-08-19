@@ -3,9 +3,6 @@ services:
     image: minio/minio:latest
     container_name: aurora-minio
     restart: unless-stopped
-    cpus: "0.25"
-    mem_limit: 512m
-    memswap_limit: 512m
     ports:
       - "${MINIO_API_PORT:-9000}:9000"
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
@@ -50,9 +47,6 @@ services:
     image: nats:alpine
     container_name: aurora-nats
     restart: unless-stopped
-    cpus: "0.25"
-    mem_limit: 256m
-    memswap_limit: 256m
     ports:
       - "${NATS_CLIENT_PORT:-4222}:4222"
       - "${NATS_MONITOR_PORT:-8222}:8222"
@@ -72,9 +66,6 @@ services:
     image: natsio/prometheus-nats-exporter:0.20.0
     container_name: aurora-nats-exporter
     restart: unless-stopped
-    cpus: "0.10"
-    mem_limit: 128m
-    memswap_limit: 128m
     command:
       - -varz
       - -connz
@@ -95,9 +86,6 @@ services:
     build: ./apps/go-ingester
     container_name: aurora-go-ingester
     restart: unless-stopped
-    cpus: "0.50"
-    mem_limit: 512m
-    memswap_limit: 512m
     ports:
       - "${AURORA_INGESTER_METRICS_PORT:-8081}:8081"
     expose:
@@ -123,9 +111,6 @@ services:
     build: ./apps/rust-preprocessor
     container_name: aurora-rust-preprocessor
     restart: unless-stopped
-    cpus: "0.50"
-    mem_limit: 768m
-    memswap_limit: 768m
     ports:
       - "${AURORA_PREPROCESSOR_METRICS_PORT:-8082}:8082"
     env_file:
@@ -152,9 +137,6 @@ services:
     container_name: aurora-python-ml-worker
     restart: unless-stopped
     gpus: all
-    cpus: "1.50"
-    mem_limit: 2560m
-    memswap_limit: 2560m
     ports:
       - "${AURORA_ML_METRICS_PORT:-8083}:8083"
     environment:
@@ -185,9 +167,6 @@ services:
       dockerfile: python-gold-builder/Dockerfile
     container_name: aurora-gold-builder
     restart: unless-stopped
-    cpus: "0.50"
-    mem_limit: 512m
-    memswap_limit: 512m
     env_file:
       - ./apps/python-gold-builder/.env.example
     networks:
@@ -206,9 +185,6 @@ services:
     container_name: aurora-rust-inference
     restart: unless-stopped
     gpus: all
-    cpus: "0.50"
-    mem_limit: 512m
-    memswap_limit: 512m
     ports:
       - "${AURORA_INFERENCE_METRICS_PORT:-8084}:8084"
     env_file:
@@ -232,9 +208,6 @@ services:
     build: ./apps/go-api
     container_name: aurora-go-api
     restart: unless-stopped
-    cpus: "0.25"
-    mem_limit: 256m
-    memswap_limit: 256m
     ports:
       - "${AURORA_API_PORT:-8080}:8080"
       - "${AURORA_API_METRICS_PORT:-8086}:8086"
@@ -261,9 +234,6 @@ services:
     build: ./apps/dashboard
     container_name: aurora-dashboard
     restart: unless-stopped
-    cpus: "0.25"
-    mem_limit: 256m
-    memswap_limit: 256m
     ports:
       - "${AURORA_DASHBOARD_PORT:-8501}:8501"
     env_file:
@@ -283,9 +253,6 @@ services:
     image: clickhouse/clickhouse-server:24.3-alpine
     container_name: aurora-clickhouse
     restart: unless-stopped
-    cpus: "0.50"
-    mem_limit: 1024m
-    memswap_limit: 1024m
     ports:
       - "${AURORA_CLICKHOUSE_HTTP_PORT:-8123}:8123"
       - "${AURORA_CLICKHOUSE_METRICS_PORT:-9363}:9363"
@@ -312,9 +279,6 @@ services:
     container_name: aurora-cadvisor
     restart: unless-stopped
     privileged: true
-    cpus: "0.15"
-    mem_limit: 128m
-    memswap_limit: 128m
     command:
       - --docker_only=true
       - --housekeeping_interval=10s
@@ -333,9 +297,6 @@ services:
     image: prom/prometheus:v2.51.0
     container_name: aurora-prometheus
     restart: unless-stopped
-    cpus: "0.25"
-    mem_limit: 256m
-    memswap_limit: 256m
     ports:
       - "9090:9090"
     volumes:
