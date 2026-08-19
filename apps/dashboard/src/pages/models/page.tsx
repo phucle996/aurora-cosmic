@@ -77,7 +77,16 @@ type TrainingResponse = {
 
 type ModelResponse = { models: ModelRecord[] };
 type JobResponse = { jobs: InferenceJob[] };
-type StorageResponse = { objects: { key: string }[] };
+type StorageResponse = { objects: { key: string; size_bytes?: number; last_modified?: string }[] };
+
+type GoldSnapshotItem = {
+  snapshot_id: string;
+  key: string;
+  size_bytes: number;
+  last_modified: string;
+  is_trained: boolean;
+  trained_model_id?: string;
+};
 
 const taskLabel: Record<string, string> = {
   candidate_vetting: 'Candidate vetting (Exoplanets)',
@@ -115,10 +124,14 @@ export default function ModelsPage(): JSX.Element {
   const [queueingJob, setQueueingJob] = useState<string>();
   const [notice, setNotice] = useState<string>();
 
-  // Training Dialog state
+  // Training Dialog state & Snapshots
   const [trainDialogOpen, setTrainDialogOpen] = useState(false);
   const [trainTask, setTrainTask] = useState<'candidate_vetting' | 'astronomical_anomaly_detection'>('candidate_vetting');
   const [trainSnapshotId, setTrainSnapshotId] = useState('');
+  const [isCustomSnapshot, setIsCustomSnapshot] = useState(false);
+  const [availableSnapshots, setAvailableSnapshots] = useState<GoldSnapshotItem[]>([]);
+  const [snapshotsLoading, setSnapshotsLoading] = useState(false);
+
   const [trainEpochs, setTrainEpochs] = useState('50');
   const [trainLr, setTrainLr] = useState('0.001');
   const [trainBatchSize, setTrainBatchSize] = useState('32');
@@ -154,21 +167,65 @@ export default function ModelsPage(): JSX.Element {
     void loadData();
   }, [loadData]);
 
-  const fetchLatestSnapshot = async () => {
+  // Load danh sách toàn bộ Gold Snapshots và phân loại Chưa chạy / Đã chạy
+  const loadAvailableSnapshots = useCallback(async () => {
+    setSnapshotsLoading(true);
     try {
-      const storage = await apiFetch<StorageResponse>('/v1/storage?prefix=gold/snapshots/&limit=20');
+      const storage = await apiFetch<StorageResponse>('/v1/storage?prefix=gold/snapshots/&limit=200');
       const objects = storage.objects ?? [];
-      if (objects.length > 0) {
-        // Extract snapshot directory name
-        const match = objects[0].key.match(/gold\/snapshots\/([^/]+)/);
-        if (match && match[1]) {
-          setTrainSnapshotId(match[1]);
-          return;
+
+      const trainedSnapshotSet = new Map<string, string>();
+      for (const m of models) {
+        if (m.gold_snapshot_id) {
+          trainedSnapshotSet.set(m.gold_snapshot_id, m.model_id);
         }
       }
-      setTrainSnapshotId('gold-candidate-snapshot-v1');
+
+      const snapshotMap = new Map<string, GoldSnapshotItem>();
+      for (const obj of objects) {
+        const match = obj.key.match(/gold\/snapshots\/([^/]+)/);
+        if (match && match[1]) {
+          const snapId = match[1];
+          if (!snapshotMap.has(snapId)) {
+            const isTrained = trainedSnapshotSet.has(snapId);
+            snapshotMap.set(snapId, {
+              snapshot_id: snapId,
+              key: obj.key,
+              size_bytes: obj.size_bytes ?? 0,
+              last_modified: obj.last_modified ?? new Date().toISOString(),
+              is_trained: isTrained,
+              trained_model_id: trainedSnapshotSet.get(snapId),
+            });
+          }
+        }
+      }
+
+      const list = Array.from(snapshotMap.values()).sort((a, b) => {
+        if (a.is_trained !== b.is_trained) {
+          return a.is_trained ? 1 : -1;
+        }
+        return new Date(b.last_modified).getTime() - new Date(a.last_modified).getTime();
+      });
+
+      setAvailableSnapshots(list);
+
+      // Tự động chọn snapshot mới nhất chưa từng huấn luyện
+      const firstUnrun = list.find((s) => !s.is_trained) || list[0];
+      if (firstUnrun) {
+        setTrainSnapshotId(firstUnrun.snapshot_id);
+        setIsCustomSnapshot(false);
+      }
     } catch {
-      setTrainSnapshotId('gold-candidate-snapshot-v1');
+      setAvailableSnapshots([]);
+    } finally {
+      setSnapshotsLoading(false);
+    }
+  }, [models]);
+
+  const handleOpenDialog = (open: boolean) => {
+    setTrainDialogOpen(open);
+    if (open) {
+      void loadAvailableSnapshots();
     }
   };
 
@@ -190,10 +247,9 @@ export default function ModelsPage(): JSX.Element {
           auto_promote: trainAutoPromote,
         }),
       });
-      setNotice(`🚀 Training Job ${res.job_id} đã được gửi tới GPU Worker thành công! Quá trình huấn luyện, tối ưu ngưỡng và export ONNX đang chạy ngầm.`);
+      setNotice(`🚀 Training Job ${res.job_id} đã được gửi tới GPU Worker thành công với Gold Snapshot [${trainSnapshotId}]!`);
       setTrainDialogOpen(false);
 
-      // Auto poll after a few seconds to update registry
       setTimeout(() => {
         void loadData(true);
       }, 3000);
@@ -246,14 +302,14 @@ export default function ModelsPage(): JSX.Element {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Dialog open={trainDialogOpen} onOpenChange={setTrainDialogOpen}>
+          <Dialog open={trainDialogOpen} onOpenChange={handleOpenDialog}>
             <DialogTrigger asChild>
               <Button size="sm" className="gap-2 bg-gradient-to-r from-amber-500 to-primary text-primary-foreground font-semibold shadow-md">
                 <Sparkles className="size-4" />
                 Train New Model
               </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[540px]">
+            <DialogContent className="sm:max-w-[560px]">
               <form onSubmit={handleStartTraining}>
                 <DialogHeader>
                   <DialogTitle className="flex items-center gap-2 text-base font-semibold">
@@ -261,7 +317,7 @@ export default function ModelsPage(): JSX.Element {
                     Huấn luyện Mô hình Học máy Mới (GPU)
                   </DialogTitle>
                   <DialogDescription className="text-xs">
-                    Khởi chạy quy trình huấn luyện PyTorch, tối ưu Decision Threshold, kiểm thử Parity và tự động đăng ký Model Package vào MinIO.
+                    Khởi chạy quy trình huấn luyện PyTorch trên GPU NVIDIA từ các Gold Snapshots trong Lakehouse.
                   </DialogDescription>
                 </DialogHeader>
 
@@ -282,27 +338,119 @@ export default function ModelsPage(): JSX.Element {
                     </select>
                   </div>
 
-                  {/* Gold Snapshot Input */}
-                  <div className="space-y-1.5">
+                  {/* Dynamic Gold Snapshot Selector */}
+                  <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <Label htmlFor="train-snapshot" className="text-xs font-medium">
-                        Gold Snapshot Nguồn
-                      </Label>
+                      <div className="flex items-center gap-2">
+                        <Label htmlFor="train-snapshot" className="text-xs font-medium">
+                          Gold Snapshot Nguồn (Feature Store)
+                        </Label>
+                        {availableSnapshots.filter((s) => !s.is_trained).length > 0 && (
+                          <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30 text-[10px] py-0 px-1.5 font-mono">
+                            {availableSnapshots.filter((s) => !s.is_trained).length} mới chưa chạy
+                          </Badge>
+                        )}
+                      </div>
                       <button
                         type="button"
-                        onClick={() => void fetchLatestSnapshot()}
-                        className="text-[11px] text-primary hover:underline"
+                        onClick={() => void loadAvailableSnapshots()}
+                        disabled={snapshotsLoading}
+                        className="flex items-center gap-1 text-[11px] text-primary hover:underline disabled:opacity-50"
                       >
-                        Lấy Snapshot mới nhất
+                        <RefreshCw className={`size-3 ${snapshotsLoading ? 'animate-spin' : ''}`} />
+                        Làm mới danh sách
                       </button>
                     </div>
-                    <Input
-                      id="train-snapshot"
-                      placeholder="gold-candidate-snapshot-v1 (hoặc để trống để tự động)"
-                      value={trainSnapshotId}
-                      onChange={(e) => setTrainSnapshotId(e.target.value)}
-                      className="text-xs font-mono"
-                    />
+
+                    {snapshotsLoading ? (
+                      <div className="flex items-center justify-center p-3 border rounded-md text-xs text-muted-foreground bg-muted/20">
+                        <LoaderCircle className="size-3.5 animate-spin mr-2" />
+                        Đang nạp danh sách Gold Snapshots từ Lakehouse...
+                      </div>
+                    ) : (
+                      <select
+                        id="train-snapshot-select"
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        value={isCustomSnapshot ? '__custom__' : trainSnapshotId}
+                        onChange={(e) => {
+                          if (e.target.value === '__custom__') {
+                            setIsCustomSnapshot(true);
+                          } else {
+                            setIsCustomSnapshot(false);
+                            setTrainSnapshotId(e.target.value);
+                          }
+                        }}
+                      >
+                        {/* Group 1: Snapshots Mới Chưa Chạy */}
+                        <optgroup label={`🌟 SNAPSHOTS MỚI CHƯA CHẠY (${availableSnapshots.filter((s) => !s.is_trained).length})`}>
+                          {availableSnapshots
+                            .filter((s) => !s.is_trained)
+                            .map((snap) => (
+                              <option key={snap.snapshot_id} value={snap.snapshot_id}>
+                                [Mới] {snap.snapshot_id} ({formatBytes(snap.size_bytes)}) — {formatDate(snap.last_modified)}
+                              </option>
+                            ))}
+                        </optgroup>
+
+                        {/* Group 2: Snapshots Đã Huấn Luyện */}
+                        {availableSnapshots.filter((s) => s.is_trained).length > 0 && (
+                          <optgroup label={`✅ SNAPSHOTS ĐÃ HUẤN LUYỆN (${availableSnapshots.filter((s) => s.is_trained).length})`}>
+                            {availableSnapshots
+                              .filter((s) => s.is_trained)
+                              .map((snap) => (
+                                <option key={snap.snapshot_id} value={snap.snapshot_id}>
+                                  [Đã train: {snap.trained_model_id}] {snap.snapshot_id}
+                                </option>
+                              ))}
+                          </optgroup>
+                        )}
+
+                        <optgroup label="⚙️ TÙY CHỌN">
+                          <option value="__custom__">✏️ Nhập Snapshot ID thủ công...</option>
+                        </optgroup>
+                      </select>
+                    )}
+
+                    {/* Custom Snapshot Input */}
+                    {isCustomSnapshot && (
+                      <Input
+                        id="train-snapshot-custom"
+                        placeholder="gold-v1-xxxxxxxxxxxx (hoặc tên snapshot bất kỳ)"
+                        value={trainSnapshotId}
+                        onChange={(e) => setTrainSnapshotId(e.target.value)}
+                        className="text-xs font-mono mt-1.5"
+                      />
+                    )}
+
+                    {/* Snapshot Metadata Preview Card */}
+                    {(() => {
+                      const snap = availableSnapshots.find((s) => s.snapshot_id === trainSnapshotId);
+                      if (!snap) return null;
+                      return (
+                        <div className="rounded-md border border-border/70 bg-muted/20 p-2.5 space-y-1 text-[11px]">
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground font-medium">Trạng thái Snapshot:</span>
+                            {snap.is_trained ? (
+                              <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                                Đã train với model: {snap.trained_model_id}
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30 text-[10px]">
+                                🟢 Sẵn sàng huấn luyện (Chưa chạy)
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="flex items-center justify-between text-muted-foreground">
+                            <span>Dung lượng Parquet:</span>
+                            <span className="font-mono text-foreground font-medium">{formatBytes(snap.size_bytes)}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-muted-foreground">
+                            <span>Thời gian tạo:</span>
+                            <span className="font-mono text-foreground">{formatDate(snap.last_modified)}</span>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Hyperparameters Grid */}
