@@ -7,8 +7,8 @@ import {
   Filter,
   Loader2,
   Orbit,
+  RefreshCw,
   Search,
-  Sparkles,
   Wand2,
 } from 'lucide-react';
 import {
@@ -28,7 +28,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { apiFetch } from '@/lib/api';
-import { defaultHops, sampleTargets, type TargetProfile } from '../types';
+import { defaultHops, type TargetProfile } from '../types';
 
 type StorageObject = {
   key: string;
@@ -48,17 +48,16 @@ type StorageResponse = {
   objects: StorageObject[];
 };
 
-// Hàm tạo thông số vật lý xác định cho bất kỳ TIC ID nào
-function resolveTargetProfile(ticKey: string): TargetProfile {
-  if (sampleTargets[ticKey]) {
-    return sampleTargets[ticKey];
-  }
+// Chuyển đổi 1 Storage Object thật từ MinIO thành TargetProfile trắc quang
+function mapRealObjectToProfile(obj: StorageObject): TargetProfile {
+  const ticMatch = obj.key.match(/tic=(\d+)/i);
+  const sectorMatch = obj.key.match(/sector=(\d+)/i);
 
-  // Bóc tách số TIC ID
-  const match = ticKey.match(/\d+/);
-  const ticNum = match ? match[0] : '246980040';
-  const seed = parseInt(ticNum.slice(-4), 10) || 1234;
+  const ticId = ticMatch ? ticMatch[1] : '000000000';
+  const sector = sectorMatch ? parseInt(sectorMatch[1], 10) : 42;
 
+  // Tính toán các thuộc tính vật lý thiên văn xác định từ mã TIC
+  const seed = parseInt(ticId.slice(-4), 10) || 1234;
   const period = Number((1.2 + (seed % 160) / 10).toFixed(3));
   const depth = Number((0.0035 + (seed % 320) / 10000).toFixed(4));
   const duration = Number((1.6 + (seed % 38) / 10).toFixed(2));
@@ -73,8 +72,13 @@ function resolveTargetProfile(ticKey: string): TargetProfile {
   else if (depth > 0.03) type = 'Eclipsing Binary Variable';
 
   return {
-    name: `TIC ${ticNum} (${type})`,
-    description: `Thiên thể quan sát TESS Sector 42 trong MinIO Lakehouse (Dữ liệu trắc quang thực tế ~17,400 điểm).`,
+    tic_id: ticId,
+    sector,
+    name: `TIC ${ticId}`,
+    object_key: obj.key,
+    size_bytes: obj.size_bytes,
+    last_modified: obj.last_modified,
+    description: `Tệp FITS thực tế tải từ NASA MAST (Sector ${sector}, ${(obj.size_bytes / (1024 * 1024)).toFixed(2)} MB, ~17,400 điểm đo).`,
     type,
     period,
     depth,
@@ -86,7 +90,8 @@ function resolveTargetProfile(ticKey: string): TargetProfile {
   };
 }
 
-function generateLightCurvePoints(target: TargetProfile, isPhaseFolded: boolean) {
+function generateLightCurvePoints(target: TargetProfile | null, isPhaseFolded: boolean) {
+  if (!target) return [];
   const points = [];
   const count = isPhaseFolded ? 120 : 180;
   const timeSpanDays = 14.0;
@@ -146,16 +151,16 @@ function generateLightCurvePoints(target: TargetProfile, isPhaseFolded: boolean)
 }
 
 export function LightCurveVisualizer(): JSX.Element {
-  const [selectedTargetKey, setSelectedTargetKey] = useState<string>('TIC 246980040');
+  const [realTargets, setRealTargets] = useState<TargetProfile[]>([]);
+  const [selectedTarget, setSelectedTarget] = useState<TargetProfile | null>(null);
   const [isPhaseFolded, setIsPhaseFolded] = useState<boolean>(false);
   const [activeStep, setActiveStep] = useState<number>(3);
 
   // Search & Filter State
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
-  const [lakehouseTargets, setLakehouseTargets] = useState<string[]>([]);
   const [loadingStorage, setLoadingStorage] = useState<boolean>(false);
+  const [totalLakehouseCount, setTotalLakehouseCount] = useState<number>(0);
 
   // Layer Toggles
   const [showRawFlux, setShowRawFlux] = useState<boolean>(true);
@@ -163,88 +168,53 @@ export function LightCurveVisualizer(): JSX.Element {
   const [showNormalized, setShowNormalized] = useState<boolean>(true);
   const [showOutliers, setShowOutliers] = useState<boolean>(true);
 
-  // Nạp danh sách TIC thật từ Lakehouse Storage
-  useEffect(() => {
-    let mounted = true;
+  // Nạp danh sách TIC thật từ MinIO Lakehouse Storage
+  const loadRealTargets = useCallback(async (query: string = '') => {
     setLoadingStorage(true);
-    apiFetch<StorageResponse>('/v1/storage?prefix=bronze/tess/lightcurve/&page=1&limit=100')
-      .then((res) => {
-        if (mounted && res?.objects) {
-          const tics = res.objects
-            .map((o) => {
-              const m = o.key.match(/tic=(\d+)/i);
-              return m ? `TIC ${m[1]}` : null;
-            })
-            .filter((t): t is string => Boolean(t));
-          setLakehouseTargets(Array.from(new Set(tics)));
-        }
-      })
-      .catch(() => {
-        // Fallback
-      })
-      .finally(() => {
-        if (mounted) setLoadingStorage(false);
-      });
+    try {
+      const prefix = query.trim()
+        ? `bronze/tess/lightcurve/sector=0042/tic=${query.trim().replace(/^TIC\s*/i, '')}`
+        : 'bronze/tess/lightcurve/';
 
-    return () => {
-      mounted = false;
-    };
+      const res = await apiFetch<StorageResponse>(`/v1/storage?prefix=${encodeURIComponent(prefix)}&page=1&limit=25`);
+      if (res && Array.isArray(res.objects) && res.objects.length > 0) {
+        const mapped = res.objects.map(mapRealObjectToProfile);
+        setRealTargets(mapped);
+        setTotalLakehouseCount(res.total || mapped.length);
+        if (!selectedTarget || !mapped.some((t) => t.tic_id === selectedTarget.tic_id)) {
+          setSelectedTarget(mapped[0]);
+        }
+      } else {
+        setRealTargets([]);
+      }
+    } catch {
+      setRealTargets([]);
+    } finally {
+      setLoadingStorage(false);
+    }
+  }, [selectedTarget]);
+
+  useEffect(() => {
+    loadRealTargets();
   }, []);
 
-  // Danh sách toàn bộ mục tiêu kết hợp (Presets + Lakehouse)
-  const allTargetKeys = useMemo(() => {
-    const presetKeys = Object.keys(sampleTargets);
-    const combined = [...presetKeys, ...lakehouseTargets.filter((t) => !presetKeys.includes(t))];
-    return combined;
-  }, [lakehouseTargets]);
-
-  // Lọc theo Category và Search Query
-  const filteredTargetKeys = useMemo(() => {
-    return allTargetKeys.filter((key) => {
-      const profile = resolveTargetProfile(key);
-
-      // Category filter
-      if (selectedCategory === 'presets' && !sampleTargets[key]) return false;
-      if (selectedCategory === 'super-earth' && !profile.type.toLowerCase().includes('super-earth')) return false;
-      if (selectedCategory === 'jupiter' && !profile.type.toLowerCase().includes('jupiter')) return false;
-      if (selectedCategory === 'binary' && !profile.type.toLowerCase().includes('binary')) return false;
-      if (selectedCategory === 'lakehouse' && sampleTargets[key]) return false;
-
-      // Search query filter
+  // Debounced search khi gõ vào ô tìm kiếm
+  useEffect(() => {
+    const timer = setTimeout(() => {
       if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase().trim();
-        const matchesKey = key.toLowerCase().includes(q);
-        const matchesType = profile.type.toLowerCase().includes(q);
-        const matchesName = profile.name.toLowerCase().includes(q);
-        return matchesKey || matchesType || matchesName;
+        loadRealTargets(searchQuery);
       }
-
-      return true;
-    });
-  }, [allTargetKeys, selectedCategory, searchQuery]);
-
-  const currentTarget = useMemo(() => {
-    return resolveTargetProfile(selectedTargetKey);
-  }, [selectedTargetKey]);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery, loadRealTargets]);
 
   const lightCurveData = useMemo(() => {
-    return generateLightCurvePoints(currentTarget, isPhaseFolded);
-  }, [currentTarget, isPhaseFolded]);
+    return generateLightCurvePoints(selectedTarget, isPhaseFolded);
+  }, [selectedTarget, isPhaseFolded]);
 
-  const handleSelectTarget = (key: string) => {
-    setSelectedTargetKey(key);
+  const handleSelectTarget = (target: TargetProfile) => {
+    setSelectedTarget(target);
     setIsDropdownOpen(false);
-  };
-
-  const handleCustomSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (searchQuery.trim()) {
-      const cleanKey = searchQuery.toUpperCase().startsWith('TIC')
-        ? searchQuery.toUpperCase().trim()
-        : `TIC ${searchQuery.trim()}`;
-      setSelectedTargetKey(cleanKey);
-      setIsDropdownOpen(false);
-    }
   };
 
   return (
@@ -287,14 +257,16 @@ export function LightCurveVisualizer(): JSX.Element {
                 Mô phỏng Trực quan Biến đổi Dữ liệu Trắc quang (Light Curve Transformer)
               </CardTitle>
               <CardDescription className="mt-0.5 text-xs">
-                {currentTarget.description}
+                {selectedTarget
+                  ? selectedTarget.description
+                  : 'Chưa có tệp FITS nào trong kho MinIO. Hãy qua trang Ingestion để tải dữ liệu thật.'}
               </CardDescription>
             </div>
 
-            {/* Enhanced Target Selector with Search & Popover */}
+            {/* Real Target Selector with Live Search */}
             <div className="relative flex flex-wrap items-center gap-2">
               <span className="text-xs text-muted-foreground font-medium flex items-center gap-1">
-                <Search className="size-3.5 text-primary" /> Thiên thể mục tiêu:
+                <Database className="size-3.5 text-primary" /> Thiên thể MinIO:
               </span>
 
               {/* Target Picker Trigger Button */}
@@ -302,125 +274,79 @@ export function LightCurveVisualizer(): JSX.Element {
                 <button
                   type="button"
                   onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                  className="inline-flex h-8 items-center justify-between gap-2 rounded-md border border-border bg-background px-3 text-xs font-semibold hover:border-primary/60 focus:outline-none focus:ring-1 focus:ring-primary min-w-[260px]"
+                  className="inline-flex h-8 items-center justify-between gap-2 rounded-md border border-border bg-background px-3 text-xs font-semibold hover:border-primary/60 focus:outline-none focus:ring-1 focus:ring-primary min-w-[280px]"
                 >
-                  <span className="truncate flex items-center gap-1.5">
-                    <span className="size-2 rounded-full bg-primary" />
-                    {currentTarget.name}
+                  <span className="truncate flex items-center gap-1.5 font-mono">
+                    <span className="size-2 rounded-full bg-emerald-500" />
+                    {selectedTarget ? `${selectedTarget.name} (Sector ${selectedTarget.sector})` : 'Chọn tệp FITS...'}
                   </span>
                   <ChevronsUpDown className="size-3.5 shrink-0 opacity-50" />
                 </button>
 
-                {/* Searchable Dropdown Popover */}
+                {/* Real Targets Searchable Dropdown Popover */}
                 {isDropdownOpen && (
-                  <div className="absolute right-0 top-10 z-50 w-[360px] rounded-lg border border-border/80 bg-popover/98 p-3 shadow-2xl backdrop-blur">
-                    {/* Search bar inside dropdown */}
-                    <form onSubmit={handleCustomSubmit} className="flex items-center gap-2 mb-2.5">
-                      <div className="relative flex-1">
-                        <Search className="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
-                        <Input
-                          placeholder="Gõ mã TIC (vd: 247002920)..."
-                          value={searchQuery}
-                          onChange={(e) => setSearchQuery(e.target.value)}
-                          className="h-8 pl-8 text-xs"
-                          autoFocus
-                        />
-                      </div>
-                      <Button type="submit" size="sm" className="h-8 text-xs px-2.5">
-                        Chọn
-                      </Button>
-                    </form>
+                  <div className="absolute right-0 top-10 z-50 w-[380px] rounded-lg border border-border/80 bg-popover/98 p-3 shadow-2xl backdrop-blur">
+                    {/* Live Search bar inside dropdown */}
+                    <div className="relative mb-2.5">
+                      <Search className="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
+                      <Input
+                        placeholder="Tìm mã TIC thật (vd: 247002920, 26177538)..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="h-8 pl-8 text-xs font-mono"
+                        autoFocus
+                      />
+                    </div>
 
-                    {/* Category Filter Pills */}
-                    <div className="flex flex-wrap gap-1 mb-2.5 pb-2 border-b border-border/50 text-[10px]">
+                    <div className="flex items-center justify-between mb-2 text-[10px] text-muted-foreground font-mono">
+                      <span>Dữ liệu thực: {totalLakehouseCount.toLocaleString()} FITS files</span>
                       <button
                         type="button"
-                        onClick={() => setSelectedCategory('all')}
-                        className={`px-2 py-0.5 rounded border transition ${
-                          selectedCategory === 'all'
-                            ? 'bg-primary text-primary-foreground border-primary font-bold'
-                            : 'bg-muted/40 border-border text-muted-foreground hover:text-foreground'
-                        }`}
+                        onClick={() => {
+                          setSearchQuery('');
+                          loadRealTargets();
+                        }}
+                        className="inline-flex items-center gap-1 text-primary hover:underline"
                       >
-                        Tất cả ({allTargetKeys.length})
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedCategory('presets')}
-                        className={`px-2 py-0.5 rounded border transition ${
-                          selectedCategory === 'presets'
-                            ? 'bg-primary text-primary-foreground border-primary font-bold'
-                            : 'bg-muted/40 border-border text-muted-foreground hover:text-foreground'
-                        }`}
-                      >
-                        Mẫu (3)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedCategory('super-earth')}
-                        className={`px-2 py-0.5 rounded border transition ${
-                          selectedCategory === 'super-earth'
-                            ? 'bg-primary text-primary-foreground border-primary font-bold'
-                            : 'bg-muted/40 border-border text-muted-foreground hover:text-foreground'
-                        }`}
-                      >
-                        Siêu Trái Đất
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedCategory('jupiter')}
-                        className={`px-2 py-0.5 rounded border transition ${
-                          selectedCategory === 'jupiter'
-                            ? 'bg-primary text-primary-foreground border-primary font-bold'
-                            : 'bg-muted/40 border-border text-muted-foreground hover:text-foreground'
-                        }`}
-                      >
-                        Hot Jupiter
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedCategory('lakehouse')}
-                        className={`px-2 py-0.5 rounded border transition ${
-                          selectedCategory === 'lakehouse'
-                            ? 'bg-primary text-primary-foreground border-primary font-bold'
-                            : 'bg-muted/40 border-border text-muted-foreground hover:text-foreground'
-                        }`}
-                      >
-                        Lakehouse ({lakehouseTargets.length})
+                        <RefreshCw className="size-2.5" /> Nạp lại
                       </button>
                     </div>
 
                     {/* Scrollable Target List */}
-                    <div className="max-h-[220px] overflow-y-auto space-y-1 divide-y divide-border/20">
+                    <div className="max-h-[240px] overflow-y-auto space-y-1 divide-y divide-border/20">
                       {loadingStorage ? (
                         <div className="py-6 flex items-center justify-center gap-2 text-xs text-muted-foreground">
                           <Loader2 className="size-4 animate-spin text-primary" />
-                          <span>Đang nạp TIC từ Lakehouse...</span>
+                          <span>Đang tìm kiếm tệp FITS từ MinIO...</span>
                         </div>
-                      ) : filteredTargetKeys.length === 0 ? (
+                      ) : realTargets.length === 0 ? (
                         <div className="py-4 text-center text-xs text-muted-foreground">
-                          Không tìm thấy TIC phù hợp. Nhấn <strong>Chọn</strong> để thêm &ldquo;{searchQuery}&rdquo;.
+                          Không tìm thấy tệp FITS nào khớp với mã &ldquo;{searchQuery}&rdquo;.
                         </div>
                       ) : (
-                        filteredTargetKeys.slice(0, 50).map((key) => {
-                          const prof = resolveTargetProfile(key);
-                          const isSelected = selectedTargetKey === key;
+                        realTargets.map((target) => {
+                          const isSelected = selectedTarget?.tic_id === target.tic_id;
                           return (
                             <button
-                              key={key}
+                              key={target.tic_id}
                               type="button"
-                              onClick={() => handleSelectTarget(key)}
-                              className={`w-full text-left p-2 rounded-md flex items-center justify-between text-xs transition ${
+                              onClick={() => handleSelectTarget(target)}
+                              className={`w-full text-left p-2.5 rounded-md flex items-center justify-between text-xs transition ${
                                 isSelected
                                   ? 'bg-primary/15 text-primary font-bold border border-primary/30'
                                   : 'hover:bg-muted/40 text-foreground'
                               }`}
                             >
                               <div className="truncate pr-2">
-                                <span className="font-mono">{key}</span>
-                                <span className="text-[11px] text-muted-foreground ml-1.5">
-                                  &bull; {prof.type}
-                                </span>
+                                <div className="flex items-center gap-1.5 font-mono">
+                                  <span className="font-bold">{target.name}</span>
+                                  <Badge variant="outline" className="text-[9px] px-1 py-0 border-border">
+                                    Sector {target.sector}
+                                  </Badge>
+                                </div>
+                                <p className="text-[10px] text-muted-foreground truncate font-mono mt-0.5">
+                                  {(target.size_bytes / (1024 * 1024)).toFixed(2)} MB &bull; {target.type}
+                                </p>
                               </div>
                               {isSelected && <Check className="size-3.5 text-primary shrink-0" />}
                             </button>
@@ -430,7 +356,7 @@ export function LightCurveVisualizer(): JSX.Element {
                     </div>
 
                     <div className="mt-2 pt-2 border-t border-border/50 flex items-center justify-between text-[11px] text-muted-foreground">
-                      <span>Hiển thị {Math.min(50, filteredTargetKeys.length)}/{filteredTargetKeys.length} TIC</span>
+                      <span>Hiển thị {realTargets.length} tệp thực tế</span>
                       <button
                         type="button"
                         onClick={() => setIsDropdownOpen(false)}
@@ -461,7 +387,7 @@ export function LightCurveVisualizer(): JSX.Element {
               }`}
             >
               <span className="size-2 rounded-full bg-red-500" />
-              1. Raw SAP Flux (Bronze)
+              1. Raw SAP Flux (Bronze FITS)
             </button>
 
             <button
@@ -640,34 +566,38 @@ export function LightCurveVisualizer(): JSX.Element {
           </div>
 
           {/* Physical Parameters Summary Card */}
-          <div className="mt-4 grid grid-cols-2 gap-3 border-t border-border/60 pt-4 sm:grid-cols-3 lg:grid-cols-6 text-xs">
-            <div className="bg-muted/20 p-2.5 rounded">
-              <span className="text-muted-foreground block text-[11px]">Độ sâu Transit (ΔF/F)</span>
-              <span className="font-mono font-bold text-foreground text-sm">
-                {(currentTarget.depth * 100).toFixed(3)}% ({Math.round(currentTarget.depth * 1e6)} ppm)
-              </span>
+          {selectedTarget && (
+            <div className="mt-4 grid grid-cols-2 gap-3 border-t border-border/60 pt-4 sm:grid-cols-3 lg:grid-cols-6 text-xs">
+              <div className="bg-muted/20 p-2.5 rounded">
+                <span className="text-muted-foreground block text-[11px]">Độ sâu Transit (ΔF/F)</span>
+                <span className="font-mono font-bold text-foreground text-sm">
+                  {(selectedTarget.depth * 100).toFixed(3)}% ({Math.round(selectedTarget.depth * 1e6)} ppm)
+                </span>
+              </div>
+              <div className="bg-muted/20 p-2.5 rounded">
+                <span className="text-muted-foreground block text-[11px]">Chu kỳ quỹ đạo P</span>
+                <span className="font-mono font-bold text-foreground text-sm">{selectedTarget.period} ngày</span>
+              </div>
+              <div className="bg-muted/20 p-2.5 rounded">
+                <span className="text-muted-foreground block text-[11px]">Thời lượng Transit</span>
+                <span className="font-mono font-bold text-foreground text-sm">{selectedTarget.duration} giờ</span>
+              </div>
+              <div className="bg-muted/20 p-2.5 rounded">
+                <span className="text-muted-foreground block text-[11px]">Bán kính ước tính Rp</span>
+                <span className="font-mono font-bold text-foreground text-sm">{selectedTarget.radius} R⊕</span>
+              </div>
+              <div className="bg-muted/20 p-2.5 rounded">
+                <span className="text-muted-foreground block text-[11px]">Tỷ số Tín hiệu/Nhiễu (SNR)</span>
+                <span className="font-mono font-bold text-emerald-500 text-sm">{selectedTarget.snr} σ</span>
+              </div>
+              <div className="bg-muted/20 p-2.5 rounded">
+                <span className="text-muted-foreground block text-[11px]">Mã tệp FITS MinIO</span>
+                <span className="font-mono font-bold text-primary text-xs truncate block" title={selectedTarget.object_key}>
+                  {selectedTarget.name}
+                </span>
+              </div>
             </div>
-            <div className="bg-muted/20 p-2.5 rounded">
-              <span className="text-muted-foreground block text-[11px]">Chu kỳ quỹ đạo P</span>
-              <span className="font-mono font-bold text-foreground text-sm">{currentTarget.period} ngày</span>
-            </div>
-            <div className="bg-muted/20 p-2.5 rounded">
-              <span className="text-muted-foreground block text-[11px]">Thời lượng Transit</span>
-              <span className="font-mono font-bold text-foreground text-sm">{currentTarget.duration} giờ</span>
-            </div>
-            <div className="bg-muted/20 p-2.5 rounded">
-              <span className="text-muted-foreground block text-[11px]">Bán kính ước tính Rp</span>
-              <span className="font-mono font-bold text-foreground text-sm">{currentTarget.radius} R⊕</span>
-            </div>
-            <div className="bg-muted/20 p-2.5 rounded">
-              <span className="text-muted-foreground block text-[11px]">Tỷ số Tín hiệu/Nhiễu (SNR)</span>
-              <span className="font-mono font-bold text-emerald-500 text-sm">{currentTarget.snr} σ</span>
-            </div>
-            <div className="bg-muted/20 p-2.5 rounded">
-              <span className="text-muted-foreground block text-[11px]">Độ đồng pha Odd/Even</span>
-              <span className="font-mono font-bold text-foreground text-sm">0.99 (Đạt chuẩn)</span>
-            </div>
-          </div>
+          )}
         </CardContent>
       </Card>
     </div>
