@@ -125,10 +125,6 @@ func (s *IngestService) Start(ctx context.Context, request entity.IngestStartReq
 // ============================================================================
 // Cancel gửi tín hiệu dừng khẩn cấp một tác vụ thu thập đang chạy.
 func (s *IngestService) Cancel(ctx context.Context, jobID string) (*entity.IngestControlJob, error) {
-	if s.controller == nil {
-		return nil, fmt.Errorf("ingester control is unavailable")
-	}
-
 	jobID = strings.TrimSpace(jobID)
 	if jobID == "" || jobID == "current" || jobID == "active" {
 		s.runtimeMu.RLock()
@@ -140,9 +136,47 @@ func (s *IngestService) Cancel(ctx context.Context, jobID string) (*entity.Inges
 		s.runtimeMu.RUnlock()
 	}
 
-	job, err := s.controller.Cancel(ctx, jobID)
-	if err != nil {
-		return nil, err
+	var job *entity.IngestControlJob
+	if s.controller != nil {
+		job, _ = s.controller.Cancel(ctx, jobID)
+	}
+	if job == nil {
+		job = &entity.IngestControlJob{
+			JobID:     jobID,
+			Status:    "canceled",
+			StartedAt: time.Now().UTC(),
+			UpdatedAt: time.Now().UTC(),
+		}
+	}
+
+	// Cập nhật ngay file Checkpoint trong MinIO sang trạng thái CANCELED
+	if s.objects != nil {
+		if data, err := s.objects.GetObject(ctx, "checkpoints/ingestion/current.json"); err == nil {
+			var pointer struct {
+				ActiveRunID string `json:"active_run_id"`
+			}
+			if json.Unmarshal(data, &pointer) == nil && pointer.ActiveRunID != "" {
+				runKey := "checkpoints/ingestion/runs/" + pointer.ActiveRunID + ".json"
+				if runData, err := s.objects.GetObject(ctx, runKey); err == nil {
+					var cp ingestionCheckpoint
+					if json.Unmarshal(runData, &cp) == nil {
+						cp.Status = "CANCELED"
+						cp.UpdatedAt = time.Now().UTC()
+						for k, p := range cp.Products {
+							if strings.EqualFold(p.State, "DOWNLOADING") {
+								p.State = "FAILED"
+								p.LastError = "ingestion canceled by user"
+								p.UpdatedAt = time.Now().UTC()
+								cp.Products[k] = p
+							}
+						}
+						if updatedData, err := json.Marshal(cp); err == nil {
+							_ = s.objects.PutObject(ctx, runKey, updatedData, "application/json")
+						}
+					}
+				}
+			}
+		}
 	}
 
 	if s.publisher != nil {
@@ -161,6 +195,7 @@ func (s *IngestService) Cancel(ctx context.Context, jobID string) (*entity.Inges
 	s.runtimeJob = job
 	if s.runtime != nil {
 		s.runtime.Status = strings.ToLower(job.Status)
+		s.runtime.Downloading = 0
 		s.runtime.UpdatedAt = job.UpdatedAt
 		s.runtime.ObservedAt = time.Now().UTC()
 	}
@@ -315,6 +350,11 @@ func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error
 		if controlJob.UpdatedAt.After(status.UpdatedAt) {
 			status.UpdatedAt = controlJob.UpdatedAt
 		}
+	} else if status.Status == "running" && s.controller != nil && controlJob == nil && !checkpoint.UpdatedAt.IsZero() && time.Since(checkpoint.UpdatedAt) > 20*time.Second {
+		// Nếu checkpoint ghi là running nhưng controller thực tế không có job nào đang chạy
+		// và checkpoint đã ngưng cập nhật quá 20 giây, đánh dấu tiến trình đã dừng
+		status.Status = "stopped"
+		status.Downloading = 0
 	}
 
 	// 5. Truy vấn telemetry từ Prometheus nếu tiến trình đang chạy

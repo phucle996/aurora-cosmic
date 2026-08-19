@@ -22,6 +22,12 @@ func (f fakeIngestObjects) ListObjects(_ context.Context, prefix string) ([]repo
 		{Key: prefix + "old.fits", Size: 20, LastModified: time.Now().UTC().Add(-time.Hour)},
 	}, nil
 }
+func (f fakeIngestObjects) PutObject(_ context.Context, key string, data []byte, _ string) error {
+	if f.objects != nil {
+		f.objects[key] = data
+	}
+	return nil
+}
 
 type fakeIngestPrometheus struct{}
 

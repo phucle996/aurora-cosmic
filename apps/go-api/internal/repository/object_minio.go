@@ -35,3 +35,8 @@ func (r *ObjectMinIO) ListObjects(ctx context.Context, prefix string) ([]repo.Ob
 func (r *ObjectMinIO) GetObject(ctx context.Context, key string) ([]byte, error) {
 	return r.client.GetObject(ctx, key)
 }
+
+// PutObject ghi dữ liệu dạng bytes lên object theo key trong bucket MinIO
+func (r *ObjectMinIO) PutObject(ctx context.Context, key string, data []byte, contentType string) error {
+	return r.client.PutObject(ctx, key, data, contentType)
+}

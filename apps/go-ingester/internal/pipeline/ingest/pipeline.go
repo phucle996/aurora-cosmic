@@ -392,8 +392,10 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun
 
 	if p.cpManager != nil && !dryRun {
 		p.cpManager.FinalizeRun()
-		if err := p.cpManager.Flush(ctx); err != nil {
-			return summary, results, fmt.Errorf("ingest: final checkpoint flush failed: %w", err)
+		flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer flushCancel()
+		if err := p.cpManager.Flush(flushCtx); err != nil {
+			p.log.Warn("final checkpoint flush failed", slog.Any("error", err))
 		}
 	}
 

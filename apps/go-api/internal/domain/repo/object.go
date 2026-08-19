@@ -18,6 +18,7 @@ type ObjectRepository interface {
 	Ping(context.Context) error
 	ListObjects(context.Context, string) ([]ObjectInfo, error)
 	GetObject(context.Context, string) ([]byte, error)
+	PutObject(context.Context, string, []byte, string) error
 }
 
 type IngestController interface {
