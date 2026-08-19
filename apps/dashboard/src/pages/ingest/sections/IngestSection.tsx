@@ -4,7 +4,6 @@ import { Link } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowRight,
-  CheckCircle2,
   Database,
   DownloadCloud,
   Gauge,

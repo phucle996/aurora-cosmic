@@ -1,24 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
 import {
   AlertCircle,
-  Archive,
-  ArrowRight,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  Database,
-  Download,
-  FileCode,
-  FileSpreadsheet,
-  FileText,
-  Filter,
-  HardDrive,
   Layers,
   RefreshCw,
   Search,
   Sparkles,
-  TableProperties,
 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -276,9 +266,8 @@ export default function DatasetsPage(): JSX.Element {
       <div className="grid gap-4 md:grid-cols-3">
         {/* Bronze Card */}
         <Card
-          className={`cursor-pointer transition-colors ${
-            activeTab === 'bronze' ? 'border-primary/80 bg-primary/5' : 'hover:border-border'
-          }`}
+          className={`cursor-pointer transition-colors ${activeTab === 'bronze' ? 'border-primary/80 bg-primary/5' : 'hover:border-border'
+            }`}
           onClick={() => handleTabChange('bronze')}
         >
           <CardHeader className="pb-3">
@@ -316,9 +305,8 @@ export default function DatasetsPage(): JSX.Element {
 
         {/* Silver Card */}
         <Card
-          className={`cursor-pointer transition-colors ${
-            activeTab === 'silver' ? 'border-primary/80 bg-primary/5' : 'hover:border-border'
-          }`}
+          className={`cursor-pointer transition-colors ${activeTab === 'silver' ? 'border-primary/80 bg-primary/5' : 'hover:border-border'
+            }`}
           onClick={() => handleTabChange('silver')}
         >
           <CardHeader className="pb-3">
@@ -353,9 +341,8 @@ export default function DatasetsPage(): JSX.Element {
 
         {/* Gold Card */}
         <Card
-          className={`cursor-pointer transition-colors ${
-            activeTab === 'gold' ? 'border-primary/80 bg-primary/5' : 'hover:border-border'
-          }`}
+          className={`cursor-pointer transition-colors ${activeTab === 'gold' ? 'border-primary/80 bg-primary/5' : 'hover:border-border'
+            }`}
           onClick={() => handleTabChange('gold')}
         >
           <CardHeader className="pb-3">

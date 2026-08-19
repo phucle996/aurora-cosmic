@@ -9,12 +9,10 @@ import {
   Gauge,
   LoaderCircle,
   Play,
-  Plus,
   RefreshCw,
   Rocket,
   ShieldCheck,
   Sparkles,
-  Zap,
 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -213,8 +211,8 @@ export default function ModelsPage(): JSX.Element {
   const selectedModel = models.find((model) => model.runtime_package_id === selectedRuntimeId) ?? visibleModels[0];
   const selectedJobs = selectedModel
     ? jobs.filter(
-        (job) => job.model_id === selectedModel.model_id || job.runtime_package_id === selectedModel.runtime_package_id,
-      )
+      (job) => job.model_id === selectedModel.model_id || job.runtime_package_id === selectedModel.runtime_package_id,
+    )
     : [];
   const validatedCount = models.filter((model) => model.status === 'validated' || model.status === 'champion').length;
   const championCount = models.filter((model) => model.status === 'champion').length;
@@ -461,9 +459,8 @@ export default function ModelsPage(): JSX.Element {
                   key={filter}
                   type="button"
                   onClick={() => setTaskFilter(filter)}
-                  className={`whitespace-nowrap rounded px-2.5 py-1 transition-colors ${
-                    taskFilter === filter ? 'bg-primary text-primary-foreground font-medium' : 'text-muted-foreground hover:bg-muted'
-                  }`}
+                  className={`whitespace-nowrap rounded px-2.5 py-1 transition-colors ${taskFilter === filter ? 'bg-primary text-primary-foreground font-medium' : 'text-muted-foreground hover:bg-muted'
+                    }`}
                 >
                   {filter === 'all' ? 'All' : filter === 'candidate_vetting' ? 'Candidate Vetting' : 'Anomaly Autoencoder'}
                 </button>
