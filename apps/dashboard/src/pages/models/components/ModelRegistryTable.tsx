@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { JSX } from 'react';
-import { Database, LoaderCircle } from 'lucide-react';
+import { Database, LoaderCircle, Sparkles, Square } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -16,6 +16,8 @@ interface ModelRegistryTableProps {
   taskFilter: TaskType;
   onTaskFilterChange: (filter: TaskType) => void;
   loading: boolean;
+  onDeployModel?: (modelId: string, task: string, active: boolean) => Promise<void>;
+  isDeploying?: boolean;
 }
 
 export function ModelRegistryTable({
@@ -25,6 +27,8 @@ export function ModelRegistryTable({
   taskFilter,
   onTaskFilterChange,
   loading,
+  onDeployModel,
+  isDeploying,
 }: ModelRegistryTableProps): JSX.Element {
   const [modelSearch, setModelSearch] = useState('');
   const [modelPage, setModelPage] = useState(1);
@@ -106,42 +110,69 @@ export function ModelRegistryTable({
         ) : (
           <>
             <div className="overflow-x-auto">
-              <Table className="min-w-[650px]">
+              <Table className="min-w-[700px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Mô hình (Model ID)</TableHead>
                     <TableHead>Tác vụ (Task)</TableHead>
                     <TableHead>Trạng thái</TableHead>
-                    <TableHead>Runtime Package</TableHead>
-                    <TableHead className="text-right">Dung lượng ONNX</TableHead>
+                    <TableHead>Dung lượng ONNX</TableHead>
+                    <TableHead className="text-right">Triển khai Suy luận</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {pagedModels.map((model) => (
-                    <TableRow
-                      key={`${model.runtime_package_id}-${model.model_id}`}
-                      data-state={selectedRuntimeId === model.runtime_package_id ? 'selected' : undefined}
-                      className="cursor-pointer"
-                      onClick={() => onSelectRuntimeId(model.runtime_package_id)}
-                    >
-                      <TableCell>
-                        <div className="min-w-44">
-                          <p className="font-medium text-foreground">{model.model_id}</p>
-                          <p className="mt-0.5 text-xs text-muted-foreground font-mono">{model.model_version}</p>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{taskLabel[model.task] ?? model.task}</TableCell>
-                      <TableCell>
-                        <Badge variant={statusVariant(model.status)}>
-                          {model.status === 'champion' ? '👑 Champion' : model.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">{model.runtime_package_id}</TableCell>
-                      <TableCell className="text-right font-mono text-xs text-muted-foreground">
-                        {formatBytes(model.onnx_size_bytes)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {pagedModels.map((model) => {
+                    const isChamp = model.status === 'champion';
+                    return (
+                      <TableRow
+                        key={`${model.runtime_package_id}-${model.model_id}`}
+                        data-state={selectedRuntimeId === model.runtime_package_id ? 'selected' : undefined}
+                        className="cursor-pointer"
+                        onClick={() => onSelectRuntimeId(model.runtime_package_id)}
+                      >
+                        <TableCell>
+                          <div className="min-w-44">
+                            <p className="font-medium text-foreground">{model.model_id}</p>
+                            <p className="mt-0.5 text-xs text-muted-foreground font-mono">{model.model_version}</p>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">{taskLabel[model.task] ?? model.task}</TableCell>
+                        <TableCell>
+                          <Badge variant={statusVariant(model.status)}>
+                            {isChamp ? '👑 Champion' : model.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">
+                          {formatBytes(model.onnx_size_bytes)}
+                        </TableCell>
+                        <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                          {isChamp ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-6 px-2 text-[11px] border-destructive/40 text-destructive hover:bg-destructive/10 gap-1"
+                              onClick={() => onDeployModel?.(model.model_id, model.task, false)}
+                              disabled={isDeploying}
+                            >
+                              <Square className="size-2.5" />
+                              Hủy triển khai
+                            </Button>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              className="h-6 px-2 text-[11px] gap-1 hover:bg-primary hover:text-primary-foreground"
+                              onClick={() => onDeployModel?.(model.model_id, model.task, true)}
+                              disabled={isDeploying || model.status === 'invalid'}
+                            >
+                              <Sparkles className="size-2.5 text-amber-400" />
+                              Triển khai
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>

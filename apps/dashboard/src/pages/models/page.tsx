@@ -15,6 +15,7 @@ import type {
   GoldSnapshotItem,
   InferenceJob,
   JobResponse,
+  ModelDeployResponse,
   ModelRecord,
   ModelResponse,
   StorageResponse,
@@ -32,6 +33,7 @@ export default function ModelsPage(): JSX.Element {
   const [error, setError] = useState<string>();
   const [queueingJob, setQueueingJob] = useState<string>();
   const [notice, setNotice] = useState<string>();
+  const [deploying, setDeploying] = useState(false);
 
   // Training Dialog state & Snapshots
   const [trainDialogOpen, setTrainDialogOpen] = useState(false);
@@ -237,6 +239,33 @@ export default function ModelsPage(): JSX.Element {
     }
   };
 
+  // Đổi trạng thái triển khai suy luận Champion
+  const handleDeployModel = async (modelId: string, task: string, active: boolean) => {
+    setDeploying(true);
+    setError(undefined);
+    setNotice(undefined);
+    try {
+      await apiFetch<ModelDeployResponse>('/v1/models/deploy', {
+        method: 'POST',
+        body: JSON.stringify({
+          model_id: modelId,
+          task,
+          active,
+        }),
+      });
+      if (active) {
+        setNotice(`🚀 Đã chuyển quyền phục vụ suy luận chính (Champion) sang model [${modelId}] thành công!`);
+      } else {
+        setNotice(`⏹️ Đã hủy triển khai mô hình [${modelId}]. Hệ thống tạm dừng suy luận tự động.`);
+      }
+      await loadData(true);
+    } catch (deployErr) {
+      setError(deployErr instanceof Error ? deployErr.message : 'Không thể cập nhật trạng thái triển khai model');
+    } finally {
+      setDeploying(false);
+    }
+  };
+
   async function queueJob(job: InferenceJob): Promise<void> {
     setQueueingJob(job.job_id);
     setNotice(undefined);
@@ -266,7 +295,7 @@ export default function ModelsPage(): JSX.Element {
           </div>
           <h2 className="font-heading text-2xl font-semibold tracking-tight md:text-3xl">Models & Inference Engine</h2>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Chủ động huấn luyện mô hình PyTorch trên GPU NVIDIA, tự động tối ưu ngưỡng phân loại, export ONNX và quản lý Champion Model.
+            Chủ động huấn luyện mô hình PyTorch trên GPU NVIDIA, linh hoạt lựa chọn và chuyển đổi mô hình phục vụ suy luận trực tiếp.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -332,9 +361,15 @@ export default function ModelsPage(): JSX.Element {
           taskFilter={taskFilter}
           onTaskFilterChange={setTaskFilter}
           loading={loading}
+          onDeployModel={handleDeployModel}
+          isDeploying={deploying}
         />
 
-        <SelectedModelDetails selectedModel={selectedModel} />
+        <SelectedModelDetails
+          selectedModel={selectedModel}
+          onDeployModel={handleDeployModel}
+          isDeploying={deploying}
+        />
       </div>
 
       {/* Inference Jobs Table */}

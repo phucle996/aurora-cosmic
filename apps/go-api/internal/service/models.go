@@ -251,3 +251,48 @@ func (s *ModelsService) StartTrainingJob(ctx context.Context, req entity.Trainin
 		Message:         fmt.Sprintf("Training job %s successfully dispatched to PyTorch GPU worker.", jobID),
 	}, nil
 }
+
+// ============================================================================
+// HÀM TRIỂN KHAI / HỦY TRIỂN KHAI MÔ HÌNH SUY LUẬN (Champion Deployment)
+// ============================================================================
+// SetModelDeployment cập nhật nguyên tử con trỏ `champion.json` trong MinIO
+// để chọn model làm Champion phục vụ suy luận trực tiếp, hoặc hủy kích hoạt.
+func (s *ModelsService) SetModelDeployment(ctx context.Context, modelID string, task string, active bool) error {
+	if task == "" {
+		task = "candidate_vetting"
+	}
+	taskDirs := []string{task}
+	if task == "candidate_vetting" {
+		taskDirs = append(taskDirs, "candidate")
+	} else if task == "astronomical_anomaly_detection" {
+		taskDirs = append(taskDirs, "anomaly")
+	}
+
+	if !active {
+		// Hủy kích hoạt / Bỏ chọn: xóa con trỏ champion.json
+		for _, dir := range taskDirs {
+			key := fmt.Sprintf("models/%s/champion.json", dir)
+			_ = s.objects.DeleteObject(ctx, key)
+		}
+		return nil
+	}
+
+	// Triển khai model: ghi nguyên tử con trỏ champion.json
+	now := time.Now().UTC().Format(time.RFC3339)
+	pointerData, err := json.MarshalIndent(map[string]any{
+		"model_id":    modelID,
+		"task":        task,
+		"promoted_at": now,
+	}, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal champion pointer: %w", err)
+	}
+
+	for _, dir := range taskDirs {
+		key := fmt.Sprintf("models/%s/champion.json", dir)
+		if err := s.objects.PutObject(ctx, key, pointerData, "application/json"); err != nil {
+			return fmt.Errorf("write champion pointer %s: %w", key, err)
+		}
+	}
+	return nil
+}

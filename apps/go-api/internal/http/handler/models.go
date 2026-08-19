@@ -138,3 +138,31 @@ func (h *ModelsHandler) StartTraining(c *gin.Context) {
 		Message:         result.Message,
 	})
 }
+
+// DeployModel chuyển đổi mô hình phục vụ suy luận Champion hoặc hủy kích hoạt
+func (h *ModelsHandler) DeployModel(c *gin.Context) {
+	var req dto.ModelDeployRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid deploy payload"})
+		return
+	}
+	if req.Active && strings.TrimSpace(req.ModelID) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "model_id is required when active is true"})
+		return
+	}
+	if err := h.models.SetModelDeployment(c.Request.Context(), strings.TrimSpace(req.ModelID), strings.TrimSpace(req.Task), req.Active); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	statusMsg := "Model " + req.ModelID + " is now deployed as Champion for live inference."
+	if !req.Active {
+		statusMsg = "Inference deployment deactivated for task " + req.Task + "."
+	}
+	c.JSON(http.StatusOK, dto.ModelDeployResponse{
+		Status:  "success",
+		ModelID: req.ModelID,
+		Task:    req.Task,
+		Active:  req.Active,
+		Message: statusMsg,
+	})
+}

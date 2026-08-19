@@ -1,6 +1,7 @@
 import type { JSX } from 'react';
-import { Database, Gauge } from 'lucide-react';
+import { Database, Gauge, LoaderCircle, Sparkles, Square } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { formatBytes, formatDate, statusVariant, taskLabel } from '../types';
@@ -8,14 +9,22 @@ import type { ModelRecord } from '../types';
 
 interface SelectedModelDetailsProps {
   selectedModel?: ModelRecord;
+  onDeployModel?: (modelId: string, task: string, active: boolean) => Promise<void>;
+  isDeploying?: boolean;
 }
 
-export function SelectedModelDetails({ selectedModel }: SelectedModelDetailsProps): JSX.Element {
+export function SelectedModelDetails({
+  selectedModel,
+  onDeployModel,
+  isDeploying,
+}: SelectedModelDetailsProps): JSX.Element {
+  const isChampion = selectedModel?.status === 'champion';
+
   return (
     <Card className="min-w-0 overflow-hidden">
       <CardHeader>
         <CardTitle className="text-base font-semibold">Chi tiết Mô hình được chọn</CardTitle>
-        <CardDescription>Thông số kỹ thuật, tính toàn vẹn SHA-256 và lineage.</CardDescription>
+        <CardDescription>Thông số kỹ thuật, trạng thái triển khai suy luận và lineage.</CardDescription>
       </CardHeader>
       <CardContent>
         {!selectedModel ? (
@@ -25,6 +34,57 @@ export function SelectedModelDetails({ selectedModel }: SelectedModelDetailsProp
           </div>
         ) : (
           <div className="space-y-4">
+            {/* Active Inference Deployment Control Card */}
+            {isChampion ? (
+              <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3.5 space-y-2.5 shadow-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="relative flex size-2.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full size-2.5 bg-emerald-500"></span>
+                    </span>
+                    <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1">
+                      👑 ĐANG PHỤC VỤ SUY LUẬN TRỰC TIẾP
+                    </span>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs border-destructive/40 text-destructive hover:bg-destructive/10 gap-1.5 shrink-0"
+                    onClick={() => onDeployModel?.(selectedModel.model_id, selectedModel.task, false)}
+                    disabled={isDeploying}
+                  >
+                    {isDeploying ? <LoaderCircle className="size-3 animate-spin" /> : <Square className="size-3" />}
+                    Hủy triển khai
+                  </Button>
+                </div>
+                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                  Mô hình này đang giữ quyền Champion trong MinIO (<code className="text-foreground">champion.json</code>) và được Rust Inference Engine tự động tải để phân loại luồng dữ liệu thời gian thực.
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-border bg-muted/20 p-3.5 space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-muted-foreground font-medium flex items-center gap-1.5">
+                    ⚪ Mô hình dự phòng (Chưa kích hoạt suy luận)
+                  </span>
+                  <Button
+                    size="sm"
+                    className="h-7 text-xs gap-1.5 bg-gradient-to-r from-emerald-600 to-primary text-primary-foreground font-semibold shadow-sm shrink-0"
+                    onClick={() => onDeployModel?.(selectedModel.model_id, selectedModel.task, true)}
+                    disabled={isDeploying || selectedModel.status === 'invalid'}
+                  >
+                    {isDeploying ? <LoaderCircle className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
+                    Triển khai mô hình này (Set Champion)
+                  </Button>
+                </div>
+                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                  Nhấp để chuyển quyền suy luận chính cho mô hình này. Hệ thống sẽ cập nhật con trỏ <code className="text-foreground">champion.json</code> ngay lập tức.
+                </p>
+              </div>
+            )}
+
+            {/* Model Metadata Card */}
             <div className="rounded-lg border border-border bg-muted/30 p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>

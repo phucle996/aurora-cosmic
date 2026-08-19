@@ -40,3 +40,8 @@ func (r *ObjectMinIO) GetObject(ctx context.Context, key string) ([]byte, error)
 func (r *ObjectMinIO) PutObject(ctx context.Context, key string, data []byte, contentType string) error {
 	return r.client.PutObject(ctx, key, data, contentType)
 }
+
+// DeleteObject xóa một object theo key trong bucket MinIO
+func (r *ObjectMinIO) DeleteObject(ctx context.Context, key string) error {
+	return r.client.DeleteObject(ctx, key)
+}

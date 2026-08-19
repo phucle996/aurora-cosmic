@@ -37,6 +37,7 @@ type ObjectRepository interface {
 	ListObjects(context.Context, string) ([]ObjectInfo, error)
 	GetObject(context.Context, string) ([]byte, error)
 	PutObject(context.Context, string, []byte, string) error
+	DeleteObject(context.Context, string) error
 }
 
 type IngestController interface {

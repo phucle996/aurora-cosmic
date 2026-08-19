@@ -90,3 +90,10 @@ func (c *Client) PutObject(ctx context.Context, key string, data []byte, content
 	_, err := c.client.PutObject(ctx, c.Bucket, key, bytes.NewReader(data), int64(len(data)), minioSDK.PutObjectOptions{ContentType: contentType})
 	return err
 }
+
+func (c *Client) DeleteObject(ctx context.Context, key string) error {
+	if c.client == nil {
+		return fmt.Errorf("MinIO client is unavailable")
+	}
+	return c.client.RemoveObject(ctx, c.Bucket, key, minioSDK.RemoveObjectOptions{})
+}

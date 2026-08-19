@@ -24,3 +24,19 @@ type TrainingJobResponse struct {
 	CreatedAt       string   `json:"created_at"`
 	Message         string   `json:"message"`
 }
+
+// ModelDeployRequest đại diện cho yêu cầu chọn model làm Champion phục vụ suy luận trực tiếp hoặc hủy kích hoạt
+type ModelDeployRequest struct {
+	ModelID string `json:"model_id"`
+	Task    string `json:"task"`
+	Active  bool   `json:"active"` // true = triển khai làm Champion, false = hủy kích hoạt
+}
+
+// ModelDeployResponse đại diện cho kết quả triển khai mô hình
+type ModelDeployResponse struct {
+	Status  string `json:"status"`
+	ModelID string `json:"model_id"`
+	Task    string `json:"task"`
+	Active  bool   `json:"active"`
+	Message string `json:"message"`
+}
