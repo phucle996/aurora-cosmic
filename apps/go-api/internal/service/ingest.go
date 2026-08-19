@@ -22,14 +22,14 @@ import (
 // 2. Theo dõi trạng thái tiến trình thời gian thực qua Checkpoint MinIO và Metrics Prometheus.
 // 3. Quản lý danh sách đối tượng lưu trữ trong vùng đệm MinIO Bronze (~50 GiB).
 type IngestService struct {
-	objects    repo.ObjectRepository   // Repository đọc ghi MinIO S3
-	prometheus repo.PrometheusQuerier  // Truy vấn metrics tốc độ throughput từ Prometheus
-	bucket     string                  // Tên bucket MinIO (mặc định: "aurora")
-	controller repo.IngestController   // Controller điều khiển Go Ingester worker
-	publisher  repo.EventPublisher     // Publisher phát sự kiện lifecycle workflow
-	runtimeMu  sync.RWMutex            // Khóa đồng bộ trạng thái runtime trong bộ nhớ
+	objects    repo.ObjectRepository    // Repository đọc ghi MinIO S3
+	prometheus repo.PrometheusQuerier   // Truy vấn metrics tốc độ throughput từ Prometheus
+	bucket     string                   // Tên bucket MinIO (mặc định: "aurora")
+	controller repo.IngestController    // Controller điều khiển Go Ingester worker
+	publisher  repo.EventPublisher      // Publisher phát sự kiện lifecycle workflow
+	runtimeMu  sync.RWMutex             // Khóa đồng bộ trạng thái runtime trong bộ nhớ
 	runtimeJob *entity.IngestControlJob // Thông tin job điều khiển đang chạy
-	runtime    *entity.IngestStatus    // Snapshot trạng thái thu thập gần nhất
+	runtime    *entity.IngestStatus     // Snapshot trạng thái thu thập gần nhất
 }
 
 // ============================================================================
@@ -48,14 +48,14 @@ type ingestionCheckpoint struct {
 
 // ingestionProduct lưu trạng thái chi tiết của từng file dữ liệu (Light Curve / TPF FITS)
 type ingestionProduct struct {
-	ProductKind       string    `json:"product_kind"`        // Loại sản phẩm: light_curve, target_pixel, ffi
-	ObjectKey         string    `json:"object_key"`          // Khóa lưu trữ S3 (VD: bronze/sector-42/..._lc.fits)
-	ExpectedSizeBytes int64     `json:"expected_size_bytes"` // Kích thước dự kiến từ catalog MAST
-	SizeBytes         int64     `json:"size_bytes"`          // Số bytes thực tế đã tải về
-	State             string    `json:"state"`               // Trạng thái: DOWNLOADING, STORED, PUBLISHED, FAILED
-	Attempts          int       `json:"attempts"`            // Số lần đã thử tải lại
-	LastError         string    `json:"last_error,omitempty"`// Lỗi chi tiết nếu thất bại
-	UpdatedAt         time.Time `json:"updated_at"`          // Thời gian cập nhật trạng thái
+	ProductKind       string    `json:"product_kind"`         // Loại sản phẩm: light_curve, target_pixel, ffi
+	ObjectKey         string    `json:"object_key"`           // Khóa lưu trữ S3 (VD: bronze/sector-42/..._lc.fits)
+	ExpectedSizeBytes int64     `json:"expected_size_bytes"`  // Kích thước dự kiến từ catalog MAST
+	SizeBytes         int64     `json:"size_bytes"`           // Số bytes thực tế đã tải về
+	State             string    `json:"state"`                // Trạng thái: DOWNLOADING, STORED, PUBLISHED, FAILED
+	Attempts          int       `json:"attempts"`             // Số lần đã thử tải lại
+	LastError         string    `json:"last_error,omitempty"` // Lỗi chi tiết nếu thất bại
+	UpdatedAt         time.Time `json:"updated_at"`           // Thời gian cập nhật trạng thái
 }
 
 // NewIngestService khởi tạo thể hiện của IngestService

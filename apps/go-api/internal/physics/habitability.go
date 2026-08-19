@@ -249,11 +249,11 @@ func assess(p entity.PlanetPhysics, evidence entity.CandidateEvidence) entity.Ha
 	case total >= 75:
 		assessment.Tier = "high_priority" // Ưu tiên cao nhất
 	case total >= 50:
-		assessment.Tier = "promising"     // Triển vọng
+		assessment.Tier = "promising" // Triển vọng
 	case total >= 25:
-		assessment.Tier = "low_priority"  // Ưu tiên thấp
+		assessment.Tier = "low_priority" // Ưu tiên thấp
 	default:
-		assessment.Tier = "unlikely"      // Khó có khả năng
+		assessment.Tier = "unlikely" // Khó có khả năng
 	}
 	return assessment
 }
@@ -273,9 +273,9 @@ func classifyHZ(flux float64) string {
 		return "conservative" // Vùng bảo thủ (Conservative Habitable Zone)
 	}
 	if flux >= 0.32 && flux <= 1.78 {
-		return "optimistic"   // Vùng lạc quan (Optimistic Habitable Zone)
+		return "optimistic" // Vùng lạc quan (Optimistic Habitable Zone)
 	}
-	return "outside"          // Nằm ngoài Habitable Zone
+	return "outside" // Nằm ngoài Habitable Zone
 }
 
 // candidateID tạo mã định danh duy nhất (SHA-256) dựa trên các thuộc tính của tín hiệu ứng viên

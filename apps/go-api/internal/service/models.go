@@ -43,7 +43,7 @@ type runtimeManifestDTO struct {
 	PreprocessingVersion  string   `json:"preprocessing_version"`    // Phiên bản tiền xử lý dữ liệu đầu vào
 	PreprocessingSHA256   string   `json:"preprocessing_sha256"`     // SHA-256 của file cấu hình preprocessing.json
 	ThresholdSHA256       string   `json:"threshold_sha256"`         // SHA-256 của file ngưỡng quyết định threshold.json
-	ParityFixtureSHA256   string   `json:"parity_fixture_sha256"`   // SHA-256 của file kiểm thử đối sánh Python-Rust
+	ParityFixtureSHA256   string   `json:"parity_fixture_sha256"`    // SHA-256 của file kiểm thử đối sánh Python-Rust
 	FeatureOrder          []string `json:"feature_order"`            // Danh sách thứ tự các trường đặc trưng đầu vào
 	ONNXSizeBytes         int64    `json:"onnx_size_bytes"`          // Kích thước file model.onnx (bytes)
 	ONNXSHA256            string   `json:"onnx_sha256"`              // SHA-256 của file model.onnx

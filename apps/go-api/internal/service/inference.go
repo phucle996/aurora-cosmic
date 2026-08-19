@@ -23,7 +23,7 @@ import (
 // 2. Kiểm tra trạng thái hoàn thành (Completed) hay đang chờ (Planned) qua output files.
 // 3. Cho phép kích hoạt chạy lại (Retry / Re-dispatch) một Inference Job qua NATS.
 type InferenceService struct {
-	objects    repo.ObjectRepository     // Repository tương tác trực tiếp với MinIO S3
+	objects    repo.ObjectRepository    // Repository tương tác trực tiếp với MinIO S3
 	dispatcher repo.InferenceDispatcher // Dispatcher gửi event kích hoạt job qua NATS JetStream
 }
 

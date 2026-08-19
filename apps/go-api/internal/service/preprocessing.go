@@ -45,16 +45,16 @@ var preprocessingMetrics = []preprocessingMetric{
 // 2. Dựng đồ thị luồng xử lý (DAG Pipeline Hops: Bronze -> Decode -> Transform -> Silver -> Checkpoint -> Lineage -> Event -> ACK).
 // 3. Quét bất đồng bộ tiến độ checkpoint từ MinIO (`checkpoints/preprocessing/objects/...`).
 type PreprocessingService struct {
-	prometheus         repo.PrometheusQuerier        // Truy vấn metrics telemetry từ Prometheus
-	dispatcher         repo.WorkflowDispatcher       // Gửi lệnh điều khiển (start/stop) tới Rust Preprocessor
-	publisher          repo.EventPublisher           // Phát sự kiện workflow
-	objects            repo.ObjectRepository         // Đọc checkpoint từ MinIO S3
-	runtimeMu          sync.RWMutex                  // Khóa đồng bộ dữ liệu runtime trong RAM
+	prometheus         repo.PrometheusQuerier          // Truy vấn metrics telemetry từ Prometheus
+	dispatcher         repo.WorkflowDispatcher         // Gửi lệnh điều khiển (start/stop) tới Rust Preprocessor
+	publisher          repo.EventPublisher             // Phát sự kiện workflow
+	objects            repo.ObjectRepository           // Đọc checkpoint từ MinIO S3
+	runtimeMu          sync.RWMutex                    // Khóa đồng bộ dữ liệu runtime trong RAM
 	runtimeJob         *entity.PreprocessingControlJob // Thông tin job tiền xử lý hiện tại
-	progress           entity.PreprocessingProgress  // Tiến độ xử lý (tổng số checkpoint, đã xong, còn lại)
-	checkpointDetails  map[string]string             // Chi tiết checkpoint đối tượng FITS mới nhất
-	progressAt         time.Time                     // Thời điểm quét checkpoint gần nhất
-	progressRefreshing bool                          // Cờ đánh dấu đang quét nền checkpoint
+	progress           entity.PreprocessingProgress    // Tiến độ xử lý (tổng số checkpoint, đã xong, còn lại)
+	checkpointDetails  map[string]string               // Chi tiết checkpoint đối tượng FITS mới nhất
+	progressAt         time.Time                       // Thời điểm quét checkpoint gần nhất
+	progressRefreshing bool                            // Cờ đánh dấu đang quét nền checkpoint
 }
 
 // NewPreprocessingService khởi tạo PreprocessingService cơ bản
