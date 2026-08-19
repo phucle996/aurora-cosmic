@@ -45,7 +45,20 @@ func (h *EventsHandler) Stream(c *gin.Context) {
 			if !ok {
 				return
 			}
-			payload, err := json.Marshal(event)
+			eventMap := gin.H{
+				"id":          event.ID,
+				"type":        event.Type,
+				"workflow":    event.Workflow,
+				"status":      event.Status,
+				"occurred_at": event.OccurredAt,
+			}
+			if event.JobID != "" {
+				eventMap["job_id"] = event.JobID
+			}
+			if len(event.Payload) > 0 {
+				eventMap["payload"] = json.RawMessage(event.Payload)
+			}
+			payload, err := json.Marshal(eventMap)
 			if err != nil {
 				continue
 			}

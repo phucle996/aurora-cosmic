@@ -3,76 +3,76 @@ package entity
 import "time"
 
 type IngestProduct struct {
-	ID        string    `json:"id"`
-	Kind      string    `json:"kind"`
-	ObjectKey string    `json:"object_key"`
-	State     string    `json:"state"`
-	SizeBytes int64     `json:"size_bytes"`
-	Expected  int64     `json:"expected_size_bytes"`
-	Attempts  int       `json:"attempts"`
-	LastError string    `json:"last_error,omitempty"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        string
+	Kind      string
+	ObjectKey string
+	State     string
+	SizeBytes int64
+	Expected  int64
+	Attempts  int
+	LastError string
+	UpdatedAt time.Time
 }
 
 type IngestStatus struct {
-	Observed          bool            `json:"observed"`
-	Source            string          `json:"source"`
-	RunID             string          `json:"run_id,omitempty"`
-	ControlJobID      string          `json:"control_job_id,omitempty"`
-	Status            string          `json:"status"`
-	Error             string          `json:"error,omitempty"`
-	ManifestPath      string          `json:"manifest_path,omitempty"`
-	StartedAt         time.Time       `json:"started_at,omitempty"`
-	UpdatedAt         time.Time       `json:"updated_at,omitempty"`
-	TotalProducts     int             `json:"total_products"`
-	CompletedProducts int             `json:"completed_products"`
-	Downloading       int             `json:"downloading"`
-	FailedProducts    int             `json:"failed_products"`
-	ExpectedBytes     int64           `json:"expected_bytes"`
-	CompletedBytes    int64           `json:"completed_bytes"`
-	ProductsPerSecond float64         `json:"products_per_second"`
-	BytesPerSecond    float64         `json:"bytes_per_second"`
-	QueueDepth        float64         `json:"queue_depth"`
-	InflightProducts  float64         `json:"inflight_products"`
-	ObservedAt        time.Time       `json:"observed_at"`
-	Products          []IngestProduct `json:"products,omitempty"`
-	ProductsTruncated bool            `json:"products_truncated,omitempty"`
+	Observed          bool
+	Source            string
+	RunID             string
+	ControlJobID      string
+	Status            string
+	Error             string
+	ManifestPath      string
+	StartedAt         time.Time
+	UpdatedAt         time.Time
+	TotalProducts     int
+	CompletedProducts int
+	Downloading       int
+	FailedProducts    int
+	ExpectedBytes     int64
+	CompletedBytes    int64
+	ProductsPerSecond float64
+	BytesPerSecond    float64
+	QueueDepth        float64
+	InflightProducts  float64
+	ObservedAt        time.Time
+	Products          []IngestProduct
+	ProductsTruncated bool
 }
 
 type IngestStartRequest struct {
-	ManifestPath string `json:"manifest_path,omitempty"`
-	Sector       int    `json:"sector,omitempty"`
-	Limit        int    `json:"limit,omitempty"`
-	Concurrency  int    `json:"concurrency,omitempty"`
-	Resume       bool   `json:"resume,omitempty"`
-	Fresh        bool   `json:"fresh,omitempty"`
+	ManifestPath string
+	Sector       int
+	Limit        int
+	Concurrency  int
+	Resume       bool
+	Fresh        bool
 }
 
 type IngestControlJob struct {
-	JobID        string    `json:"job_id"`
-	Status       string    `json:"status"`
-	ManifestPath string    `json:"manifest_path,omitempty"`
-	Sector       int       `json:"sector,omitempty"`
-	Concurrency  int       `json:"concurrency,omitempty"`
-	StartedAt    time.Time `json:"started_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	Error        string    `json:"error,omitempty"`
+	JobID        string
+	Status       string
+	ManifestPath string
+	Sector       int
+	Concurrency  int
+	StartedAt    time.Time
+	UpdatedAt    time.Time
+	Error        string
 }
 
 type StorageObject struct {
-	Key          string    `json:"key"`
-	SizeBytes    int64     `json:"size_bytes"`
-	ETag         string    `json:"etag,omitempty"`
-	LastModified time.Time `json:"last_modified"`
+	Key          string
+	SizeBytes    int64
+	ETag         string
+	LastModified time.Time
 }
 
 type StorageListing struct {
-	Bucket     string          `json:"bucket"`
-	Prefix     string          `json:"prefix"`
-	Page       int             `json:"page"`
-	PageSize   int             `json:"page_size"`
-	Total      int             `json:"total"`
-	TotalBytes int64           `json:"total_bytes"`
-	Truncated  bool            `json:"truncated"`
-	Objects    []StorageObject `json:"objects"`
+	Bucket     string
+	Prefix     string
+	Page       int
+	PageSize   int
+	Total      int
+	TotalBytes int64
+	Truncated  bool
+	Objects    []StorageObject
 }

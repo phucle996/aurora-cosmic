@@ -9,10 +9,15 @@ import (
 
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/service"
-	"go-api/internal/http/dto"
 	"go-api/internal/taxonomy"
 
 	"github.com/gin-gonic/gin"
+)
+
+const (
+	defaultPageSize = 100
+	maxPageSize     = 1000
+	maxOffset       = 10_000_000
 )
 
 var snapshotPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
@@ -41,10 +46,10 @@ func NewAnalyticsHandler(analytics service.Analytics) *AnalyticsHandler {
 // ListCandidates phân trang danh sách các ứng viên ngoại hành tinh đã được mô hình ML
 // (Candidate Vetting CNN) phân tích và dự đoán xác suất `candidate_score`.
 func (h *AnalyticsHandler) ListCandidates(c *gin.Context) {
-	page := entity.PageRequest{Limit: dto.DefaultPageSize}
+	page := entity.PageRequest{Limit: defaultPageSize}
 	if raw := c.Query("limit"); raw != "" {
 		limit, err := strconv.Atoi(raw)
-		if err != nil || limit < 1 || limit > dto.MaxPageSize {
+		if err != nil || limit < 1 || limit > maxPageSize {
 			c.JSON(http.StatusBadRequest, gin.H{"error": taxonomy.ErrInvalidPage.Error()})
 			return
 		}
@@ -52,7 +57,7 @@ func (h *AnalyticsHandler) ListCandidates(c *gin.Context) {
 	}
 	if raw := c.Query("offset"); raw != "" {
 		offset, err := strconv.Atoi(raw)
-		if err != nil || offset < 0 || offset > dto.MaxOffset {
+		if err != nil || offset < 0 || offset > maxOffset {
 			c.JSON(http.StatusBadRequest, gin.H{"error": taxonomy.ErrInvalidPage.Error()})
 			return
 		}
@@ -204,7 +209,20 @@ func (h *AnalyticsHandler) GetCandidate(c *gin.Context) {
 			"physics_score":      detail.Habitability.PhysicsScore,
 			"confidence":         detail.Habitability.Confidence,
 			"tier":               detail.Habitability.Tier,
-			"components":         detail.Habitability.Components,
+			"components": func() []gin.H {
+				comps := make([]gin.H, len(detail.Habitability.Components))
+				for i, c := range detail.Habitability.Components {
+					comps[i] = gin.H{
+						"key":       c.Key,
+						"label":     c.Label,
+						"score":     c.Score,
+						"max_score": c.MaxScore,
+						"available": c.Available,
+						"reason":    c.Reason,
+					}
+				}
+				return comps
+			}(),
 			"ml_score":           detail.Habitability.MLScore,
 			"ml_status":          detail.Habitability.MLStatus,
 			"disclaimer":         detail.Habitability.Disclaimer,
@@ -219,10 +237,10 @@ func (h *AnalyticsHandler) GetCandidate(c *gin.Context) {
 // ListAnomalies phân trang danh sách các dị thường trắc quang được phát hiện
 // bởi mô hình Autoencoder (Reconstruction MSE vượt ngưỡng threshold).
 func (h *AnalyticsHandler) ListAnomalies(c *gin.Context) {
-	page := entity.PageRequest{Limit: dto.DefaultPageSize}
+	page := entity.PageRequest{Limit: defaultPageSize}
 	if raw := c.Query("limit"); raw != "" {
 		limit, err := strconv.Atoi(raw)
-		if err != nil || limit < 1 || limit > dto.MaxPageSize {
+		if err != nil || limit < 1 || limit > maxPageSize {
 			c.JSON(http.StatusBadRequest, gin.H{"error": taxonomy.ErrInvalidPage.Error()})
 			return
 		}
@@ -230,7 +248,7 @@ func (h *AnalyticsHandler) ListAnomalies(c *gin.Context) {
 	}
 	if raw := c.Query("offset"); raw != "" {
 		offset, err := strconv.Atoi(raw)
-		if err != nil || offset < 0 || offset > dto.MaxOffset {
+		if err != nil || offset < 0 || offset > maxOffset {
 			c.JSON(http.StatusBadRequest, gin.H{"error": taxonomy.ErrInvalidPage.Error()})
 			return
 		}
@@ -311,10 +329,10 @@ func (h *AnalyticsHandler) ListAnomalies(c *gin.Context) {
 // ListTargets lọc và phân trang danh sách các ngôi sao mục tiêu trong TESS Input Catalog (TIC),
 // hỗ trợ các bộ lọc tọa độ RA/Dec, cấp sao TMag, nhiệt độ Teff, và trạng thái pipeline.
 func (h *AnalyticsHandler) ListTargets(c *gin.Context) {
-	page := entity.PageRequest{Limit: dto.DefaultPageSize}
+	page := entity.PageRequest{Limit: defaultPageSize}
 	if raw := c.Query("limit"); raw != "" {
 		limit, err := strconv.Atoi(raw)
-		if err != nil || limit < 1 || limit > dto.MaxPageSize {
+		if err != nil || limit < 1 || limit > maxPageSize {
 			c.JSON(http.StatusBadRequest, gin.H{"error": taxonomy.ErrInvalidPage.Error()})
 			return
 		}
@@ -322,7 +340,7 @@ func (h *AnalyticsHandler) ListTargets(c *gin.Context) {
 	}
 	if raw := c.Query("offset"); raw != "" {
 		offset, err := strconv.Atoi(raw)
-		if err != nil || offset < 0 || offset > dto.MaxOffset {
+		if err != nil || offset < 0 || offset > maxOffset {
 			c.JSON(http.StatusBadRequest, gin.H{"error": taxonomy.ErrInvalidPage.Error()})
 			return
 		}
@@ -511,13 +529,24 @@ func (h *AnalyticsHandler) GetTarget(c *gin.Context) {
 		}
 	}
 	if target.Habitability != nil {
+		comps := make([]gin.H, len(target.Habitability.Components))
+		for i, c := range target.Habitability.Components {
+			comps[i] = gin.H{
+				"key":       c.Key,
+				"label":     c.Label,
+				"score":     c.Score,
+				"max_score": c.MaxScore,
+				"available": c.Available,
+				"reason":    c.Reason,
+			}
+		}
 		resp["habitability"] = gin.H{
 			"assessment_version": target.Habitability.AssessmentVersion,
 			"status":             target.Habitability.Status,
 			"physics_score":      target.Habitability.PhysicsScore,
 			"confidence":         target.Habitability.Confidence,
 			"tier":               target.Habitability.Tier,
-			"components":         target.Habitability.Components,
+			"components":         comps,
 			"ml_score":           target.Habitability.MLScore,
 			"ml_status":          target.Habitability.MLStatus,
 			"disclaimer":         target.Habitability.Disclaimer,
@@ -543,10 +572,10 @@ func (h *AnalyticsHandler) GetTarget(c *gin.Context) {
 // ENDPOINT: GET TARGET LIGHTCURVE (GET /targets/:tic_id/lightcurve)
 // ============================================================================
 func (h *AnalyticsHandler) GetLightcurve(c *gin.Context) {
-	page := entity.PageRequest{Limit: dto.DefaultPageSize}
+	page := entity.PageRequest{Limit: defaultPageSize}
 	if raw := c.Query("limit"); raw != "" {
 		limit, err := strconv.Atoi(raw)
-		if err != nil || limit < 1 || limit > dto.MaxPageSize {
+		if err != nil || limit < 1 || limit > maxPageSize {
 			c.JSON(http.StatusBadRequest, gin.H{"error": taxonomy.ErrInvalidPage.Error()})
 			return
 		}
@@ -554,7 +583,7 @@ func (h *AnalyticsHandler) GetLightcurve(c *gin.Context) {
 	}
 	if raw := c.Query("offset"); raw != "" {
 		offset, err := strconv.Atoi(raw)
-		if err != nil || offset < 0 || offset > dto.MaxOffset {
+		if err != nil || offset < 0 || offset > maxOffset {
 			c.JSON(http.StatusBadRequest, gin.H{"error": taxonomy.ErrInvalidPage.Error()})
 			return
 		}

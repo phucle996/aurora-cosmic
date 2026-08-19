@@ -1,11 +1,5 @@
 package dto
 
-const (
-	DefaultPageSize = 100
-	MaxPageSize     = 1000
-	MaxOffset       = 10_000_000
-)
-
 type CandidateQueryRequest struct {
 	Sector     int    `form:"sector" json:"sector"`
 	SnapshotID string `form:"snapshot_id" json:"snapshot_id" binding:"required"`
