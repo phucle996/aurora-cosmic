@@ -288,3 +288,55 @@ ENGINE = MergeTree()
 PARTITION BY snapshot_id
 PRIMARY KEY (snapshot_id, sector, camera, ccd, source_product_id)
 ORDER BY (snapshot_id, sector, camera, ccd, source_product_id);
+
+-- Deterministic planet-physics projection. The Go API currently derives this
+-- read model from candidate evidence; materializers can persist identical rows
+-- here without changing the API contract.
+CREATE TABLE IF NOT EXISTS aurora.planet_physics_v1 (
+    planet_candidate_id String,
+    prediction_id String,
+    gold_snapshot_id String,
+    tic_id Int64,
+    sector Int32,
+    source_product_id String,
+    physics_model_version LowCardinality(String),
+    orbital_period_days Nullable(Float64),
+    transit_depth_fraction Nullable(Float64),
+    planet_radius_earth Nullable(Float64),
+    semi_major_axis_au Nullable(Float64),
+    stellar_luminosity_solar Nullable(Float64),
+    insolation_earth Nullable(Float64),
+    equilibrium_temperature_k Nullable(Float64),
+    bond_albedo_assumption Float64,
+    hz_classification LowCardinality(String),
+    input_completeness Float64,
+    warnings Array(String),
+    calculated_at DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(calculated_at)
+PARTITION BY gold_snapshot_id
+PRIMARY KEY (gold_snapshot_id, planet_candidate_id)
+ORDER BY (gold_snapshot_id, planet_candidate_id);
+
+CREATE TABLE IF NOT EXISTS aurora.habitability_assessments_v1 (
+    planet_candidate_id String,
+    prediction_id String,
+    gold_snapshot_id String,
+    assessment_version LowCardinality(String),
+    status LowCardinality(String),
+    physics_score Nullable(Float64),
+    confidence Float64,
+    tier LowCardinality(String),
+    component_keys Array(String),
+    component_scores Array(Float64),
+    component_max_scores Array(Float64),
+    component_available Array(UInt8),
+    component_reasons Array(String),
+    ml_score Nullable(Float64),
+    ml_status LowCardinality(String),
+    evaluated_at DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(evaluated_at)
+PARTITION BY gold_snapshot_id
+PRIMARY KEY (gold_snapshot_id, planet_candidate_id, assessment_version)
+ORDER BY (gold_snapshot_id, planet_candidate_id, assessment_version);

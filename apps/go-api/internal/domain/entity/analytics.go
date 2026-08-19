@@ -68,8 +68,56 @@ type CandidateEvidence struct {
 }
 
 type CandidateDetail struct {
-	Candidate Candidate
-	Evidence  CandidateEvidence
+	Candidate    Candidate
+	Evidence     CandidateEvidence
+	Physics      PlanetPhysics
+	Habitability HabitabilityAssessment
+}
+
+// PlanetPhysics is the versioned, deterministic physical interpretation of a
+// transit candidate. Pointer fields are intentionally nullable: zero is a valid
+// scientific value and must not be confused with missing source data.
+type PlanetPhysics struct {
+	PlanetCandidateID       string
+	ModelVersion            string
+	OrbitalPeriodDays       *float64
+	TransitDepthFraction    *float64
+	PlanetRadiusEarth       *float64
+	SemiMajorAxisAU         *float64
+	StellarLuminositySolar  *float64
+	InsolationEarth         *float64
+	EquilibriumTemperatureK *float64
+	BondAlbedoAssumption    float64
+	HZClassification        string
+	ConservativeHZInnerFlux float64
+	ConservativeHZOuterFlux float64
+	OptimisticHZInnerFlux   float64
+	OptimisticHZOuterFlux   float64
+	Completeness            float64
+	Warnings                []string
+}
+
+type HabitabilityComponent struct {
+	Key       string  `json:"key"`
+	Label     string  `json:"label"`
+	Score     float64 `json:"score"`
+	MaxScore  float64 `json:"max_score"`
+	Available bool    `json:"available"`
+	Reason    string  `json:"reason"`
+}
+
+// HabitabilityAssessment keeps deterministic physics and learned ML results
+// separate. MLScore stays nil until a registered, evaluated model produces it.
+type HabitabilityAssessment struct {
+	AssessmentVersion string
+	Status            string
+	PhysicsScore      *float64
+	Confidence        float64
+	Tier              string
+	Components        []HabitabilityComponent
+	MLScore           *float64
+	MLStatus          string
+	Disclaimer        string
 }
 
 type Anomaly struct {

@@ -1,0 +1,73 @@
+import { useEffect, useMemo, useState } from 'react';
+import type { JSX } from 'react';
+import { Activity, ArrowLeft, CircleAlert, Database, Gauge, LoaderCircle, MapPin, Sparkles, Star, Telescope, ThermometerSun } from 'lucide-react';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { apiFetch } from '@/lib/api';
+import type { LightcurveResponse, TargetRecord } from '@/lib/analytics-types';
+
+function number(value: number, digits = 2): string { return Number.isFinite(value) ? value.toFixed(digits) : '—'; }
+
+export default function TargetDetailPage(): JSX.Element {
+  const { ticId = '' } = useParams();
+  const [search] = useSearchParams();
+  const sector = search.get('sector') ?? '';
+  const [target, setTarget] = useState<TargetRecord>();
+  const [curve, setCurve] = useState<LightcurveResponse>();
+  const [error, setError] = useState<string>();
+
+  useEffect(() => {
+    if (!ticId) return;
+    let active = true;
+    const suffix = sector ? `?sector=${encodeURIComponent(sector)}` : '';
+    setError(undefined);
+    void apiFetch<{ target: TargetRecord }>(`/v1/targets/${encodeURIComponent(ticId)}${suffix}`)
+      .then(async ({ target: next }) => {
+        if (!active) return;
+        setTarget(next);
+        if (!next.has_lightcurve) return;
+        try {
+          const lightcurve = await apiFetch<LightcurveResponse>(`/v1/lightcurves?tic_id=${next.tic_id}&sector=${next.sector}&limit=1000`);
+          if (active) setCurve(lightcurve);
+        } catch {
+          if (active) setCurve(undefined);
+        }
+      })
+      .catch((reason: unknown) => active && setError(reason instanceof Error ? reason.message : 'Unable to load target'));
+    return () => { active = false; };
+  }, [sector, ticId]);
+
+  const chartData = useMemo(() => curve?.time.map((time, index) => ({ time, flux: curve.flux[index] ?? 0 })) ?? [], [curve]);
+  if (error) return <StateMessage title="Không tải được target" detail={error} />;
+  if (!target) return <div className="flex items-center justify-center gap-2 py-24 text-sm text-muted-foreground"><LoaderCircle className="animate-spin" />Loading target detail…</div>;
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div><Button asChild variant="ghost" size="sm" className="mb-3 -ml-3"><Link to="/targets"><ArrowLeft />Target catalog</Link></Button><div className="flex flex-wrap items-center gap-2"><h2 className="font-heading text-2xl font-semibold md:text-3xl">TIC {target.tic_id}</h2><Badge variant="secondary">Sector {target.sector}</Badge><Badge>{target.pipeline_status}</Badge></div><p className="mt-2 text-sm text-muted-foreground">Host-star record, observation coverage and downstream candidate signals.</p></div>
+        <div className="flex gap-2"><Button asChild variant="outline"><Link to={`/exoplanets?system=${encodeURIComponent(target.matched_toi || `TIC ${target.tic_id}`)}`}><Telescope />3D system</Link></Button>{target.has_candidate && <Button asChild><Link to={`/candidates?prediction_id=${encodeURIComponent(target.candidate_prediction_id)}`}><Sparkles />Candidate review</Link></Button>}</div>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Metric icon={ThermometerSun} label="Effective temperature" value={`${number(target.effective_t, 0)} K`} detail="TIC catalog" />
+        <Metric icon={Star} label="Stellar radius" value={`${number(target.radius)} R☉`} detail="TIC catalog" />
+        <Metric icon={Gauge} label="Surface gravity" value={number(target.surface_grav)} detail="log g (cgs)" />
+        <Metric icon={MapPin} label="Coordinates" value={`${number(target.ra, 3)}°, ${number(target.dec, 3)}°`} detail="RA / Dec" />
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,0.72fr)_minmax(0,1.28fr)]">
+        <Card><CardHeader><CardTitle>Catalog & pipeline</CardTitle><CardDescription>Identity and current processing coverage.</CardDescription></CardHeader><CardContent><dl className="grid grid-cols-2 gap-x-6 gap-y-5 text-sm"><Info label="TESS magnitude" value={number(target.tess_mag)} /><Info label="TOI" value={target.matched_toi || 'unmatched'} /><Info label="Disposition" value={target.disposition || '—'} /><Info label="Sector" value={`${target.sector}`} /><Info label="Light curve" value={target.has_lightcurve ? `${target.lightcurve_points.toLocaleString()} points` : 'not indexed'} /><Info label="Time span" value={target.has_lightcurve ? `${number(target.lightcurve_time_span, 1)} days` : '—'} /></dl><div className="mt-6 grid grid-cols-2 gap-3"><Signal label="Transit candidate" value={target.has_candidate ? `${(target.candidate_score * 100).toFixed(1)}%` : 'not scored'} active={target.candidate_above_threshold} /><Signal label="Anomaly" value={target.has_anomaly ? number(target.anomaly_score, 4) : 'not scored'} active={target.has_anomaly} /></div></CardContent></Card>
+        <Card><CardHeader><CardTitle>Observation light curve</CardTitle><CardDescription>{chartData.length ? `${chartData.length.toLocaleString()} samples loaded from the ClickHouse query index.` : 'No indexed light curve for this target.'}</CardDescription></CardHeader><CardContent>{chartData.length === 0 ? <div className="flex flex-col items-center py-20 text-sm text-muted-foreground"><Database className="mb-2 size-6" />No indexed samples</div> : <div className="h-80"><ResponsiveContainer width="100%" height="100%"><LineChart data={chartData}><CartesianGrid vertical={false} strokeDasharray="3 3" /><XAxis dataKey="time" tickLine={false} axisLine={false} tickFormatter={(value: number) => value.toFixed(1)} /><YAxis width={58} tickLine={false} axisLine={false} tickFormatter={(value: number) => value.toFixed(3)} /><Tooltip formatter={(value) => [Number(value).toFixed(6), 'flux']} /><Line dataKey="flux" stroke="var(--primary)" dot={false} strokeWidth={1.5} isAnimationActive={false} /></LineChart></ResponsiveContainer></div>}</CardContent></Card>
+      </div>
+    </div>
+  );
+}
+
+function Metric({ icon: Icon, label, value, detail }: { icon: typeof Star; label: string; value: string; detail: string }): JSX.Element { return <Card><CardContent className="flex items-center gap-3 p-4"><div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><Icon className="size-5" /></div><div className="min-w-0"><p className="text-xs text-muted-foreground">{label}</p><p className="truncate text-lg font-semibold">{value}</p><p className="text-xs text-muted-foreground">{detail}</p></div></CardContent></Card>; }
+function Info({ label, value }: { label: string; value: string }): JSX.Element { return <div><dt className="text-xs text-muted-foreground">{label}</dt><dd className="mt-1 font-medium">{value}</dd></div>; }
+function Signal({ label, value, active }: { label: string; value: string; active: boolean }): JSX.Element { return <div className="rounded-lg border border-border bg-muted/20 p-3"><div className="flex items-center gap-2 text-xs text-muted-foreground"><Activity className={active ? 'size-3.5 text-primary' : 'size-3.5'} />{label}</div><p className="mt-1 font-mono font-medium">{value}</p></div>; }
+function StateMessage({ title, detail }: { title: string; detail: string }): JSX.Element { return <Card className="border-destructive/40"><CardContent className="flex gap-3 p-6"><CircleAlert className="text-destructive" /><div><p className="font-medium">{title}</p><p className="mt-1 text-sm text-muted-foreground">{detail}</p></div></CardContent></Card>; }

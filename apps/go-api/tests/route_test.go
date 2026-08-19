@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -120,6 +121,29 @@ func TestRouterEndpoints(t *testing.T) {
 		if recorder.Header().Get("Content-Type") != "application/json; charset=utf-8" {
 			t.Errorf("endpoint %s missing JSON content-type header", endpoint)
 		}
+	}
+}
+
+func TestCandidateDetailExposesSeparatePhysicsAndMLAssessments(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", nil)
+	recorder := httptest.NewRecorder()
+	newTestRouter().ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("candidate detail returned HTTP %d", recorder.Code)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode candidate detail: %v", err)
+	}
+	if _, ok := payload["planet_physics"].(map[string]any); !ok {
+		t.Fatal("candidate detail is missing planet_physics")
+	}
+	habitability, ok := payload["habitability"].(map[string]any)
+	if !ok {
+		t.Fatal("candidate detail is missing habitability")
+	}
+	if value, exists := habitability["ml_score"]; !exists || value != nil {
+		t.Fatalf("unreleased ML score must be present as null, got %#v", value)
 	}
 }
 

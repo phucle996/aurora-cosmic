@@ -280,6 +280,7 @@ function TargetDetail({ target, lightcurve, loading }: { target?: TargetRecord; 
               <EvidenceChip icon={Telescope} label="TOI match" value={target.matched_toi || 'unmatched'} />
             </div>
             <div className="flex flex-wrap gap-2 text-xs">
+              <a className="text-primary underline-offset-4 hover:underline" href={`/targets/${target.tic_id}?sector=${target.sector}`}>Open full target detail</a>
               <a className="text-primary underline-offset-4 hover:underline" href={`/candidates${target.has_candidate ? `?prediction_id=${encodeURIComponent(target.candidate_prediction_id)}` : ''}`}>Open candidate review</a>
               <a className="text-primary underline-offset-4 hover:underline" href={`/anomalies${target.has_anomaly ? `?prediction_id=${encodeURIComponent(target.anomaly_prediction_id)}` : ''}`}>Open anomaly review</a>
             </div>

@@ -96,3 +96,17 @@ GET /api/v1/storage?prefix=bronze/&page=1&limit=50
 GET /api/v1/events?workflow=preprocessing
 POST /api/v1/inference/jobs/inference-job-v1-<id>/retry
 ```
+
+The candidate-detail response contains three deliberately separate outputs:
+
+- `candidate.candidate_score`: ML transit-vetting rank, not habitability.
+- `planet_physics`: nullable deterministic estimates such as radius, semi-major
+  axis, incident flux, equilibrium temperature, and habitable-zone class.
+- `habitability.physics_score`: explainable 0–100 follow-up priority with
+  component reasons and input confidence. `habitability.ml_score` remains null
+  with `ml_status=not_evaluated` until a separately trained and validated
+  habitability model is registered.
+
+The formula and release contracts are documented in
+`contracts/data/planet-physics-v1.md` and
+`contracts/data/habitability-assessment-v1.md`.

@@ -8,9 +8,12 @@ import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import AnomaliesPage from '@/pages/anomalies/page';
 import CandidatesPage from '@/pages/candidates/page';
+import CandidateDetailPage from '@/pages/candidates/detail-page';
 import OverviewPage from '@/pages/overview/page';
 import MonitoringPage from '@/pages/monitoring/page';
 import TargetsPage from '@/pages/targets/page';
+import TargetDetailPage from '@/pages/targets/detail-page';
+import ExoplanetsPage from '@/pages/exoplanets/page';
 import ModelsPage from '@/pages/models/page';
 import PreprocessingPage from '@/pages/preprocessing/page';
 import IngestPage from '@/pages/ingest/page';
@@ -29,9 +32,12 @@ export default function App(): JSX.Element {
                   <Routes>
                     <Route path="/" element={<OverviewPage />} />
                     <Route path="/targets" element={<TargetsPage />} />
+                    <Route path="/targets/:ticId" element={<TargetDetailPage />} />
+                    <Route path="/exoplanets" element={<ExoplanetsPage />} />
                     <Route path="/preprocessing" element={<PreprocessingPage />} />
                     <Route path="/ingest" element={<IngestPage />} />
                     <Route path="/candidates" element={<CandidatesPage />} />
+                    <Route path="/candidates/:predictionId" element={<CandidateDetailPage />} />
                     <Route path="/anomalies" element={<AnomaliesPage />} />
                     <Route path="/monitoring" element={<MonitoringPage />} />
                     <Route path="/models" element={<ModelsPage />} />

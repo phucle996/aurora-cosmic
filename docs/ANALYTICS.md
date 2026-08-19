@@ -18,6 +18,16 @@ ClickHouse stores query projections under the `aurora` database:
 - `aurora.anomaly_lightcurve_v1`: Analytical query table for light curve feature anomalies.
 - `aurora.anomaly_tpf_v1`: Analytical query table for Target Pixel File spatial evidence anomalies.
 - `aurora.anomaly_ffi_v1`: Analytical query table for Full Frame Image detector anomalies.
+- `aurora.planet_physics_v1`: Rebuildable deterministic physical estimates for
+  a stable transit-signal identity.
+- `aurora.habitability_assessments_v1`: Explainable physics assessment and a
+  separate nullable slot for a future validated ML assessment.
+
+Candidate detail currently derives the versioned physics read model from the
+snapshot-isolated candidate evidence in the Go API. The two ClickHouse tables
+reserve the additive projection contract for a Gold materializer; persisted
+rows must be reproducible from the canonical MinIO snapshot and must match the
+same formula version.
 
 ---
 

@@ -20,6 +20,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 const pageNames: Record<string, string> = {
   '/': 'Overview',
   '/targets': 'Targets',
+  '/exoplanets': '3D exoplanet explorer',
+  '/preprocessing': 'Preprocessing & lineage',
+  '/ingest': 'Ingest & storage',
   '/candidates': 'Candidates',
   '/anomalies': 'Anomalies',
   '/monitoring': 'Monitoring',
@@ -28,14 +31,18 @@ const pageNames: Record<string, string> = {
 
 export default function Header(): JSX.Element {
   const location = useLocation();
-  const pageName = pageNames[location.pathname] ?? 'Dashboard';
+  const pageName = location.pathname.startsWith('/targets/')
+    ? 'Target detail'
+    : location.pathname.startsWith('/candidates/')
+      ? 'Candidate detail'
+      : pageNames[location.pathname] ?? 'Dashboard';
 
   return (
-    <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center gap-3 border-b border-border/60 bg-background/90 px-4 backdrop-blur-md md:px-6">
+    <header className="sticky top-0 z-20 flex h-16 min-w-0 shrink-0 items-center gap-2 border-b border-border/60 bg-background/90 px-3 backdrop-blur-md sm:gap-3 sm:px-4 md:px-6">
       <SidebarTrigger aria-label="Toggle navigation" />
       <Separator orientation="vertical" className="mr-1 h-5" />
 
-      <Breadcrumb>
+      <Breadcrumb className="min-w-0">
         <BreadcrumbList>
           <BreadcrumbItem className="hidden md:block">
             <BreadcrumbLink asChild>
@@ -49,12 +56,12 @@ export default function Header(): JSX.Element {
         </BreadcrumbList>
       </Breadcrumb>
 
-      <div className="ml-auto flex items-center gap-1">
+      <div className="ml-auto flex shrink-0 items-center gap-1">
         <ThemeToggle />
-        <Separator orientation="vertical" className="mx-2 h-5" />
+        <Separator orientation="vertical" className="mx-2 hidden h-5 sm:block" />
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon" aria-label="Help and documentation">
+            <Button variant="ghost" size="icon" aria-label="Help and documentation" className="hidden sm:inline-flex">
               <CircleHelp aria-hidden="true" />
             </Button>
           </TooltipTrigger>
@@ -62,14 +69,14 @@ export default function Header(): JSX.Element {
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon" aria-label="Notifications">
+            <Button variant="ghost" size="icon" aria-label="Notifications" className="hidden sm:inline-flex">
               <Bell aria-hidden="true" />
             </Button>
           </TooltipTrigger>
           <TooltipContent>Notifications</TooltipContent>
         </Tooltip>
-        <Separator orientation="vertical" className="mx-2 h-5" />
-        <Avatar size="sm" aria-label="AURORA operator">
+        <Separator orientation="vertical" className="mx-2 hidden h-5 md:block" />
+        <Avatar size="sm" aria-label="AURORA operator" className="hidden md:flex">
           <AvatarFallback>AU</AvatarFallback>
         </Avatar>
       </div>

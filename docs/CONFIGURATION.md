@@ -17,8 +17,17 @@ All platform and service configurations are strictly managed via environment var
 | **Go API** | `http://go-api:8080` | `http://localhost:8080` |
 | **Dashboard** | `http://dashboard:8501` | `http://localhost:8501` |
 | **ClickHouse HTTP** | `http://clickhouse:8123` | `http://localhost:8123` |
+| **Grafana (optional)** | `http://grafana:3000` | `http://localhost:3000` |
 
 > ⚠️ **Rule:** Containers communicate using Docker service names (`minio`, `nats`, `go-api`), never `localhost`.
+
+Grafana is excluded from the default Compose stack because the AURORA UI reads
+Prometheus telemetry through the Go API. Start Grafana only for ad-hoc PromQL
+and engineering diagnostics:
+
+```bash
+docker compose --profile observability up -d grafana
+```
 
 ## 3. Sub-Project Environment Files
 
@@ -35,7 +44,7 @@ Each sub-project owns its `.env.example` in its application directory:
 
 1. Never commit `.env` or real credentials to Git.
 2. Credentials (`MINIO_SECRET_KEY`, passwords, tokens) must never be logged during service startup configuration dumps.
-3. Change all development defaults before deployment. In particular, set non-default MinIO and Grafana credentials and a specific `AURORA_CORS_ALLOWED_ORIGIN`.
+3. Change all development defaults before deployment. In particular, set non-default MinIO credentials, Grafana credentials when the optional profile is enabled, and a specific `AURORA_CORS_ALLOWED_ORIGIN`.
 
 ## 5. Go API data access
 

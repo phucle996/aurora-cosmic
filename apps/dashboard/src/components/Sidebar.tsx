@@ -4,6 +4,7 @@ import {
   BrainCircuit,
   DownloadCloud,
   LayoutDashboard,
+  Orbit,
   Server,
   Sparkles,
   Target,
@@ -28,6 +29,7 @@ import {
 const menuItems = [
   { path: '/', label: 'Platform Overview', icon: LayoutDashboard },
   { path: '/targets', label: 'TESS Target Discovery', icon: Target },
+  { path: '/exoplanets', label: '3D Exoplanet Explorer', icon: Orbit },
   { path: '/preprocessing', label: 'Preprocessing & Lineage', icon: Workflow },
   { path: '/ingest', label: 'Ingest & Storage', icon: DownloadCloud },
   { path: '/candidates', label: 'ML Transit Candidates', icon: Sparkles },

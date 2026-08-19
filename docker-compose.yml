@@ -336,6 +336,9 @@ services:
   grafana:
     image: grafana/grafana:10.4.1
     container_name: aurora-grafana
+    # The AURORA dashboard is the default observability UI. Grafana is kept as
+    # an opt-in engineering tool for ad-hoc PromQL inspection.
+    profiles: ["observability"]
     restart: unless-stopped
     ports:
       - "3000:3000"
