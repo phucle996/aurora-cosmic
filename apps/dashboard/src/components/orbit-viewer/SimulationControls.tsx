@@ -1,5 +1,5 @@
 import type { JSX } from 'react';
-import { Layers, Pause, Play, Sparkles, Zap } from 'lucide-react';
+import { Layers, Pause, Play, Ruler, Sparkles, Zap } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
@@ -11,6 +11,7 @@ export interface SimulationControlsProps {
   showHabitableZone: boolean;
   showTrails: boolean;
   showGrid: boolean;
+  showDistanceRuler: boolean;
   planets: PlanetParams[];
   selectedPlanetIndex: number;
   onTogglePlay: () => void;
@@ -19,6 +20,7 @@ export interface SimulationControlsProps {
   onToggleHabitableZone: () => void;
   onToggleTrails: () => void;
   onToggleGrid: () => void;
+  onToggleDistanceRuler: () => void;
 }
 
 export function SimulationControls({
@@ -27,6 +29,7 @@ export function SimulationControls({
   showHabitableZone,
   showTrails,
   showGrid,
+  showDistanceRuler,
   planets,
   selectedPlanetIndex,
   onTogglePlay,
@@ -35,6 +38,7 @@ export function SimulationControls({
   onToggleHabitableZone,
   onToggleTrails,
   onToggleGrid,
+  onToggleDistanceRuler,
 }: SimulationControlsProps): JSX.Element {
   return (
     <div className="absolute bottom-4 inset-x-4 z-10 flex flex-wrap items-center justify-between gap-3 bg-background/90 p-3 px-5 rounded-2xl border border-border/60 backdrop-blur-xl shadow-2xl text-xs">
@@ -80,8 +84,21 @@ export function SimulationControls({
         ))}
       </div>
 
-      {/* Layer Toggles: Goldilocks Zone, Trails, AU Grid */}
+      {/* Layer Toggles: Goldilocks Zone, Trails, AU Grid, Distance Vector */}
       <div className="flex items-center gap-2">
+        <Button
+          variant={showDistanceRuler ? 'default' : 'outline'}
+          size="sm"
+          className={`h-7 px-2.5 text-xs ${
+            showDistanceRuler ? 'bg-sky-600 hover:bg-sky-700 text-white' : ''
+          }`}
+          onClick={onToggleDistanceRuler}
+          title="Toggle astronomical distance vector measurement"
+        >
+          <Ruler className="size-3.5 mr-1" />
+          Distance Ruler
+        </Button>
+
         <Button
           variant={showHabitableZone ? 'default' : 'outline'}
           size="sm"

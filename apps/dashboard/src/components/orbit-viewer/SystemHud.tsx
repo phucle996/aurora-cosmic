@@ -1,5 +1,5 @@
 import type { JSX } from 'react';
-import { Orbit, Sparkles, Sun } from 'lucide-react';
+import { Gauge, Orbit, Ruler, Sparkles, Sun, Zap } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import type { HabitableZoneBoundaries, PlanetParams, StarParams, StarStyle } from './types';
@@ -15,12 +15,16 @@ export interface SystemHudProps {
 export function SystemHud({ star, starStyle, hz, selectedPlanet }: SystemHudProps): JSX.Element {
   const teff = star.teff > 0 ? star.teff : 5778;
   const radius = star.radius > 0 ? star.radius : 1.0;
-  const selectedBiome = selectedPlanet ? getPlanetBiome(selectedPlanet.radiusEarth, selectedPlanet.tempK) : null;
+  const selectedBiome = selectedPlanet ? getPlanetBiome(selectedPlanet.radiusEarth, selectedPlanet.tempK, selectedPlanet.insolationEarth) : null;
+
+  const distAu = selectedPlanet?.semiMajorAxisAu ?? 0;
+  const distKmMillion = (distAu * 149.59787).toFixed(1);
+  const distStarRadii = (distAu / (radius * 0.00465)).toFixed(1);
 
   return (
     <div className="absolute top-4 left-4 z-10 flex flex-col gap-3 pointer-events-none max-w-sm">
       {/* Host Star Card */}
-      <div className="rounded-xl border border-border/50 bg-background/90 p-3.5 backdrop-blur-xl pointer-events-auto shadow-2xl">
+      <div className="rounded-xl border border-border/60 bg-background/92 p-3.5 backdrop-blur-xl pointer-events-auto shadow-2xl">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 font-semibold text-sm">
             <Sun className="size-4 text-amber-400 animate-pulse" />
@@ -44,9 +48,9 @@ export function SystemHud({ star, starStyle, hz, selectedPlanet }: SystemHudProp
             Luminosity: <span className="font-mono text-foreground font-medium">{hz.luminosity.toFixed(3)} L☉</span>
           </div>
           <div>
-            HZ Zone:{' '}
+            Goldilocks Zone:{' '}
             <span className="font-mono text-emerald-400 font-medium">
-              {hz.consInnerAu.toFixed(2)} - {hz.consOuterAu.toFixed(2)} AU
+              {hz.consInnerAu.toFixed(3)} - {hz.consOuterAu.toFixed(3)} AU
             </span>
           </div>
         </div>
@@ -54,7 +58,7 @@ export function SystemHud({ star, starStyle, hz, selectedPlanet }: SystemHudProp
 
       {/* Selected Exoplanet Card */}
       {selectedPlanet && selectedBiome && (
-        <div className="rounded-xl border border-sky-500/40 bg-background/90 p-3.5 backdrop-blur-xl pointer-events-auto shadow-2xl">
+        <div className="rounded-xl border border-sky-500/40 bg-background/92 p-3.5 backdrop-blur-xl pointer-events-auto shadow-2xl">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 font-semibold text-xs text-sky-400">
               <Orbit className="size-4" />
@@ -65,18 +69,37 @@ export function SystemHud({ star, starStyle, hz, selectedPlanet }: SystemHudProp
                 className={`text-[10px] ${
                   selectedPlanet.habitabilityScore > 75
                     ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                    : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                    : selectedPlanet.habitabilityScore > 40
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                    : 'bg-muted/40 text-muted-foreground border-border'
                 }`}
               >
                 <Sparkles className="size-2.5 mr-1" />
-                Life Score {selectedPlanet.habitabilityScore.toFixed(0)}/100
+                Habitability {selectedPlanet.habitabilityScore.toFixed(0)}%
               </Badge>
             )}
           </div>
 
-          <p className="mt-1 text-[11px] font-medium text-muted-foreground">{selectedBiome.type}</p>
+          <div className="mt-1 flex items-center justify-between gap-2">
+            <p className="text-[11px] font-medium text-foreground">{selectedBiome.type}</p>
+            {selectedBiome.isHabitable && (
+              <span className="text-[10px] font-semibold text-emerald-400">● Liquid Water Stable</span>
+            )}
+          </div>
 
-          <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <div className="mt-2.5 grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs text-muted-foreground border-t border-border/40 pt-2">
+            <div>
+              Distance:{' '}
+              <span className="font-mono text-sky-400 font-medium">
+                {distAu.toFixed(3)} AU ({distKmMillion}M km)
+              </span>
+            </div>
+            <div>
+              Separation:{' '}
+              <span className="font-mono text-sky-400 font-medium">
+                {distStarRadii} R☉
+              </span>
+            </div>
             <div>
               Radius: <span className="font-mono text-foreground font-medium">{selectedPlanet.radiusEarth.toFixed(2)} R⊕</span>
             </div>
@@ -84,13 +107,15 @@ export function SystemHud({ star, starStyle, hz, selectedPlanet }: SystemHudProp
               Period: <span className="font-mono text-foreground font-medium">{selectedPlanet.periodDays.toFixed(2)} d</span>
             </div>
             <div>
-              Semi-Major:{' '}
-              <span className="font-mono text-foreground font-medium">{selectedPlanet.semiMajorAxisAu.toFixed(4)} AU</span>
+              Velocity:{' '}
+              <span className="font-mono text-foreground font-medium">
+                {selectedPlanet.orbitalVelocityKms ? `${selectedPlanet.orbitalVelocityKms.toFixed(1)} km/s` : `${(29.78 / Math.sqrt(selectedPlanet.semiMajorAxisAu)).toFixed(1)} km/s`}
+              </span>
             </div>
             <div>
               T_eq:{' '}
               <span className="font-mono text-foreground font-medium">
-                {selectedPlanet.tempK ? `${selectedPlanet.tempK.toFixed(0)} K` : '—'}
+                {selectedPlanet.tempK ? `${selectedPlanet.tempK.toFixed(0)} K (${(selectedPlanet.tempK - 273.15).toFixed(0)}°C)` : '—'}
               </span>
             </div>
           </div>

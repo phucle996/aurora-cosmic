@@ -1,12 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
 
 import type { CameraMode, CameraState, OrbitViewer3DProps, TrailPoint } from './types';
-import { calculateHabitableZone, generateStarfield, getStarColor } from './physics';
+import { calculateHabitableZone, generateStarfield, getStarColor, solveKeplerOrbit } from './physics';
 import {
   createProjector,
   drawDeepSpace,
   drawDistanceGrid,
+  drawDistanceRuler,
   drawHabitableZone,
   drawHostStar,
   drawOrbits,
@@ -31,11 +32,12 @@ export function OrbitViewer3D({
 
   // Simulation state
   const [isPlaying, setIsPlaying] = useState(true);
-  const [speedMultiplier, setSpeedMultiplier] = useState(8);
+  const [speedMultiplier, setSpeedMultiplier] = useState(1);
   const [showHabitableZone, setShowHabitableZone] = useState(true);
   const [showOrbits, setShowOrbits] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
   const [showTrails, setShowTrails] = useState(true);
+  const [showDistanceRuler, setShowDistanceRuler] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [selectedPlanetIndex, setSelectedPlanetIndex] = useState(0);
   const [cameraMode, setCameraMode] = useState<CameraMode>('free');
@@ -53,7 +55,7 @@ export function OrbitViewer3D({
     isDragging: false,
     startX: 0,
     startY: 0,
-    autoRotate: true,
+    autoRotate: false,
   });
 
   const timeRef = useRef(0);
@@ -93,11 +95,9 @@ export function OrbitViewer3D({
       cameraRef.current.startY = e.clientY;
 
       if (isRightDrag || e.shiftKey) {
-        // Pan camera
         cameraRef.current.panX += dx;
         cameraRef.current.panY += dy;
       } else {
-        // Rotate camera
         cameraRef.current.targetYaw += dx * 0.007;
         cameraRef.current.targetPitch = Math.max(
           0.02,
@@ -113,7 +113,6 @@ export function OrbitViewer3D({
 
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
-      // Smooth exponential zoom scaling with ultra-deep zoom support (down to 0.015)
       const zoomFactor = e.deltaY > 0 ? 1.15 : 0.86;
       cameraRef.current.targetDistance = Math.max(
         0.015,
@@ -139,6 +138,8 @@ export function OrbitViewer3D({
     };
   }, [cameraMode]);
 
+  const starfield = useMemo(() => generateStarfield(50), []);
+
   // Main Canvas Render Loop
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -147,7 +148,6 @@ export function OrbitViewer3D({
     if (!ctx) return;
 
     let animationFrameId: number;
-    const starfield = generateStarfield(280);
 
     const render = () => {
       const width = canvas.clientWidth;
@@ -160,7 +160,7 @@ export function OrbitViewer3D({
       if (isPlaying) {
         timeRef.current += 0.016 * speedMultiplier;
         if (cameraRef.current.autoRotate && !cameraRef.current.isDragging && cameraMode === 'free') {
-          cameraRef.current.targetYaw += 0.0015;
+          cameraRef.current.targetYaw += 0.0012;
         }
       }
 
@@ -169,9 +169,12 @@ export function OrbitViewer3D({
       cameraRef.current.pitch += (cameraRef.current.targetPitch - cameraRef.current.pitch) * 0.1;
       cameraRef.current.distance += (cameraRef.current.targetDistance - cameraRef.current.distance) * 0.14;
 
-      // Calculate Extent & Scale
-      const maxAu = Math.max(0.18, hz.optOuterAu * 1.3, ...planets.map((p) => p.semiMajorAxisAu * 1.3));
-      const baseScale = (Math.min(width, height) * 0.42) / (maxAu * cameraRef.current.distance);
+      // Calculate Extent & Scale: Dynamically frame the actual planet orbit with ample clearance
+      const activeOrbitAu = planets.length > 0
+        ? Math.max(...planets.map((p) => p.semiMajorAxisAu))
+        : hz.consInnerAu;
+      const maxAu = Math.max(0.04, activeOrbitAu * 1.4);
+      const baseScale = (Math.min(width, height) * 0.44) / (maxAu * cameraRef.current.distance);
 
       // Handle Focus Planet Tracking Cam
       let targetPanX = 0;
@@ -180,9 +183,11 @@ export function OrbitViewer3D({
 
       if (cameraMode === 'focus_planet' && selectedPlanet) {
         const period = Math.max(0.1, selectedPlanet.periodDays);
-        const theta = (timeRef.current / period) * Math.PI * 2;
-        const orbX = Math.cos(theta) * selectedPlanet.semiMajorAxisAu;
-        const orbZ = Math.sin(theta) * selectedPlanet.semiMajorAxisAu;
+        const orbitalSpeedFactor = Math.pow(10.0 / period, 0.65);
+        const meanAnom = (selectedPlanet.initialPhase ?? 0) + (timeRef.current * orbitalSpeedFactor * 0.12) * Math.PI * 2;
+        const ecc = selectedPlanet.eccentricity ?? 0.04;
+        const periRad = ((selectedPlanet.periapsisDeg ?? 0) * Math.PI) / 180;
+        const { xAu: orbX, zAu: orbZ } = solveKeplerOrbit(meanAnom, ecc, selectedPlanet.semiMajorAxisAu, periRad);
 
         const cosYaw = Math.cos(cameraRef.current.yaw);
         const sinYaw = Math.sin(cameraRef.current.yaw);
@@ -220,14 +225,16 @@ export function OrbitViewer3D({
       if (showTrails) {
         planets.forEach((p, idx) => {
           const period = Math.max(0.1, p.periodDays);
-          const theta = (timeRef.current / period) * Math.PI * 2;
-          const currentXAu = Math.cos(theta) * p.semiMajorAxisAu;
-          const currentZAu = Math.sin(theta) * p.semiMajorAxisAu;
+          const orbitalSpeedFactor = Math.pow(10.0 / period, 0.65);
+          const meanAnom = (p.initialPhase ?? 0) + (timeRef.current * orbitalSpeedFactor * 0.12) * Math.PI * 2;
+          const ecc = p.eccentricity ?? 0.04;
+          const periRad = ((p.periapsisDeg ?? 0) * Math.PI) / 180;
+          const { xAu: currentXAu, zAu: currentZAu } = solveKeplerOrbit(meanAnom, ecc, p.semiMajorAxisAu, periRad);
 
           if (!trailsRef.current[idx]) trailsRef.current[idx] = [];
           const trail = trailsRef.current[idx];
           trail.push({ xAu: currentXAu, zAu: currentZAu, time: timeRef.current });
-          if (trail.length > 45) trail.shift();
+          if (trail.length > 50) trail.shift();
         });
         drawTrails(ctx, project, trailsRef.current, selectedPlanetIndex);
       }
@@ -235,17 +242,15 @@ export function OrbitViewer3D({
       // 6. Orbit Rings
       if (showOrbits) drawOrbits(ctx, project, planets, selectedPlanetIndex);
 
-      // 7. Dynamic Adaptive Sizing for Star & Planets
-      // Ensures close-in orbits are never swallowed by the star
+      // 7. Star Sizing: Grand and prominent, capped at 22% of the orbit radius to preserve wide vacuum space
       const minOrbitAu = planets.length > 0
         ? Math.min(...planets.map((p) => p.semiMajorAxisAu))
         : hz.consInnerAu;
       const minOrbitScreenR = minOrbitAu * baseScale;
-      const maxStarR = Math.max(8, minOrbitScreenR * 0.42);
-      const desiredStarR = Math.max(8, (16 * Math.sqrt(radius)) / Math.pow(cameraRef.current.distance, 0.22));
+      const maxStarR = Math.max(10, minOrbitScreenR * 0.22);
+      const desiredStarR = Math.max(12, (20 * Math.sqrt(radius)) / Math.pow(cameraRef.current.distance, 0.25));
       const starScreenR = Math.min(maxStarR, desiredStarR);
 
-      // Current Zoom Multiplier for Close-Up Detail Expansion
       const zoomMultiplier = 1 / Math.max(0.015, cameraRef.current.distance);
 
       // 8. Depth-Sorted Objects
@@ -257,23 +262,31 @@ export function OrbitViewer3D({
         y: number;
         depth: number;
         screenRadius: number;
+        currentRadiusAu?: number;
       }[] = [];
 
       renderObjects.push({ type: 'star', x: cx, y: cy, depth: 0, screenRadius: starScreenR });
 
+      let activePlanetProj: { x: number; y: number; radiusAu: number } | null = null;
+
       planets.forEach((p, idx) => {
         const period = Math.max(0.1, p.periodDays);
-        const theta = (timeRef.current / period) * Math.PI * 2;
-        const orbX = Math.cos(theta) * p.semiMajorAxisAu;
-        const orbZ = Math.sin(theta) * p.semiMajorAxisAu;
+        const orbitalSpeedFactor = Math.pow(10.0 / period, 0.65);
+        const meanAnom = (p.initialPhase ?? 0) + (timeRef.current * orbitalSpeedFactor * 0.12) * Math.PI * 2;
+        const ecc = p.eccentricity ?? 0.04;
+        const periRad = ((p.periapsisDeg ?? 0) * Math.PI) / 180;
+        const { xAu: orbX, zAu: orbZ, radiusAu } = solveKeplerOrbit(meanAnom, ecc, p.semiMajorAxisAu, periRad);
         const proj = project(orbX, orbZ);
 
-        // Planet radius expands smoothly when zoomed in close!
-        const basePlanetR = 4.2 * Math.pow(p.radiusEarth, 0.55);
-        const planetScreenR = Math.max(
-          5,
-          Math.min(150, basePlanetR * Math.pow(zoomMultiplier, 0.42))
-        );
+        if (idx === selectedPlanetIndex) {
+          activePlanetProj = { x: proj.x, y: proj.y, radiusAu };
+        }
+
+        // Planet Sizing: Compact in normal overview (4-8px), expanding smoothly on deep zoom / focus planet
+        const basePlanetR = 2.4 + 1.2 * Math.sqrt(Math.max(0.5, p.radiusEarth));
+        const planetScreenR = cameraMode === 'focus_planet'
+          ? Math.max(25, Math.min(85, 28 * Math.pow(p.radiusEarth, 0.45)))
+          : Math.max(3.5, Math.min(22, basePlanetR * Math.pow(zoomMultiplier, 0.35)));
 
         renderObjects.push({
           type: 'planet',
@@ -283,6 +296,7 @@ export function OrbitViewer3D({
           y: proj.y,
           depth: proj.depth,
           screenRadius: planetScreenR,
+          currentRadiusAu: radiusAu,
         });
       });
 
@@ -301,22 +315,42 @@ export function OrbitViewer3D({
             cx,
             cy,
             obj.index === selectedPlanetIndex,
-            cameraRef.current.yaw
+            cameraRef.current.yaw,
+            timeRef.current
           );
         }
       });
 
-      // 9. Transit Eclipse Ray
+      // 9. Interactive Astronomical Distance Vector Ruler
+      if (showDistanceRuler && activePlanetProj) {
+        drawDistanceRuler(
+          ctx,
+          cx,
+          cy,
+          activePlanetProj.x,
+          activePlanetProj.y,
+          activePlanetProj.radiusAu,
+          radius
+        );
+      }
+
+      // 10. Transit Eclipse Ray
       const transitThreshold = 0.05;
       planets.forEach((p) => {
         const period = Math.max(0.1, p.periodDays);
-        const theta = ((timeRef.current / period) * Math.PI * 2) % (Math.PI * 2);
+        const orbitalSpeedFactor = Math.pow(10.0 / period, 0.65);
+        const meanAnom = (p.initialPhase ?? 0) + (timeRef.current * orbitalSpeedFactor * 0.12) * Math.PI * 2;
+        const ecc = p.eccentricity ?? 0.04;
+        const periRad = ((p.periapsisDeg ?? 0) * Math.PI) / 180;
+        const { xAu: orbX, zAu: orbZ } = solveKeplerOrbit(meanAnom, ecc, p.semiMajorAxisAu, periRad);
+        const theta = (Math.atan2(orbZ, orbX) + Math.PI * 2) % (Math.PI * 2);
+
         const isTransit =
           Math.abs(theta - Math.PI / 2) < transitThreshold ||
           Math.abs(theta - (3 * Math.PI) / 2) < transitThreshold;
 
         if (isTransit) {
-          const pProj = project(Math.cos(theta) * p.semiMajorAxisAu, Math.sin(theta) * p.semiMajorAxisAu);
+          const pProj = project(orbX, orbZ);
           drawTransitEclipse(ctx, cx, cy, starScreenR, pProj.x, pProj.y, p.name);
         }
       });
@@ -325,12 +359,17 @@ export function OrbitViewer3D({
       const activePlanet = planets[selectedPlanetIndex] ?? planets[0];
       if (activePlanet && onTimeUpdate) {
         const period = Math.max(0.1, activePlanet.periodDays);
-        const theta = ((timeRef.current / period) * Math.PI * 2) % (Math.PI * 2);
+        const orbitalSpeedFactor = Math.pow(10.0 / period, 0.65);
+        const meanAnom = (activePlanet.initialPhase ?? 0) + (timeRef.current * orbitalSpeedFactor * 0.12) * Math.PI * 2;
+        const ecc = activePlanet.eccentricity ?? 0.04;
+        const periRad = ((activePlanet.periapsisDeg ?? 0) * Math.PI) / 180;
+        const { xAu: orbX, zAu: orbZ } = solveKeplerOrbit(meanAnom, ecc, activePlanet.semiMajorAxisAu, periRad);
+        const theta = (Math.atan2(orbZ, orbX) + Math.PI * 2) % (Math.PI * 2);
+
         let phase = (theta - Math.PI / 2) / (Math.PI * 2);
         while (phase < -0.5) phase += 1.0;
         while (phase > 0.5) phase -= 1.0;
 
-        const transitThreshold = 0.05;
         const isTransit = Math.abs(phase) < transitThreshold;
         const transitDepthRatio = isTransit
           ? 1.0 - Math.pow(Math.abs(phase) / transitThreshold, 2)
@@ -359,6 +398,7 @@ export function OrbitViewer3D({
     showOrbits,
     showGrid,
     showTrails,
+    showDistanceRuler,
     selectedPlanetIndex,
     cameraMode,
     hz,
@@ -376,12 +416,12 @@ export function OrbitViewer3D({
     cameraRef.current.targetDistance = 1.0;
     cameraRef.current.panX = 0;
     cameraRef.current.panY = 0;
-    cameraRef.current.autoRotate = true;
+    cameraRef.current.autoRotate = false;
     setCameraMode('free');
   };
 
   const focusPlanet = () => {
-    cameraRef.current.targetDistance = 0.06; // 16x zoom-in directly on planet
+    cameraRef.current.targetDistance = 0.06;
     cameraRef.current.targetPitch = 0.35;
     cameraRef.current.autoRotate = false;
     setCameraMode('focus_planet');
@@ -449,6 +489,7 @@ export function OrbitViewer3D({
         showHabitableZone={showHabitableZone}
         showTrails={showTrails}
         showGrid={showGrid}
+        showDistanceRuler={showDistanceRuler}
         planets={planets}
         selectedPlanetIndex={selectedPlanetIndex}
         onTogglePlay={() => setIsPlaying(!isPlaying)}
@@ -460,6 +501,7 @@ export function OrbitViewer3D({
         onToggleHabitableZone={() => setShowHabitableZone(!showHabitableZone)}
         onToggleTrails={() => setShowTrails(!showTrails)}
         onToggleGrid={() => setShowGrid(!showGrid)}
+        onToggleDistanceRuler={() => setShowDistanceRuler(!showDistanceRuler)}
       />
     </div>
   );

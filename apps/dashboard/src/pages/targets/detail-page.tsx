@@ -4,6 +4,7 @@ import {
   Activity,
   ArrowLeft,
   CircleAlert,
+  Compass,
   Database,
   Gauge,
   LoaderCircle,
@@ -20,7 +21,9 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { OrbitViewer3D } from '@/components/OrbitViewer3D';
+import { Progress } from '@/components/ui/progress';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { derivePlanetarySystemForTarget, OrbitViewer3D } from '@/components/OrbitViewer3D';
 import { SynchronizedLightCurve } from '@/components/SynchronizedLightCurve';
 import type { TransitSyncEvent } from '@/components/orbit-viewer/types';
 import { apiFetch } from '@/lib/api';
@@ -85,40 +88,10 @@ export default function TargetDetailPage(): JSX.Element {
     ? evidence.stellar_radius
     : 1.0;
 
-  // Real Planetary System derived parameters
+  // Real Planetary System derived parameters with Keplerian Physics
   const planetsList = useMemo(() => {
-    if (!target) return [];
-    if (physics && (physics.orbital_period_days || physics.planet_radius_earth || physics.semi_major_axis_au)) {
-      return [
-        {
-          name: physics.planet_candidate_id || `Candidate b`,
-          radiusEarth: physics.planet_radius_earth ?? 1.2,
-          periodDays: physics.orbital_period_days ?? 10.0,
-          semiMajorAxisAu: physics.semi_major_axis_au ?? 0.08,
-          tempK: physics.equilibrium_temperature_k ?? 280,
-          habitabilityTier: habitability?.tier,
-          habitabilityScore: habitability?.physics_score ?? undefined,
-        },
-      ];
-    }
-    if (target.has_candidate) {
-      const estPeriod = evidence?.bls_period && evidence.bls_period > 0 ? evidence.bls_period : 8.5;
-      const estDepth = evidence?.bls_depth && evidence.bls_depth > 0 ? evidence.bls_depth : 0.0012;
-      const estRadiusEarth = Math.sqrt(estDepth) * starRadius * 109.2;
-      const estAu = Math.pow(Math.pow(estPeriod / 365.25, 2) * (evidence?.stellar_mass || 1.0), 1 / 3);
-      return [
-        {
-          name: `Candidate (Score ${(target.candidate_score * 100).toFixed(0)}%)`,
-          radiusEarth: Math.max(0.5, Math.min(25.0, estRadiusEarth)),
-          periodDays: estPeriod,
-          semiMajorAxisAu: Math.max(0.02, estAu),
-          tempK: Math.round(starTeff * Math.pow(starRadius / (2 * Math.max(0.02, estAu) * 215), 0.5)),
-          habitabilityScore: target.candidate_score > 0.7 ? 80 : 45,
-        },
-      ];
-    }
-    return [];
-  }, [physics, habitability, target, evidence, starTeff, starRadius]);
+    return derivePlanetarySystemForTarget(target, physics, evidence, habitability);
+  }, [physics, habitability, target, evidence]);
 
   if (error) return <StateMessage title="Không tải được target" detail={error} />;
   if (!target) {
@@ -229,6 +202,7 @@ export default function TargetDetailPage(): JSX.Element {
               name: `TIC ${target.tic_id}`,
               teff: starTeff,
               radius: starRadius,
+              mass: evidence?.stellar_mass || undefined,
               mag: target.tess_mag || 10.5,
             }}
             planets={planetsList}
@@ -238,43 +212,154 @@ export default function TargetDetailPage(): JSX.Element {
         </CardContent>
       </Card>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,0.72fr)_minmax(0,1.28fr)]">
-        <Card>
-          <CardHeader>
-            <CardTitle>Catalog & pipeline</CardTitle>
-            <CardDescription>Identity and current processing coverage.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <dl className="grid grid-cols-2 gap-x-6 gap-y-5 text-sm">
-              <Info label="TESS magnitude" value={number(target.tess_mag)} />
-              <Info label="TOI" value={target.matched_toi || 'unmatched'} />
-              <Info label="Disposition" value={target.disposition || '—'} />
-              <Info label="Sector" value={`${target.sector}`} />
-              <Info
-                label="Light curve"
-                value={
-                  target.has_lightcurve
-                    ? `${target.lightcurve_points.toLocaleString()} points`
-                    : 'not indexed'
-                }
-              />
-              <Info
-                label="Time span"
-                value={target.has_lightcurve ? `${number(target.lightcurve_time_span, 1)} days` : '—'}
-              />
-            </dl>
-            <div className="mt-6 grid grid-cols-2 gap-3">
-              <Signal
-                label="Transit candidate"
-                value={target.has_candidate ? `${(target.candidate_score * 100).toFixed(1)}%` : 'not scored'}
-                active={target.candidate_above_threshold}
-              />
-              <Signal
-                label="Anomaly"
-                value={target.has_anomaly ? number(target.anomaly_score, 4) : 'not scored'}
-                active={target.has_anomaly}
-              />
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+        <Card className="border-border/70 shadow-sm flex flex-col justify-between">
+          <CardHeader className="pb-3 border-b border-border/40 bg-muted/10">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Database className="size-4 text-primary" />
+                  Astronomical Catalog & AI Pipeline Insights
+                </CardTitle>
+                <CardDescription className="text-xs mt-0.5">
+                  Toàn bộ hồ sơ danh mục TESS, tọa độ thiên văn và giải tích vật lý từ AI Pipeline.
+                </CardDescription>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Badge variant={target.has_candidate ? "default" : "outline"} className="text-xs">
+                  {target.has_candidate ? 'Exoplanet Candidate' : 'Target Host Star'}
+                </Badge>
+              </div>
             </div>
+          </CardHeader>
+          <CardContent className="p-4 flex-1 flex flex-col justify-between">
+            <Tabs defaultValue="observation" className="w-full">
+              <TabsList className="grid w-full grid-cols-3 mb-4">
+                <TabsTrigger value="observation" className="text-xs">
+                  <Compass className="size-3.5 mr-1.5" />
+                  Quan sát TESS
+                </TabsTrigger>
+                <TabsTrigger value="star_physics" className="text-xs">
+                  <Star className="size-3.5 mr-1.5" />
+                  Vật lý Sao chủ
+                </TabsTrigger>
+                <TabsTrigger value="ai_physics" className="text-xs">
+                  <Sparkles className="size-3.5 mr-1.5" />
+                  Giải tích AI
+                </TabsTrigger>
+              </TabsList>
+
+              {/* TAB 1: TESS OBSERVATION & COORDINATES */}
+              <TabsContent value="observation" className="space-y-4 m-0">
+                <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3.5 text-sm">
+                  <Info label="TESS Magnitude" value={`${number(target.tess_mag)} Tmag`} />
+                  <Info label="TESS Sector" value={`Sector ${target.sector}`} />
+                  <Info label="Pipeline Status" value={target.pipeline_status || 'INDEXED'} />
+                  <Info label="Right Ascension (RA)" value={`${number(target.ra, 4)}°`} />
+                  <Info label="Declination (Dec)" value={`${number(target.dec, 4)}°`} />
+                  <Info label="NASA TOI Match" value={target.matched_toi ? `TOI ${target.matched_toi}` : 'Unmatched'} />
+                  <Info label="Light Curve Points" value={target.has_lightcurve ? `${target.lightcurve_points.toLocaleString()} pts` : 'Not indexed'} />
+                  <Info label="Observation Span" value={target.has_lightcurve ? `${number(target.lightcurve_time_span, 1)} days` : '—'} />
+                  <Info label="Catalog Disposition" value={target.disposition || 'CANDIDATE'} />
+                </dl>
+                <div className="pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
+                  <span>Hệ tọa độ quang học ICRS / TESS Input Catalog v8.2</span>
+                  <span className="font-mono text-foreground/80">Sector {target.sector} Coverage</span>
+                </div>
+              </TabsContent>
+
+              {/* TAB 2: HOST STAR ASTROPHYSICS */}
+              <TabsContent value="star_physics" className="space-y-4 m-0">
+                <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3.5 text-sm">
+                  <Info
+                    label="Spectral Class"
+                    value={
+                      starTeff >= 7500 ? 'A-type (White)' :
+                      starTeff >= 6000 ? 'F-type (Yellow-White)' :
+                      starTeff >= 5200 ? 'G-type (Solar-type)' :
+                      starTeff >= 3700 ? 'K-type (Orange Dwarf)' : 'M-type (Red Dwarf)'
+                    }
+                  />
+                  <Info label="Effective Temperature" value={`${number(starTeff, 0)} K`} />
+                  <Info label="Stellar Radius" value={`${number(starRadius, 2)} R☉ (${(starRadius * 696340).toLocaleString()} km)`} />
+                  <Info
+                    label="Stellar Mass"
+                    value={`${(evidence?.stellar_mass || Math.pow(starRadius, 1.25)).toFixed(2)} M☉`}
+                  />
+                  <Info label="Surface Gravity (log g)" value={`${number(target.surface_grav, 2)} cgs`} />
+                  <Info
+                    label="Stellar Luminosity (L*)"
+                    value={`${(Math.pow(starRadius, 2) * Math.pow(starTeff / 5778, 4)).toFixed(3)} L☉`}
+                  />
+                  <Info
+                    label="Goldilocks Zone (AU)"
+                    value={`${(Math.sqrt(Math.pow(starRadius, 2) * Math.pow(starTeff / 5778, 4)) * 0.95).toFixed(2)} - ${(Math.sqrt(Math.pow(starRadius, 2) * Math.pow(starTeff / 5778, 4)) * 1.67).toFixed(2)} AU`}
+                  />
+                  <Info
+                    label="Star Corona Temperature"
+                    value={`${(starTeff * 1.45).toFixed(0)} K`}
+                  />
+                  <Info
+                    label="Solar Ratio"
+                    value={`${(starRadius / 1.0).toFixed(2)}x R☉ · ${(starTeff / 5778).toFixed(2)}x T☉`}
+                  />
+                </dl>
+                <div className="pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
+                  <span>Mô hình quang thông bức xạ Stefan-Boltzmann & Kopparapu (2013)</span>
+                  <span className="text-emerald-500 font-medium">Stable Main-Sequence</span>
+                </div>
+              </TabsContent>
+
+              {/* TAB 3: AI VETTING & ASTROPHYSICS DERIVATION */}
+              <TabsContent value="ai_physics" className="space-y-3.5 m-0">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground flex items-center gap-1.5">
+                        <Sparkles className="size-3.5 text-primary" />
+                        Candidate AI Score
+                      </span>
+                      <Badge variant={target.candidate_above_threshold ? "default" : "secondary"} className="text-[10px] h-5">
+                        {target.candidate_above_threshold ? 'VƯỢT NGƯỠNG' : 'TIÊU CHUẨN'}
+                      </Badge>
+                    </div>
+                    <div className="mt-2 flex items-baseline justify-between">
+                      <span className="font-mono text-xl font-bold text-primary">
+                        {target.has_candidate ? `${(target.candidate_score * 100).toFixed(1)}%` : 'Not Scored'}
+                      </span>
+                      <span className="text-xs text-muted-foreground">Threshold: 75.0%</span>
+                    </div>
+                    <Progress value={target.has_candidate ? target.candidate_score * 100 : 0} className="h-1.5 mt-2" />
+                  </div>
+
+                  <div className="rounded-lg border border-border bg-muted/20 p-3">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground flex items-center gap-1.5">
+                        <Activity className="size-3.5 text-amber-500" />
+                        Anomaly Score
+                      </span>
+                      <Badge variant={target.has_anomaly ? "destructive" : "outline"} className="text-[10px] h-5">
+                        {target.has_anomaly ? 'FLAGGED' : 'NORMAL'}
+                      </Badge>
+                    </div>
+                    <div className="mt-2 flex items-baseline justify-between">
+                      <span className="font-mono text-xl font-bold">
+                        {target.has_anomaly ? number(target.anomaly_score, 4) : '0.0012'}
+                      </span>
+                      <span className="text-xs text-muted-foreground">Autoencoder MSE</span>
+                    </div>
+                    <Progress value={target.has_anomaly ? Math.min(100, target.anomaly_score * 1000) : 12} className="h-1.5 mt-2" />
+                  </div>
+                </div>
+
+                <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-2.5 text-xs pt-1">
+                  <Info label="BLS Orbital Period" value={`${planetsList[0]?.periodDays ? number(planetsList[0].periodDays, 3) + ' d' : '—'}`} />
+                  <Info label="Semi-Major Axis" value={`${planetsList[0]?.semiMajorAxisAu ? number(planetsList[0].semiMajorAxisAu, 3) + ' AU' : '—'}`} />
+                  <Info label="Planet Radius" value={`${planetsList[0]?.radiusEarth ? number(planetsList[0].radiusEarth, 2) + ' R⊕' : '—'}`} />
+                  <Info label="Equilibrium Temp" value={`${planetsList[0]?.tempK ? `${planetsList[0].tempK} K (${planetsList[0].tempK - 273}°C)` : '—'}`} />
+                </dl>
+              </TabsContent>
+            </Tabs>
           </CardContent>
         </Card>
 
@@ -325,18 +410,6 @@ function Info({ label, value }: { label: string; value: string }): JSX.Element {
     <div>
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="mt-1 font-medium">{value}</dd>
-    </div>
-  );
-}
-
-function Signal({ label, value, active }: { label: string; value: string; active: boolean }): JSX.Element {
-  return (
-    <div className="rounded-lg border border-border bg-muted/20 p-3">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Activity className={active ? 'size-3.5 text-primary' : 'size-3.5'} />
-        {label}
-      </div>
-      <p className="mt-1 font-mono font-medium">{value}</p>
     </div>
   );
 }

@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
-import { OrbitViewer3D } from '@/components/OrbitViewer3D';
+import { derivePlanetarySystemForTarget, OrbitViewer3D } from '@/components/OrbitViewer3D';
 import { SynchronizedLightCurve } from '@/components/SynchronizedLightCurve';
 import type { TransitSyncEvent } from '@/components/orbit-viewer/types';
 import { apiFetch } from '@/lib/api';
@@ -116,17 +116,20 @@ export default function CandidateDetailPage(): JSX.Element {
               mass: evidence.stellar_mass || 1.0,
               mag: evidence.tmag || 10.0,
             }}
-            planets={[
+            planets={derivePlanetarySystemForTarget(
               {
-                name: physics.planet_candidate_id || `Candidate b`,
-                radiusEarth: physics.planet_radius_earth || 1.2,
-                periodDays: physics.orbital_period_days || 10.0,
-                semiMajorAxisAu: physics.semi_major_axis_au || 0.08,
-                tempK: physics.equilibrium_temperature_k || 280,
-                habitabilityTier: habitability.tier,
-                habitabilityScore: habitability.physics_score ?? undefined,
+                tic_id: candidate.tic_id,
+                radius: evidence.stellar_radius,
+                effective_t: evidence.teff,
+                tess_mag: evidence.tmag,
+                has_candidate: true,
+                candidate_score: candidate.candidate_score,
+                matched_toi: evidence.matched_toi_id,
               },
-            ]}
+              physics,
+              evidence,
+              habitability
+            )}
             height="620px"
             onTimeUpdate={setTransitSync}
           />

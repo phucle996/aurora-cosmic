@@ -4,6 +4,8 @@ export interface StarParams {
   radius: number; // Solar radii (R☉), e.g. 1.0
   mass?: number; // Solar masses (M☉), e.g. 1.0
   mag?: number;
+  luminositySolar?: number;
+  logg?: number;
 }
 
 export interface PlanetParams {
@@ -12,9 +14,18 @@ export interface PlanetParams {
   periodDays: number; // in days, e.g. 10.5
   semiMajorAxisAu: number; // in AU, e.g. 0.08
   tempK?: number; // in Kelvin, e.g. 280
-  habitabilityTier?: string; // e.g. 'promising', 'high_priority', 'unlikely'
+  habitabilityTier?: string; // e.g. 'promising', 'high_priority', 'unlikely', 'conservative_hz', 'optimistic_hz'
   habitabilityScore?: number; // 0 - 100
-  eccentricity?: number; // 0 - 0.5
+  eccentricity?: number; // 0 - 0.4
+  periapsisDeg?: number; // 0 - 360 deg
+  initialPhase?: number; // 0 - 2PI rad (mean anomaly at epoch)
+  inclinationDeg?: number; // 0 - 90 deg
+  axialTiltDeg?: number; // axial obliquity
+  rotationPeriodHours?: number; // axial rotation period
+  massEarth?: number; // estimated M⊕
+  insolationEarth?: number; // S/S⊕
+  orbitalVelocityKms?: number; // orbital velocity km/s
+  isCandidate?: boolean;
 }
 
 export interface TransitSyncEvent {
@@ -40,6 +51,7 @@ export interface StarStyle {
   flare: string;
   type: string;
   spectralClass: string;
+  description: string;
 }
 
 export interface PlanetBiome {
@@ -51,6 +63,7 @@ export interface PlanetBiome {
   hasClouds: boolean;
   hasRings: boolean;
   isHabitable: boolean;
+  surfacePattern: 'continents' | 'bands' | 'craters' | 'lava_cracks' | 'ice_sheets' | 'methane_haze';
 }
 
 export interface HabitableZoneBoundaries {
