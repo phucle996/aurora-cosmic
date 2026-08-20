@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	"go-api/internal/config"
-	"go-api/internal/http/middleware"
 	"go-api/internal/observer"
+	"go-api/internal/transport/http/middleware"
 
 	"github.com/gin-gonic/gin"
 )

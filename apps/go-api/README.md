@@ -1,4 +1,4 @@
-# Go API Service
+# Go API Service
 
 `aurora-api` provides HTTP endpoints querying analytical Targets, Light Curves,
 Candidates, Anomalies, Model Runtime Registry, Inference Jobs, and System
@@ -12,8 +12,8 @@ infra/                       ClickHouse, MinIO, NATS, Prometheus clients
 internal/observer/           Dedicated Prometheus observer on AURORA_API_METRICS_ADDR
 internal/app/                composition root, module DI wiring, and Gin route registration
 internal/domain/             framework-free entities and repository/service ports
-internal/http/dto/           API request DTO structs
-internal/http/handler/       HTTP input parsing, service calls, and inline gin.H responses
+internal/transport/http/     HTTP transport (DTOs, handlers, middlewares)
+internal/transport/stream/   Event/Stream transport (NATS consumer & subscriber)
 internal/repository/         ClickHouse queries and raw MinIO object adapter
 internal/service/            business workflows and MinIO model/inference logic
 internal/taxonomy/           stable application errors

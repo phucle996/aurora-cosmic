@@ -4,9 +4,10 @@ import (
 	"fmt"
 
 	"go-api/internal/events"
-	"go-api/internal/http/handler"
 	"go-api/internal/repository"
 	"go-api/internal/service"
+	"go-api/internal/transport/http/handler"
+	"go-api/internal/transport/stream"
 )
 
 type Module struct {
@@ -17,6 +18,7 @@ type Module struct {
 	PreprocessingHandler *handler.PreprocessingHandler
 	IngestHandler        *handler.IngestHandler
 	EventsHandler        *handler.EventsHandler
+	NATSStream           *stream.NATSStream
 }
 
 func NewModule(infra Infrastructure) (*Module, error) {
@@ -73,6 +75,15 @@ func NewModule(infra Infrastructure) (*Module, error) {
 		return nil, fmt.Errorf("service IngestService is nil")
 	}
 
+	natsStream := stream.NewNATSStream(stream.StreamConfig{
+		NATSURL:       infra.NATS.URL,
+		Broker:        eventBroker,
+		Preprocessing: preprocessingService,
+		Ingest:        ingestService,
+		Inference:     inferenceService,
+		Models:        modelsService,
+	})
+
 	return &Module{
 		AnalyticsHandler:     handler.NewAnalyticsHandler(analyticsService),
 		ModelsHandler:        handler.NewModelsHandler(modelsService, inferenceService),
@@ -81,5 +92,6 @@ func NewModule(infra Infrastructure) (*Module, error) {
 		PreprocessingHandler: handler.NewPreprocessingHandler(preprocessingService),
 		IngestHandler:        handler.NewIngestHandler(ingestService),
 		EventsHandler:        handler.NewEventsHandler(eventBroker),
+		NATSStream:           natsStream,
 	}, nil
 }

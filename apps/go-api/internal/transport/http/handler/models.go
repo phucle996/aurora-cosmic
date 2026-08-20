@@ -6,7 +6,7 @@ import (
 
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/service"
-	"go-api/internal/http/dto"
+	"go-api/internal/transport/http/dto"
 
 	"github.com/gin-gonic/gin"
 )

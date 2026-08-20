@@ -16,6 +16,7 @@ import (
 	"go-api/infra/prometheus"
 	"go-api/internal/config"
 	"go-api/internal/observer"
+	"go-api/internal/transport/stream"
 )
 
 type Infrastructure struct {
@@ -29,6 +30,7 @@ type Infrastructure struct {
 type App struct {
 	Server   *http.Server
 	Observer *observer.Server
+	Stream   *stream.NATSStream
 	Addr     string
 }
 
@@ -69,16 +71,22 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 	return &App{
 		Server:   srv,
 		Observer: observerServer,
+		Stream:   module.NATSStream,
 		Addr:     addr,
 	}, nil
 }
 
-// Shutdown gracefully stops both the public API and its dedicated observer.
+// Shutdown gracefully stops the public API, its dedicated observer, and the NATS stream consumer.
 func (a *App) Shutdown(ctx context.Context) error {
 	if a == nil {
 		return nil
 	}
 	var shutdownErrs []error
+	if a.Stream != nil {
+		if err := a.Stream.Close(); err != nil {
+			shutdownErrs = append(shutdownErrs, err)
+		}
+	}
 	if a.Server != nil {
 		if err := a.Server.Shutdown(ctx); err != nil {
 			shutdownErrs = append(shutdownErrs, err)

@@ -12,8 +12,8 @@ import (
 	"go-api/internal/config"
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/service"
-	"go-api/internal/http/handler"
 	"go-api/internal/observer"
+	"go-api/internal/transport/http/handler"
 )
 
 type fakeAnalytics struct{}
