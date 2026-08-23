@@ -5,12 +5,8 @@ import {
   Calendar,
   CheckCircle2,
   Database,
-  Layers,
   Orbit,
-  Radio,
-  Sparkles,
   TrendingDown,
-  Zap,
 } from 'lucide-react';
 import {
   CartesianGrid,
@@ -27,7 +23,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+
 import type { TransitSyncEvent } from './orbit-viewer/types';
 
 export interface SynchronizedLightCurveProps {
@@ -184,7 +180,7 @@ export function SynchronizedLightCurve({
             <div className="flex items-center gap-2">
               <CardTitle className="text-base flex items-center gap-2">
                 <Activity className="size-4 text-primary" />
-                Synchronized Observation Light Curve
+                Synchronized Observation Light Curve · {planetName}
               </CardTitle>
               {isCurrentlyInTransit ? (
                 <Badge className="bg-rose-500/20 text-rose-300 border-rose-500/40 animate-pulse font-mono text-[11px]">

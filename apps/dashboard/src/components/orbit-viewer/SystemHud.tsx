@@ -1,5 +1,5 @@
 import type { JSX } from 'react';
-import { Gauge, Orbit, Ruler, Sparkles, Sun, Zap } from 'lucide-react';
+import { Orbit, Sparkles, Sun } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import type { HabitableZoneBoundaries, PlanetParams, StarParams, StarStyle } from './types';

@@ -263,9 +263,10 @@ func (s *ModelsService) SetModelDeployment(ctx context.Context, modelID string, 
 		task = "candidate_vetting"
 	}
 	taskDirs := []string{task}
-	if task == "candidate_vetting" {
+	switch task {
+	case "candidate_vetting":
 		taskDirs = append(taskDirs, "candidate")
-	} else if task == "astronomical_anomaly_detection" {
+	case "astronomical_anomaly_detection":
 		taskDirs = append(taskDirs, "anomaly")
 	}
 

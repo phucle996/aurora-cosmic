@@ -1,4 +1,5 @@
 import type { BackgroundStar, HabitableZoneBoundaries, PlanetBiome, PlanetParams, StarStyle } from './types';
+import type { CandidateEvidence, HabitabilityAssessment, PlanetPhysics } from '@/lib/analytics-types';
 
 // ============================================================================
 // STELLAR SPECTRAL CLASSIFICATION & VISUALS
@@ -248,34 +249,35 @@ function createSeededRandom(seed: number) {
 export function derivePlanetarySystemForTarget(
   target: {
     tic_id: number | string;
-    radius?: number;
-    effective_t?: number;
-    tess_mag?: number;
-    surface_grav?: number;
-    has_candidate?: boolean;
-    candidate_score?: number;
-    matched_toi?: string;
+    radius?: number | null;
+    effective_t?: number | null;
+    tess_mag?: number | null;
+    surface_grav?: number | null;
+    has_candidate?: boolean | null;
+    candidate_score?: number | null;
+    matched_toi?: string | null;
   } | null | undefined,
   physics?: {
-    planet_candidate_id?: string;
-    orbital_period_days?: number;
-    planet_radius_earth?: number;
-    semi_major_axis_au?: number;
-    equilibrium_temperature_k?: number;
-    insolation_earth?: number;
-    hz_classification?: string;
-  } | null,
+    planet_candidate_id?: string | null;
+    orbital_period_days?: number | null;
+    planet_radius_earth?: number | null;
+    semi_major_axis_au?: number | null;
+    equilibrium_temperature_k?: number | null;
+    insolation_earth?: number | null;
+    hz_classification?: string | null;
+  } | PlanetPhysics | null,
   evidence?: {
-    teff?: number;
-    stellar_radius?: number;
-    stellar_mass?: number;
-    bls_period?: number;
-    bls_depth?: number;
-  } | null,
+    teff?: number | null;
+    stellar_radius?: number | null;
+    stellar_mass?: number | null;
+    bls_period?: number | null;
+    bls_depth?: number | null;
+    matched_toi_id?: string | null;
+  } | CandidateEvidence | null,
   habitability?: {
-    tier?: string;
-    physics_score?: number;
-  } | null
+    tier?: string | null;
+    physics_score?: number | null;
+  } | HabitabilityAssessment | null
 ): PlanetParams[] {
   if (!target) return [];
 
@@ -308,7 +310,7 @@ export function derivePlanetarySystemForTarget(
         periodDays: period,
         semiMajorAxisAu: au,
         tempK,
-        habitabilityTier: habitability?.tier ?? physics.hz_classification,
+        habitabilityTier: (habitability?.tier ?? physics.hz_classification) || undefined,
         habitabilityScore: habitability?.physics_score ?? (habitability?.tier === 'promising' ? 88 : 65),
         eccentricity: 0.02 + rand() * 0.06,
         periapsisDeg: rand() * 360,

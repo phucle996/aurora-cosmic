@@ -284,7 +284,6 @@ export function drawDistanceRuler(
 
   const kmMillion = (currentRadiusAu * 149.59787).toFixed(1);
   const stellarRadii = (currentRadiusAu / (starRadiusSolar * 0.00465)).toFixed(1);
-  const lightTimeSec = (currentRadiusAu * 499.0).toFixed(0);
 
   const badgeText = `${currentRadiusAu.toFixed(3)} AU · ${kmMillion}M km (${stellarRadii} R☉)`;
 
@@ -315,7 +314,7 @@ export function drawHostStar(
   r: number,
   star: StarParams,
   style: StarStyle,
-  time: number
+  _time?: number
 ): void {
   // Volumetric Corona Glow (proportioned gracefully so it doesn't swallow inner planets)
   const coronaGrad = ctx.createRadialGradient(x, y, r * 0.3, x, y, r * 1.85);

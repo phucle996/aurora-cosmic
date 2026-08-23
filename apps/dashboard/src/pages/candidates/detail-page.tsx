@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
-import { ArrowLeft, CircleAlert, Database, ExternalLink, FlaskConical, LoaderCircle, Orbit, Rotate3D, Sparkles, Star, ThermometerSun } from 'lucide-react';
+import { ArrowLeft, CircleAlert, Database, FlaskConical, LoaderCircle, Orbit, Rotate3D, Sparkles, Star, ThermometerSun } from 'lucide-react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 
 import { Badge } from '@/components/ui/badge';
@@ -55,6 +55,23 @@ export default function CandidateDetailPage(): JSX.Element {
 
   const { candidate, evidence, planet_physics: physics, habitability } = detail;
   const physicsScore = habitability.physics_score;
+
+  const planets = useMemo(() => {
+    return derivePlanetarySystemForTarget(
+      {
+        tic_id: candidate.tic_id,
+        radius: evidence.stellar_radius,
+        effective_t: evidence.teff,
+        tess_mag: evidence.tmag,
+        has_candidate: true,
+        candidate_score: candidate.candidate_score,
+        matched_toi: evidence.matched_toi_id,
+      },
+      physics,
+      evidence,
+      habitability
+    );
+  }, [candidate, evidence, physics, habitability]);
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
@@ -116,20 +133,7 @@ export default function CandidateDetailPage(): JSX.Element {
               mass: evidence.stellar_mass || 1.0,
               mag: evidence.tmag || 10.0,
             }}
-            planets={derivePlanetarySystemForTarget(
-              {
-                tic_id: candidate.tic_id,
-                radius: evidence.stellar_radius,
-                effective_t: evidence.teff,
-                tess_mag: evidence.tmag,
-                has_candidate: true,
-                candidate_score: candidate.candidate_score,
-                matched_toi: evidence.matched_toi_id,
-              },
-              physics,
-              evidence,
-              habitability
-            )}
+            planets={planets}
             height="620px"
             onTimeUpdate={setTransitSync}
           />

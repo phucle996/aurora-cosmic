@@ -373,7 +373,7 @@ func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error
 		if controlJob.UpdatedAt.After(status.UpdatedAt) {
 			status.UpdatedAt = controlJob.UpdatedAt
 		}
-	} else if status.Status == "running" && s.controller != nil && controlJob == nil && !checkpoint.UpdatedAt.IsZero() && time.Since(checkpoint.UpdatedAt) > 20*time.Second {
+	} else if status.Status == "running" && s.controller != nil && !checkpoint.UpdatedAt.IsZero() && time.Since(checkpoint.UpdatedAt) > 20*time.Second {
 		// Nếu checkpoint ghi là running nhưng controller thực tế không có job nào đang chạy
 		// và checkpoint đã ngưng cập nhật quá 20 giây, đánh dấu tiến trình đã dừng
 		status.Status = "stopped"
