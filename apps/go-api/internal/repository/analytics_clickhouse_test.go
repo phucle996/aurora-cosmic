@@ -22,7 +22,7 @@ func TestUnmarshalClickHouseTargetsJSON(t *testing.T) {
 		{"name": "sector", "type": "Int32"},
 		{"name": "matched_toi", "type": "Nullable(String)"},
 		{"name": "disposition", "type": "LowCardinality(String)"},
-		{"name": "lightcurve_points", "type": "UInt64"},
+		{"name": "lightcurve_points", "type": "Int64"},
 		{"name": "lightcurve_time_span", "type": "Float64"},
 		{"name": "has_lightcurve", "type": "UInt8"},
 		{"name": "has_candidate", "type": "UInt8"},

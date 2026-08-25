@@ -68,6 +68,25 @@ pub struct PreprocessingConfig {
     pub label_encoding: HashMap<String, i64>,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::PreprocessingConfig;
+
+    #[test]
+    fn accepts_candidate_label_encoding_as_non_runtime_metadata() {
+        let parsed: PreprocessingConfig = serde_json::from_str(
+            r#"{
+                "feature_order": ["flux_median"],
+                "label_encoding": {"CONFIRMED": 1, "FALSE POSITIVE": 0}
+            }"#,
+        )
+        .expect("candidate preprocessing metadata must be accepted");
+
+        assert_eq!(parsed.label_encoding.get("CONFIRMED"), Some(&1));
+        assert_eq!(parsed.feature_order, vec!["flux_median"]);
+    }
+}
+
 /// Threshold configuration loaded from `threshold.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
