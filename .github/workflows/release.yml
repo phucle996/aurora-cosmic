@@ -1,29 +1,25 @@
 name: AURORA Sub-Project GHCR Release
 
 on:
-  push:
+  workflow_run:
+    workflows: ["AURORA CI Workflow"]
+    types: [completed]
     branches: [ main ]
-    tags:
-      - 'v*'
-      - 'go-ingester/v*'
-      - 'rust-preprocessor/v*'
-      - 'python-ml-worker/v*'
-      - 'python-gold-builder/v*'
-      - 'rust-inference/v*'
-      - 'go-api/v*'
-      - 'dashboard/v*'
   workflow_dispatch:
 
 jobs:
   release-go-ingester:
     name: Build & Release go-ingester
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository) }}
     permissions:
       contents: read
       packages: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -47,12 +43,15 @@ jobs:
   release-rust-preprocessor:
     name: Build & Release rust-preprocessor
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository) }}
     permissions:
       contents: read
       packages: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -76,12 +75,15 @@ jobs:
   release-python-ml-worker:
     name: Build & Release python-ml-worker
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository) }}
     permissions:
       contents: read
       packages: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -105,12 +107,15 @@ jobs:
   release-gold-builder:
     name: Build & Release gold-builder
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository) }}
     permissions:
       contents: read
       packages: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -134,12 +139,15 @@ jobs:
   release-rust-inference:
     name: Build & Release rust-inference
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository) }}
     permissions:
       contents: read
       packages: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -163,12 +171,15 @@ jobs:
   release-go-api:
     name: Build & Release go-api
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository) }}
     permissions:
       contents: read
       packages: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -192,12 +203,15 @@ jobs:
   release-dashboard:
     name: Build & Release dashboard
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository) }}
     permissions:
       contents: read
       packages: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
       - name: Log in to GHCR
         uses: docker/login-action@v3

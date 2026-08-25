@@ -122,3 +122,64 @@ export type TargetDetailResponse = {
 };
 
 export type LightcurveResponse = { tic_id: number; sector: number; time: number[]; flux: number[] };
+
+export type AnomalyRecord = {
+  prediction_id: string;
+  source_product_id: string;
+  tic_id: number;
+  sector: number;
+  reconstruction_mse: number;
+  decision_threshold: number;
+  above_threshold: boolean;
+  model_version: string;
+  registered_model_id: string;
+  gold_snapshot_id: string;
+  runtime_validation_id: string;
+  runtime_package_id: string;
+  predicted_at: string;
+};
+
+export type AnomalyExplanationFeature = {
+  name: string;
+  gold_value: number | null;
+  model_value: number;
+  imputed: boolean;
+  mean: number;
+  scale: number;
+  standardized_input: number;
+  reconstruction: number;
+  residual: number;
+  squared_residual: number;
+  contribution: number;
+};
+
+export type AnomalyExplanation = {
+  schema_version: number;
+  explanation_version: string;
+  prediction_id: string;
+  gold_snapshot_id: string;
+  gold_artifact_key: string;
+  source_product_id: string;
+  tic_id: number;
+  sample_id: string | null;
+  sector: number;
+  runtime_package_id: string;
+  runtime_validation_id: string;
+  registered_model_id: string;
+  model_version: string;
+  preprocessing_version: string;
+  split_id: string;
+  feature_order: string[];
+  model_input_sha256: string;
+  reconstruction_mse: number;
+  decision_threshold: number;
+  above_threshold: boolean;
+  features: AnomalyExplanationFeature[];
+};
+
+export type AnomalyDetailResponse = {
+  anomaly: AnomalyRecord;
+  explanation_available: boolean;
+  explanation: AnomalyExplanation | null;
+  snapshot_id: string;
+};

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
+import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
   CircleAlert,
@@ -168,7 +169,7 @@ export default function AnomaliesSection(): JSX.Element {
           <CardContent>
             {loading ? <LoadingState /> : !latestCompletedJob ? <EmptyState label="Chưa có anomaly inference job hoàn tất." /> : anomalies.length === 0 ? <EmptyState label="Không có anomaly vượt threshold trong snapshot mới nhất." /> : (
               <Table className="min-w-[920px]">
-                <TableHeader><TableRow><TableHead>Target</TableHead><TableHead>Score / threshold</TableHead><TableHead>Sector</TableHead><TableHead>Detected</TableHead><TableHead>Model</TableHead></TableRow></TableHeader>
+                <TableHeader><TableRow><TableHead>Target</TableHead><TableHead>Score / threshold</TableHead><TableHead>Sector</TableHead><TableHead>Detected</TableHead><TableHead>Model</TableHead><TableHead>Review</TableHead></TableRow></TableHeader>
                 <TableBody>
                   {anomalies.map((item) => (
                     <TableRow key={item.prediction_id}>
@@ -183,6 +184,7 @@ export default function AnomaliesSection(): JSX.Element {
                       <TableCell>{item.sector}</TableCell>
                       <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDate(item.predicted_at)}</TableCell>
                       <TableCell className="max-w-44 truncate font-mono text-xs text-muted-foreground">{item.model_version || '—'}</TableCell>
+                      <TableCell><Button asChild size="sm" variant="outline"><Link to={`/anomalies/${encodeURIComponent(item.prediction_id)}?snapshot_id=${encodeURIComponent(item.gold_snapshot_id)}`}>Open detail</Link></Button></TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

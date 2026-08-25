@@ -22,10 +22,11 @@ type MetricsConfig struct {
 }
 
 type MinIOConfig struct {
-	Endpoint  string
-	Bucket    string
-	AccessKey string
-	SecretKey string
+	Endpoint         string
+	Bucket           string
+	PredictionBucket string
+	AccessKey        string
+	SecretKey        string
 }
 
 type NATSConfig struct {
@@ -132,10 +133,11 @@ func Load() (*Config, error) {
 			Addr: getenvOrDefault("AURORA_API_METRICS_ADDR", ":8086"),
 		},
 		MinIO: MinIOConfig{
-			Endpoint:  minioEndpoint,
-			Bucket:    minioBucket,
-			AccessKey: minioAccessKey,
-			SecretKey: minioSecretKey,
+			Endpoint:         minioEndpoint,
+			Bucket:           minioBucket,
+			PredictionBucket: getenvOrDefault("AURORA_PREDICTION_BUCKET", minioBucket),
+			AccessKey:        minioAccessKey,
+			SecretKey:        minioSecretKey,
 		},
 		ClickHouse: ClickHouseConfig{
 			Endpoint: clickHouseEndpoint,

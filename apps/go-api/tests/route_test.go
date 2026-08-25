@@ -27,6 +27,9 @@ func (fakeAnalytics) GetCandidate(context.Context, string, string) (*entity.Cand
 func (fakeAnalytics) ListAnomalies(context.Context, int, string, bool, entity.PageRequest) (entity.Page[entity.Anomaly], error) {
 	return entity.Page[entity.Anomaly]{Items: []entity.Anomaly{}, Limit: 100}, nil
 }
+func (fakeAnalytics) GetAnomalyDetail(context.Context, string, string) (*entity.AnomalyDetail, error) {
+	return &entity.AnomalyDetail{}, nil
+}
 func (fakeAnalytics) ListTargets(context.Context, entity.TargetQuery) (entity.Page[entity.Target], error) {
 	return entity.Page[entity.Target]{Items: []entity.Target{}, Limit: 100}, nil
 }

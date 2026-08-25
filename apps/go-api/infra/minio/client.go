@@ -64,6 +64,10 @@ func (c *Client) GetObject(ctx context.Context, key string) ([]byte, error) {
 	defer object.Close()
 	data, err := io.ReadAll(object)
 	if err != nil {
+		response := minioSDK.ToErrorResponse(err)
+		if response.Code == "NoSuchKey" || response.Code == "NoSuchObject" {
+			return nil, fmt.Errorf("%w: %s", repo.ErrObjectNotFound, key)
+		}
 		return nil, fmt.Errorf("MinIO read object %s: %w", key, err)
 	}
 	return data, nil

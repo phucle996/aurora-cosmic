@@ -7,6 +7,7 @@ MINIO_PORT="${MINIO_PORT:-9000}"
 MINIO_ACCESS_KEY="${MINIO_ACCESS_KEY:-minioadmin}"
 MINIO_SECRET_KEY="${MINIO_SECRET_KEY:-minioadmin}"
 MINIO_BUCKET="${MINIO_BUCKET:-aurora}"
+AURORA_PREDICTION_BUCKET="${AURORA_PREDICTION_BUCKET:-${MINIO_BUCKET}}"
 
 echo "Waiting for MinIO server at ${MINIO_HOST}:${MINIO_PORT}..."
 until mc alias set myminio "http://${MINIO_HOST}:${MINIO_PORT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"; do
@@ -16,5 +17,9 @@ done
 
 echo "MinIO connected. Creating base bucket '${MINIO_BUCKET}' if not exists..."
 mc mb myminio/"${MINIO_BUCKET}" --ignore-existing
+if [ "${AURORA_PREDICTION_BUCKET}" != "${MINIO_BUCKET}" ]; then
+  echo "Creating prediction bucket '${AURORA_PREDICTION_BUCKET}' if not exists..."
+  mc mb myminio/"${AURORA_PREDICTION_BUCKET}" --ignore-existing
+fi
 
 echo "MinIO initialization completed successfully."

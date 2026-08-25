@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"math"
 	"net/http"
 	"regexp"
@@ -8,6 +9,7 @@ import (
 	"strings"
 
 	"go-api/internal/domain/entity"
+	"go-api/internal/domain/repo"
 	"go-api/internal/domain/service"
 	"go-api/internal/taxonomy"
 
@@ -223,9 +225,9 @@ func (h *AnalyticsHandler) GetCandidate(c *gin.Context) {
 				}
 				return comps
 			}(),
-			"ml_score":           detail.Habitability.MLScore,
-			"ml_status":          detail.Habitability.MLStatus,
-			"disclaimer":         detail.Habitability.Disclaimer,
+			"ml_score":   detail.Habitability.MLScore,
+			"ml_status":  detail.Habitability.MLStatus,
+			"disclaimer": detail.Habitability.Disclaimer,
 		},
 		"snapshot_id": snapshot,
 	})
@@ -320,6 +322,43 @@ func (h *AnalyticsHandler) ListAnomalies(c *gin.Context) {
 		},
 		"snapshot_id":  snapshot,
 		"only_flagged": flaggedOnly,
+	})
+}
+
+// GetAnomalyDetail returns the immutable model evidence sidecar for one prediction.
+func (h *AnalyticsHandler) GetAnomalyDetail(c *gin.Context) {
+	predictionID := c.Param("prediction_id")
+	if !snapshotPattern.MatchString(predictionID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid prediction_id"})
+		return
+	}
+	snapshot := c.Query("snapshot_id")
+	if snapshot == "" || !snapshotPattern.MatchString(snapshot) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": taxonomy.ErrInvalidSnapshot.Error()})
+		return
+	}
+	detail, err := h.analytics.GetAnomalyDetail(c.Request.Context(), predictionID, snapshot)
+	if err != nil {
+		if errors.Is(err, repo.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": taxonomy.ErrNotFound.Error()})
+			return
+		}
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "anomaly detail is unavailable"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"anomaly": gin.H{
+			"prediction_id": detail.Anomaly.PredictionID, "source_product_id": detail.Anomaly.SourceProductID,
+			"tic_id": detail.Anomaly.TICID, "sector": detail.Anomaly.Sector,
+			"reconstruction_mse": detail.Anomaly.ReconstructionMSE, "decision_threshold": detail.Anomaly.Threshold,
+			"above_threshold": detail.Anomaly.AboveThreshold, "model_version": detail.Anomaly.ModelVersion,
+			"registered_model_id": detail.Anomaly.RegisteredModel, "gold_snapshot_id": detail.Anomaly.SnapshotID,
+			"runtime_validation_id": detail.Anomaly.ValidationID, "runtime_package_id": detail.Anomaly.RuntimePkgID,
+			"predicted_at": detail.Anomaly.PredictedAt,
+		},
+		"explanation_available": detail.ExplanationAvailable,
+		"explanation":           detail.Explanation,
+		"snapshot_id":           snapshot,
 	})
 }
 

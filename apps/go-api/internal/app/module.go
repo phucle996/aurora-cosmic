@@ -28,6 +28,9 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	if infra.MinIO == nil {
 		return nil, fmt.Errorf("infrastructure MinIO client is nil")
 	}
+	if infra.PredictionMinIO == nil {
+		return nil, fmt.Errorf("infrastructure prediction MinIO client is nil")
+	}
 	if infra.NATS == nil {
 		return nil, fmt.Errorf("infrastructure NATS dispatcher is nil")
 	}
@@ -43,9 +46,13 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	if objectRepo == nil {
 		return nil, fmt.Errorf("repository ObjectMinIO is nil")
 	}
+	predictionObjectRepo := repository.NewObjectMinIO(infra.PredictionMinIO)
+	if predictionObjectRepo == nil {
+		return nil, fmt.Errorf("repository prediction ObjectMinIO is nil")
+	}
 	eventBroker := events.NewBroker()
 
-	analyticsService := service.NewAnalyticsService(analyticsRepo)
+	analyticsService := service.NewAnalyticsService(analyticsRepo, predictionObjectRepo)
 	if analyticsService == nil {
 		return nil, fmt.Errorf("service AnalyticsService is nil")
 	}

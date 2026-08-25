@@ -35,6 +35,7 @@ services:
       MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY:-minioadmin}"
       MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:-minioadmin}"
       MINIO_BUCKET: "${MINIO_BUCKET:-aurora}"
+      AURORA_PREDICTION_BUCKET: "${AURORA_PREDICTION_BUCKET:-${MINIO_BUCKET:-aurora}}"
     volumes:
       - ./infra/minio/init.sh:/infra/minio/init.sh:ro
     networks:

@@ -345,6 +345,10 @@ impl OnnxRuntime {
         self.threshold
     }
 
+    pub fn preprocessing(&self) -> &PreprocessingConfig {
+        &self.preprocessing
+    }
+
     pub fn standardize(
         &self,
         raw_features: &HashMap<String, Option<f64>>,

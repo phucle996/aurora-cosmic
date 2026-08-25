@@ -4,11 +4,12 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use async_nats::jetstream::{self, AckKind};
 use chrono::Utc;
-use futures::StreamExt;
+use futures::{stream, StreamExt, TryStreamExt};
 use tempfile::TempDir;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
+use crate::domain::explanation::{AnomalyExplanation, AnomalyExplanationFeature};
 use crate::domain::job::{InferenceJobManifest, InferenceJobRequestedEvent};
 use crate::domain::prediction::{
     compute_anomaly_prediction_id, compute_candidate_prediction_id, compute_model_input_sha256,
@@ -24,6 +25,7 @@ use crate::config::{Config, NatsConfig};
 use crate::observer::Metrics;
 
 const INFERENCE_STREAM_SUBJECT: &str = "aurora.v1.inference.>";
+const MAX_EXPLANATION_UPLOADS: usize = 16;
 
 pub async fn ensure_stream(
     js: &jetstream::Context,
@@ -203,6 +205,7 @@ async fn process_message(
     observation.set_rows(rows.len());
 
     let mut output = Vec::with_capacity(rows.len() * 512);
+    let mut explanations = Vec::new();
     for row in rows {
         let standardized = runtime
             .standardize(&row.raw_features)
@@ -211,6 +214,26 @@ async fn process_message(
         let model_output = runtime
             .infer_standardized(&standardized)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        if job.task == "astronomical_anomaly_detection" {
+            let (prediction_id, _) = compute_anomaly_prediction_id(
+                &job.runtime_package_id,
+                &job.gold_snapshot_id,
+                &row.source_product_id,
+            );
+            let explanation = build_anomaly_explanation(
+                &job,
+                &runtime,
+                &row,
+                &standardized,
+                &input_sha,
+                &model_output,
+                prediction_id,
+            )?;
+            let explanation_key =
+                format!("explanations/anomaly/{}.json", explanation.prediction_id);
+            let explanation_bytes = serde_json::to_vec(&explanation)?;
+            explanations.push((explanation_key, explanation_bytes));
+        }
         let record = build_prediction(
             &job,
             &runtime,
@@ -227,6 +250,20 @@ async fn process_message(
         "predictions/{}/{}/{}/part-00000.jsonl",
         job.task, job.gold_snapshot_id, job.job_id
     );
+    let prediction_bucket = config.minio.prediction_bucket.clone();
+    stream::iter(explanations)
+        .map(|(explanation_key, explanation_bytes)| {
+            let store = Arc::clone(&store);
+            let prediction_bucket = prediction_bucket.clone();
+            async move {
+                store
+                    .put_json(&prediction_bucket, &explanation_key, &explanation_bytes)
+                    .await
+            }
+        })
+        .buffer_unordered(MAX_EXPLANATION_UPLOADS)
+        .try_collect::<Vec<_>>()
+        .await?;
     store
         .put_json(&config.minio.prediction_bucket, &key, &output)
         .await?;
@@ -238,6 +275,90 @@ async fn process_message(
     tracing::info!(job_id = %job.job_id, rows = job.expected_prediction_count, output_key = %key, "inference job completed");
     observation.set_success();
     Ok(())
+}
+
+fn build_anomaly_explanation(
+    job: &InferenceJobManifest,
+    runtime: &OnnxRuntime,
+    row: &GoldRow,
+    standardized: &[f32],
+    input_sha: &str,
+    reconstruction: &[f32],
+    prediction_id: String,
+) -> Result<AnomalyExplanation> {
+    if standardized.len() != reconstruction.len()
+        || standardized.len() != runtime.manifest.feature_order.len()
+    {
+        anyhow::bail!("anomaly explanation feature width mismatch")
+    }
+    let squared: Vec<f64> = standardized
+        .iter()
+        .zip(reconstruction)
+        .map(|(input, output)| {
+            let residual = *input as f64 - *output as f64;
+            residual * residual
+        })
+        .collect();
+    let total = squared.iter().sum::<f64>();
+    let preprocessing = runtime.preprocessing();
+    let mut features = Vec::with_capacity(standardized.len());
+    for (index, name) in runtime.manifest.feature_order.iter().enumerate() {
+        let gold_value = row.raw_features.get(name).copied().flatten();
+        let model_value = gold_value
+            .or_else(|| preprocessing.feature_medians.get(name).copied())
+            .context(format!("missing model value for feature '{name}'"))?;
+        let mean = *preprocessing
+            .feature_means
+            .get(name)
+            .context(format!("missing mean for feature '{name}'"))?;
+        let scale = *preprocessing
+            .feature_scales
+            .get(name)
+            .context(format!("missing scale for feature '{name}'"))?;
+        let residual = standardized[index] as f64 - reconstruction[index] as f64;
+        features.push(AnomalyExplanationFeature {
+            name: name.clone(),
+            gold_value,
+            model_value,
+            imputed: gold_value.is_none(),
+            mean,
+            scale,
+            standardized_input: standardized[index] as f64,
+            reconstruction: reconstruction[index] as f64,
+            residual,
+            squared_residual: squared[index],
+            contribution: if total > 0.0 {
+                squared[index] / total
+            } else {
+                0.0
+            },
+        });
+    }
+    let mse = compute_reconstruction_mse(standardized, reconstruction)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    Ok(AnomalyExplanation {
+        schema_version: 1,
+        explanation_version: "anomaly-explanation-v1".to_string(),
+        prediction_id,
+        gold_snapshot_id: job.gold_snapshot_id.clone(),
+        gold_artifact_key: job.gold_artifact_key.clone(),
+        source_product_id: row.source_product_id.clone(),
+        tic_id: row.tic_id,
+        sample_id: row.sample_id.clone(),
+        sector: row.sector,
+        runtime_package_id: job.runtime_package_id.clone(),
+        runtime_validation_id: job.runtime_validation_id.clone(),
+        registered_model_id: job.model_id.clone(),
+        model_version: runtime.manifest.model_version.clone(),
+        preprocessing_version: runtime.preprocessing().preprocessing_version.clone(),
+        split_id: runtime.preprocessing().split_id.clone(),
+        feature_order: runtime.manifest.feature_order.clone(),
+        model_input_sha256: input_sha.to_string(),
+        reconstruction_mse: mse,
+        decision_threshold: runtime.threshold(),
+        above_threshold: mse >= runtime.threshold(),
+        features,
+    })
 }
 
 fn validate_event_against_job(

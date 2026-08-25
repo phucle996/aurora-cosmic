@@ -2,10 +2,13 @@ package repo
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"go-api/internal/domain/entity"
 )
+
+var ErrObjectNotFound = errors.New("object not found")
 
 type ObjectInfo struct {
 	Key          string

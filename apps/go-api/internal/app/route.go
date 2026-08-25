@@ -52,6 +52,7 @@ func (r *Router) registerRoutes() {
 		api.GET("/candidates", r.module.AnalyticsHandler.ListCandidates)
 		api.GET("/candidates/:prediction_id", r.module.AnalyticsHandler.GetCandidate)
 		api.GET("/anomalies", r.module.AnalyticsHandler.ListAnomalies)
+		api.GET("/anomalies/:prediction_id", r.module.AnalyticsHandler.GetAnomalyDetail)
 		api.GET("/lightcurves", r.module.AnalyticsHandler.GetLightcurve)
 		api.GET("/models", r.module.ModelsHandler.ListModels)
 		api.POST("/models/train", r.module.ModelsHandler.StartTraining)

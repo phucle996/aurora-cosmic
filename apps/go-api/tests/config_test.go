@@ -42,6 +42,9 @@ func TestLoadRequiredEnv(t *testing.T) {
 	if cfg.Server.Port != 8080 {
 		t.Errorf("expected port 8080, got %d", cfg.Server.Port)
 	}
+	if cfg.MinIO.PredictionBucket != "aurora" {
+		t.Errorf("expected prediction bucket fallback aurora, got %q", cfg.MinIO.PredictionBucket)
+	}
 
 	os.Unsetenv("AURORA_ENV")
 	if _, err := config.Load(); err == nil {

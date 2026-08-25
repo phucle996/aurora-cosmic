@@ -7,6 +7,7 @@ import { ThemeProvider } from '@/components/theme-provider';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import AnomaliesPage from '@/pages/anomalies/page';
+import AnomalyDetailPage from '@/pages/anomalies/detail-page';
 import CandidatesPage from '@/pages/candidates/page';
 import CandidateDetailPage from '@/pages/candidates/detail-page';
 import OverviewPage from '@/pages/overview/page';
@@ -41,6 +42,7 @@ export default function App(): JSX.Element {
                     <Route path="/candidates" element={<CandidatesPage />} />
                     <Route path="/candidates/:predictionId" element={<CandidateDetailPage />} />
                     <Route path="/anomalies" element={<AnomaliesPage />} />
+                    <Route path="/anomalies/:predictionId" element={<AnomalyDetailPage />} />
                     <Route path="/models" element={<ModelsPage />} />
                     <Route path="/monitoring" element={<MonitoringPage />} />
                   </Routes>
