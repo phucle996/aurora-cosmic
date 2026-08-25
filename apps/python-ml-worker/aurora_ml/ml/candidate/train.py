@@ -292,16 +292,27 @@ def train_candidate_model(
     # Load base model weights for fine-tuning if provided
     if base_model_path and os.path.exists(base_model_path):
         try:
-            state_dict = torch.load(base_model_path, map_location=device, weights_only=True)
+            state_dict = torch.load(
+                base_model_path, map_location=device, weights_only=True
+            )
             model.load_state_dict(state_dict, strict=False)
-            print(f"[aurora-ml] Transfer Learning: Initialized CandidateTabularMLP with base weights from {base_model_path}")
+            print(
+                f"[aurora-ml] Transfer Learning: Initialized CandidateTabularMLP with base weights from {base_model_path}"
+            )
         except Exception as exc:
-            print(f"[aurora-ml] Warning: Could not load base weights: {exc}. Training with random init.")
+            print(
+                f"[aurora-ml] Warning: Could not load base weights: {exc}. Training with random init."
+            )
 
     optimizer = torch.optim.AdamW(
-        model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.999)
+        model.parameters(),
+        lr=learning_rate,
+        weight_decay=weight_decay,
+        betas=(0.9, 0.999),
     )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=epochs, eta_min=1e-5
+    )
 
     checkpoint.update_status("TRAINING")
     checkpoint_path = os.path.join(

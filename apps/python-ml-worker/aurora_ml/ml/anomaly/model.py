@@ -11,7 +11,12 @@ import torch.nn as nn
 
 from aurora_ml.ml.datasets.splits import ANOMALY_MODEL_INPUT_FEATURES
 
-__all__ = ["AnomalyLightcurveAutoencoder", "AnomalyAutoencoderV1", "ANOMALY_MODEL_INPUT_FEATURES", "compute_reconstruction_mse"]
+__all__ = [
+    "AnomalyLightcurveAutoencoder",
+    "AnomalyAutoencoderV1",
+    "ANOMALY_MODEL_INPUT_FEATURES",
+    "compute_reconstruction_mse",
+]
 
 
 class AnomalyLightcurveAutoencoder(nn.Module):
@@ -20,7 +25,9 @@ class AnomalyLightcurveAutoencoder(nn.Module):
     model_version: str = "anomaly-deep-autoencoder-v1"
     score_definition_version: str = "reconstruction-mse-v1"
 
-    def __init__(self, input_dim: int = 14, hidden_dims: Tuple[int, int, int] = (64, 32, 16)):
+    def __init__(
+        self, input_dim: int = 14, hidden_dims: Tuple[int, int, int] = (64, 32, 16)
+    ):
         super().__init__()
         self.input_dim = input_dim
         self.hidden_dims = hidden_dims

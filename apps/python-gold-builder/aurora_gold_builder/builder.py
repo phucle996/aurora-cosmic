@@ -134,7 +134,9 @@ class GoldBuilder:
                 "source_product_id": event.source_product_id,
                 "lineage_id": event.lineage_id,
                 "sample_id": event.effective_sample_id,
-                "tic_id": event.tic_id if event.tic_id is not None else row.get("tic_id"),
+                "tic_id": event.tic_id
+                if event.tic_id is not None
+                else row.get("tic_id"),
                 "sector": int(event.sector),
                 "silver_sha256": event.sha256,
                 "training_label": "UNRESOLVED",

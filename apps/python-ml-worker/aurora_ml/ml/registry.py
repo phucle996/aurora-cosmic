@@ -227,7 +227,9 @@ class ModelRegistry:
         with open(model_pt_source_path, "rb") as f:
             actual_model_pt_sha = hashlib.sha256(f.read()).hexdigest()
 
-        expected_model_sha = train_data.get("model_sha256") or train_data.get("artifacts", {}).get("model_pt_sha256")
+        expected_model_sha = train_data.get("model_sha256") or train_data.get(
+            "artifacts", {}
+        ).get("model_pt_sha256")
         if expected_model_sha and actual_model_pt_sha != expected_model_sha:
             raise ModelPackageIntegrityError(
                 f"MODEL_SHA_MISMATCH: actual {actual_model_pt_sha} != manifest {expected_model_sha}"
@@ -240,7 +242,9 @@ class ModelRegistry:
         with open(preprocessing_json_source_path, "rb") as f:
             actual_prep_sha = hashlib.sha256(f.read()).hexdigest()
 
-        expected_prep_sha = train_data.get("preprocessing_sha256") or train_data.get("artifacts", {}).get("preprocessing_json_sha256")
+        expected_prep_sha = train_data.get("preprocessing_sha256") or train_data.get(
+            "artifacts", {}
+        ).get("preprocessing_json_sha256")
         if expected_prep_sha and actual_prep_sha != expected_prep_sha:
             raise ModelPackageIntegrityError(
                 f"PREPROCESSING_SHA_MISMATCH: actual {actual_prep_sha} != manifest {expected_prep_sha}"

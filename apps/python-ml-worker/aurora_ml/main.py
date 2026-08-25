@@ -495,35 +495,55 @@ def main():
         def run_nats_training_listener():
             async def nats_worker():
                 import nats
+
                 while not stop_event:
                     try:
-                        nc = await nats.connect(cfg.nats_url, reconnect_time_wait=2, max_reconnect_attempts=-1)
-                        logger.info("ML Worker subscribed to aurora.v1.ml.training.requested on NATS")
+                        nc = await nats.connect(
+                            cfg.nats_url,
+                            reconnect_time_wait=2,
+                            max_reconnect_attempts=-1,
+                        )
+                        logger.info(
+                            "ML Worker subscribed to aurora.v1.ml.training.requested on NATS"
+                        )
 
                         async def handle_train_request(msg):
                             try:
                                 payload = json.loads(msg.data.decode("utf-8"))
-                                logger.info("Received training job request via NATS: %s", payload)
+                                logger.info(
+                                    "Received training job request via NATS: %s",
+                                    payload,
+                                )
                                 import importlib
                                 import aurora_ml.trainer
+
                                 importlib.reload(aurora_ml.trainer)
                                 from aurora_ml.trainer import run_training_pipeline
+
                                 result = run_training_pipeline(payload, cfg)
                                 await nc.publish(
                                     "aurora.v1.ml.training.completed",
                                     json.dumps(result, sort_keys=True).encode("utf-8"),
                                 )
                                 await nc.flush()
-                                logger.info("Published aurora.v1.ml.training.completed for job %s", result.get("job_id"))
+                                logger.info(
+                                    "Published aurora.v1.ml.training.completed for job %s",
+                                    result.get("job_id"),
+                                )
 
                                 # Auto-dispatch inference jobs for ALL gold snapshots used in this training run.
                                 # This closes the gap: training done → inference requested automatically.
                                 if result.get("status") == "completed":
                                     import uuid as _uuid
+
                                     task = result.get("task", "")
-                                    runtime_pkg_id = result.get("runtime_package_id", "")
+                                    runtime_pkg_id = result.get(
+                                        "runtime_package_id", ""
+                                    )
                                     manifest_key = result.get("manifest_key", "")
-                                    gold_snapshot_ids = payload.get("gold_snapshot_ids", [])
+                                    gold_snapshot_ids = payload.get(
+                                        "gold_snapshot_ids", []
+                                    )
                                     # Fallback to single snapshot id if list not provided
                                     if not gold_snapshot_ids:
                                         single = payload.get("gold_snapshot_id", "")
@@ -542,12 +562,16 @@ def main():
                                             js = None
 
                                         for snap_id in gold_snapshot_ids:
-                                            event_id = f"inference-request-{_uuid.uuid4()}"
+                                            event_id = (
+                                                f"inference-request-{_uuid.uuid4()}"
+                                            )
                                             inference_event = {
                                                 "schema_version": 1,
                                                 "event_id": event_id,
                                                 "event_type": nats_subject,
-                                                "occurred_at": __import__("datetime").datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                                "occurred_at": __import__("datetime")
+                                                .datetime.utcnow()
+                                                .strftime("%Y-%m-%dT%H:%M:%SZ"),
                                                 "task": task,
                                                 "job_id": event_id,
                                                 "job_manifest_bucket": "aurora",
@@ -560,25 +584,40 @@ def main():
                                                 "expected_prediction_count": 0,
                                                 "producer": "aurora-ml-worker",
                                             }
-                                            event_bytes = json.dumps(inference_event, sort_keys=True).encode("utf-8")
+                                            event_bytes = json.dumps(
+                                                inference_event, sort_keys=True
+                                            ).encode("utf-8")
                                             try:
                                                 if js is not None:
-                                                    await js.publish(nats_subject, event_bytes)
+                                                    await js.publish(
+                                                        nats_subject, event_bytes
+                                                    )
                                                 else:
-                                                    await nc.publish(nats_subject, event_bytes)
+                                                    await nc.publish(
+                                                        nats_subject, event_bytes
+                                                    )
                                             except Exception as pub_err:
-                                                logger.warning("Failed to dispatch inference for snapshot %s: %s", snap_id, pub_err)
+                                                logger.warning(
+                                                    "Failed to dispatch inference for snapshot %s: %s",
+                                                    snap_id,
+                                                    pub_err,
+                                                )
 
                                         await nc.flush()
                                         logger.info(
                                             "Dispatched %d inference job(s) for task=%s runtime=%s",
-                                            len(gold_snapshot_ids), task, runtime_pkg_id,
+                                            len(gold_snapshot_ids),
+                                            task,
+                                            runtime_pkg_id,
                                         )
                             except Exception as req_err:
-                                logger.exception("Failed to execute training job: %s", req_err)
+                                logger.exception(
+                                    "Failed to execute training job: %s", req_err
+                                )
 
-
-                        sub = await nc.subscribe("aurora.v1.ml.training.requested", cb=handle_train_request)
+                        sub = await nc.subscribe(
+                            "aurora.v1.ml.training.requested", cb=handle_train_request
+                        )
                         while not stop_event:
                             await asyncio.sleep(1)
                         await sub.unsubscribe()
@@ -586,7 +625,10 @@ def main():
                         break
                     except Exception as nats_err:
                         if not stop_event:
-                            logger.warning("NATS listener connection failed (%s); retrying in 5s...", nats_err)
+                            logger.warning(
+                                "NATS listener connection failed (%s); retrying in 5s...",
+                                nats_err,
+                            )
                             await asyncio.sleep(5)
 
             loop = asyncio.new_event_loop()
@@ -595,7 +637,12 @@ def main():
 
         import threading
         import asyncio
-        train_thread = threading.Thread(target=run_nats_training_listener, daemon=True, name="nats-training-listener")
+
+        train_thread = threading.Thread(
+            target=run_nats_training_listener,
+            daemon=True,
+            name="nats-training-listener",
+        )
         train_thread.start()
 
         while not stop_event:
@@ -613,4 +660,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

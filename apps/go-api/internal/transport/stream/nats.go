@@ -27,9 +27,9 @@ type NATSStream struct {
 	models        service.Models
 	log           *slog.Logger
 
-	mu            sync.Mutex
-	conn          *nats.Conn
-	subscriptions []*nats.Subscription
+	mu             sync.Mutex
+	conn           *nats.Conn
+	subscriptions  []*nats.Subscription
 	customHandlers map[string][]MessageHandler
 }
 

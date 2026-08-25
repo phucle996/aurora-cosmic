@@ -4,20 +4,26 @@ PyTorch Deep Residual Network with Squeeze-and-Excitation (SE) Feature Attention
 and Layer Normalization for exoplanet-candidate vetting tabular features.
 """
 
-from typing import List, Tuple
+from typing import Tuple
 
 import torch
 import torch.nn as nn
 
 from aurora_ml.ml.datasets.splits import CANDIDATE_MODEL_INPUT_FEATURES
 
-__all__ = ["CandidateTabularMLP", "CandidateTabularMlpV1", "CANDIDATE_MODEL_INPUT_FEATURES"]
+__all__ = [
+    "CandidateTabularMLP",
+    "CandidateTabularMlpV1",
+    "CANDIDATE_MODEL_INPUT_FEATURES",
+]
 
 
 class ResidualDenseBlock(nn.Module):
     """Residual Dense Block with LayerNorm, GELU, and Dropout."""
 
-    def __init__(self, in_dim: int, hidden_dim: int, out_dim: int, dropout_rate: float = 0.15):
+    def __init__(
+        self, in_dim: int, hidden_dim: int, out_dim: int, dropout_rate: float = 0.15
+    ):
         super().__init__()
         self.block = nn.Sequential(
             nn.Linear(in_dim, hidden_dim),
@@ -28,7 +34,9 @@ class ResidualDenseBlock(nn.Module):
             nn.LayerNorm(out_dim),
         )
         self.act = nn.GELU()
-        self.shortcut = nn.Linear(in_dim, out_dim) if in_dim != out_dim else nn.Identity()
+        self.shortcut = (
+            nn.Linear(in_dim, out_dim) if in_dim != out_dim else nn.Identity()
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.act(self.shortcut(x) + self.block(x))
