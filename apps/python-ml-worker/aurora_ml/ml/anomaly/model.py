@@ -26,34 +26,36 @@ class AnomalyLightcurveAutoencoder(nn.Module):
     score_definition_version: str = "reconstruction-mse-v1"
 
     def __init__(
-        self, input_dim: int = 14, hidden_dims: Tuple[int, int, int] = (64, 32, 16)
+        self, input_dim: int = 14, hidden_dims: Tuple[int, ...] = (64, 32, 16)
     ):
         super().__init__()
+        if not hidden_dims or any(width <= 0 for width in hidden_dims):
+            raise ValueError("hidden_dims must contain at least one positive width")
+
         self.input_dim = input_dim
         self.hidden_dims = hidden_dims
+        self.latent_dim = hidden_dims[-1]
 
-        # Encoder: input_dim -> 64 -> 32 -> 16 (Deep compressed latent space)
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, 64),
-            nn.LayerNorm(64),
-            nn.GELU(),
-            nn.Linear(64, 32),
-            nn.LayerNorm(32),
-            nn.GELU(),
-            nn.Linear(32, 16),
-            nn.LayerNorm(16),
-        )
+        encoder_layers: list[nn.Module] = []
+        previous_width = input_dim
+        for index, width in enumerate(hidden_dims):
+            encoder_layers.extend(
+                (nn.Linear(previous_width, width), nn.LayerNorm(width))
+            )
+            if index < len(hidden_dims) - 1:
+                encoder_layers.append(nn.GELU())
+            previous_width = width
+        self.encoder = nn.Sequential(*encoder_layers)
 
-        # Decoder: 16 (latent) -> 32 -> 64 -> input_dim
-        self.decoder = nn.Sequential(
-            nn.Linear(16, 32),
-            nn.LayerNorm(32),
-            nn.GELU(),
-            nn.Linear(32, 64),
-            nn.LayerNorm(64),
-            nn.GELU(),
-            nn.Linear(64, input_dim),
-        )
+        decoder_layers: list[nn.Module] = []
+        previous_width = self.latent_dim
+        for width in reversed(hidden_dims[:-1]):
+            decoder_layers.extend(
+                (nn.Linear(previous_width, width), nn.LayerNorm(width), nn.GELU())
+            )
+            previous_width = width
+        decoder_layers.append(nn.Linear(previous_width, input_dim))
+        self.decoder = nn.Sequential(*decoder_layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass: computes reconstruction tensor x_hat of shape (N, input_dim)."""
@@ -62,7 +64,7 @@ class AnomalyLightcurveAutoencoder(nn.Module):
         return reconstructed
 
     def encode(self, x: torch.Tensor) -> torch.Tensor:
-        """Extract bottleneck latent representation of shape (N, 16)."""
+        """Extract bottleneck latent representation of shape (N, hidden_dims[-1])."""
         return self.encoder(x)
 
 
