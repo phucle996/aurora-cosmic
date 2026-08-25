@@ -3,8 +3,8 @@ import { Sparkles } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { goldFeatureCatalog } from '../types';
+import { goldCandidateSchema } from '../types';
+import { SchemaCatalogCard } from './SchemaCatalogCard';
 
 export function GoldFeatureCatalogCard(): JSX.Element {
   return (
@@ -51,62 +51,7 @@ export function GoldFeatureCatalogCard(): JSX.Element {
         </CardContent>
       </Card>
 
-      {/* Feature Catalog Dictionary */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="text-base font-semibold">
-                Từ điển Đặc trưng Thiên văn (Gold Feature Store Schema)
-              </CardTitle>
-              <CardDescription>
-                Danh mục các đặc trưng toán học và vật lý được trích xuất từ chuỗi thời gian ánh sáng Silver.
-              </CardDescription>
-            </div>
-            <Badge variant="outline" className="font-mono">
-              {goldFeatureCatalog.length} Features
-            </Badge>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-[200px]">Tên đặc trưng (Column)</TableHead>
-                  <TableHead>Nhóm</TableHead>
-                  <TableHead>Kiểu dữ liệu</TableHead>
-                  <TableHead>Đơn vị</TableHead>
-                  <TableHead>Mô tả giải tích</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {goldFeatureCatalog.map((feat) => (
-                  <TableRow key={feat.name}>
-                    <TableCell className="font-mono text-xs font-semibold text-primary">
-                      {feat.name}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="secondary" className="text-[10px]">
-                        {feat.category}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {feat.dtype}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {feat.unit}
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {feat.description}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </CardContent>
-      </Card>
+      <SchemaCatalogCard catalog={goldCandidateSchema} />
     </div>
   );
 }

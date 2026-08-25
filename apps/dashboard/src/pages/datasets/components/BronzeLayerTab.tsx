@@ -7,6 +7,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { StorageListing } from '../types';
 import { ObjectBrowserTable } from './ObjectBrowserTable';
+import { SchemaCatalogCard } from './SchemaCatalogCard';
+import {
+  bronzeFfiFitsSchema,
+  bronzeLightCurveFitsSchema,
+  bronzeManifestSchema,
+  bronzeTargetPixelFitsSchema,
+} from '../types';
 
 interface BronzeLayerTabProps {
   bronzeData: StorageListing | null;
@@ -68,6 +75,11 @@ export function BronzeLayerTab({
           />
         </CardContent>
       </Card>
+
+      <SchemaCatalogCard catalog={bronzeManifestSchema} />
+      <SchemaCatalogCard catalog={bronzeLightCurveFitsSchema} />
+      <SchemaCatalogCard catalog={bronzeTargetPixelFitsSchema} />
+      <SchemaCatalogCard catalog={bronzeFfiFitsSchema} />
     </div>
   );
 }

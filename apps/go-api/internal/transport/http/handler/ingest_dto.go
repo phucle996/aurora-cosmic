@@ -128,3 +128,44 @@ func ingestControlJobResponseFromEntity(job entity.IngestControlJob) ingestContr
 		Error:        job.Error,
 	}
 }
+
+type storageObjectResponseDTO struct {
+	Key          string    `json:"key"`
+	SizeBytes    int64     `json:"size_bytes"`
+	ETag         string    `json:"etag,omitempty"`
+	LastModified time.Time `json:"last_modified"`
+}
+
+type storageListingResponseDTO struct {
+	Bucket     string                     `json:"bucket"`
+	Prefix     string                     `json:"prefix"`
+	Page       int                        `json:"page"`
+	PageSize   int                        `json:"page_size"`
+	Total      int                        `json:"total"`
+	TotalBytes int64                      `json:"total_bytes"`
+	Truncated  bool                       `json:"truncated"`
+	Objects    []storageObjectResponseDTO `json:"objects"`
+}
+
+func storageListingResponseFromEntity(listing entity.StorageListing) storageListingResponseDTO {
+	objects := make([]storageObjectResponseDTO, len(listing.Objects))
+	for index, object := range listing.Objects {
+		objects[index] = storageObjectResponseDTO{
+			Key:          object.Key,
+			SizeBytes:    object.SizeBytes,
+			ETag:         object.ETag,
+			LastModified: object.LastModified,
+		}
+	}
+
+	return storageListingResponseDTO{
+		Bucket:     listing.Bucket,
+		Prefix:     listing.Prefix,
+		Page:       listing.Page,
+		PageSize:   listing.PageSize,
+		Total:      listing.Total,
+		TotalBytes: listing.TotalBytes,
+		Truncated:  listing.Truncated,
+		Objects:    objects,
+	}
+}

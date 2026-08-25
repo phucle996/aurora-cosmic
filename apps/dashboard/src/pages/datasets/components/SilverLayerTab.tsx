@@ -3,6 +3,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { StorageListing } from '../types';
 import { ObjectBrowserTable } from './ObjectBrowserTable';
+import { SchemaCatalogCard } from './SchemaCatalogCard';
+import { silverFfiSchema, silverLightCurveSchema, silverTargetPixelSchema } from '../types';
 
 interface SilverLayerTabProps {
   silverData: StorageListing | null;
@@ -64,6 +66,10 @@ export function SilverLayerTab({
           />
         </CardContent>
       </Card>
+
+      <SchemaCatalogCard catalog={silverLightCurveSchema} />
+      <SchemaCatalogCard catalog={silverTargetPixelSchema} />
+      <SchemaCatalogCard catalog={silverFfiSchema} />
     </div>
   );
 }

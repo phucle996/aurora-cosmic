@@ -67,7 +67,7 @@ func (h *IngestHandler) Storage(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "storage listing unavailable"})
 		return
 	}
-	c.JSON(http.StatusOK, listing)
+	c.JSON(http.StatusOK, storageListingResponseFromEntity(*listing))
 }
 
 func (h *IngestHandler) Start(c *gin.Context) {

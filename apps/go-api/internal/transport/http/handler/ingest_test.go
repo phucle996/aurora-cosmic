@@ -33,7 +33,20 @@ func (s *ingestHTTPStub) Status(context.Context) (*entity.IngestStatus, error) {
 }
 
 func (*ingestHTTPStub) Storage(context.Context, string, int, int) (*entity.StorageListing, error) {
-	return &entity.StorageListing{}, nil
+	return &entity.StorageListing{
+		Bucket:     "aurora",
+		Prefix:     "bronze/",
+		Page:       1,
+		PageSize:   25,
+		Total:      12656,
+		TotalBytes: 28424102400,
+		Objects: []entity.StorageObject{{
+			Key:          "bronze/tess/lightcurve/sector=0001/tic=1/example.fits",
+			SizeBytes:    2039040,
+			ETag:         "etag-1",
+			LastModified: time.Date(2026, 8, 25, 8, 41, 49, 0, time.UTC),
+		}},
+	}, nil
 }
 
 func (s *ingestHTTPStub) Start(_ context.Context, request entity.IngestStartRequest) (*entity.IngestControlJob, error) {
@@ -51,6 +64,7 @@ func TestIngestHTTPContractUsesSnakeCaseDTOs(t *testing.T) {
 	h := NewIngestHandler(stub)
 	router := gin.New()
 	router.GET("/status", h.Status)
+	router.GET("/storage", h.Storage)
 	router.POST("/jobs", h.Start)
 
 	statusRecorder := httptest.NewRecorder()
@@ -64,6 +78,19 @@ func TestIngestHTTPContractUsesSnakeCaseDTOs(t *testing.T) {
 	}
 	if status["control_job_id"] != "ingest-job-1" || status["completed_products"] != float64(3) || status["CompletedProducts"] != nil {
 		t.Fatalf("status response does not match the dashboard contract: %s", statusRecorder.Body.String())
+	}
+
+	storageRecorder := httptest.NewRecorder()
+	router.ServeHTTP(storageRecorder, httptest.NewRequest(http.MethodGet, "/storage?prefix=bronze/&page=1&limit=25", nil))
+	if storageRecorder.Code != http.StatusOK {
+		t.Fatalf("storage response = %d", storageRecorder.Code)
+	}
+	var storage map[string]any
+	if err := json.Unmarshal(storageRecorder.Body.Bytes(), &storage); err != nil {
+		t.Fatalf("decode storage response: %v", err)
+	}
+	if storage["total"] != float64(12656) || storage["total_bytes"] != float64(28424102400) || storage["Total"] != nil {
+		t.Fatalf("storage response does not match the dashboard contract: %s", storageRecorder.Body.String())
 	}
 
 	startRecorder := httptest.NewRecorder()
