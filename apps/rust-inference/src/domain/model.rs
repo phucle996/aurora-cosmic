@@ -62,6 +62,10 @@ pub struct PreprocessingConfig {
     pub feature_means: HashMap<String, f64>,
     #[serde(default)]
     pub feature_scales: HashMap<String, f64>,
+    /// Supervision metadata emitted by CandidatePreprocessor. It is retained in
+    /// the immutable package but is never used by runtime inference.
+    #[serde(default)]
+    pub label_encoding: HashMap<String, i64>,
 }
 
 /// Threshold configuration loaded from `threshold.json`.

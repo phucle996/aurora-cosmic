@@ -335,10 +335,16 @@ func (r *AnalyticsClickHouse) ListTargets(ctx context.Context, filter entity.Tar
 
 	joins := `
 LEFT JOIN (
-		SELECT tic_id, sector, count() AS lightcurve_points, max(time) - min(time) AS lightcurve_time_span
+		SELECT tic_id, sector, toInt64(count()) AS lightcurve_points, max(time) - min(time) AS lightcurve_time_span
 		FROM lightcurves
 		GROUP BY tic_id, sector
 ) AS lc ON lc.tic_id = t.tic_id AND lc.sector = t.sector
+LEFT JOIN (
+		SELECT tic_id, sector, max(n_points) AS gold_points, max(time_span) AS gold_time_span
+		FROM candidate_features_v1
+		WHERE tic_id IS NOT NULL
+		GROUP BY tic_id, sector
+) AS gf ON gf.tic_id = t.tic_id AND gf.sector = t.sector
 LEFT JOIN (
 		SELECT tic_id, sector,
 			argMax(prediction_id, predicted_at) AS candidate_prediction_id,
@@ -391,7 +397,7 @@ LEFT JOIN (
 		if *filter.HasLightcurve {
 			flag = 1
 		}
-		conditions = append(conditions, fmt.Sprintf("if(lc.lightcurve_points > 0, 1, 0) = %d", flag))
+		conditions = append(conditions, fmt.Sprintf("if(if(lc.lightcurve_points > 0, lc.lightcurve_points, gf.gold_points) > 0, 1, 0) = %d", flag))
 	}
 	if filter.HasCandidate != nil {
 		flag := 0
@@ -408,14 +414,14 @@ LEFT JOIN (
 		conditions = append(conditions, fmt.Sprintf("if(ap.anomaly_prediction_id != '', 1, 0) = %d", flag))
 	}
 	if filter.PipelineStatus != "" {
-		conditions = append(conditions, fmt.Sprintf("multiIf(ap.anomaly_prediction_id != '' OR cp.candidate_prediction_id != '', 'scored', lc.lightcurve_points > 0, 'ingested', 'discovered') = '%s'", strings.ReplaceAll(filter.PipelineStatus, "'", "''")))
+		conditions = append(conditions, fmt.Sprintf("multiIf(ap.anomaly_prediction_id != '' OR cp.candidate_prediction_id != '', 'scored', if(lc.lightcurve_points > 0, lc.lightcurve_points, gf.gold_points) > 0, 'ingested', 'discovered') = '%s'", strings.ReplaceAll(filter.PipelineStatus, "'", "''")))
 	}
 	where := ""
 	if len(conditions) > 0 {
 		where = " WHERE " + strings.Join(conditions, " AND ")
 	}
 
-	countQuery := "SELECT count() AS total FROM targets AS t" + joins + where + " FORMAT JSON"
+	countQuery := "SELECT count() AS total FROM targets AS t FINAL" + joins + where + " FORMAT JSON"
 	countBody, err := r.client.Query(ctx, countQuery)
 	if err != nil {
 		return entity.Page[entity.Target]{}, err
@@ -453,14 +459,14 @@ LEFT JOIN (
 	}
 	query := `SELECT
 		t.tic_id AS tic_id, t.tess_mag AS tess_mag, t.ra AS ra, t.dec AS dec, t.effective_t AS effective_t, t.surface_grav AS surface_grav, t.radius AS radius, t.sector AS sector, t.matched_toi AS matched_toi, t.disposition AS disposition,
-		ifNull(lc.lightcurve_points, 0) AS lightcurve_points, ifNull(lc.lightcurve_time_span, 0) AS lightcurve_time_span,
-		if(lc.lightcurve_points > 0, 1, 0) AS has_lightcurve,
+		if(lc.lightcurve_points > 0, lc.lightcurve_points, gf.gold_points) AS lightcurve_points, if(lc.lightcurve_points > 0, lc.lightcurve_time_span, gf.gold_time_span) AS lightcurve_time_span,
+		if(if(lc.lightcurve_points > 0, lc.lightcurve_points, gf.gold_points) > 0, 1, 0) AS has_lightcurve,
 		if(cp.candidate_prediction_id != '', 1, 0) AS has_candidate, ifNull(cp.candidate_prediction_id, '') AS candidate_prediction_id,
 		ifNull(cp.candidate_score, 0) AS candidate_score, ifNull(cp.candidate_above_threshold, 0) AS candidate_above_threshold,
 		if(ap.anomaly_prediction_id != '', 1, 0) AS has_anomaly, ifNull(ap.anomaly_prediction_id, '') AS anomaly_prediction_id,
 		ifNull(ap.anomaly_score, 0) AS anomaly_score,
-		multiIf(ap.anomaly_prediction_id != '' OR cp.candidate_prediction_id != '', 'scored', lc.lightcurve_points > 0, 'ingested', 'discovered') AS pipeline_status
-	FROM targets AS t` + joins + where + fmt.Sprintf(" ORDER BY %s LIMIT %d OFFSET %d FORMAT JSON", orderBy, page.Limit, page.Offset)
+		multiIf(ap.anomaly_prediction_id != '' OR cp.candidate_prediction_id != '', 'scored', if(lc.lightcurve_points > 0, lc.lightcurve_points, gf.gold_points) > 0, 'ingested', 'discovered') AS pipeline_status
+	FROM targets AS t FINAL` + joins + where + fmt.Sprintf(" ORDER BY %s LIMIT %d OFFSET %d FORMAT JSON", orderBy, page.Limit, page.Offset)
 
 	body, err := r.client.Query(ctx, query)
 	if err != nil {

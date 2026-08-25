@@ -336,8 +336,13 @@ def main():
         return
 
     if args.command == "analytics-load":
+        from aurora_ml.pipeline.analytics_projector import AnalyticsProjector
+
+        indexed_rows = AnalyticsProjector(Config()).project_snapshot(
+            args.snapshot_id, rebuild=args.rebuild
+        )
         print(
-            f"[aurora-ml-worker] Analytics load executed for snapshot '{args.snapshot_id}' (rebuild={args.rebuild})"
+            f"[aurora-ml-worker] Analytics load indexed {indexed_rows} Gold rows for snapshot '{args.snapshot_id}' (rebuild={args.rebuild})"
         )
         return
 
@@ -492,6 +497,26 @@ def main():
 
         logger.info("ML Worker service active and running.")
 
+        def run_analytics_reconciler():
+            from aurora_ml.pipeline.analytics_projector import AnalyticsProjector
+
+            projector = AnalyticsProjector(cfg)
+            while not stop_event:
+                try:
+                    gold_rows, prediction_rows = projector.reconcile()
+                    if gold_rows or prediction_rows:
+                        logger.info(
+                            "Analytics reconciled Gold rows=%d prediction rows=%d",
+                            gold_rows,
+                            prediction_rows,
+                        )
+                except Exception:
+                    logger.exception("Analytics reconciliation failed")
+                for _ in range(30):
+                    if stop_event:
+                        return
+                    time.sleep(1)
+
         # Start NATS Training Listener in background thread
         def run_nats_training_listener():
             async def nats_worker():
@@ -533,85 +558,23 @@ def main():
                                     result.get("job_id"),
                                 )
 
-                                # Auto-dispatch inference jobs for ALL gold snapshots used in this training run.
-                                # This closes the gap: training done → inference requested automatically.
                                 if result.get("status") == "completed":
-                                    import uuid as _uuid
-
-                                    task = result.get("task", "")
-                                    runtime_pkg_id = result.get(
-                                        "runtime_package_id", ""
-                                    )
-                                    manifest_key = result.get("manifest_key", "")
-                                    gold_snapshot_ids = payload.get(
-                                        "gold_snapshot_ids", []
-                                    )
-                                    # Fallback to single snapshot id if list not provided
-                                    if not gold_snapshot_ids:
-                                        single = payload.get("gold_snapshot_id", "")
-                                        if single:
-                                            gold_snapshot_ids = [single]
-
-                                    if task and runtime_pkg_id and gold_snapshot_ids:
-                                        nats_subject = (
-                                            "aurora.v1.inference.candidate.requested"
-                                            if "candidate" in task
-                                            else "aurora.v1.inference.anomaly.requested"
+                                    requests = result.get("inference_requests", [])
+                                    js = nc.jetstream()
+                                    for inference_request in requests:
+                                        subject = inference_request["event_type"]
+                                        await js.publish(
+                                            subject,
+                                            json.dumps(
+                                                inference_request, sort_keys=True
+                                            ).encode("utf-8"),
                                         )
-                                        try:
-                                            js = nc.jetstream()
-                                        except Exception:
-                                            js = None
-
-                                        for snap_id in gold_snapshot_ids:
-                                            event_id = (
-                                                f"inference-request-{_uuid.uuid4()}"
-                                            )
-                                            inference_event = {
-                                                "schema_version": 1,
-                                                "event_id": event_id,
-                                                "event_type": nats_subject,
-                                                "occurred_at": __import__("datetime")
-                                                .datetime.utcnow()
-                                                .strftime("%Y-%m-%dT%H:%M:%SZ"),
-                                                "task": task,
-                                                "job_id": event_id,
-                                                "job_manifest_bucket": "aurora",
-                                                "job_manifest_key": manifest_key,
-                                                "job_manifest_sha256": "",
-                                                "runtime_package_id": runtime_pkg_id,
-                                                "gold_snapshot_id": snap_id,
-                                                "gold_artifact_key": f"gold/{task.split('_')[0]}/{snap_id}/part-00000.parquet",
-                                                "sector": payload.get("sector", 42),
-                                                "expected_prediction_count": 0,
-                                                "producer": "aurora-ml-worker",
-                                            }
-                                            event_bytes = json.dumps(
-                                                inference_event, sort_keys=True
-                                            ).encode("utf-8")
-                                            try:
-                                                if js is not None:
-                                                    await js.publish(
-                                                        nats_subject, event_bytes
-                                                    )
-                                                else:
-                                                    await nc.publish(
-                                                        nats_subject, event_bytes
-                                                    )
-                                            except Exception as pub_err:
-                                                logger.warning(
-                                                    "Failed to dispatch inference for snapshot %s: %s",
-                                                    snap_id,
-                                                    pub_err,
-                                                )
-
-                                        await nc.flush()
-                                        logger.info(
-                                            "Dispatched %d inference job(s) for task=%s runtime=%s",
-                                            len(gold_snapshot_ids),
-                                            task,
-                                            runtime_pkg_id,
-                                        )
+                                    await nc.flush()
+                                    logger.info(
+                                        "Dispatched %d durable inference job(s) for training job %s",
+                                        len(requests),
+                                        result.get("job_id"),
+                                    )
                             except Exception as req_err:
                                 failure = {
                                     "job_id": payload.get("training_job_id", ""),
@@ -665,6 +628,13 @@ def main():
 
         import threading
         import asyncio
+
+        analytics_thread = threading.Thread(
+            target=run_analytics_reconciler,
+            name="aurora-analytics-reconciler",
+            daemon=True,
+        )
+        analytics_thread.start()
 
         train_thread = threading.Thread(
             target=run_nats_training_listener,

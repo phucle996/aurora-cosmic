@@ -462,6 +462,16 @@ def run_training_pipeline(payload: Dict[str, Any], config: Config) -> Dict[str, 
                 minio_client.fput_object(bucket, target_key, local_file)
                 LOGGER.info("Uploaded %s -> s3://%s/%s", file_name, bucket, target_key)
 
+        from aurora_ml.inference_dispatch import MinioInferenceJobPlanner
+
+        runtime_manifest_key = f"{s3_prefix}/manifest.json"
+        inference_requests = MinioInferenceJobPlanner(minio_client, bucket).plan(
+            task=final_task_name,
+            gold_snapshot_ids=gold_snapshot_ids,
+            runtime_package_id=runtime_pkg_id,
+            runtime_manifest_key=runtime_manifest_key,
+        )
+
         # 5. If auto_promote, write champion pointer
         if auto_promote:
             champion_key = f"models/{final_task_name}/champion.json"
@@ -499,6 +509,7 @@ def run_training_pipeline(payload: Dict[str, Any], config: Config) -> Dict[str, 
             "task": final_task_name,
             "model_id": final_model_id,
             "runtime_package_id": runtime_pkg_id,
-            "manifest_key": f"{s3_prefix}/manifest.json",
+            "manifest_key": runtime_manifest_key,
             "auto_promoted": auto_promote,
+            "inference_requests": inference_requests,
         }
