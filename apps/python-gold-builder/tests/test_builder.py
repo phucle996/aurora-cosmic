@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from aurora_gold_builder.builder import GoldBuilder
 from aurora_gold_builder.events import SilverEvent
 from aurora_gold_builder.store import MemoryObjectStore
+from aurora_gold_builder.worker import _drain_full_batches
 
 
 def _silver_event(key="silver/test/lightcurve.parquet"):
@@ -51,6 +52,18 @@ def _silver_bytes():
     buffer = io.BytesIO()
     pq.write_table(table, buffer, compression="ZSTD")
     return buffer.getvalue()
+
+
+def test_full_batches_leave_the_partial_batch_for_idle_flush():
+    events = [
+        (f"checkpoint-{index}", SilverEvent.from_dict(_silver_event()))
+        for index in range(7)
+    ]
+
+    batches = _drain_full_batches(events, max_batch_size=3)
+
+    assert [len(batch) for batch in batches] == [3, 3]
+    assert [key for key, _ in events] == ["checkpoint-6"]
 
 
 def test_build_candidate_snapshot_from_silver():

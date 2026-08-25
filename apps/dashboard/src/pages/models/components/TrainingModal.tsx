@@ -278,7 +278,7 @@ export function TrainingModal({
                         </Badge>
                       </div>
                       <div className="flex items-center justify-between text-muted-foreground">
-                        <span>Tổng dung lượng Parquet:</span>
+                        <span>Tổng dung lượng dữ liệu:</span>
                         <span className="font-mono text-foreground font-medium">{formatBytes(totalBytes)}</span>
                       </div>
                       <p className="text-muted-foreground text-[10.5px] pt-1 border-t border-border/50">

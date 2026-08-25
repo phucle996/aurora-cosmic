@@ -43,7 +43,11 @@ export type TrainingResponse = {
 
 export type ModelResponse = { models: ModelRecord[] };
 export type JobResponse = { jobs: InferenceJob[] };
-export type StorageResponse = { objects: { key: string; size_bytes?: number; last_modified?: string }[] };
+export type StorageResponse = {
+  objects: { key: string; size_bytes?: number; last_modified?: string }[];
+  total?: number;
+  truncated?: boolean;
+};
 export type ModelDeployResponse = { status: string; model_id: string; task: string; active: boolean; message: string };
 
 export type GoldSnapshotItem = {

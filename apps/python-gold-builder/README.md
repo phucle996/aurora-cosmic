@@ -21,7 +21,9 @@ python -m aurora_gold_builder worker
 ```
 
 The worker persists pending events under
-`checkpoints/gold-builder/pending/` before acknowledging NATS. It flushes a
-snapshot when the configured batch size is reached or the flush window elapses.
+`checkpoints/gold-builder/pending/` before acknowledging NATS. A collector
+quickly checkpoints and ACKs Silver events while a bounded pool of Gold workers
+builds snapshots in parallel. It flushes after an idle window with no new Silver
+events, or when the configured maximum batch size is reached.
 Gold artifacts are written under `gold/snapshots/<snapshot-id>/` and the
 current pointer is `gold/current/CANDIDATE.json`.

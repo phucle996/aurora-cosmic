@@ -79,8 +79,23 @@ export default function ModelsPage(): JSX.Element {
   const loadAvailableSnapshots = useCallback(async () => {
     setSnapshotsLoading(true);
     try {
-      const storage = await apiFetch<StorageResponse>('/v1/storage?prefix=gold/snapshots/&limit=200');
-      const objects = storage.objects ?? [];
+      const pageSize = 200;
+      const objects: StorageResponse['objects'] = [];
+      let page = 1;
+      let hasMore = true;
+
+      while (hasMore) {
+        const storage = await apiFetch<StorageResponse>(`/v1/storage?prefix=gold/snapshots/&page=${page}&limit=${pageSize}`);
+        const pageObjects = storage.objects ?? [];
+        objects.push(...pageObjects);
+
+        hasMore = storage.truncated ?? (
+          typeof storage.total === 'number'
+            ? objects.length < storage.total
+            : pageObjects.length === pageSize
+        );
+        page += 1;
+      }
 
       const trainedSnapshotSet = new Map<string, string>();
       for (const m of models) {
@@ -89,26 +104,45 @@ export default function ModelsPage(): JSX.Element {
         }
       }
 
-      const snapshotMap = new Map<string, GoldSnapshotItem>();
+      const snapshotMap = new Map<string, {
+        manifest?: StorageResponse['objects'][number];
+        dataSizeBytes: number;
+        lastModified: string;
+      }>();
       for (const obj of objects) {
-        const match = obj.key.match(/gold\/snapshots\/([^/]+)/);
+        const match = obj.key.match(/^gold\/snapshots\/([^/]+)\/(.+)$/);
         if (match && match[1]) {
           const snapId = match[1];
-          if (!snapshotMap.has(snapId)) {
-            const isTrained = trainedSnapshotSet.has(snapId);
-            snapshotMap.set(snapId, {
-              snapshot_id: snapId,
-              key: obj.key,
-              size_bytes: obj.size_bytes ?? 0,
-              last_modified: obj.last_modified ?? new Date().toISOString(),
-              is_trained: isTrained,
-              trained_model_id: trainedSnapshotSet.get(snapId),
-            });
+          const relativeKey = match[2];
+          const snapshot = snapshotMap.get(snapId) ?? {
+            dataSizeBytes: 0,
+            lastModified: obj.last_modified ?? '',
+          };
+
+          if (relativeKey === 'manifest.json') {
+            snapshot.manifest = obj;
+          } else {
+            snapshot.dataSizeBytes += obj.size_bytes ?? 0;
           }
+          if (obj.last_modified && obj.last_modified > snapshot.lastModified) {
+            snapshot.lastModified = obj.last_modified;
+          }
+          snapshotMap.set(snapId, snapshot);
         }
       }
 
-      const list = Array.from(snapshotMap.values()).sort((a, b) => {
+      const list = Array.from(snapshotMap, ([snapshotId, snapshot]) => {
+        if (!snapshot.manifest) return undefined;
+
+        return {
+          snapshot_id: snapshotId,
+          key: snapshot.manifest.key,
+          size_bytes: snapshot.dataSizeBytes,
+          last_modified: snapshot.lastModified || snapshot.manifest.last_modified || new Date().toISOString(),
+          is_trained: trainedSnapshotSet.has(snapshotId),
+          trained_model_id: trainedSnapshotSet.get(snapshotId),
+        } satisfies GoldSnapshotItem;
+      }).filter((snapshot): snapshot is GoldSnapshotItem => snapshot !== undefined).sort((a, b) => {
         if (a.is_trained !== b.is_trained) {
           return a.is_trained ? 1 : -1;
         }

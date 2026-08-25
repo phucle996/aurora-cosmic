@@ -11,8 +11,9 @@ class Config:
     minio_secret_key: str
     minio_bucket: str
     nats_url: str
-    batch_size: int
+    max_batch_size: int
     flush_seconds: float
+    worker_concurrency: int
     durable: str
     stream: str
     set_current: bool
@@ -25,12 +26,20 @@ class Config:
                 raise ValueError(f"Missing required environment variable '{key}'")
             return value
 
-        batch_size = int(os.getenv("AURORA_GOLD_BATCH_SIZE", "100"))
+        max_batch_size = int(
+            os.getenv(
+                "AURORA_GOLD_MAX_BATCH_SIZE",
+                os.getenv("AURORA_GOLD_BATCH_SIZE", "5000"),
+            )
+        )
         flush_seconds = float(os.getenv("AURORA_GOLD_FLUSH_SECONDS", "300"))
-        if batch_size < 1:
-            raise ValueError("AURORA_GOLD_BATCH_SIZE must be positive")
+        worker_concurrency = int(os.getenv("AURORA_GOLD_WORKER_CONCURRENCY", "2"))
+        if max_batch_size < 1:
+            raise ValueError("AURORA_GOLD_MAX_BATCH_SIZE must be positive")
         if flush_seconds <= 0:
             raise ValueError("AURORA_GOLD_FLUSH_SECONDS must be positive")
+        if worker_concurrency < 1:
+            raise ValueError("AURORA_GOLD_WORKER_CONCURRENCY must be positive")
 
         return cls(
             environment=required("AURORA_ENV"),
@@ -40,8 +49,9 @@ class Config:
             minio_secret_key=required("MINIO_SECRET_KEY"),
             minio_bucket=required("MINIO_BUCKET"),
             nats_url=required("NATS_URL"),
-            batch_size=batch_size,
+            max_batch_size=max_batch_size,
             flush_seconds=flush_seconds,
+            worker_concurrency=worker_concurrency,
             durable=os.getenv("AURORA_GOLD_DURABLE", "aurora-gold-builder"),
             stream=os.getenv("AURORA_GOLD_STREAM", "AURORA_SILVER"),
             set_current=os.getenv("AURORA_GOLD_SET_CURRENT", "false").lower()
