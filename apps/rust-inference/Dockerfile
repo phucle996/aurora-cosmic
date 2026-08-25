@@ -2,7 +2,9 @@
 # ONNX Runtime's prebuilt Linux binary targets glibc. Use Debian for both
 # stages; Alpine/musl would compile the Rust binary but fail to load the ORT
 # shared library at runtime.
-ARG CUDA_VERSION=13.0.2
+# The deployment host exposes a CUDA 12.4-compatible driver.  Keep the
+# runtime image on that ABI so ONNX Runtime's CUDA provider can initialize.
+ARG CUDA_VERSION=12.4.1
 FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu24.04 AS builder
 WORKDIR /app
 ENV DEBIAN_FRONTEND=noninteractive
