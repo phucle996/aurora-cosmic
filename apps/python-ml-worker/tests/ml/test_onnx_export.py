@@ -22,6 +22,7 @@ from aurora_ml.ml.candidate.model import (
 )
 from aurora_ml.ml.candidate.preprocessor import CandidatePreprocessor
 from aurora_ml.ml.anomaly.model import (
+    ANOMALY_AUTOENCODER_HIDDEN_DIMS,
     AnomalyAutoencoderV1,
     ANOMALY_MODEL_INPUT_FEATURES,
 )
@@ -183,7 +184,10 @@ def test_anomaly_onnx_export_and_python_parity():
         os.makedirs(eval_root, exist_ok=True)
 
         # 1. Create native PyTorch anomaly autoencoder
-        model = AnomalyAutoencoderV1(input_dim=len(ANOMALY_MODEL_INPUT_FEATURES))
+        model = AnomalyAutoencoderV1(
+            input_dim=len(ANOMALY_MODEL_INPUT_FEATURES),
+            hidden_dims=ANOMALY_AUTOENCODER_HIDDEN_DIMS,
+        )
         model_pt = os.path.join(tmp_dir, "model_anom.pt")
         torch.save(model.state_dict(), model_pt)
         model_sha = hashlib.sha256(open(model_pt, "rb").read()).hexdigest()

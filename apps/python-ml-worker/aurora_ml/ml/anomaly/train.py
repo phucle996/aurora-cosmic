@@ -20,6 +20,7 @@ from aurora_ml.ml.anomaly.checkpoint import (
     AnomalyTrainingRunSpec,
 )
 from aurora_ml.ml.anomaly.model import (
+    ANOMALY_AUTOENCODER_HIDDEN_DIMS,
     AnomalyLightcurveAutoencoder,
     compute_reconstruction_mse,
 )
@@ -187,7 +188,7 @@ def train_anomaly_model(
     # 5. Model & Optimizer Initialization
     model = AnomalyLightcurveAutoencoder(
         input_dim=len(ANOMALY_MODEL_INPUT_FEATURES),
-        hidden_dims=(32, 8),
+        hidden_dims=ANOMALY_AUTOENCODER_HIDDEN_DIMS,
     ).to(device)
 
     optimizer = torch.optim.AdamW(

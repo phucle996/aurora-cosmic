@@ -3,6 +3,7 @@ import json
 import signal
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Add project root to sys.path so pkg module can be imported
@@ -508,6 +509,7 @@ def main():
                         )
 
                         async def handle_train_request(msg):
+                            payload = {}
                             try:
                                 payload = json.loads(msg.data.decode("utf-8"))
                                 logger.info(
@@ -611,6 +613,32 @@ def main():
                                             runtime_pkg_id,
                                         )
                             except Exception as req_err:
+                                failure = {
+                                    "job_id": payload.get("training_job_id", ""),
+                                    "task": payload.get("task", ""),
+                                    "gold_snapshot_id": payload.get(
+                                        "gold_snapshot_id", ""
+                                    ),
+                                    "status": "failed",
+                                    "error": str(req_err),
+                                    "error_type": type(req_err).__name__,
+                                    "failed_at": datetime.now(timezone.utc)
+                                    .isoformat()
+                                    .replace("+00:00", "Z"),
+                                }
+                                try:
+                                    await nc.publish(
+                                        "aurora.v1.ml.training.failed",
+                                        json.dumps(failure, sort_keys=True).encode(
+                                            "utf-8"
+                                        ),
+                                    )
+                                    await nc.flush()
+                                except Exception:
+                                    logger.exception(
+                                        "Failed to publish training failure for job %s",
+                                        failure["job_id"],
+                                    )
                                 logger.exception(
                                     "Failed to execute training job: %s", req_err
                                 )

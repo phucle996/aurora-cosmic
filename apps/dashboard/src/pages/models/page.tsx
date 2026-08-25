@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { JSX } from 'react';
 import { BrainCircuit, CheckCircle2, CircleAlert, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { apiFetch } from '@/lib/api';
+import { apiBase, apiFetch } from '@/lib/api';
 
 import { InferenceJobsTable } from './components/InferenceJobsTable';
 import { LiveTrainingBanner } from './components/LiveTrainingBanner';
@@ -44,7 +44,6 @@ export default function ModelsPage(): JSX.Element {
   // Live GPU Training Monitor State
   const [activeTraining, setActiveTraining] = useState<ActiveTrainingState | null>(null);
   const [trainingElapsed, setTrainingElapsed] = useState(0);
-  const initialModelCountRef = useRef(0);
 
   // Load Model Registry and Inference Jobs
   const loadData = useCallback(async (isRefresh = false) => {
@@ -167,22 +166,46 @@ export default function ModelsPage(): JSX.Element {
     const poll = setInterval(async () => {
       try {
         const res = await apiFetch<ModelResponse>('/v1/models');
-        const list = res.models ?? [];
-        if (list.length > initialModelCountRef.current || Date.now() - activeTraining.startedAt > 60000) {
-          setModels(list);
-          const finishedSnapCount = activeTraining.snapshotCount;
-          setActiveTraining(null);
-          setNotice(`🎉 Huấn luyện thành công! Mô hình Deep Learning mới đã được tạo từ ${finishedSnapCount} Gold Snapshots, vượt qua kiểm thử Python-ONNX Parity và thăng hạng thành 👑 Champion!`);
-          void loadAvailableSnapshots();
-        }
+        setModels(res.models ?? []);
       } catch {
         // ignore network error while polling
       }
     }, 2000);
 
+    const eventSource = new EventSource(`${apiBase}/v1/events?workflow=ml`);
+    eventSource.addEventListener('workflow', (event) => {
+      const message = event as MessageEvent<string>;
+      try {
+        const update = JSON.parse(message.data) as {
+          job_id?: string;
+          status?: string;
+          payload?: { error?: string };
+        };
+        if (update.job_id !== activeTraining.jobId) return;
+
+        if (update.status === 'failed') {
+          setActiveTraining(null);
+          setError(`Huấn luyện thất bại: ${update.payload?.error || 'ML Worker không trả về chi tiết lỗi.'}`);
+          return;
+        }
+
+        if (update.status === 'completed') {
+          void apiFetch<ModelResponse>('/v1/models')
+            .then((res) => setModels(res.models ?? []))
+            .catch(() => undefined);
+          setActiveTraining(null);
+          setNotice(`🎉 Huấn luyện thành công! Mô hình Deep Learning mới đã được tạo từ ${activeTraining.snapshotCount} Gold Snapshots, vượt qua kiểm thử Python-ONNX Parity và thăng hạng thành 👑 Champion!`);
+          void loadAvailableSnapshots();
+        }
+      } catch {
+        // Ignore malformed events and keep polling the registry.
+      }
+    });
+
     return () => {
       clearInterval(timer);
       clearInterval(poll);
+      eventSource.close();
     };
   }, [activeTraining, loadAvailableSnapshots]);
 
@@ -209,7 +232,6 @@ export default function ModelsPage(): JSX.Element {
     setError(undefined);
     setNotice(undefined);
     try {
-      initialModelCountRef.current = models.length;
       let snapshotCount = 1;
       let targetJobId = '';
 

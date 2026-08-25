@@ -12,11 +12,18 @@ import torch.nn as nn
 from aurora_ml.ml.datasets.splits import ANOMALY_MODEL_INPUT_FEATURES
 
 __all__ = [
+    "ANOMALY_AUTOENCODER_HIDDEN_DIMS",
     "AnomalyLightcurveAutoencoder",
     "AnomalyAutoencoderV1",
     "ANOMALY_MODEL_INPUT_FEATURES",
     "compute_reconstruction_mse",
 ]
+
+
+# This architecture is part of the anomaly runtime contract. Training,
+# evaluation, and ONNX export must reconstruct the same module before loading a
+# checkpoint.
+ANOMALY_AUTOENCODER_HIDDEN_DIMS: Tuple[int, ...] = (32, 8)
 
 
 class AnomalyLightcurveAutoencoder(nn.Module):
@@ -26,7 +33,9 @@ class AnomalyLightcurveAutoencoder(nn.Module):
     score_definition_version: str = "reconstruction-mse-v1"
 
     def __init__(
-        self, input_dim: int = 14, hidden_dims: Tuple[int, ...] = (64, 32, 16)
+        self,
+        input_dim: int = 14,
+        hidden_dims: Tuple[int, ...] = ANOMALY_AUTOENCODER_HIDDEN_DIMS,
     ):
         super().__init__()
         if not hidden_dims or any(width <= 0 for width in hidden_dims):
