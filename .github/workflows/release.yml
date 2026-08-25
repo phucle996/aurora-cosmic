@@ -4,230 +4,161 @@ on:
   workflow_run:
     workflows: ["AURORA CI Workflow"]
     types: [completed]
-    branches: [ main ]
+    branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: release-${{ github.event.workflow_run.head_branch || github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  changes:
+    name: Load CI change manifest
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      go-ingester: ${{ steps.outputs.outputs.go-ingester }}
+      rust-preprocessor: ${{ steps.outputs.outputs.rust-preprocessor }}
+      python-ml-worker: ${{ steps.outputs.outputs.python-ml-worker }}
+      gold-builder: ${{ steps.outputs.outputs.gold-builder }}
+      rust-inference: ${{ steps.outputs.outputs.rust-inference }}
+      go-api: ${{ steps.outputs.outputs.go-api }}
+      dashboard: ${{ steps.outputs.outputs.dashboard }}
+    steps:
+      - name: Download CI change manifest
+        id: download
+        if: ${{ github.event_name == 'workflow_run' }}
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: changed-subprojects
+          path: .release
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Export changed sub-projects
+        id: outputs
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] || [ "$DOWNLOAD_OUTCOME" != "success" ]; then
+            echo "CI manifest unavailable; releasing every sub-project."
+            go_ingester=true
+            rust_preprocessor=true
+            python_ml_worker=true
+            gold_builder=true
+            rust_inference=true
+            go_api=true
+            dashboard=true
+          else
+            . .release/changed-subprojects.env
+            if [ "$shared" = "true" ]; then
+              go_ingester=true
+              rust_preprocessor=true
+              python_ml_worker=true
+              gold_builder=true
+              rust_inference=true
+              go_api=true
+              dashboard=true
+            fi
+          fi
+          echo "go-ingester=$go_ingester" >> "$GITHUB_OUTPUT"
+          echo "rust-preprocessor=$rust_preprocessor" >> "$GITHUB_OUTPUT"
+          echo "python-ml-worker=$python_ml_worker" >> "$GITHUB_OUTPUT"
+          echo "gold-builder=$gold_builder" >> "$GITHUB_OUTPUT"
+          echo "rust-inference=$rust_inference" >> "$GITHUB_OUTPUT"
+          echo "go-api=$go_api" >> "$GITHUB_OUTPUT"
+          echo "dashboard=$dashboard" >> "$GITHUB_OUTPUT"
+
   release-go-ingester:
     name: Build & Release go-ingester
-    runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository) }}
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and Push Docker Image
-        uses: docker/build-push-action@v6
-        with:
-          context: ./apps/go-ingester
-          file: ./apps/go-ingester/Dockerfile
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/aurora-go-ingester:latest
+    needs: changes
+    if: ${{ needs.changes.outputs.go-ingester == 'true' && (github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository)) }}
+    uses: ./.github/workflows/release-image.yml
+    with:
+      image-name: aurora-go-ingester
+      context: ./apps/go-ingester
+      dockerfile: ./apps/go-ingester/Dockerfile
+      cache-scope: go-ingester
+      ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+    secrets: inherit
 
   release-rust-preprocessor:
     name: Build & Release rust-preprocessor
-    runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository) }}
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and Push Docker Image
-        uses: docker/build-push-action@v6
-        with:
-          context: ./apps/rust-preprocessor
-          file: ./apps/rust-preprocessor/Dockerfile
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/aurora-rust-preprocessor:latest
+    needs: changes
+    if: ${{ needs.changes.outputs.rust-preprocessor == 'true' && (github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository)) }}
+    uses: ./.github/workflows/release-image.yml
+    with:
+      image-name: aurora-rust-preprocessor
+      context: ./apps/rust-preprocessor
+      dockerfile: ./apps/rust-preprocessor/Dockerfile
+      cache-scope: rust-preprocessor
+      ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+    secrets: inherit
 
   release-python-ml-worker:
     name: Build & Release python-ml-worker
-    runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository) }}
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and Push Docker Image
-        uses: docker/build-push-action@v6
-        with:
-          context: ./apps/python-ml-worker
-          file: ./apps/python-ml-worker/Dockerfile
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/aurora-python-ml-worker:latest
+    needs: changes
+    if: ${{ needs.changes.outputs.python-ml-worker == 'true' && (github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository)) }}
+    uses: ./.github/workflows/release-image.yml
+    with:
+      image-name: aurora-python-ml-worker
+      context: ./apps/python-ml-worker
+      dockerfile: ./apps/python-ml-worker/Dockerfile
+      cache-scope: python-ml-worker
+      ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+    secrets: inherit
 
   release-gold-builder:
     name: Build & Release gold-builder
-    runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository) }}
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and Push Docker Image
-        uses: docker/build-push-action@v6
-        with:
-          context: ./apps
-          file: ./apps/python-gold-builder/Dockerfile
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/aurora-gold-builder:latest
+    needs: changes
+    if: ${{ needs.changes.outputs.gold-builder == 'true' && (github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository)) }}
+    uses: ./.github/workflows/release-image.yml
+    with:
+      image-name: aurora-gold-builder
+      context: ./apps
+      dockerfile: ./apps/python-gold-builder/Dockerfile
+      cache-scope: gold-builder
+      ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+    secrets: inherit
 
   release-rust-inference:
     name: Build & Release rust-inference
-    runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository) }}
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and Push Docker Image
-        uses: docker/build-push-action@v6
-        with:
-          context: ./apps/rust-inference
-          file: ./apps/rust-inference/Dockerfile
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/aurora-rust-inference:latest
+    needs: changes
+    if: ${{ needs.changes.outputs.rust-inference == 'true' && (github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository)) }}
+    uses: ./.github/workflows/release-image.yml
+    with:
+      image-name: aurora-rust-inference
+      context: ./apps/rust-inference
+      dockerfile: ./apps/rust-inference/Dockerfile
+      cache-scope: rust-inference
+      ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+    secrets: inherit
 
   release-go-api:
     name: Build & Release go-api
-    runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository) }}
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and Push Docker Image
-        uses: docker/build-push-action@v6
-        with:
-          context: ./apps/go-api
-          file: ./apps/go-api/Dockerfile
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/aurora-go-api:latest
+    needs: changes
+    if: ${{ needs.changes.outputs.go-api == 'true' && (github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository)) }}
+    uses: ./.github/workflows/release-image.yml
+    with:
+      image-name: aurora-go-api
+      context: ./apps/go-api
+      dockerfile: ./apps/go-api/Dockerfile
+      cache-scope: go-api
+      ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+    secrets: inherit
 
   release-dashboard:
     name: Build & Release dashboard
-    runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository) }}
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and Push Docker Image
-        uses: docker/build-push-action@v6
-        with:
-          context: ./apps/dashboard
-          file: ./apps/dashboard/Dockerfile
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/aurora-dashboard:latest
+    needs: changes
+    if: ${{ needs.changes.outputs.dashboard == 'true' && (github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository)) }}
+    uses: ./.github/workflows/release-image.yml
+    with:
+      image-name: aurora-dashboard
+      context: ./apps/dashboard
+      dockerfile: ./apps/dashboard/Dockerfile
+      cache-scope: dashboard
+      ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+    secrets: inherit

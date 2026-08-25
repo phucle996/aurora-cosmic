@@ -2,133 +2,15 @@ name: AURORA CI Workflow
 
 on:
   push:
-    branches: [ main, "feature/**", "fix/**" ]
+    branches: [main, "feature/**", "fix/**"]
   pull_request:
-    branches: [ main ]
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  docker-config:
-    name: Validate Docker Compose Config
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Validate Docker Compose Configuration
-        run: |
-          docker compose config --quiet
-
-  go-checks:
-    name: Go Verification (go-ingester & go-api)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.26'
-          check-latest: true
-
-      - name: Verify go-ingester
-        run: |
-          cd apps/go-ingester
-          test -z "$(gofmt -s -l .)"
-          go vet ./...
-          go test -v ./...
-          go build ./...
-
-      - name: Verify go-api
-        run: |
-          cd apps/go-api
-          test -z "$(gofmt -s -l .)"
-          go vet ./...
-          go test -v ./...
-          go build ./...
-
-  rust-checks:
-    name: Rust Verification (rust-preprocessor & rust-inference)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Set up Rust Toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-
-      - name: Install native dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libcfitsio-dev pkg-config
-
-      - name: Verify rust-preprocessor
-        run: |
-          cd apps/rust-preprocessor
-          cargo fmt --check
-          cargo clippy -- -D warnings
-          cargo test
-          cargo build
-
-      - name: Verify rust-inference
-        run: |
-          cd apps/rust-inference
-          cargo fmt --check
-          cargo clippy -- -D warnings
-          cargo test
-          cargo build
-
-  python-checks:
-    name: Python Verification (python-ml-worker)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install dependencies
-        run: |
-          cd apps/python-ml-worker
-          pip install -e ".[dev]"
-          pip install -e "../python-gold-builder[dev]"
-
-      - name: Verify python-ml-worker
-        run: |
-          cd apps/python-ml-worker
-          ruff format --check .
-          ruff check .
-          PYTHONPATH=. pytest
-          cd ../python-gold-builder
-          ruff format --check .
-          ruff check .
-          PYTHONPATH=../python-ml-worker:. pytest
-
-  dashboard-checks:
-    name: Dashboard Verification (React TSX & Vite)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: 'apps/dashboard/package-lock.json'
-
-      - name: Build Dashboard
-        run: |
-          cd apps/dashboard
-          npm ci
-          npm run build
-
   changes:
     name: Detect Changed Sub-Projects
     runs-on: ubuntu-latest
@@ -140,14 +22,15 @@ jobs:
       rust-inference: ${{ steps.filter.outputs.rust-inference }}
       go-api: ${{ steps.filter.outputs.go-api }}
       dashboard: ${{ steps.filter.outputs.dashboard }}
-      root: ${{ steps.filter.outputs.root }}
+      shared: ${{ steps.filter.outputs.shared }}
+      compose: ${{ steps.filter.outputs.compose }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Filter Changed Paths
-        uses: dorny/paths-filter@v3
         id: filter
+        uses: dorny/paths-filter@v3
         with:
           filters: |
             go-ingester:
@@ -165,13 +48,198 @@ jobs:
               - 'apps/go-api/**'
             dashboard:
               - 'apps/dashboard/**'
-            root:
-              - 'README.md'
-              - 'ARCH.MD'
-              - 'STRUCTURE.MD'
-              - 'STAGE.MD'
-              - 'Makefile'
-              - '.github/**'
+            shared:
+              - 'contracts/**'
+              - '.github/workflows/**'
+            compose:
+              - 'docker-compose.yml'
+              - '.env.example'
+              - 'infra/**'
+
+      - name: Write release change manifest
+        run: |
+          cat > changed-subprojects.env <<EOF
+          go_ingester=${{ steps.filter.outputs.go-ingester }}
+          rust_preprocessor=${{ steps.filter.outputs.rust-preprocessor }}
+          python_ml_worker=${{ steps.filter.outputs.python-ml-worker }}
+          gold_builder=${{ steps.filter.outputs.gold-builder }}
+          rust_inference=${{ steps.filter.outputs.rust-inference }}
+          go_api=${{ steps.filter.outputs.go-api }}
+          dashboard=${{ steps.filter.outputs.dashboard }}
+          shared=${{ steps.filter.outputs.shared }}
+          EOF
+
+      - name: Upload release change manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: changed-subprojects
+          path: changed-subprojects.env
+          retention-days: 1
+
+  docker-config:
+    name: Validate Docker Compose Config
+    needs: changes
+    if: ${{ needs.changes.outputs.compose == 'true' || needs.changes.outputs.shared == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose config --quiet
+
+  go-ingester-checks:
+    name: Go Verification (go-ingester)
+    needs: changes
+    if: ${{ needs.changes.outputs.go-ingester == 'true' || needs.changes.outputs.shared == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          check-latest: true
+          cache-dependency-path: apps/go-ingester/go.sum
+      - name: Verify go-ingester
+        working-directory: apps/go-ingester
+        run: |
+          test -z "$(gofmt -s -l .)"
+          go vet ./...
+          go test -v ./...
+          go build ./...
+
+  go-api-checks:
+    name: Go Verification (go-api)
+    needs: changes
+    if: ${{ needs.changes.outputs.go-api == 'true' || needs.changes.outputs.shared == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          check-latest: true
+          cache-dependency-path: apps/go-api/go.sum
+      - name: Verify go-api
+        working-directory: apps/go-api
+        run: |
+          test -z "$(gofmt -s -l .)"
+          go vet ./...
+          go test -v ./...
+          go build ./...
+
+  rust-preprocessor-checks:
+    name: Rust Verification (rust-preprocessor)
+    needs: changes
+    if: ${{ needs.changes.outputs.rust-preprocessor == 'true' || needs.changes.outputs.shared == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Restore Rust compilation cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/rust-preprocessor -> target
+          cache-on-failure: true
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libcfitsio-dev pkg-config
+      - name: Verify rust-preprocessor
+        working-directory: apps/rust-preprocessor
+        run: |
+          cargo fmt --check
+          cargo clippy -- -D warnings
+          cargo test
+          cargo build
+
+  rust-inference-checks:
+    name: Rust Verification (rust-inference)
+    needs: changes
+    if: ${{ needs.changes.outputs.rust-inference == 'true' || needs.changes.outputs.shared == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Restore Rust compilation cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/rust-inference -> target
+          cache-on-failure: true
+      - name: Verify rust-inference
+        working-directory: apps/rust-inference
+        run: |
+          cargo fmt --check
+          cargo clippy -- -D warnings
+          cargo test
+          cargo build
+
+  python-ml-worker-checks:
+    name: Python Verification (python-ml-worker)
+    needs: changes
+    if: ${{ needs.changes.outputs.python-ml-worker == 'true' || needs.changes.outputs.shared == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: apps/python-ml-worker/pyproject.toml
+      - name: Install dependencies
+        working-directory: apps/python-ml-worker
+        run: pip install -e ".[dev]"
+      - name: Verify python-ml-worker
+        working-directory: apps/python-ml-worker
+        run: |
+          ruff format --check .
+          ruff check .
+          PYTHONPATH=. pytest
+
+  gold-builder-checks:
+    name: Python Verification (gold-builder)
+    needs: changes
+    if: ${{ needs.changes.outputs.gold-builder == 'true' || needs.changes.outputs.shared == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            apps/python-gold-builder/pyproject.toml
+            apps/python-ml-worker/pyproject.toml
+      - name: Install dependencies
+        working-directory: apps/python-gold-builder
+        run: |
+          pip install -e "../python-ml-worker[dev]"
+          pip install -e ".[dev]"
+      - name: Verify gold-builder
+        working-directory: apps/python-gold-builder
+        run: |
+          ruff format --check .
+          ruff check .
+          PYTHONPATH=../python-ml-worker:. pytest
+
+  dashboard-checks:
+    name: Dashboard Verification (React TSX & Vite)
+    needs: changes
+    if: ${{ needs.changes.outputs.dashboard == 'true' || needs.changes.outputs.shared == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: apps/dashboard/package-lock.json
+      - name: Build Dashboard
+        working-directory: apps/dashboard
+        run: |
+          npm ci
+          npm run build
 
   scan-go-ingester:
     needs: changes
@@ -179,17 +247,14 @@ jobs:
     name: Trivy Scan (go-ingester)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Run Trivy Vulnerability Scanner
-        uses: aquasecurity/trivy-action@v0.35.0
+      - uses: actions/checkout@v4
+      - uses: aquasecurity/trivy-action@v0.35.0
         with:
-          scan-type: 'fs'
-          scan-ref: 'apps/go-ingester'
-          format: 'table'
-          severity: 'CRITICAL,HIGH'
-          version: 'latest'
+          scan-type: fs
+          scan-ref: apps/go-ingester
+          format: table
+          severity: CRITICAL,HIGH
+          version: latest
 
   scan-rust-preprocessor:
     needs: changes
@@ -197,17 +262,14 @@ jobs:
     name: Trivy Scan (rust-preprocessor)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Run Trivy Vulnerability Scanner
-        uses: aquasecurity/trivy-action@v0.35.0
+      - uses: actions/checkout@v4
+      - uses: aquasecurity/trivy-action@v0.35.0
         with:
-          scan-type: 'fs'
-          scan-ref: 'apps/rust-preprocessor'
-          format: 'table'
-          severity: 'CRITICAL,HIGH'
-          version: 'latest'
+          scan-type: fs
+          scan-ref: apps/rust-preprocessor
+          format: table
+          severity: CRITICAL,HIGH
+          version: latest
 
   scan-python-ml-worker:
     needs: changes
@@ -215,17 +277,14 @@ jobs:
     name: Trivy Scan (python-ml-worker)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Run Trivy Vulnerability Scanner
-        uses: aquasecurity/trivy-action@v0.35.0
+      - uses: actions/checkout@v4
+      - uses: aquasecurity/trivy-action@v0.35.0
         with:
-          scan-type: 'fs'
-          scan-ref: 'apps/python-ml-worker'
-          format: 'table'
-          severity: 'CRITICAL,HIGH'
-          version: 'latest'
+          scan-type: fs
+          scan-ref: apps/python-ml-worker
+          format: table
+          severity: CRITICAL,HIGH
+          version: latest
 
   scan-gold-builder:
     needs: changes
@@ -233,17 +292,14 @@ jobs:
     name: Trivy Scan (gold-builder)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Run Trivy Vulnerability Scanner
-        uses: aquasecurity/trivy-action@v0.35.0
+      - uses: actions/checkout@v4
+      - uses: aquasecurity/trivy-action@v0.35.0
         with:
-          scan-type: 'fs'
-          scan-ref: 'apps/python-gold-builder'
-          format: 'table'
-          severity: 'CRITICAL,HIGH'
-          version: 'latest'
+          scan-type: fs
+          scan-ref: apps/python-gold-builder
+          format: table
+          severity: CRITICAL,HIGH
+          version: latest
 
   scan-rust-inference:
     needs: changes
@@ -251,17 +307,14 @@ jobs:
     name: Trivy Scan (rust-inference)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Run Trivy Vulnerability Scanner
-        uses: aquasecurity/trivy-action@v0.35.0
+      - uses: actions/checkout@v4
+      - uses: aquasecurity/trivy-action@v0.35.0
         with:
-          scan-type: 'fs'
-          scan-ref: 'apps/rust-inference'
-          format: 'table'
-          severity: 'CRITICAL,HIGH'
-          version: 'latest'
+          scan-type: fs
+          scan-ref: apps/rust-inference
+          format: table
+          severity: CRITICAL,HIGH
+          version: latest
 
   scan-go-api:
     needs: changes
@@ -269,17 +322,14 @@ jobs:
     name: Trivy Scan (go-api)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Run Trivy Vulnerability Scanner
-        uses: aquasecurity/trivy-action@v0.35.0
+      - uses: actions/checkout@v4
+      - uses: aquasecurity/trivy-action@v0.35.0
         with:
-          scan-type: 'fs'
-          scan-ref: 'apps/go-api'
-          format: 'table'
-          severity: 'CRITICAL,HIGH'
-          version: 'latest'
+          scan-type: fs
+          scan-ref: apps/go-api
+          format: table
+          severity: CRITICAL,HIGH
+          version: latest
 
   scan-dashboard:
     needs: changes
@@ -287,14 +337,11 @@ jobs:
     name: Trivy Scan (dashboard)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Run Trivy Vulnerability Scanner
-        uses: aquasecurity/trivy-action@v0.35.0
+      - uses: actions/checkout@v4
+      - uses: aquasecurity/trivy-action@v0.35.0
         with:
-          scan-type: 'fs'
-          scan-ref: 'apps/dashboard'
-          format: 'table'
-          severity: 'CRITICAL,HIGH'
-          version: 'latest'
+          scan-type: fs
+          scan-ref: apps/dashboard
+          format: table
+          severity: CRITICAL,HIGH
+          version: latest
