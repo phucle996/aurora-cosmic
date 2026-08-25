@@ -37,10 +37,10 @@ func (h *IngestHandler) Status(c *gin.Context) {
 		response := *status
 		response.Products = append([]entity.IngestProduct(nil), status.Products[:productsLimit]...)
 		response.ProductsTruncated = true
-		c.JSON(http.StatusOK, &response)
+		c.JSON(http.StatusOK, ingestStatusResponseFromEntity(response))
 		return
 	}
-	c.JSON(http.StatusOK, status)
+	c.JSON(http.StatusOK, ingestStatusResponseFromEntity(*status))
 }
 
 func (h *IngestHandler) Storage(c *gin.Context) {
@@ -71,7 +71,7 @@ func (h *IngestHandler) Storage(c *gin.Context) {
 }
 
 func (h *IngestHandler) Start(c *gin.Context) {
-	var request entity.IngestStartRequest
+	var request ingestStartRequestDTO
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid ingest start request"})
 		return
@@ -80,7 +80,7 @@ func (h *IngestHandler) Start(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "sector or manifest_path is required"})
 		return
 	}
-	job, err := h.ingest.Start(c.Request.Context(), request)
+	job, err := h.ingest.Start(c.Request.Context(), request.toEntity())
 	if err != nil {
 		var statusError interface{ HTTPStatusCode() int }
 		if errors.As(err, &statusError) {
@@ -97,7 +97,7 @@ func (h *IngestHandler) Start(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ingester control unavailable"})
 		return
 	}
-	c.JSON(http.StatusAccepted, job)
+	c.JSON(http.StatusAccepted, ingestControlJobResponseFromEntity(*job))
 }
 
 func (h *IngestHandler) Cancel(c *gin.Context) {
@@ -118,5 +118,5 @@ func (h *IngestHandler) Cancel(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ingester control unavailable"})
 		return
 	}
-	c.JSON(http.StatusAccepted, job)
+	c.JSON(http.StatusAccepted, ingestControlJobResponseFromEntity(*job))
 }

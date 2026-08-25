@@ -39,18 +39,20 @@ func NewClient(endpoint string) *Client {
 }
 
 func (c *Client) Start(ctx context.Context, request entity.IngestStartRequest) (*entity.IngestControlJob, error) {
-	var job entity.IngestControlJob
-	if err := c.post(ctx, "/api/v1/ingest/jobs", request, &job); err != nil {
+	var response controlJobDTO
+	if err := c.post(ctx, "/api/v1/ingest/jobs", controlStartRequestFromEntity(request), &response); err != nil {
 		return nil, err
 	}
+	job := response.toEntity()
 	return &job, nil
 }
 
 func (c *Client) Cancel(ctx context.Context, jobID string) (*entity.IngestControlJob, error) {
-	var job entity.IngestControlJob
-	if err := c.post(ctx, "/api/v1/ingest/jobs/"+jobID+"/cancel", map[string]string{}, &job); err != nil {
+	var response controlJobDTO
+	if err := c.post(ctx, "/api/v1/ingest/jobs/"+jobID+"/cancel", map[string]string{}, &response); err != nil {
 		return nil, err
 	}
+	job := response.toEntity()
 	return &job, nil
 }
 
@@ -71,10 +73,11 @@ func (c *Client) Current(ctx context.Context) (*entity.IngestControlJob, error) 
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
 		return nil, &HTTPError{StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(body))}
 	}
-	var job entity.IngestControlJob
-	if err := json.NewDecoder(resp.Body).Decode(&job); err != nil {
+	var response controlJobDTO
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
 		return nil, fmt.Errorf("decode ingester control response: %w", err)
 	}
+	job := response.toEntity()
 	return &job, nil
 }
 
