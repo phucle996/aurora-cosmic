@@ -13,7 +13,7 @@ RUN apt-get update \
     && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.97.1 \
     && rm -rf /var/lib/apt/lists/*
 ENV PATH="/root/.cargo/bin:${PATH}"
-ENV CUDA_VERSION=13
+ENV CUDA_VERSION=12
 COPY Cargo.toml Cargo.lock* ./
 COPY src ./src
 RUN --mount=type=cache,target=/root/.cargo/registry \
