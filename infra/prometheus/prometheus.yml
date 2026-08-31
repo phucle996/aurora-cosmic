@@ -6,27 +6,36 @@ scrape_configs:
   - job_name: 'aurora-go-ingester'
     metrics_path: /metrics
     static_configs:
-      - targets: ['go-ingester:8081']
+      - targets: ['host.docker.internal:8081']
 
   - job_name: 'aurora-rust-preprocessor'
     metrics_path: /metrics
     static_configs:
-      - targets: ['rust-preprocessor:8082']
+      - targets: ['host.docker.internal:8082']
 
   - job_name: 'aurora-python-ml-worker'
     metrics_path: /metrics
     static_configs:
-      - targets: ['python-ml-worker:8083']
+      - targets: ['host.docker.internal:8083']
 
   - job_name: 'aurora-rust-inference'
     metrics_path: /metrics
     static_configs:
-      - targets: ['rust-inference:8084']
+      - targets: ['host.docker.internal:8084']
 
   - job_name: 'aurora-go-api'
     metrics_path: /metrics
     static_configs:
-      - targets: ['go-api:8086']
+      - targets: ['host.docker.internal:8086']
+
+  # Native services run under the current user's systemd manager. This
+  # exporter includes units without an application /metrics endpoint (Gold
+  # Builder and dashboard) and exposes their active state, restart count, CPU
+  # and memory usage.
+  - job_name: 'aurora-systemd'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['host.docker.internal:9580']
 
   # Open-source infrastructure metrics. These targets stay on the internal
   # Docker network; the dashboard reads their time series through the API.

@@ -28,8 +28,9 @@ hex = "0.4"
 # Temporary file management
 tempfile = "3"
 
-# FITS decode — wraps CFITSIO (requires cfitsio system library)
-fitsio = "0.21"
+# FITS decode — build the pinned CFITSIO source with the Rust crate so local
+# systemd development and CI do not depend on a host-level cfitsio-dev package.
+fitsio = { version = "0.21", features = ["fitsio-src"] }
 
 # Arrow & Parquet for Silver materialization (v54 handles chrono 0.4.45)
 arrow = { version = "54.0", features = ["ffi"] }

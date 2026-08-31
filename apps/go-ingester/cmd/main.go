@@ -42,47 +42,9 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	if len(os.Args) < 2 {
-		if err := app.Run(ctx, cfg, log, metrics); err != nil {
-			log.Error("Runtime error encountered", slog.Any("error", err))
-			os.Exit(1)
-		}
-		log.Info("Shutdown completed gracefully.")
-		return
+	if err := app.Run(ctx, cfg, log, metrics); err != nil {
+		log.Error("Runtime error encountered", slog.Any("error", err))
+		os.Exit(1)
 	}
-
-	switch os.Args[1] {
-	case "plan":
-		if err := runPlan(ctx, cfg, log, os.Args[2:]); err != nil {
-			log.Error("plan command failed", slog.Any("error", err))
-			os.Exit(1)
-		}
-
-	case "ingest":
-		if err := runIngest(ctx, cfg, log, os.Args[2:], metrics); err != nil {
-			log.Error("ingest command failed", slog.Any("error", err))
-			os.Exit(1)
-		}
-
-	case "cleanup":
-		if err := runCleanup(ctx, cfg, log, os.Args[2:]); err != nil {
-			log.Error("cleanup command failed", slog.Any("error", err))
-			os.Exit(1)
-		}
-
-	default:
-		// Legacy runner
-		if err := app.Run(ctx, cfg, log, metrics); err != nil {
-			log.Error("Runtime error encountered", slog.Any("error", err))
-			os.Exit(1)
-		}
-		log.Info("Shutdown completed gracefully.")
-	}
-}
-
-func printUsage() {
-	fmt.Fprintln(os.Stderr, "usage: aurora-ingester <command> [options]")
-	fmt.Fprintln(os.Stderr, "  plan     -- discover and create ingestion manifest")
-	fmt.Fprintln(os.Stderr, "  ingest   -- stream products from manifest into MinIO Bronze")
-	fmt.Fprintln(os.Stderr, "  cleanup  -- enforce Bronze rolling window (--dry-run, --json)")
+	log.Info("Shutdown completed gracefully.")
 }

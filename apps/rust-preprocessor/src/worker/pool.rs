@@ -8,8 +8,10 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::{ConsumerConfig, ImageConfig, LightCurveConfig};
+use crate::event::{BronzeObjectReady, ProductKind};
 use crate::infra::MinioClient;
 use crate::observer::Metrics;
+use crate::runtime::RuntimeReporter;
 use crate::worker::process_message;
 
 /// Subjects to subscribe from AURORA_BRONZE stream.
@@ -26,6 +28,8 @@ pub async fn run_pool(
     cancel: CancellationToken,
     metrics: Arc<Metrics>,
     mode: &str,
+    runtime: RuntimeReporter,
+    job_id: &str,
 ) -> Result<()> {
     // The ingester creates AURORA_BRONZE lazily when it publishes the first
     // product. Keep the preprocessor alive while that happens instead of
@@ -55,6 +59,25 @@ pub async fn run_pool(
         subject = BRONZE_FILTER_SUBJECT,
         "Worker pool starting"
     );
+
+    let worker_slots = Arc::new(tokio::sync::Mutex::new(
+        (1..=cfg.workers)
+            .map(|index| format!("preprocess-{index:02}"))
+            .collect::<Vec<_>>(),
+    ));
+    for worker_id in worker_slots.lock().await.iter() {
+        runtime.emit(
+            "worker_spawned",
+            job_id,
+            worker_id,
+            "idle",
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+    }
 
     let mut consumer = loop {
         match stream
@@ -99,8 +122,13 @@ pub async fn run_pool(
     );
 
     let semaphore = Arc::new(Semaphore::new(cfg.workers));
+    // A multi-GB FITS currently needs one local FITS staging file because
+    // CFITSIO opens a seekable path. Keep those files from exhausting the SSD
+    // when a JetStream fetch returns many TPF/FFI products at once.
+    let large_staging_slots = Arc::new(Semaphore::new(cfg.large_staging_concurrency));
     let mut tasks: JoinSet<()> = JoinSet::new();
     let fetch_size = cfg.workers;
+    let ack_progress_interval = ack_progress_interval(&cfg.ack_wait);
 
     loop {
         tokio::select! {
@@ -175,6 +203,11 @@ pub async fn run_pool(
                     let lc_config = lc_cfg.clone();
                     let img_config = img_cfg.clone();
                     let metrics_ref = metrics.clone();
+                    let runtime_ref = runtime.clone();
+                    let ack_progress_interval_ref = ack_progress_interval;
+                    let job_id_ref = job_id.to_string();
+                    let slots_ref = Arc::clone(&worker_slots);
+                    let large_staging_slots_ref = Arc::clone(&large_staging_slots);
 
                     // The fetch above may return up to `workers` messages. A
                     // permit is attached to every spawned task so every
@@ -190,6 +223,36 @@ pub async fn run_pool(
                         }
                     };
 
+                    // A semaphore permit represents one concrete worker slot.
+                    // Acquire the ID only after holding the permit and return
+                    // it before releasing the permit to avoid an extra,
+                    // transient "unassigned" worker under load.
+                    let worker_id = slots_ref
+                        .lock()
+                        .await
+                        .pop()
+                        .expect("worker slot must exist while a pool permit is held");
+
+                    let large_staging_permit = match serde_json::from_slice::<BronzeObjectReady>(&msg.payload) {
+                        Ok(event)
+                            if matches!(event.product_kind, ProductKind::TargetPixel | ProductKind::Ffi)
+                                && event.size_bytes >= cfg.large_staging_threshold_bytes => {
+                            tracing::info!(
+                                worker_id = %worker_id,
+                                object_key = %event.object_key,
+                                size_bytes = event.size_bytes,
+                                threshold_bytes = cfg.large_staging_threshold_bytes,
+                                max_concurrent = cfg.large_staging_concurrency,
+                                "Waiting for large FITS staging admission"
+                            );
+                            match large_staging_slots_ref.acquire_owned().await {
+                                Ok(permit) => Some(permit),
+                                Err(_) => break,
+                            }
+                        }
+                        _ => None,
+                    };
+
                     tasks.spawn(async move {
                         process_message(
                             msg,
@@ -199,9 +262,16 @@ pub async fn run_pool(
                             lc_config,
                             img_config,
                             metrics_ref,
-                            Some(task_permit),
+                            runtime_ref.clone(),
+                            job_id_ref.clone(),
+                            worker_id.clone(),
+                            ack_progress_interval_ref,
+                            large_staging_permit,
                         )
                         .await;
+                        runtime_ref.emit("worker_idle", &job_id_ref, &worker_id, "idle", None, None, Some("waiting".to_string()), None, None);
+                        slots_ref.lock().await.push(worker_id);
+                        drop(task_permit);
                     });
                     pending_messages = pending_messages.saturating_sub(1);
                     metrics.set_queue_depth(pending_messages);
@@ -227,6 +297,19 @@ pub async fn run_pool(
     }
 
     tracing::info!("Worker pool shutdown complete");
+    for index in 1..=cfg.workers {
+        runtime.emit(
+            "worker_stopped",
+            job_id,
+            &format!("preprocess-{index:02}"),
+            "stopped",
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+    }
     Ok(())
 }
 
@@ -242,4 +325,9 @@ pub fn parse_duration(s: &str) -> Duration {
         }
     }
     Duration::from_secs(30)
+}
+
+fn ack_progress_interval(ack_wait: &str) -> Duration {
+    let ack_seconds = parse_duration(ack_wait).as_secs().max(2);
+    Duration::from_secs((ack_seconds / 2).clamp(1, 30))
 }

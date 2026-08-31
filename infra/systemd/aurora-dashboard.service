@@ -1,0 +1,18 @@
+[Unit]
+Description=AURORA dashboard Vite dev server
+Requires=aurora-infra.service
+After=aurora-infra.service aurora-go-api.service
+PartOf=aurora-dev.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Desktop/aurora-cosmic/apps/dashboard
+EnvironmentFile=%h/Desktop/aurora-cosmic/apps/dashboard/.env.example
+Environment=VITE_AURORA_API_URL=/api
+ExecStart=%h/.local/bin/npm run dev -- --host 0.0.0.0 --port 8501
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGINT
+
+[Install]
+WantedBy=aurora-dev.target

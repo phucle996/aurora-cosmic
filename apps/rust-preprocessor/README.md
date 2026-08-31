@@ -65,10 +65,8 @@ The Silver schema is `silver-lightcurve-v1` with `time`, `flux`, `flux_err`, and
 ### Target Pixel File (`TARGET_PIXEL`)
 
 1. Remove invalid times and, in `strict` mode, non-zero quality rows.
-2. Calculate the reference level using one of:
-   - `temporal-median`: median for each pixel position across retained cadences;
-   - `global-median`: one median across all finite retained pixels;
-   - `none`: preserve finite input flux values.
+2. Calculate the reference level per pixel in bounded cadence chunks with
+   `chunk-temporal-median`, or preserve finite input values with `none`.
 3. For median modes, emit `(pixel / reference) - 1`; invalid or non-positive
    references produce a safe neutral value of zero.
 4. Serialize each cadence as a row with flattened row-major pixel values and
@@ -79,15 +77,15 @@ The Silver schema is `silver-target-pixel-v1`. The processor version is
 
 ### Full Frame Image (`FFI`)
 
-The runtime currently persists compact statistics rather than the full image:
+The runtime currently persists compact normalized-image statistics rather than the full image:
 width, height, finite-pixel count/fraction, median, mean, standard deviation,
 minimum, and maximum. Non-finite pixels are excluded from the statistics.
 Optional cutout extraction is available in the library API, but the event worker
 does not request cutouts because `silver-ffi-v1` has no cutout column.
 
-`AURORA_FFI_NORMALIZATION` is validated and recorded in processing metadata;
-Silver FFI v1 statistics remain in the source flux scale. The processor version
-is `ffi-preprocess-v1`.
+`AURORA_FFI_NORMALIZATION=median` transforms finite pixels to
+`(pixel / median) - 1` before calculating statistics and cutouts; `none`
+preserves the source flux scale. The processor version is `ffi-preprocess-v2`.
 
 ## Durability and recovery
 
@@ -104,7 +102,8 @@ lineage/v1/tess/<product-kind>/<lineage-id>.json
 ```
 
 Recovery first verifies the Bronze checksum and any existing Silver artifact.
-Completed Silver artifacts are reused without decoding the FITS again. A
+Completed Silver artifacts are reused only when the source checksum, processor
+version, and output-affecting configuration fingerprint all match. A
 failed MinIO/NATS operation is NAKed for JetStream redelivery; deterministic
 decode or scientific-quality failures are persisted as terminal failures.
 
@@ -127,9 +126,9 @@ product IDs, object keys, and source URLs are never emitted as labels.
 ## Storage layout
 
 ```text
-silver/tess/lightcurve/processor=lc-preprocess-v1/sector=0042/tic=<tic>/<source>.parquet
-silver/tess/target-pixel/processor=tpf-preprocess-v1/sector=0042/tic=<tic>/<source>.parquet
-silver/tess/ffi/processor=ffi-preprocess-v1/sector=0042/camera=<camera>/ccd=<ccd>/<source>.parquet
+silver/tess/lightcurve/processor=lc-preprocess-v1/config=<sha256>/sector=0042/tic=<tic>/<source>.parquet
+silver/tess/target-pixel/processor=tpf-preprocess-v2-chunked/config=<sha256>/sector=0042/tic=<tic>/<source>.parquet
+silver/tess/ffi/processor=ffi-preprocess-v2/config=<sha256>/sector=0042/camera=<camera>/ccd=<ccd>/<source>.parquet
 ```
 
 All Silver objects include source identity, processor/schema versions, Bronze
@@ -160,22 +159,17 @@ object key, Bronze SHA-256, and Silver SHA-256 metadata.
 | `AURORA_LC_ALLOW_SAP_FALLBACK` | no | `false` | Allow SAP flux fallback |
 | `AURORA_LC_SIGMA_CLIP` | no | disabled | Positive sigma threshold |
 | `AURORA_TPF_QUALITY_MODE` | no | `strict` | `strict` or `none` |
-| `AURORA_TPF_NORMALIZATION` | no | `temporal-median` | `temporal-median`, `global-median`, or `none` |
+| `AURORA_TPF_NORMALIZATION` | no | `chunk-temporal-median` | `chunk-temporal-median` or `none`; both are bounded-memory modes. |
+| `AURORA_TPF_CHUNK_CADENCES` | no | `256` | TPF cadence rows read and written per bounded-memory chunk. |
 | `AURORA_FFI_NORMALIZATION` | no | `median` | Recorded metadata mode: `median` or `none` |
-| `AURORA_FFI_CUTOUT_SIZE` | no | `32` | Reserved for explicit cutout callers |
 
 ## Build and test
 
-CFITSIO is required. The supported reproducible environment is the project
-Dockerfile, which installs the Alpine CFITSIO development/runtime packages.
+CFITSIO is built from the pinned source dependency, so a host-level
+`cfitsio-dev` package is not required for development or systemd execution.
 
 ```bash
-docker compose build rust-preprocessor
-docker run --rm \
-  -v "$PWD/apps/rust-preprocessor:/workspace" \
-  -w /workspace rust:alpine \
-  sh -c 'apk add --no-cache musl-dev cfitsio-dev pkgconfig >/dev/null && \
-         RUSTFLAGS="-C target-feature=-crt-static" cargo test --all-targets'
+cargo test --all-targets
 ```
 
 The test suite covers configuration, event contracts, FITS decoding, LC/TPF/FFI

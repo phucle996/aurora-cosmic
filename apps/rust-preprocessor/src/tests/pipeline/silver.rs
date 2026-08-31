@@ -7,7 +7,7 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use crate::event::{BronzeObjectReady, ProductKind};
 use crate::output::silver::{
     build_ffi_key, build_lc_key, build_tpf_key, serialize_ffi, serialize_lightcurve,
-    serialize_target_pixel,
+    TargetPixelStreamWriter,
 };
 use crate::pipeline::image::{
     ImageProcessingMetadata, ImageStatistics, ProcessedFfi, ProcessedTargetPixel,
@@ -37,29 +37,41 @@ fn make_event(kind: ProductKind) -> BronzeObjectReady {
 
 #[test]
 fn test_build_deterministic_keys() {
-    let lc_key = build_lc_key(42, Some(123456789), "prod-1", "v1");
+    let lc_key = build_lc_key(42, Some(123456789), "prod-1", "v1", "test-config");
     assert_eq!(
         lc_key,
-        "silver/tess/lightcurve/processor=v1/sector=0042/tic=123456789/prod-1.parquet"
+        "silver/tess/lightcurve/processor=v1/config=test-config/sector=0042/tic=123456789/prod-1.parquet"
     );
 
-    let tpf_key = build_tpf_key(42, Some(123456789), "prod-1", "v1");
+    let tpf_key = build_tpf_key(42, Some(123456789), "prod-1", "v1", "test-config");
     assert_eq!(
         tpf_key,
-        "silver/tess/target-pixel/processor=v1/sector=0042/tic=123456789/prod-1.parquet"
+        "silver/tess/target-pixel/processor=v1/config=test-config/sector=0042/tic=123456789/prod-1.parquet"
     );
 
-    let ffi_key = build_ffi_key(42, Some(1), Some(2), "prod-1", "v1");
+    let ffi_key = build_ffi_key(42, Some(1), Some(2), "prod-1", "v1", "test-config");
     assert_eq!(
         ffi_key,
-        "silver/tess/ffi/processor=v1/sector=0042/camera=1/ccd=2/prod-1.parquet"
+        "silver/tess/ffi/processor=v1/config=test-config/sector=0042/camera=1/ccd=2/prod-1.parquet"
     );
 }
 
 #[test]
 fn test_processor_version_changes_path() {
-    let key_v1 = build_lc_key(42, Some(123456789), "prod-1", "lc-preprocess-v1");
-    let key_v2 = build_lc_key(42, Some(123456789), "prod-1", "lc-preprocess-v2");
+    let key_v1 = build_lc_key(
+        42,
+        Some(123456789),
+        "prod-1",
+        "lc-preprocess-v1",
+        "test-config",
+    );
+    let key_v2 = build_lc_key(
+        42,
+        Some(123456789),
+        "prod-1",
+        "lc-preprocess-v2",
+        "test-config",
+    );
 
     assert_ne!(key_v1, key_v2);
     assert!(key_v1.contains("processor=lc-preprocess-v1"));
@@ -90,7 +102,7 @@ fn test_serialize_lightcurve_parquet_roundtrip() {
         },
     };
 
-    let artifact = serialize_lightcurve(&lc, &event, dir.path()).unwrap();
+    let artifact = serialize_lightcurve(&lc, &event, dir.path(), "test-config").unwrap();
     assert_eq!(artifact.schema_version, "silver-lightcurve-v1");
     assert!(artifact.size_bytes > 0);
     assert_eq!(artifact.sha256.len(), 64);
@@ -137,7 +149,6 @@ fn test_serialize_target_pixel_parquet_roundtrip() {
         ],
         rows: 2,
         cols: 2,
-        tic_id: Some(123456789),
         processing: ImageProcessingMetadata {
             processor_version: "tpf-preprocess-v1".to_string(),
             normalization_mode: "temporal-median".to_string(),
@@ -149,7 +160,18 @@ fn test_serialize_target_pixel_parquet_roundtrip() {
         },
     };
 
-    let artifact = serialize_target_pixel(&tpf, &event, dir.path()).unwrap();
+    let mut writer = TargetPixelStreamWriter::new(dir.path()).unwrap();
+    writer.write_chunk(&tpf).unwrap();
+    let artifact = writer
+        .finish(
+            &event,
+            event.tic_id,
+            tpf.processing.clone(),
+            1,
+            tpf.time.len(),
+            "test-config",
+        )
+        .unwrap();
     assert_eq!(artifact.schema_version, "silver-target-pixel-v1");
     assert!(artifact.size_bytes > 0);
 
@@ -169,6 +191,62 @@ fn test_serialize_target_pixel_parquet_roundtrip() {
         .as_primitive::<arrow::datatypes::Int32Type>();
     assert_eq!(rows_col.value(0), 2);
     assert_eq!(cols_col.value(0), 2);
+}
+
+#[test]
+fn test_stream_target_pixel_parquet_writes_multiple_chunks() {
+    let dir = tempdir().unwrap();
+    let event = make_event(ProductKind::TargetPixel);
+    let processing = ImageProcessingMetadata {
+        processor_version: "tpf-preprocess-v2-chunked".to_string(),
+        normalization_mode: "chunk-temporal-median".to_string(),
+        input_cadences: 2,
+        output_cadences: 2,
+        quality_removed: 0,
+        invalid_time_removed: 0,
+        finite_pixel_fraction: 1.0,
+    };
+    let first = ProcessedTargetPixel {
+        time: vec![1.0],
+        quality: vec![0],
+        flux: vec![vec![vec![0.0, 0.1]]],
+        rows: 1,
+        cols: 2,
+        processing: processing.clone(),
+    };
+    let second = ProcessedTargetPixel {
+        time: vec![2.0],
+        quality: vec![0],
+        flux: vec![vec![vec![0.2, 0.3]]],
+        rows: 1,
+        cols: 2,
+        processing: processing.clone(),
+    };
+
+    let mut writer = TargetPixelStreamWriter::new(dir.path()).unwrap();
+    writer.write_chunk(&first).unwrap();
+    writer.write_chunk(&second).unwrap();
+    let artifact = writer
+        .finish(&event, Some(123456789), processing, 2, 1, "test-config")
+        .unwrap();
+
+    assert_eq!(
+        artifact.metadata.get("tpf-chunk-count"),
+        Some(&"2".to_string())
+    );
+    assert_eq!(
+        artifact.metadata.get("tpf-chunk-cadences"),
+        Some(&"1".to_string())
+    );
+    let file = File::open(&artifact.local_path).unwrap();
+    let reader = ParquetRecordBatchReaderBuilder::try_new(file)
+        .unwrap()
+        .build()
+        .unwrap();
+    assert_eq!(
+        reader.map(|batch| batch.unwrap().num_rows()).sum::<usize>(),
+        2
+    );
 }
 
 #[test]
@@ -202,7 +280,7 @@ fn test_serialize_ffi_parquet_roundtrip() {
         },
     };
 
-    let artifact = serialize_ffi(&ffi, &event, dir.path()).unwrap();
+    let artifact = serialize_ffi(&ffi, &event, dir.path(), "test-config").unwrap();
     assert_eq!(artifact.schema_version, "silver-ffi-v1");
     assert!(artifact.size_bytes > 0);
 

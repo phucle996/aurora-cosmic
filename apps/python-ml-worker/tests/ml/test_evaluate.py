@@ -4,7 +4,6 @@ Tests Golden Test and Recent Holdout cohorts, validation-only threshold selectio
 group contamination checks, PR-AUC / ROC-AUC, p99 anomaly thresholds, and synthetic shifts.
 """
 
-from dataclasses import asdict
 import json
 import os
 import tempfile
@@ -14,8 +13,10 @@ import numpy as np
 import pytest
 
 from aurora_ml.ml.anomaly.checkpoint import AnomalyTrainingRunManifest
+from aurora_ml.ml.anomaly.model import AnomalyLightcurveAutoencoder
 from aurora_ml.ml.anomaly.preprocessor import AnomalyPreprocessor
 from aurora_ml.ml.candidate.checkpoint import TrainingRunManifest
+from aurora_ml.ml.candidate.model import CandidateTabularMLP
 from aurora_ml.ml.candidate.preprocessor import CandidatePreprocessor
 from aurora_ml.ml.datasets.splits import (
     ANOMALY_MODEL_INPUT_FEATURES,
@@ -32,7 +33,6 @@ from aurora_ml.ml.evaluate import (
     apply_synthetic_standardized_shift,
     build_candidate_golden_cohort,
     build_candidate_recent_cohort,
-    build_evaluation_cohort,
     calculate_candidate_cohort_metrics,
     check_group_contamination,
     compute_average_precision,
@@ -458,53 +458,38 @@ def test_full_candidate_evaluation_flow():
             },
             best_epoch=10,
             artifacts={
-                "model_sha256": "mod" * 21 + "m",
-                "preprocessing_sha256": "p" * 64,
-                "metrics_sha256": "met" * 21 + "m",
+                "model_pt_sha256": "m" * 64,
+                "preprocessing_json_sha256": "p" * 64,
+                "metrics_json_sha256": "e" * 64,
             },
             schema_version=1,
             created_at="2026-08-08T00:00:00Z",
         )
 
-        train_manifest_path = os.path.join(tmp_dir, "training_manifest.json")
-        with open(train_manifest_path, "w", encoding="utf-8") as f:
-            json.dump(asdict(train_manifest), f)
-
-        # Build Golden and Recent cohorts
-        golden_cohort = build_evaluation_cohort(
-            task="candidate_vetting",
-            kind="GOLDEN",
-            gold_manifest=manifest,
-            rows=all_rows,
+        golden_cohort = build_candidate_golden_cohort(manifest, all_rows, split)
+        recent_cohort = build_candidate_recent_cohort(
+            manifest, all_rows, split, golden_cohort
         )
-        recent_cohort = build_evaluation_cohort(
-            task="candidate_vetting",
-            kind="RECENT",
-            gold_manifest=manifest,
-            rows=all_rows,
-        )
-
-        golden_path = os.path.join(tmp_dir, "golden_cohort.json")
-        recent_path = os.path.join(tmp_dir, "recent_cohort.json")
-        with open(golden_path, "w", encoding="utf-8") as f:
-            json.dump(golden_cohort.to_dict(), f)
-        with open(recent_path, "w", encoding="utf-8") as f:
-            json.dump(recent_cohort.to_dict(), f)
-
-        # Execute candidate evaluation
-        eval_manifest = evaluate_candidate_model(
-            training_run_manifest_path=train_manifest_path,
+        model = CandidateTabularMLP(input_dim=len(CANDIDATE_MODEL_INPUT_FEATURES))
+        eval_manifest, _, _ = evaluate_candidate_model(
+            training_manifest=train_manifest,
+            training_split=split,
+            golden_cohort=golden_cohort,
+            training_rows=train_rows,
+            golden_rows=all_rows,
+            model_state_dict=model.state_dict(),
             preprocessing_json_path=prep_path,
-            golden_cohort_path=golden_path,
-            recent_cohort_path=recent_path,
-            output_dir=tmp_dir,
+            recent_cohort=recent_cohort,
+            recent_rows=all_rows,
+            dest_dir=tmp_dir,
         )
 
         assert eval_manifest.schema_version == 1
         assert eval_manifest.task == "candidate_vetting"
-        assert os.path.exists(os.path.join(tmp_dir, "threshold.json"))
-        assert os.path.exists(os.path.join(tmp_dir, "metrics.json"))
-        assert os.path.exists(os.path.join(tmp_dir, "manifest.json"))
+        eval_dir = os.path.join(tmp_dir, eval_manifest.evaluation_run_id)
+        assert os.path.exists(os.path.join(eval_dir, "threshold.json"))
+        assert os.path.exists(os.path.join(eval_dir, "metrics.json"))
+        assert os.path.exists(os.path.join(eval_dir, "manifest.json"))
 
 
 def test_full_anomaly_evaluation_flow():
@@ -558,29 +543,26 @@ def test_full_anomaly_evaluation_flow():
             created_at="2026-08-08T00:00:00Z",
         )
 
-        train_manifest_path = os.path.join(tmp_dir, "training_manifest.json")
-        with open(train_manifest_path, "w", encoding="utf-8") as f:
-            json.dump(asdict(train_manifest), f)
+        from aurora_ml.ml.evaluate.cohort import build_anomaly_golden_cohort
 
-        golden_cohort = build_evaluation_cohort(
-            task="astronomical_anomaly_detection",
-            kind="GOLDEN",
-            gold_manifest=manifest,
-            rows=all_rows,
+        golden_cohort = build_anomaly_golden_cohort(manifest, all_rows, split)
+        model = AnomalyLightcurveAutoencoder(
+            input_dim=len(ANOMALY_MODEL_INPUT_FEATURES)
         )
-        golden_path = os.path.join(tmp_dir, "golden_cohort.json")
-        with open(golden_path, "w", encoding="utf-8") as f:
-            json.dump(golden_cohort.to_dict(), f)
-
-        eval_manifest = evaluate_anomaly_model(
-            training_run_manifest_path=train_manifest_path,
+        eval_manifest, _, _ = evaluate_anomaly_model(
+            training_manifest=train_manifest,
+            training_split=split,
+            golden_cohort=golden_cohort,
+            training_rows=train_rows,
+            golden_rows=all_rows,
+            model_state_dict=model.state_dict(),
             preprocessing_json_path=prep_path,
-            golden_cohort_path=golden_path,
-            output_dir=tmp_dir,
+            dest_dir=tmp_dir,
         )
 
         assert eval_manifest.schema_version == 1
         assert eval_manifest.task == "astronomical_anomaly_detection"
-        assert os.path.exists(os.path.join(tmp_dir, "threshold.json"))
-        assert os.path.exists(os.path.join(tmp_dir, "metrics.json"))
-        assert os.path.exists(os.path.join(tmp_dir, "manifest.json"))
+        eval_dir = os.path.join(tmp_dir, eval_manifest.evaluation_run_id)
+        assert os.path.exists(os.path.join(eval_dir, "threshold.json"))
+        assert os.path.exists(os.path.join(eval_dir, "metrics.json"))
+        assert os.path.exists(os.path.join(eval_dir, "manifest.json"))

@@ -1,15 +1,20 @@
 import {
   Activity,
-  AlertTriangle,
   BrainCircuit,
+	Clock3,
   Database,
   DownloadCloud,
+  Factory,
+  GitBranch,
   LayoutDashboard,
+  Microscope,
   Orbit,
   Server,
   Sparkles,
+  SearchCheck,
   Target,
   Workflow,
+  Waves,
 } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router-dom';
 import type { JSX } from 'react';
@@ -25,19 +30,41 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
 } from '@/components/ui/sidebar';
 
 const menuItems = [
   { path: '/', label: 'Platform Overview', icon: LayoutDashboard },
-  { path: '/targets', label: 'TESS Target Discovery', icon: Target },
-  { path: '/exoplanets', label: '3D Exoplanet Explorer', icon: Orbit },
   { path: '/ingest', label: 'Ingest Pipeline', icon: DownloadCloud },
-  { path: '/preprocessing', label: 'Preprocessing & Lineage', icon: Workflow },
   { path: '/datasets', label: 'Datasets (Lakehouse)', icon: Database },
-  { path: '/candidates', label: 'ML Transit Candidates', icon: Sparkles },
-  { path: '/anomalies', label: 'Anomaly Engine', icon: AlertTriangle },
-  { path: '/models', label: 'Models & Inference', icon: BrainCircuit },
   { path: '/monitoring', label: 'Monitoring', icon: Server },
+];
+
+const dataFactoryItems = [
+  { path: '/data-factory/preprocessing', label: 'Preprocessing', detail: 'Run Bronze → Silver', icon: Workflow },
+  { path: '/data-factory/enrichment', label: 'Data Enrichment', detail: 'Silver → Gold', icon: Waves },
+  { path: '/data-factory/pipeline', label: 'Pipeline DAG', detail: 'Bronze → Gold footprint', icon: Factory },
+  { path: '/data-factory/history', label: 'Run History', detail: 'Durable batch + stream ledger', icon: Clock3 },
+  { path: '/data-factory/lineage', label: 'Lineage Explorer', detail: 'Artifact provenance', icon: GitBranch },
+];
+
+const researchFactoryItems = [
+  { path: '/research-factory/discovery', label: 'TESS Target Discovery', detail: 'Find research targets', icon: Target },
+  { path: '/research-factory/workbench', label: 'Observation Workbench', detail: 'Inspect observations', icon: Microscope },
+  { path: '/research-factory/transit-candidates', label: 'Transit Candidates', detail: 'ML-ranked evidence', icon: Sparkles },
+  { path: '/research-factory/systems', label: '3D Systems & Habitability', detail: 'Evidence-backed physics', icon: Orbit },
+  { path: '/research-factory/vetting', label: 'Target Vetting', detail: 'Evidence review', icon: SearchCheck },
+  { path: '/research-factory/evidence', label: 'Evidence & Runs', detail: 'Gold + inference provenance', icon: GitBranch },
+];
+
+const aiFactoryItems = [
+  { path: '/ai-factory/training', label: 'Training Lab', detail: 'Gold → trained model', icon: BrainCircuit },
+  { path: '/ai-factory/evaluation', label: 'Model Evaluation', detail: 'Quality + parity checks', icon: Activity },
+  { path: '/ai-factory/evidence', label: 'Evolution Evidence', detail: 'Data and model provenance', icon: GitBranch },
+  { path: '/ai-factory/registry', label: 'Model Registry', detail: 'Promote and roll back', icon: Database },
+  { path: '/ai-factory/inference', label: 'Inference Engine', detail: 'Batch + stream scoring', icon: Sparkles },
 ];
 
 export default function Sidebar(): JSX.Element {
@@ -79,6 +106,74 @@ export default function Sidebar(): JSX.Element {
                   </SidebarMenuItem>
                 );
               })}
+              <SidebarMenuItem>
+                <SidebarMenuButton isActive={location.pathname.startsWith('/data-factory/')} tooltip="Data Factory" className="font-medium">
+                  <Factory className="size-4" aria-hidden="true" />
+                  <span>Data Factory</span>
+                </SidebarMenuButton>
+                <SidebarMenuSub>
+                  {dataFactoryItems.map((item) => {
+                    const Icon = item.icon;
+                    const isActive = location.pathname.startsWith(item.path);
+                    return (
+                      <SidebarMenuSubItem key={item.path}>
+                        <SidebarMenuSubButton asChild isActive={isActive}>
+                          <NavLink to={item.path}>
+                            <Icon className="size-3.5" aria-hidden="true" />
+                            <span>{item.label}</span>
+                          </NavLink>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+                    );
+                  })}
+                </SidebarMenuSub>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton isActive={location.pathname.startsWith('/ai-factory/')} tooltip="AI Factory" className="font-medium">
+                  <BrainCircuit className="size-4" aria-hidden="true" />
+                  <span>AI Factory</span>
+                </SidebarMenuButton>
+                <SidebarMenuSub>
+                  {aiFactoryItems.map((item) => {
+                    const Icon = item.icon;
+                    const isActive = location.pathname.startsWith(item.path);
+                    return (
+                      <SidebarMenuSubItem key={item.path}>
+                        <SidebarMenuSubButton asChild isActive={isActive}>
+                          <NavLink to={item.path}>
+                            <Icon className="size-3.5" aria-hidden="true" />
+                            <span>{item.label}</span>
+                          </NavLink>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+                    );
+                  })}
+                </SidebarMenuSub>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={location.pathname.startsWith('/research-factory/')} tooltip="Scientific Research Factory" className="font-medium">
+                  <NavLink to="/research-factory">
+                    <Microscope className="size-4" aria-hidden="true" />
+                    <span>Scientific Research Factory</span>
+                  </NavLink>
+                </SidebarMenuButton>
+                <SidebarMenuSub>
+                  {researchFactoryItems.map((item) => {
+                    const Icon = item.icon;
+                    const isActive = location.pathname.startsWith(item.path);
+                    return (
+                      <SidebarMenuSubItem key={item.path}>
+                        <SidebarMenuSubButton asChild isActive={isActive}>
+                          <NavLink to={item.path}>
+                            <Icon className="size-3.5" aria-hidden="true" />
+                            <span>{item.label}</span>
+                          </NavLink>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+                    );
+                  })}
+                </SidebarMenuSub>
+              </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

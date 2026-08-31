@@ -1,6 +1,6 @@
 """Astronomical Catalog Snapshot, Ephemeris Candidate Matching & Label Versioning (Phase 5.4).
 
-Manages immutable TIC/TOI/TCE catalog snapshots, candidate ephemeris matching (toi-match-v1),
+Manages immutable TIC/TOI/TCE catalog snapshots, candidate ephemeris matching (toi-match-v2),
 and conservative training label derivation (candidate-label-policy-v1).
 """
 
@@ -415,12 +415,10 @@ def match_toi_candidate(
 
     Returns (matched_toi_record, match_status, period_error).
     """
-    if (
-        lc_features.tic_id is None
-        or not lc_features.bls_available
-        or lc_features.bls_period is None
-    ):
-        return None, "NO_MATCH", None
+    if lc_features.tic_id is None:
+        return None, "TARGET_ID_UNAVAILABLE", None
+    if not lc_features.bls_available or lc_features.bls_period is None:
+        return None, "BLS_UNAVAILABLE", None
 
     tic_id = lc_features.tic_id
     bls_period = lc_features.bls_period
@@ -428,7 +426,7 @@ def match_toi_candidate(
     # Filter TOIs for target TIC
     target_tois = [r for r in toi_candidates if r.tic_id == tic_id]
     if not target_tois:
-        return None, "NO_MATCH", None
+        return None, "NO_TOI_FOR_TARGET", None
 
     exact_matches: List[Tuple[ToiCatalogRecord, float]] = []
     harmonic_matches: List[Tuple[ToiCatalogRecord, float]] = []
@@ -482,7 +480,10 @@ def match_toi_candidate(
     elif len(harmonic_matches) > 1:
         return None, "AMBIGUOUS", None
 
-    return None, "NO_MATCH", None
+    # The catalog has one or more TOIs for this TIC, but the measured BLS
+    # period does not agree with an exact or supported harmonic.  This is
+    # materially different from a target that is absent from the TOI catalog.
+    return None, "PERIOD_MISMATCH", None
 
 
 def match_tce_candidate(

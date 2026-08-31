@@ -5,6 +5,7 @@ mod infra;
 mod observer;
 mod output;
 mod pipeline;
+mod runtime;
 mod worker;
 
 #[cfg(test)]

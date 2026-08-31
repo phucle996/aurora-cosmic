@@ -127,7 +127,7 @@ def test_candidate_ml_view_builder_success():
 
     view = build_candidate_ml_view(manifest, rows)
     assert isinstance(view, CandidateMlView)
-    assert view.dataset_view_version == "candidate-ml-view-v1"
+    assert view.dataset_view_version == "candidate-ml-view-v2"
     assert view.gold_snapshot_id == manifest.snapshot_id
     assert (
         view.total_row_count == 13
@@ -138,16 +138,16 @@ def test_candidate_ml_view_builder_success():
     assert view.positive_count == 7  # TIC 1001 s10, s11, TICs 1002-1006
     assert view.negative_count == 5  # TICs 2001-2005
     assert view.unresolved_count == 1  # TIC 3001
-    assert len(view.feature_names) == 32
+    assert len(view.feature_names) == 31
     assert view.feature_names == CANDIDATE_MODEL_INPUT_FEATURES
 
 
 def test_frozen_feature_ordering_alphabetical():
-    # Verify 32 MODEL_INPUT feature names are strictly sorted alphabetically
+    # Verify v2 MODEL_INPUT feature names are strictly sorted alphabetically.
     assert list(CANDIDATE_MODEL_INPUT_FEATURES) == sorted(
         CANDIDATE_MODEL_INPUT_FEATURES
     )
-    assert len(CANDIDATE_MODEL_INPUT_FEATURES) == 32
+    assert len(CANDIDATE_MODEL_INPUT_FEATURES) == 31
 
 
 def test_leakage_exclusion():

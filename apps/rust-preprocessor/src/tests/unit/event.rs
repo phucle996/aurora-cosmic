@@ -187,6 +187,7 @@ fn test_silver_object_ready_event_serialization() {
         product_kind: ProductKind::LightCurve,
         schema_version: "silver-lightcurve-v1".to_string(),
         processor_version: "lc-preprocess-v1".to_string(),
+        processing_fingerprint: "f".repeat(64),
         sector: 42,
         tic_id: Some(123456789),
         camera: None,

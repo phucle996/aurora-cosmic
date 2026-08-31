@@ -1,0 +1,15 @@
+[Unit]
+Description=AURORA native development application stack
+Requires=aurora-infra.service
+After=aurora-infra.service
+Wants=aurora-go-ingester.service
+Wants=aurora-rust-preprocessor.service
+Wants=aurora-python-ml-worker.service
+Wants=aurora-gold-builder.service
+Wants=aurora-systemd-exporter.service
+Wants=aurora-rust-inference.service
+Wants=aurora-go-api.service
+Wants=aurora-dashboard.service
+
+[Install]
+WantedBy=default.target

@@ -56,12 +56,12 @@ func (r *CatalogClickHouse) UpsertObjects(ctx context.Context, objects []repo.Ca
 		}
 		first = false
 
-		cleanEtag := strings.ReplaceAll(obj.ETag, "'", "")
-		cleanKey := strings.ReplaceAll(obj.ObjectKey, "'", "\\'")
+		cleanEtag := quoteSQL(obj.ETag)
+		cleanKey := quoteSQL(obj.ObjectKey)
 		timeStr := obj.LastModified.UTC().Format("2006-01-02 15:04:05")
 
 		sb.WriteString(fmt.Sprintf("('%s', '%s', %d, '%s', %d, %d, '%s', '%s')",
-			obj.Tier, cleanKey, obj.SizeBytes, cleanEtag, obj.Sector, obj.TICID, obj.ProductType, timeStr))
+			quoteSQL(obj.Tier), cleanKey, obj.SizeBytes, cleanEtag, obj.Sector, obj.TICID, quoteSQL(obj.ProductType), timeStr))
 	}
 
 	return r.client.Exec(ctx, sb.String())
@@ -88,7 +88,9 @@ func ParseCatalogObject(key string, size int64, etag string, modTime time.Time) 
 		productType = "gold_features"
 	}
 
-	var sector int32 = 42
+	// A path that does not identify a sector is inventory metadata, not Sector
+	// 42.  Zero is explicitly the unknown/unscoped value across the API.
+	var sector int32
 	if m := sectorRegex.FindStringSubmatch(key); len(m) > 1 {
 		if parsed, err := strconv.Atoi(m[1]); err == nil {
 			sector = int32(parsed)
@@ -124,7 +126,10 @@ type countResponse struct {
 }
 
 func (r *CatalogClickHouse) CountObjects(ctx context.Context, tier string) (int64, int64, error) {
-	query := fmt.Sprintf("SELECT toString(count()) AS total, toString(sum(size_bytes)) AS total_bytes FROM aurora.lakehouse_objects WHERE tier = '%s' FORMAT JSON", tier)
+	if !validTier(tier) {
+		return 0, 0, fmt.Errorf("unsupported lakehouse tier %q", tier)
+	}
+	query := fmt.Sprintf("SELECT toString(count()) AS total, toString(sum(size_bytes)) AS total_bytes FROM aurora.lakehouse_objects FINAL WHERE tier = '%s' FORMAT JSON", quoteSQL(tier))
 	data, err := r.client.Query(ctx, query)
 	if err != nil {
 		return 0, 0, err
@@ -154,6 +159,9 @@ type listResponse struct {
 }
 
 func (r *CatalogClickHouse) ListObjects(ctx context.Context, tier, prefix string, page, limit int) ([]repo.CatalogObject, int64, int64, error) {
+	if !validTier(tier) {
+		return nil, 0, 0, fmt.Errorf("unsupported lakehouse tier %q", tier)
+	}
 	if page < 1 {
 		page = 1
 	}
@@ -162,14 +170,14 @@ func (r *CatalogClickHouse) ListObjects(ctx context.Context, tier, prefix string
 	}
 	offset := (page - 1) * limit
 
-	whereClause := fmt.Sprintf("tier = '%s'", tier)
+	whereClause := fmt.Sprintf("tier = '%s'", quoteSQL(tier))
 	if prefix != "" && prefix != tier && prefix != tier+"/" {
-		cleanPrefix := strings.ReplaceAll(prefix, "'", "\\'")
+		cleanPrefix := quoteSQL(prefix)
 		whereClause += fmt.Sprintf(" AND object_key LIKE '%s%%'", cleanPrefix)
 	}
 
 	// 1. Get total and sum in 1ms
-	countQuery := fmt.Sprintf("SELECT toString(count()) AS total, toString(sum(size_bytes)) AS total_bytes FROM aurora.lakehouse_objects WHERE %s FORMAT JSON", whereClause)
+	countQuery := fmt.Sprintf("SELECT toString(count()) AS total, toString(sum(size_bytes)) AS total_bytes FROM aurora.lakehouse_objects FINAL WHERE %s FORMAT JSON", whereClause)
 	countData, err := r.client.Query(ctx, countQuery)
 	if err != nil {
 		return nil, 0, 0, err
@@ -188,7 +196,7 @@ func (r *CatalogClickHouse) ListObjects(ctx context.Context, tier, prefix string
 	}
 
 	// 2. Fetch paginated objects in 1ms
-	dataQuery := fmt.Sprintf("SELECT tier, object_key, toString(size_bytes) AS size_bytes, etag, sector, toString(tic_id) AS tic_id, product_type, toString(last_modified) AS last_modified FROM aurora.lakehouse_objects WHERE %s ORDER BY last_modified DESC LIMIT %d OFFSET %d FORMAT JSON", whereClause, limit, offset)
+	dataQuery := fmt.Sprintf("SELECT tier, object_key, toString(size_bytes) AS size_bytes, etag, sector, toString(tic_id) AS tic_id, product_type, toString(last_modified) AS last_modified FROM aurora.lakehouse_objects FINAL WHERE %s ORDER BY last_modified DESC LIMIT %d OFFSET %d FORMAT JSON", whereClause, limit, offset)
 	dataBytes, err := r.client.Query(ctx, dataQuery)
 	if err != nil {
 		return nil, 0, 0, err
@@ -217,4 +225,21 @@ func (r *CatalogClickHouse) ListObjects(ctx context.Context, tier, prefix string
 	}
 
 	return results, total, totalBytes, nil
+}
+
+func validTier(tier string) bool {
+	switch tier {
+	case "bronze", "silver", "gold":
+		return true
+	default:
+		return false
+	}
+}
+
+// quoteSQL escapes a ClickHouse single-quoted string. Queries are still built
+// locally because the HTTP client does not expose parameter binding; every
+// external string therefore passes through this single implementation.
+func quoteSQL(value string) string {
+	value = strings.ReplaceAll(value, "\\", "\\\\")
+	return strings.ReplaceAll(value, "'", "\\'")
 }

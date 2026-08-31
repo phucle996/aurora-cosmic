@@ -161,9 +161,49 @@ def build_transit_masks(
     return in_mask, out_mask
 
 
-def compute_tpf_features(
+def _sample_target_key(sample_id: Optional[str]) -> Optional[tuple[int, int]]:
+    """Normalize the two durable sample-id encodings to ``(TIC, sector)``.
+
+    Historical LC events use ``tic:<id>:s:<sector>``, while TPF events emitted
+    by the chunked preprocessor use ``sample:tic=<id>:sector=<sector>``. They
+    identify the same physical target and must not suppress spatial transit
+    vetting merely because their serializations differ.
+    """
+    if not sample_id:
+        return None
+    value = str(sample_id).strip()
+    if value.startswith("tic:"):
+        parts = value.split(":")
+        if len(parts) >= 4 and parts[2] == "s":
+            try:
+                return int(parts[1]), int(parts[3])
+            except ValueError:
+                return None
+    if value.startswith("sample:"):
+        fields = {
+            key: raw
+            for part in value.split(":")[1:]
+            if "=" in part
+            for key, raw in [part.split("=", 1)]
+        }
+        try:
+            return int(fields["tic"]), int(fields["sector"])
+        except (KeyError, ValueError):
+            return None
+    return None
+
+
+def _samples_describe_same_target(left: Optional[str], right: Optional[str]) -> bool:
+    if left == right:
+        return True
+    left_target = _sample_target_key(left)
+    right_target = _sample_target_key(right)
+    return left_target is not None and left_target == right_target
+
+
+def compute_tpf_features_from_cube(
     time_arr: np.ndarray,
-    flux_cube_list: List[np.ndarray],
+    cube: np.ndarray,
     rows: int,
     cols: int,
     metadata: Dict[str, Any],
@@ -174,7 +214,12 @@ def compute_tpf_features(
     min_in_cadences: int = 3,
     min_out_cadences: int = 20,
 ) -> TpfVettingFeatures:
-    """Pure mathematical function to extract TPF vetting evidence from time and flux cube."""
+    """Extract exact TPF evidence from an in-memory array or disk-backed memmap.
+
+    The computation walks cadence/pixel blocks so a large TPF never requires a
+    second full-cube allocation.  ``cube`` may therefore be a ``numpy.memmap``
+    assembled from Parquet row groups by the Gold Builder.
+    """
     time = np.asarray(time_arr, dtype=np.float64)
     n_cadences = len(time)
 
@@ -183,23 +228,23 @@ def compute_tpf_features(
 
     pixel_count = rows * cols
 
-    # Reshape 1D flattened flux lists to (n_cadences, rows, cols)
-    cube = np.zeros((n_cadences, rows, cols), dtype=np.float64)
-    for t_idx in range(n_cadences):
-        arr = np.asarray(flux_cube_list[t_idx], dtype=np.float64)
-        if len(arr) != pixel_count:
-            raise ValueError(
-                f"Invalid TPF input: cadence {t_idx} array length {len(arr)} != rows*cols ({pixel_count})"
-            )
-        cube[t_idx] = arr.reshape((rows, cols))
+    if cube.shape != (n_cadences, pixel_count):
+        raise ValueError(
+            "Invalid TPF cube shape: "
+            f"expected {(n_cadences, pixel_count)}, got {cube.shape}"
+        )
 
-    finite_mask = np.isfinite(cube)
-    finite_pixel_fraction = float(np.mean(finite_mask))
+    pixel_block_size = 512
+    pixel_mads = np.empty(pixel_count, dtype=np.float64)
+    finite_count = 0
+    for start in range(0, pixel_count, pixel_block_size):
+        stop = min(start + pixel_block_size, pixel_count)
+        values = np.asarray(cube[:, start:stop], dtype=np.float64)
+        medians = np.median(values, axis=0)
+        pixel_mads[start:stop] = np.median(np.abs(values - medians), axis=0)
+        finite_count += int(np.isfinite(values).sum())
 
-    # Compute per-pixel temporal MAD map across cadences
-    pixel_medians = np.median(cube, axis=0)  # Shape (rows, cols)
-    pixel_mads = np.median(np.abs(cube - pixel_medians), axis=0)  # Shape (rows, cols)
-
+    finite_pixel_fraction = float(finite_count / (n_cadences * pixel_count))
     pixel_mad_median = float(np.median(pixel_mads))
     pixel_mad_mean = float(np.mean(pixel_mads))
     pixel_mad_max = float(np.max(pixel_mads))
@@ -213,7 +258,11 @@ def compute_tpf_features(
         variability_effective_pixels = None
 
     # Summed relative flux across cadences
-    summed_flux = np.sum(cube, axis=(1, 2))  # Shape (n_cadences,)
+    cadence_block_size = 256
+    summed_flux = np.empty(n_cadences, dtype=np.float64)
+    for start in range(0, n_cadences, cadence_block_size):
+        stop = min(start + cadence_block_size, n_cadences)
+        summed_flux[start:stop] = np.sum(cube[start:stop], axis=1)
     summed_flux_std = float(np.std(summed_flux, ddof=0))
     summed_flux_mad = float(np.median(np.abs(summed_flux - np.median(summed_flux))))
     summed_flux_p05 = float(np.percentile(summed_flux, 5))
@@ -241,7 +290,9 @@ def compute_tpf_features(
         # Validate candidate pairing compatibility
         sample_id = metadata.get("sample_id")
         lc_sample_id = lc_features.sample_id
-        if sample_id and lc_sample_id and sample_id != lc_sample_id:
+        if sample_id and lc_sample_id and not _samples_describe_same_target(
+            sample_id, lc_sample_id
+        ):
             tpf_feature_status = "PAIRING_CONFLICT"
         else:
             in_mask, out_mask = build_transit_masks(
@@ -266,8 +317,13 @@ def compute_tpf_features(
                 transit_evidence_available = True
 
                 # Median images during in-transit and out-of-transit windows
-                in_median_img = np.median(cube[in_mask], axis=0)
-                out_median_img = np.median(cube[out_mask], axis=0)
+                in_median_img = np.empty(pixel_count, dtype=np.float64)
+                out_median_img = np.empty(pixel_count, dtype=np.float64)
+                for start in range(0, pixel_count, pixel_block_size):
+                    stop = min(start + pixel_block_size, pixel_count)
+                    values = np.asarray(cube[:, start:stop], dtype=np.float64)
+                    in_median_img[start:stop] = np.median(values[in_mask], axis=0)
+                    out_median_img[start:stop] = np.median(values[out_mask], axis=0)
 
                 # Positive Deficit Map: dimming during transit => out > in
                 deficit_map = out_median_img - in_median_img
@@ -286,8 +342,9 @@ def compute_tpf_features(
 
                     # Compute Transit Deficit Centroid (0-indexed)
                     grid_r, grid_c = np.indices((rows, cols))
-                    c_row = float(np.sum(grid_r * positive_deficit) / tot_deficit)
-                    c_col = float(np.sum(grid_c * positive_deficit) / tot_deficit)
+                    deficit_image = positive_deficit.reshape(rows, cols)
+                    c_row = float(np.sum(grid_r * deficit_image) / tot_deficit)
+                    c_col = float(np.sum(grid_c * deficit_image) / tot_deficit)
 
                     transit_deficit_centroid_row = c_row
                     transit_deficit_centroid_col = c_col
@@ -348,6 +405,48 @@ def compute_tpf_features(
         transit_deficit_centroid_row=transit_deficit_centroid_row,
         transit_deficit_centroid_col=transit_deficit_centroid_col,
         transit_deficit_center_offset_pixels=transit_deficit_center_offset_pixels,
+    )
+
+
+def compute_tpf_features(
+    time_arr: np.ndarray,
+    flux_cube_list: List[np.ndarray],
+    rows: int,
+    cols: int,
+    metadata: Dict[str, Any],
+    lc_features: Optional[LightCurveFeatures] = None,
+    feature_version: str = "tpf-vetting-v1",
+    window_factor: float = 1.0,
+    out_guard_factor: float = 2.0,
+    min_in_cadences: int = 3,
+    min_out_cadences: int = 20,
+) -> TpfVettingFeatures:
+    """Compatibility wrapper for callers that already materialized a TPF cube."""
+    n_cadences = len(time_arr)
+    pixel_count = rows * cols
+    if len(flux_cube_list) != n_cadences:
+        raise ValueError("TPF cadence and flux-cube lengths differ")
+    cube = np.empty((n_cadences, pixel_count), dtype=np.float64)
+    for index, values in enumerate(flux_cube_list):
+        pixels = np.asarray(values, dtype=np.float64)
+        if len(pixels) != pixel_count:
+            raise ValueError(
+                f"Invalid TPF input: cadence {index} array length {len(pixels)} "
+                f"!= rows*cols ({pixel_count})"
+            )
+        cube[index] = pixels
+    return compute_tpf_features_from_cube(
+        time_arr=time_arr,
+        cube=cube,
+        rows=rows,
+        cols=cols,
+        metadata=metadata,
+        lc_features=lc_features,
+        feature_version=feature_version,
+        window_factor=window_factor,
+        out_guard_factor=out_guard_factor,
+        min_in_cadences=min_in_cadences,
+        min_out_cadences=min_out_cadences,
     )
 
 
@@ -494,6 +593,48 @@ def extract_tpf_features_from_silver(
     return compute_tpf_features(
         time_arr=time_arr,
         flux_cube_list=flux_cube_list,
+        rows=rows,
+        cols=cols,
+        metadata=metadata,
+        lc_features=lc_features,
+        feature_version=feature_version,
+        window_factor=window_factor,
+        out_guard_factor=out_guard_factor,
+    )
+
+
+def extract_tpf_features_from_silver_cube(
+    tpf_input_ref: SilverInputRef,
+    time_arr: np.ndarray,
+    cube: np.ndarray,
+    rows: int,
+    cols: int,
+    lc_features: Optional[LightCurveFeatures] = None,
+    feature_version: str = "tpf-vetting-v1",
+    window_factor: float = 1.0,
+    out_guard_factor: float = 2.0,
+) -> TpfVettingFeatures:
+    """Extract TPF features from a verified, optionally disk-backed Silver cube."""
+    metadata = {
+        "lineage_id": tpf_input_ref.lineage_id,
+        "source_product_id": tpf_input_ref.source_product_id,
+        "product_kind": tpf_input_ref.product_kind,
+        "silver_schema_version": tpf_input_ref.silver_schema_version,
+        "silver_sha256": tpf_input_ref.silver_sha256,
+        "processor_version": tpf_input_ref.processor_version,
+        "sample_id": tpf_input_ref.sample_id,
+    }
+    if tpf_input_ref.sample_id and tpf_input_ref.sample_id.startswith("tic:"):
+        parts = tpf_input_ref.sample_id.split(":")
+        if len(parts) >= 4:
+            try:
+                metadata["tic_id"] = int(parts[1])
+                metadata["sector"] = int(parts[3])
+            except ValueError:
+                pass
+    return compute_tpf_features_from_cube(
+        time_arr=time_arr,
+        cube=cube,
         rows=rows,
         cols=cols,
         metadata=metadata,

@@ -9,7 +9,7 @@ use crate::infra::MinioClient;
 use crate::output::silver::SilverArtifact;
 
 /// Schema version for preprocessing checkpoint format.
-pub const CURRENT_CHECKPOINT_SCHEMA_VERSION: u32 = 1;
+pub const CURRENT_CHECKPOINT_SCHEMA_VERSION: u32 = 2;
 
 /// Preprocessing progress state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,6 +49,9 @@ pub struct PreprocessingCheckpoint {
     pub bronze_sha256: String,
 
     pub processor_version: String,
+    /// Hash of every output-affecting scientific configuration value.
+    /// A changed fingerprint is a distinct reproducible transformation.
+    pub processing_fingerprint: String,
 
     pub silver_bucket: Option<String>,
     pub silver_object_key: Option<String>,
@@ -73,8 +76,16 @@ pub struct PreprocessingCheckpoint {
 
 impl PreprocessingCheckpoint {
     /// Create a new checkpoint record in `PROCESSING` state for a fresh event attempt.
-    pub fn new(event: &BronzeObjectReady, processor_version: &str) -> Self {
-        let checkpoint_id = derive_checkpoint_id(&event.source_product_id, processor_version);
+    pub fn new(
+        event: &BronzeObjectReady,
+        processor_version: &str,
+        processing_fingerprint: &str,
+    ) -> Self {
+        let checkpoint_id = derive_checkpoint_id(
+            &event.source_product_id,
+            processor_version,
+            processing_fingerprint,
+        );
         let now = Utc::now().to_rfc3339();
 
         Self {
@@ -87,6 +98,7 @@ impl PreprocessingCheckpoint {
             bronze_object_key: event.object_key.clone(),
             bronze_sha256: event.sha256.clone(),
             processor_version: processor_version.to_string(),
+            processing_fingerprint: processing_fingerprint.to_string(),
             silver_bucket: None,
             silver_object_key: None,
             silver_sha256: None,
@@ -183,11 +195,17 @@ impl PreprocessingCheckpoint {
 }
 
 /// Derive a deterministic checkpoint ID from source product ID and processor version.
-pub fn derive_checkpoint_id(source_product_id: &str, processor_version: &str) -> String {
+pub fn derive_checkpoint_id(
+    source_product_id: &str,
+    processor_version: &str,
+    processing_fingerprint: &str,
+) -> String {
     let mut hasher = Sha256::new();
     hasher.update(source_product_id.as_bytes());
     hasher.update(b":");
     hasher.update(processor_version.as_bytes());
+    hasher.update(b":");
+    hasher.update(processing_fingerprint.as_bytes());
     hex::encode(hasher.finalize())
 }
 

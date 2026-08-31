@@ -12,6 +12,7 @@ type TrainingJobRequest struct {
 	BatchSize       int      `json:"batch_size"`
 	Seed            int      `json:"seed"`
 	AutoPromote     bool     `json:"auto_promote"`
+	ComputeTarget   string   `json:"compute_target,omitempty"` // "cpu" or "gpu"
 }
 
 // TrainingJobResponse đại diện cho dữ liệu phản hồi sau khi xếp hàng huấn luyện thành công
@@ -23,6 +24,7 @@ type TrainingJobResponse struct {
 	Status          string   `json:"status"`
 	CreatedAt       string   `json:"created_at"`
 	Message         string   `json:"message"`
+	ComputeTarget   string   `json:"compute_target"`
 }
 
 // ModelDeployRequest đại diện cho yêu cầu chọn model làm Champion phục vụ suy luận trực tiếp hoặc hủy kích hoạt

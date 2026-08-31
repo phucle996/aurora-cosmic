@@ -13,7 +13,8 @@ from typing import Any, Dict, List, Set, Tuple
 
 from aurora_ml.pipeline.gold import GoldSnapshotManifest
 
-# Frozen List of 32 MODEL_INPUT Features in Deterministic Alphabetical Order
+# Frozen v2 feature contract.  Labels are supplied by the separate curated
+# cohort, and TPF presence is guaranteed by Gold's completeness contract.
 CANDIDATE_MODEL_INPUT_FEATURES: Tuple[str, ...] = (
     "bls_available",
     "bls_depth",
@@ -42,7 +43,6 @@ CANDIDATE_MODEL_INPUT_FEATURES: Tuple[str, ...] = (
     "tic_available",
     "time_span",
     "tmag",
-    "tpf_evidence_available",
     "transit_deficit_center_offset_pixels",
     "transit_deficit_centroid_col",
     "transit_deficit_centroid_row",
@@ -80,10 +80,7 @@ LEAKAGE_EXCLUSIONS: Set[str] = {
     "matched_toi_id",
     "toi_match_status",
     "toi_period_error",
-    "matched_tce_id",
-    "tce_match_status",
     "training_label",
-    "label_policy_version",
 }
 
 
@@ -166,9 +163,9 @@ def build_candidate_ml_view(
         raise MlDatasetError(
             f"UNSUPPORTED_ML_DATASET_SOURCE: Snapshot type '{manifest.snapshot_type}' is not CANDIDATE"
         )
-    if manifest.gold_schema_version != "gold-candidate-v1":
+    if manifest.gold_schema_version not in {"gold-candidate-v1", "gold-candidate-v4"}:
         raise MlDatasetError(
-            f"UNSUPPORTED_ML_DATASET_SOURCE: Gold schema '{manifest.gold_schema_version}' is not gold-candidate-v1"
+            f"UNSUPPORTED_ML_DATASET_SOURCE: Gold schema '{manifest.gold_schema_version}' is not a supported candidate contract"
         )
 
     product_ids = []
@@ -199,7 +196,7 @@ def build_candidate_ml_view(
     ).hexdigest()
 
     v_fingerprint = derive_view_fingerprint(
-        view_version="candidate-ml-view-v1",
+        view_version="candidate-ml-view-v2",
         snapshot_id=manifest.snapshot_id,
         manifest_sha256=manifest_sha,
         feature_names=CANDIDATE_MODEL_INPUT_FEATURES,
@@ -210,7 +207,7 @@ def build_candidate_ml_view(
         gold_snapshot_id=manifest.snapshot_id,
         gold_manifest_sha256=manifest_sha,
         view_fingerprint=v_fingerprint,
-        dataset_view_version="candidate-ml-view-v1",
+        dataset_view_version="candidate-ml-view-v2",
         feature_names=CANDIDATE_MODEL_INPUT_FEATURES,
         total_row_count=len(candidate_rows),
         supervised_eligible_count=pos_c + neg_c,

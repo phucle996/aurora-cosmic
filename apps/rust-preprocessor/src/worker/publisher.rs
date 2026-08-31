@@ -14,6 +14,7 @@ pub fn build_silver_event(
     size_bytes: u64,
     schema_version: &str,
     processor_version: &str,
+    processing_fingerprint: &str,
 ) -> SilverObjectReady {
     SilverObjectReady {
         event_id: Uuid::new_v4().to_string(),
@@ -26,6 +27,7 @@ pub fn build_silver_event(
         product_kind: event.product_kind.clone(),
         schema_version: schema_version.to_string(),
         processor_version: processor_version.to_string(),
+        processing_fingerprint: processing_fingerprint.to_string(),
         sector: event.sector,
         tic_id: event.tic_id,
         camera: event.camera,

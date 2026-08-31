@@ -26,14 +26,14 @@ export function LiveTrainingBanner({
           <div className="space-y-0.5">
             <div className="flex items-center gap-2">
               <h4 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
-                ⚡ GPU Worker đang trong quá trình huấn luyện Deep Neural Network
+                ⚡ {activeTraining.computeTarget?.toUpperCase() || 'GPU'} Worker đang huấn luyện Deep Neural Network
               </h4>
               <Badge variant="outline" className="bg-primary/20 text-primary border-primary/40 text-[10px] animate-pulse font-mono">
                 Đang chạy: {trainingElapsed}s
               </Badge>
             </div>
             <p className="text-xs text-muted-foreground">
-              Đang xử lý & gộp <strong className="text-foreground">{activeTraining.snapshotCount} Gold Snapshots</strong> • Epochs: <strong className="text-foreground">{activeTraining.epochs}</strong> • Base: <span className="font-mono text-primary">{activeTraining.baseModel || 'Scratch'}</span> • AdamW + Cosine Annealing LR
+              Đang xử lý & gộp <strong className="text-foreground">{activeTraining.snapshotCount} Gold Snapshots</strong> • Epochs: <strong className="text-foreground">{activeTraining.epochs}</strong> • Compute: <strong className="text-foreground">{activeTraining.computeTarget?.toUpperCase() || 'GPU'}</strong> • Base: <span className="font-mono text-primary">{activeTraining.baseModel || 'Scratch'}</span> • AdamW + Cosine Annealing LR
             </p>
           </div>
         </div>

@@ -31,6 +31,11 @@ func main() {
 		log.Error("Application initialization error", slog.Any("error", err))
 		os.Exit(1)
 	}
+	if err := application.Start(context.Background()); err != nil {
+		log.Error("NATS runtime stream unavailable", slog.Any("error", err))
+		_ = application.Shutdown(context.Background())
+		os.Exit(1)
+	}
 
 	serverErr := make(chan error, 1)
 	go func() {

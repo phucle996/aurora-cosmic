@@ -15,20 +15,66 @@ import (
 
 	"go-ingester/infra/mast"
 	"go-ingester/internal/model"
+	"go-ingester/internal/pipeline/checkpoint"
+	"go-ingester/internal/pipeline/event"
 	"go-ingester/internal/pipeline/ingest"
+	"go-ingester/internal/pipeline/plan"
+	storagecontract "go-ingester/internal/pipeline/storage"
 )
 
 type mockStorageClient struct {
 	mu      sync.Mutex
-	objects map[string]*model.ObjectInfo
+	objects map[string]*storagecontract.ObjectInfo
 	content map[string][]byte
+}
+
+type fixedSourceReader struct {
+	data []byte
+	size int64
+}
+
+func (s fixedSourceReader) OpenProduct(context.Context, string) (io.ReadCloser, int64, error) {
+	return io.NopCloser(bytes.NewReader(s.data)), s.size, nil
+}
+
+type recordingCapacityGate struct {
+	mu       sync.Mutex
+	acquired []int64
+	released int64
+}
+
+func (g *recordingCapacityGate) Acquire(_ context.Context, size int64) (func(), error) {
+	g.mu.Lock()
+	g.acquired = append(g.acquired, size)
+	g.mu.Unlock()
+	return func() {
+		g.mu.Lock()
+		g.released += size
+		g.mu.Unlock()
+	}, nil
 }
 
 func newMockStorageClient() *mockStorageClient {
 	return &mockStorageClient{
-		objects: make(map[string]*model.ObjectInfo),
+		objects: make(map[string]*storagecontract.ObjectInfo),
 		content: make(map[string][]byte),
 	}
+}
+
+func newTestPipeline(source ingest.SourceReader, storage storagecontract.Client, publisher event.Publisher, checkpoints *checkpoint.Manager, bucket string, workers int, logger *slog.Logger) *ingest.Pipeline {
+	return ingest.NewPipeline(
+		ingest.Dependencies{
+			Source:      source,
+			Storage:     storage,
+			Publisher:   publisher,
+			Checkpoints: checkpoints,
+		},
+		ingest.Options{
+			Bucket:      bucket,
+			WorkerCount: workers,
+			Logger:      logger,
+		},
+	)
 }
 
 func (m *mockStorageClient) EnsureBucket(ctx context.Context, bucket string) error {
@@ -43,7 +89,7 @@ func (m *mockStorageClient) PutObject(ctx context.Context, bucket, objectKey str
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.content[objectKey] = data
-	m.objects[objectKey] = &model.ObjectInfo{
+	m.objects[objectKey] = &storagecontract.ObjectInfo{
 		Key:          objectKey,
 		Size:         int64(len(data)),
 		UserMetadata: userMetadata,
@@ -51,7 +97,7 @@ func (m *mockStorageClient) PutObject(ctx context.Context, bucket, objectKey str
 	return nil
 }
 
-func (m *mockStorageClient) StatObject(ctx context.Context, bucket, objectKey string) (*model.ObjectInfo, bool, error) {
+func (m *mockStorageClient) StatObject(ctx context.Context, bucket, objectKey string) (*storagecontract.ObjectInfo, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	obj, ok := m.objects[objectKey]
@@ -66,64 +112,21 @@ func (m *mockStorageClient) GetObject(ctx context.Context, bucket, objectKey str
 	defer m.mu.Unlock()
 	data, ok := m.content[objectKey]
 	if !ok {
-		return nil, model.ErrObjectNotFound
+		return nil, storagecontract.ErrObjectNotFound
 	}
 	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
-func (m *mockStorageClient) ListObjectsWithPrefix(_ context.Context, _ string, prefix string) ([]model.ObjectInfo, error) {
+func (m *mockStorageClient) ListObjectsWithPrefix(_ context.Context, _ string, prefix string) ([]storagecontract.ObjectInfo, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var result []model.ObjectInfo
+	var result []storagecontract.ObjectInfo
 	for key, info := range m.objects {
 		if info != nil && strings.HasPrefix(key, prefix) {
 			result = append(result, *info)
 		}
 	}
 	return result, nil
-}
-
-func TestPipelineDryRun(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	mockStorage := newMockStorageClient()
-	pipe := ingest.NewPipeline(nil, mockStorage, nil, nil, "aurora", 2, logger)
-
-	man := &model.Manifest{
-		SchemaVersion: 1,
-		Source:        "test",
-		Samples: []model.Sample{
-			{
-				SampleID:   model.SampleID(123, 42),
-				TICID:      123,
-				Sector:     42,
-				PairStatus: model.PairStatusTPFOnly,
-				TargetPixel: &model.ManifestProduct{
-					SourceProductID: "tess1",
-					Kind:            model.KindTargetPixel,
-					Filename:        "tess1_tp.fits",
-					DataURI:         "mast:TESS/tess1_tp.fits",
-					SizeBytes:       100,
-					Sector:          42,
-					TICID:           123,
-				},
-			},
-		},
-	}
-
-	summary, results, err := pipe.IngestManifest(context.Background(), man, true)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if summary.SkippedCount != 1 {
-		t.Errorf("expected 1 skipped product in dry-run, got %d", summary.SkippedCount)
-	}
-	if len(results) != 1 || results[0].Status != model.StatusSkipped {
-		t.Errorf("expected result status SKIPPED, got %v", results[0].Status)
-	}
-	if len(mockStorage.objects) != 0 {
-		t.Errorf("dry-run should not write to storage, but stored %d objects", len(mockStorage.objects))
-	}
 }
 
 func TestPipelineStreamingIngestion(t *testing.T) {
@@ -151,24 +154,30 @@ func TestPipelineStreamingIngestion(t *testing.T) {
 
 	mockStorage := newMockStorageClient()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	pipe := ingest.NewPipeline(mastClient, mockStorage, nil, nil, "aurora", 2, logger)
 	var progressMu sync.Mutex
 	var progressEvents []ingest.ProgressEvent
-	pipe.SetProgressReporter(func(event ingest.ProgressEvent) {
-		progressMu.Lock()
-		progressEvents = append(progressEvents, event)
-		progressMu.Unlock()
-	})
+	pipe := ingest.NewPipeline(
+		ingest.Dependencies{Source: mastClient, Storage: mockStorage},
+		ingest.Options{
+			Bucket:      "aurora",
+			WorkerCount: 2,
+			Logger:      logger,
+			Progress: func(event ingest.ProgressEvent) {
+				progressMu.Lock()
+				progressEvents = append(progressEvents, event)
+				progressMu.Unlock()
+			},
+		},
+	)
 
 	man := &model.Manifest{
 		SchemaVersion: 1,
 		Source:        "test",
 		Samples: []model.Sample{
 			{
-				SampleID:   model.SampleID(999, 10),
-				TICID:      999,
-				Sector:     10,
-				PairStatus: model.PairStatusPaired,
+				SampleID: plan.SampleID(999, 10),
+				TICID:    999,
+				Sector:   10,
 				TargetPixel: &model.ManifestProduct{
 					SourceProductID: "p-tp",
 					Kind:            model.KindTargetPixel,
@@ -191,7 +200,7 @@ func TestPipelineStreamingIngestion(t *testing.T) {
 		},
 	}
 
-	summary, results, err := pipe.IngestManifest(context.Background(), man, false)
+	summary, results, err := pipe.IngestManifest(context.Background(), man)
 	if err != nil {
 		t.Fatalf("unexpected pipeline error: %v", err)
 	}
@@ -231,7 +240,7 @@ func TestPipelineSkipExistingValidObject(t *testing.T) {
 	mockStorage := newMockStorageClient()
 	tpKey := "bronze/tess/target-pixel/sector=0005/tic=777/existing_tp.fits"
 	existingData := []byte("EXISTING_VALID_CONTENT")
-	mockStorage.objects[tpKey] = &model.ObjectInfo{
+	mockStorage.objects[tpKey] = &storagecontract.ObjectInfo{
 		Key:          tpKey,
 		Size:         int64(len(existingData)),
 		UserMetadata: map[string]string{"sha256": "dummyhash"},
@@ -239,17 +248,16 @@ func TestPipelineSkipExistingValidObject(t *testing.T) {
 	mockStorage.content[tpKey] = existingData
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	pipe := ingest.NewPipeline(nil, mockStorage, nil, nil, "aurora", 1, logger)
+	pipe := newTestPipeline(nil, mockStorage, nil, nil, "aurora", 1, logger)
 
 	man := &model.Manifest{
 		SchemaVersion: 1,
 		Source:        "test",
 		Samples: []model.Sample{
 			{
-				SampleID:   model.SampleID(777, 5),
-				TICID:      777,
-				Sector:     5,
-				PairStatus: model.PairStatusTPFOnly,
+				SampleID: plan.SampleID(777, 5),
+				TICID:    777,
+				Sector:   5,
 				TargetPixel: &model.ManifestProduct{
 					SourceProductID: "p-exist",
 					Kind:            model.KindTargetPixel,
@@ -263,7 +271,7 @@ func TestPipelineSkipExistingValidObject(t *testing.T) {
 		},
 	}
 
-	summary, results, err := pipe.IngestManifest(context.Background(), man, false)
+	summary, results, err := pipe.IngestManifest(context.Background(), man)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -280,14 +288,14 @@ func TestPipelineSkipExistingObjectWithUnknownExpectedSize(t *testing.T) {
 	mockStorage := newMockStorageClient()
 	objectKey := "bronze/tess/lightcurve/sector=0005/tic=777/unknown-size_lc.fits"
 	existingData := []byte("EXISTING_OBJECT_WITH_UNKNOWN_MANIFEST_SIZE")
-	mockStorage.objects[objectKey] = &model.ObjectInfo{
+	mockStorage.objects[objectKey] = &storagecontract.ObjectInfo{
 		Key:          objectKey,
 		Size:         int64(len(existingData)),
 		UserMetadata: map[string]string{"sha256": "dummyhash"},
 	}
 	mockStorage.content[objectKey] = existingData
 
-	pipe := ingest.NewPipeline(nil, mockStorage, nil, nil, "aurora", 1, nil)
+	pipe := newTestPipeline(nil, mockStorage, nil, nil, "aurora", 1, nil)
 	man := &model.Manifest{Samples: []model.Sample{{LightCurve: &model.ManifestProduct{
 		SourceProductID: "p-unknown-size",
 		Kind:            model.KindLightCurve,
@@ -298,7 +306,7 @@ func TestPipelineSkipExistingObjectWithUnknownExpectedSize(t *testing.T) {
 		TICID:           777,
 	}}}}
 
-	summary, results, err := pipe.IngestManifest(context.Background(), man, false)
+	summary, results, err := pipe.IngestManifest(context.Background(), man)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -324,17 +332,16 @@ func TestPipelineSizeMismatchAdvisory(t *testing.T) {
 
 	mockStorage := newMockStorageClient()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	pipe := ingest.NewPipeline(mastClient, mockStorage, nil, nil, "aurora", 1, logger)
+	pipe := newTestPipeline(mastClient, mockStorage, nil, nil, "aurora", 1, logger)
 
 	man := &model.Manifest{
 		SchemaVersion: 1,
 		Source:        "test",
 		Samples: []model.Sample{
 			{
-				SampleID:   model.SampleID(888, 1),
-				TICID:      888,
-				Sector:     1,
-				PairStatus: model.PairStatusTPFOnly,
+				SampleID: plan.SampleID(888, 1),
+				TICID:    888,
+				Sector:   1,
 				TargetPixel: &model.ManifestProduct{
 					SourceProductID: "p-mismatch",
 					Kind:            model.KindTargetPixel,
@@ -348,7 +355,7 @@ func TestPipelineSizeMismatchAdvisory(t *testing.T) {
 		},
 	}
 
-	summary, results, err := pipe.IngestManifest(context.Background(), man, false)
+	summary, results, err := pipe.IngestManifest(context.Background(), man)
 	if err != nil {
 		t.Fatalf("unexpected pipeline execution error: %v", err)
 	}
@@ -365,36 +372,49 @@ func TestPipelineSizeMismatchAdvisory(t *testing.T) {
 	}
 }
 
-func TestPipelineRejectsManifestAboveRunBudget(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	pipe := ingest.NewPipeline(nil, newMockStorageClient(), nil, nil, "aurora", 1, logger)
-	pipe.SetMaxRunBytes(3)
-	man := &model.Manifest{
-		Samples: []model.Sample{{TargetPixel: &model.ManifestProduct{
-			SourceProductID: "budget-product",
-			Kind:            model.KindTargetPixel,
-			Filename:        "budget_tp.fits",
-			DataURI:         "mast:TESS/budget_tp.fits",
-			SizeBytes:       4,
-			Sector:          1,
-			TICID:           1,
-		}}},
-	}
+func TestPipelineReservesHTTPSizeAboveCatalogEstimate(t *testing.T) {
+	gate := &recordingCapacityGate{}
+	data := []byte("actual payload")
+	pipe := ingest.NewPipeline(
+		ingest.Dependencies{Source: fixedSourceReader{data: data, size: int64(len(data))}, Storage: newMockStorageClient()},
+		ingest.Options{Bucket: "aurora", WorkerCount: 1, CapacityGate: gate},
+	)
+	manifest := &model.Manifest{Samples: []model.Sample{{LightCurve: &model.ManifestProduct{
+		SourceProductID: "capacity-delta",
+		Kind:            model.KindLightCurve,
+		Filename:        "capacity_lc.fits",
+		DataURI:         "memory://capacity",
+		SizeBytes:       4,
+		Sector:          1,
+		TICID:           42,
+	}}}}
 
-	if _, _, err := pipe.IngestManifest(context.Background(), man, true); err == nil {
-		t.Fatal("expected manifest run budget rejection")
+	summary, _, err := pipe.IngestManifest(context.Background(), manifest)
+	if err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	if summary.StoredCount != 1 {
+		t.Fatalf("stored=%d, want 1", summary.StoredCount)
+	}
+	gate.mu.Lock()
+	defer gate.mu.Unlock()
+	if len(gate.acquired) != 2 || gate.acquired[0] != 4 || gate.acquired[1] != int64(len(data))-4 {
+		t.Fatalf("capacity acquisitions=%v, want catalog estimate plus HTTP delta", gate.acquired)
+	}
+	if gate.released != int64(len(data)) {
+		t.Fatalf("released=%d, want %d", gate.released, len(data))
 	}
 }
 
 func TestPipelineRejectsInvalidManifestSizes(t *testing.T) {
-	pipe := ingest.NewPipeline(nil, newMockStorageClient(), nil, nil, "aurora", 1, nil)
-	if _, _, err := pipe.IngestManifest(context.Background(), nil, true); err == nil {
+	pipe := newTestPipeline(nil, newMockStorageClient(), nil, nil, "aurora", 1, nil)
+	if _, _, err := pipe.IngestManifest(context.Background(), nil); err == nil {
 		t.Fatal("expected nil manifest rejection")
 	}
 	man := &model.Manifest{Samples: []model.Sample{{TargetPixel: &model.ManifestProduct{
 		SourceProductID: "negative-size", SizeBytes: -1,
 	}}}}
-	if _, _, err := pipe.IngestManifest(context.Background(), man, true); err == nil {
+	if _, _, err := pipe.IngestManifest(context.Background(), man); err == nil {
 		t.Fatal("expected negative product size rejection")
 	}
 }

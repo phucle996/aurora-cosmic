@@ -286,6 +286,24 @@ def test_tpf_pairing_conflict():
     assert res.tpf_feature_status == "PAIRING_CONFLICT"
 
 
+def test_tpf_accepts_equivalent_legacy_sample_ids():
+    """LC and TPF encodings may differ while identifying one TIC/sector."""
+    time = np.linspace(0, 10, 400)
+    flux_cube = [np.zeros(9) for _ in range(400)]
+
+    res = compute_tpf_features(
+        time_arr=time,
+        flux_cube_list=flux_cube,
+        rows=3,
+        cols=3,
+        metadata={"sample_id": "sample:tic=12345678:sector=0001"},
+        lc_features=sample_lc_features(),
+    )
+
+    assert res.transit_evidence_available is True
+    assert res.tpf_feature_status == "SUCCESS"
+
+
 def test_ffi_summary_features():
     summary_data = {
         "width": 2048,

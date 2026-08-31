@@ -40,28 +40,31 @@ type ingestProductResponseDTO struct {
 }
 
 type ingestStatusResponseDTO struct {
-	Observed          bool                       `json:"observed"`
-	Source            string                     `json:"source"`
-	RunID             string                     `json:"run_id"`
-	ControlJobID      string                     `json:"control_job_id"`
-	Status            string                     `json:"status"`
-	Error             string                     `json:"error,omitempty"`
-	ManifestPath      string                     `json:"manifest_path"`
-	StartedAt         time.Time                  `json:"started_at"`
-	UpdatedAt         time.Time                  `json:"updated_at"`
-	TotalProducts     int                        `json:"total_products"`
-	CompletedProducts int                        `json:"completed_products"`
-	Downloading       int                        `json:"downloading"`
-	FailedProducts    int                        `json:"failed_products"`
-	ExpectedBytes     int64                      `json:"expected_bytes"`
-	CompletedBytes    int64                      `json:"completed_bytes"`
-	ProductsPerSecond float64                    `json:"products_per_second"`
-	BytesPerSecond    float64                    `json:"bytes_per_second"`
-	QueueDepth        float64                    `json:"queue_depth"`
-	InflightProducts  float64                    `json:"inflight_products"`
-	ObservedAt        time.Time                  `json:"observed_at"`
-	Products          []ingestProductResponseDTO `json:"products"`
-	ProductsTruncated bool                       `json:"products_truncated"`
+	Observed          bool                                `json:"observed"`
+	Source            string                              `json:"source"`
+	RunID             string                              `json:"run_id"`
+	ControlJobID      string                              `json:"control_job_id"`
+	Status            string                              `json:"status"`
+	Error             string                              `json:"error,omitempty"`
+	ManifestPath      string                              `json:"manifest_path"`
+	StartedAt         time.Time                           `json:"started_at"`
+	UpdatedAt         time.Time                           `json:"updated_at"`
+	TotalProducts     int                                 `json:"total_products"`
+	CompletedProducts int                                 `json:"completed_products"`
+	Downloading       int                                 `json:"downloading"`
+	FailedProducts    int                                 `json:"failed_products"`
+	ExpectedBytes     int64                               `json:"expected_bytes"`
+	CompletedBytes    int64                               `json:"completed_bytes"`
+	ProductsPerSecond float64                             `json:"products_per_second"`
+	BytesPerSecond    float64                             `json:"bytes_per_second"`
+	QueueDepth        float64                             `json:"queue_depth"`
+	InflightProducts  float64                             `json:"inflight_products"`
+	ObservedAt        time.Time                           `json:"observed_at"`
+	Products          []ingestProductResponseDTO          `json:"products"`
+	ProductsTruncated bool                                `json:"products_truncated"`
+	ProductKinds      map[string]entity.IngestKindSummary `json:"product_kinds"`
+	CatalogProgress   *entity.IngestCatalogProgress       `json:"catalog_progress,omitempty"`
+	ManifestProgress  *entity.IngestManifestProgress      `json:"manifest_progress,omitempty"`
 }
 
 func ingestStatusResponseFromEntity(status entity.IngestStatus) ingestStatusResponseDTO {
@@ -102,6 +105,9 @@ func ingestStatusResponseFromEntity(status entity.IngestStatus) ingestStatusResp
 		ObservedAt:        status.ObservedAt,
 		Products:          products,
 		ProductsTruncated: status.ProductsTruncated,
+		ProductKinds:      status.ProductKinds,
+		CatalogProgress:   status.CatalogProgress,
+		ManifestProgress:  status.ManifestProgress,
 	}
 }
 

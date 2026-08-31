@@ -60,52 +60,60 @@ export const bronzeManifestSchema: SchemaCatalog = {
   description: 'Metadata định danh và truy xuất của mỗi FITS nguyên bản trước khi ghi vào bronze/.',
   columns: [
     field('source_product_id', 'Định danh', 'String', '—', 'ID sản phẩm nguồn duy nhất từ NASA MAST.'),
-    field('kind', 'Phân loại', 'Enum', '—', 'LIGHT_CURVE, TARGET_PIXEL hoặc FFI.'),
+    field('kind', 'Phân loại', 'Enum', '—', 'LIGHT_CURVE hoặc TARGET_PIXEL.'),
     field('filename', 'Nguồn', 'String', '—', 'Tên tệp FITS gốc.'),
     field('data_uri', 'Nguồn', 'String', 'URI', 'Đường dẫn tải sản phẩm tại NASA MAST.'),
     field('size_bytes', 'Lưu trữ', 'Int64', 'Bytes', 'Dung lượng FITS dự kiến trong manifest.'),
     field('sector', 'Quan sát', 'Int32', 'TESS sector', 'Số sector quan sát của TESS.'),
-    field('tic_id', 'Mục tiêu', 'Int64?', 'TIC ID', 'ID ngôi sao trong TESS Input Catalog; FFI có thể không có.'),
+    field('tic_id', 'Mục tiêu', 'Int64', 'TIC ID', 'ID ngôi sao trong TESS Input Catalog.'),
     field('camera', 'Thiết bị', 'Int32?', 'Index', 'Camera TESS; có thể không có với Light Curve.'),
     field('ccd', 'Thiết bị', 'Int32?', 'Index', 'CCD TESS; có thể không có với Light Curve.'),
   ],
 };
 
 export const bronzeLightCurveFitsSchema: SchemaCatalog = {
-  schemaVersion: 'TESS Light Curve FITS BINTABLE (pipeline-read columns)',
+  schemaVersion: 'NASA TESS Light Curve FITS Standard (Multi-HDU Series)',
   title: 'Bronze LIGHT_CURVE FITS',
-  description: 'FITS được giữ nguyên; bảng chỉ liệt kê các cột BINTABLE mà decoder thực sự đọc.',
+  description: 'Tệp FITS nguyên bản 3 HDU lưu trữ chuỗi thời gian quang trắc độ sáng tích phân của ngôi sao.',
   columns: [
-    field('TIME', 'Cadence', 'Float64', 'BTJD days', 'Thời điểm mỗi phép đo.'),
-    field('QUALITY', 'Chất lượng', 'Int32', 'Bitmask', 'Cờ chất lượng cadence từ TESS.'),
-    field('SAP_FLUX', 'Quang trắc', 'Float32', 'e⁻/s', 'Simple Aperture Photometry flux gốc.'),
-    field('SAP_FLUX_ERR', 'Quang trắc', 'Float32', 'e⁻/s', 'Sai số của SAP_FLUX.'),
-    field('PDCSAP_FLUX', 'Quang trắc', 'Float32', 'e⁻/s', 'Flux đã được PDC hiệu chỉnh systematics.'),
-    field('PDCSAP_FLUX_ERR', 'Quang trắc', 'Float32', 'e⁻/s', 'Sai số của PDCSAP_FLUX.'),
+    field('TIME', 'HDU 1: BINTABLE', 'Float64', 'BTJD days', 'Thời điểm mỗi phép đo (Barycentric TESS Julian Date).'),
+    field('TIMECORR', 'HDU 1: BINTABLE', 'Float32', 'days', 'Hiệu chỉnh thời gian photon đến tâm hệ Mặt Trời.'),
+    field('CADENCENO', 'HDU 1: BINTABLE', 'Int32', 'Index', 'Số thứ tự cadence duy nhất trong kỳ quan sát.'),
+    field('SAP_FLUX', 'HDU 1: BINTABLE', 'Float32', 'e⁻/s', 'Simple Aperture Photometry: Tổng thông lượng ánh sáng thô qua khẩu độ.'),
+    field('SAP_FLUX_ERR', 'HDU 1: BINTABLE', 'Float32', 'e⁻/s', 'Sai số đo quang trắc của SAP_FLUX.'),
+    field('SAP_BKG / ERR', 'HDU 1: BINTABLE', 'Float32', 'e⁻/s', 'Ước lượng cường độ nền và sai số nền trong khẩu độ.'),
+    field('PDCSAP_FLUX', 'HDU 1: BINTABLE', 'Float32', 'e⁻/s', 'Pre-search Data Conditioning: Flux đã hiệu chỉnh nhiễu hệ thống và biến thiên quang học.'),
+    field('PDCSAP_FLUX_ERR', 'HDU 1: BINTABLE', 'Float32', 'e⁻/s', 'Sai số của PDCSAP_FLUX.'),
+    field('QUALITY', 'HDU 1: BINTABLE', 'Int32', 'Bitmask', 'Cờ chất lượng đo từ vệ tinh TESS.'),
+    field('PSF_CENTR1 / 2', 'HDU 1: BINTABLE', 'Float64', 'pixel', 'Tọa độ tâm sao theo mô hình hàm truyền điểm (PSF Centroid).'),
+    field('MOM_CENTR1 / 2', 'HDU 1: BINTABLE', 'Float64', 'pixel', 'Tọa độ tâm quang trắc Moment Centroid trên cảm biến CCD.'),
+    field('POS_CORR1 / 2', 'HDU 1: BINTABLE', 'Float32', 'pixels', 'Độ lệch dịch chuyển centroid sao theo trục X/Y.'),
+    field('HDU 0: PRIMARY', 'HDU 0: Header', 'Metadata', '—', 'Metadata định danh đối tượng: TICID, SECTOR, CAMERA, CCD, RA/DEC, TSTART, TSTOP.'),
+    field('HDU 2: APERTURE', 'HDU 2: Image 2D', 'Int32[][]', 'Bitmask', 'Ma trận mask khẩu độ quang trắc tối ưu tính toán SAP/PDCSAP.'),
   ],
-  note: 'Pipeline ưu tiên PDCSAP_FLUX; chỉ fallback sang SAP_FLUX khi cấu hình cho phép.',
+  note: 'Pipeline ưu tiên trích xuất PDCSAP_FLUX để nén sang Silver Parquet; chỉ fallback sang SAP_FLUX khi cấu hình cho phép.',
 };
 
 export const bronzeTargetPixelFitsSchema: SchemaCatalog = {
-  schemaVersion: 'TESS Target Pixel FITS BINTABLE (pipeline-read columns)',
+  schemaVersion: 'NASA TESS Target Pixel FITS Standard (Multi-HDU Data Cube)',
   title: 'Bronze TARGET_PIXEL FITS',
-  description: 'FITS được giữ nguyên; mỗi row biểu diễn một cadence và ma trận pixel của mục tiêu.',
+  description: 'Tệp FITS nguyên bản 4 HDU lưu trữ Data Cube 3D (thời gian & không gian) gồm Header metadata, bảng Pixel cadences và Aperture mask.',
   columns: [
-    field('TIME', 'Cadence', 'Float64', 'BTJD days', 'Thời điểm mỗi cadence.'),
-    field('QUALITY', 'Chất lượng', 'Int32', 'Bitmask', 'Cờ chất lượng cadence.'),
-    field('FLUX', 'Ảnh pixel', 'Float32[][]', 'e⁻/s', 'Cutout pixel 2D của mục tiêu tại cadence tương ứng.'),
+    field('TIME', 'HDU 1: BINTABLE', 'Float64', 'BTJD days', 'Thời điểm mỗi cadence quan sát (Barycentric TESS Julian Date).'),
+    field('TIMECORR', 'HDU 1: BINTABLE', 'Float32', 'days', 'Hiệu chỉnh thời gian photon đến hệ tọa độ khối tâm Mặt Trời.'),
+    field('CADENCENO', 'HDU 1: BINTABLE', 'Int32', 'Index', 'Số thứ tự cadence duy nhất trong kỳ quan sát (Sector).'),
+    field('RAW_CNTS', 'HDU 1: BINTABLE', 'Int32[][]', 'count (ADU)', 'Ma trận giá trị số đếm thô trực tiếp từ cảm biến CCD của camera.'),
+    field('FLUX', 'HDU 1: BINTABLE', 'Float32[][]', 'e⁻/s', 'Ma trận cường độ sáng hiệu chỉnh (đã trừ nền và hiệu chuẩn) của pixel stamp (11x11 hoặc dải mở rộng).'),
+    field('FLUX_ERR', 'HDU 1: BINTABLE', 'Float32[][]', 'e⁻/s', 'Sai số đo quang trắc 1-sigma tương ứng cho từng pixel trong ma trận.'),
+    field('FLUX_BKG', 'HDU 1: BINTABLE', 'Float32[][]', 'e⁻/s', 'Cường độ nền bầu trời ước tính cục bộ (Local background flux).'),
+    field('FLUX_BKG_ERR', 'HDU 1: BINTABLE', 'Float32[][]', 'e⁻/s', 'Sai số của giá trị nền bầu trời cho từng pixel.'),
+    field('QUALITY', 'HDU 1: BINTABLE', 'Int32', 'Bitmask', 'Cờ chất lượng cadence (0: Hợp lệ; >0: Cảnh báo vệt nhiễu, rung lắc, momentum dump).'),
+    field('POS_CORR1 / POS_CORR2', 'HDU 1: BINTABLE', 'Float32', 'pixel', 'Độ dịch chuyển vị trí tâm sao theo trục X và Y (Centroid drift).'),
+    field('HDU 0: PRIMARY', 'HDU 0: Header', 'Metadata', '—', 'Siêu dữ liệu quan sát: TICID, SECTOR, CAMERA, CCD, TSTART, TSTOP, RA_OBJ, DEC_OBJ.'),
+    field('HDU 2: APERTURE', 'HDU 2: Image 2D', 'Int32[][]', 'Bitmask', 'Ma trận mask 2D phân biệt các pixel thuộc khẩu độ quan trắc của sao và pixel nền.'),
+    field('HDU 3: COSMIC RAY', 'HDU 3: BINTABLE', 'Event Log', '—', 'Bảng ghi nhận tọa độ và năng lượng các hạt tia vũ trụ va chạm CCD.'),
   ],
-};
-
-export const bronzeFfiFitsSchema: SchemaCatalog = {
-  schemaVersion: 'TESS FFI Image HDU (pipeline-read layout)',
-  title: 'Bronze FFI FITS',
-  description: 'Ảnh toàn trường FITS được giữ nguyên; decoder đọc Image HDU và kích thước ảnh từ header.',
-  columns: [
-    field('NAXIS1', 'FITS header', 'Int64', 'Pixels', 'Chiều rộng ảnh trong Image HDU.'),
-    field('NAXIS2', 'FITS header', 'Int64', 'Pixels', 'Chiều cao ảnh trong Image HDU.'),
-    field('IMAGE pixels', 'Ảnh pixel', 'Float32[]', 'e⁻/s', 'Buffer pixel toàn trường theo row-major sau khi decode.'),
-  ],
+  note: 'Cấu trúc chuẩn NASA MAST gồm 4 HDU. Pipeline tiền xử lý Rust (rust-preprocessor) đọc TIME, QUALITY, FLUX để chuyển đổi sang Silver Parquet.',
 };
 
 export const silverLightCurveSchema: SchemaCatalog = {
@@ -130,23 +138,6 @@ export const silverTargetPixelSchema: SchemaCatalog = {
     field('flux', 'Ảnh pixel', 'List<Float32>', 'e⁻/s', 'Pixel flux flatten theo row-major cho mỗi cadence.'),
     field('rows', 'Hình học', 'Int32', 'Pixels', 'Số hàng của cutout pixel.'),
     field('cols', 'Hình học', 'Int32', 'Pixels', 'Số cột của cutout pixel.'),
-  ],
-};
-
-export const silverFfiSchema: SchemaCatalog = {
-  schemaVersion: 'silver-ffi-v1',
-  title: 'Silver FFI Parquet',
-  description: 'Thống kê ảnh toàn trường sau khi kiểm tra pixel hữu hạn; không ghi toàn bộ ma trận FFI.',
-  columns: [
-    field('width', 'Hình học', 'Int32', 'Pixels', 'Chiều rộng ảnh.'),
-    field('height', 'Hình học', 'Int32', 'Pixels', 'Chiều cao ảnh.'),
-    field('finite_pixel_count', 'Chất lượng ảnh', 'Int64', 'Pixels', 'Số pixel hữu hạn.'),
-    field('finite_pixel_fraction', 'Chất lượng ảnh', 'Float32', 'Fraction', 'Tỷ lệ pixel hữu hạn.'),
-    field('median', 'Thống kê ảnh', 'Float32', 'e⁻/s', 'Trung vị pixel hữu hạn.'),
-    field('mean', 'Thống kê ảnh', 'Float32', 'e⁻/s', 'Trung bình pixel hữu hạn.'),
-    field('stddev', 'Thống kê ảnh', 'Float32', 'e⁻/s', 'Độ lệch chuẩn pixel hữu hạn.'),
-    field('min', 'Thống kê ảnh', 'Float32', 'e⁻/s', 'Giá trị nhỏ nhất của pixel hữu hạn.'),
-    field('max', 'Thống kê ảnh', 'Float32', 'e⁻/s', 'Giá trị lớn nhất của pixel hữu hạn.'),
   ],
 };
 
@@ -179,7 +170,6 @@ export const goldFeatureCatalog: FeatureCatalogItem[] = [
   field('bls_transit_time', 'Transit BLS', 'Float64', 'BTJD days', 'Epoch transit tốt nhất.'),
   field('bls_depth', 'Transit BLS', 'Float64', 'Fraction ΔF/F', 'Độ sâu transit BLS.'),
   field('bls_power', 'Transit BLS', 'Float64', 'BLS statistic', 'Độ mạnh đỉnh periodogram BLS; không mặc định là S/N.'),
-  field('tpf_evidence_available', 'TPF spatial evidence', 'Bool', '—', 'TPF matching đã có để trích spatial evidence.'),
   field('pixel_mad_median', 'TPF spatial evidence', 'Float64', 'Pixel flux', 'Trung vị MAD của pixel TPF.'),
   field('variability_peak_fraction', 'TPF spatial evidence', 'Float64', 'Fraction', 'Phần năng lượng biến thiên tập trung ở pixel đỉnh.'),
   field('transit_evidence_available', 'TPF spatial evidence', 'Bool', '—', 'Có evidence spatial cho cửa sổ transit.'),
@@ -193,18 +183,14 @@ export const goldFeatureCatalog: FeatureCatalogItem[] = [
   field('stellar_radius', 'TIC stellar context', 'Float64', 'R☉', 'Bán kính sao chủ.'),
   field('stellar_mass', 'TIC stellar context', 'Float64', 'M☉', 'Khối lượng sao chủ.'),
   field('logg', 'TIC stellar context', 'Float64', 'log₁₀(cm/s²)', 'Log gravity của sao.'),
-  field('matched_toi_id', 'Audit & supervision', 'String', 'TOI ID', 'TOI khớp ephemeris, nếu có.'),
-  field('toi_match_status', 'Audit & supervision', 'String', '—', 'Trạng thái khớp TOI.'),
-  field('toi_period_error', 'Audit & supervision', 'Float64', 'Relative error', 'Sai số chu kỳ so với TOI khớp.'),
-  field('matched_tce_id', 'Audit & supervision', 'String', 'TCE ID', 'TCE khớp ephemeris, nếu có.'),
-  field('tce_match_status', 'Audit & supervision', 'String', '—', 'Trạng thái khớp TCE.'),
-  field('training_label', 'Audit & supervision', 'String', '—', 'POSITIVE, NEGATIVE, UNRESOLVED hoặc EXCLUDED.'),
-  field('label_policy_version', 'Audit & supervision', 'String', '—', 'Phiên bản policy gán nhãn.'),
+  field('matched_toi_id', 'TOI evidence', 'String', 'TOI ID', 'TOI khớp ephemeris, nếu có.'),
+  field('toi_match_status', 'TOI evidence', 'String', '—', 'TOI evidence: match, no TOI record for the TIC, or a measured-period mismatch.'),
+  field('toi_period_error', 'TOI evidence', 'Float64', 'Relative error', 'Sai số chu kỳ so với TOI khớp.'),
 ];
 
 export const goldCandidateSchema: SchemaCatalog = {
-  schemaVersion: 'gold-candidate-v1',
+  schemaVersion: 'gold-candidate-v4',
   title: 'Gold Candidate Feature Store',
-  description: '49 cột bất biến: lineage, đặc trưng Light Curve/TPF/TIC và audit-supervision. Model chỉ chọn feature order đã freeze từ tập này.',
+  description: 'Candidate discovery evidence: lineage, Light Curve/TPF/TIC and TOI evidence. Curated supervised labels are stored outside this Gold dataset.',
   columns: goldFeatureCatalog,
 };

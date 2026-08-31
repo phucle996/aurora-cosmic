@@ -16,7 +16,7 @@ import (
 	"go-ingester/infra/mast"
 	"go-ingester/internal/model"
 	"go-ingester/internal/pipeline/checkpoint"
-	"go-ingester/internal/pipeline/ingest"
+	storagecontract "go-ingester/internal/pipeline/storage"
 )
 
 type checkpointStorageFailure struct {
@@ -49,7 +49,7 @@ func TestCheckpointStateTransitions(t *testing.T) {
 		TICID:           123,
 	}
 
-	cp := model.CreateNewInitialCheckpoint("run-1", "manifest.json", "hash123", []model.ManifestProduct{prod})
+	cp := checkpoint.NewInitial("run-1", "manifest.json", "hash123", []model.ManifestProduct{prod})
 	mgr := checkpoint.NewManager(cpStore, cp)
 
 	pc, ok := mgr.GetProductCheckpoint("p-trans")
@@ -118,7 +118,7 @@ func TestCheckpointCrashRecoveryStoredToPublished(t *testing.T) {
 	}
 
 	objectKey := "bronze/tess/target-pixel/sector=0005/tic=555/crash_tp.fits"
-	mockStorage.objects[objectKey] = &model.ObjectInfo{
+	mockStorage.objects[objectKey] = &storagecontract.ObjectInfo{
 		Key:          objectKey,
 		Size:         int64(len(fitsPayload)),
 		UserMetadata: map[string]string{"sha256": "abcdef123456"},
@@ -126,14 +126,14 @@ func TestCheckpointCrashRecoveryStoredToPublished(t *testing.T) {
 	mockStorage.content[objectKey] = []byte(fitsPayload)
 
 	cpStore := checkpoint.NewStore(mockStorage, "aurora")
-	cp := model.CreateNewInitialCheckpoint("run-crash", "manifest.json", "hash-crash", []model.ManifestProduct{prod})
+	cp := checkpoint.NewInitial("run-crash", "manifest.json", "hash-crash", []model.ManifestProduct{prod})
 	cp.Products["p-crash"].State = model.StateStored
 	cp.Products["p-crash"].ObjectKey = objectKey
 	cp.Products["p-crash"].SizeBytes = int64(len(fitsPayload))
 	cp.Products["p-crash"].SHA256 = "abcdef123456"
 
 	mgr := checkpoint.NewManager(cpStore, cp)
-	pipe := ingest.NewPipeline(mastClient, mockStorage, mockPub, mgr, "aurora", 1, logger)
+	pipe := newTestPipeline(mastClient, mockStorage, mockPub, mgr, "aurora", 1, logger)
 
 	man := &model.Manifest{
 		SchemaVersion: 1,
@@ -143,13 +143,12 @@ func TestCheckpointCrashRecoveryStoredToPublished(t *testing.T) {
 				SampleID:    "s-crash",
 				TICID:       555,
 				Sector:      5,
-				PairStatus:  model.PairStatusTPFOnly,
 				TargetPixel: &prod,
 			},
 		},
 	}
 
-	summary, results, err := pipe.IngestManifest(context.Background(), man, false)
+	summary, results, err := pipe.IngestManifest(context.Background(), man)
 	if err != nil {
 		t.Fatalf("unexpected pipeline error: %v", err)
 	}
@@ -198,13 +197,13 @@ func TestCheckpointIdempotentRerun(t *testing.T) {
 	}
 
 	cpStore := checkpoint.NewStore(mockStorage, "aurora")
-	cp := model.CreateNewInitialCheckpoint("run-rerun", "manifest.json", "hash-rerun", []model.ManifestProduct{prod})
+	cp := checkpoint.NewInitial("run-rerun", "manifest.json", "hash-rerun", []model.ManifestProduct{prod})
 	cp.Products["p-done"].State = model.StatePublished
 	cp.Products["p-done"].ObjectKey = "bronze/tess/target-pixel/sector=0001/tic=111/done_tp.fits"
 	cp.Products["p-done"].SizeBytes = 4
 
 	mgr := checkpoint.NewManager(cpStore, cp)
-	pipe := ingest.NewPipeline(mastClient, mockStorage, mockPub, mgr, "aurora", 1, logger)
+	pipe := newTestPipeline(mastClient, mockStorage, mockPub, mgr, "aurora", 1, logger)
 
 	man := &model.Manifest{
 		SchemaVersion: 1,
@@ -214,13 +213,12 @@ func TestCheckpointIdempotentRerun(t *testing.T) {
 				SampleID:    "s-done",
 				TICID:       111,
 				Sector:      1,
-				PairStatus:  model.PairStatusTPFOnly,
 				TargetPixel: &prod,
 			},
 		},
 	}
 
-	summary, results, err := pipe.IngestManifest(context.Background(), man, false)
+	summary, results, err := pipe.IngestManifest(context.Background(), man)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -244,7 +242,7 @@ func TestCheckpointIdempotentRerun(t *testing.T) {
 
 func TestCheckpointManagerConcurrency(t *testing.T) {
 	cpStore := checkpoint.NewStore(newMockStorageClient(), "aurora")
-	cp := model.CreateNewInitialCheckpoint("run-concurrent", "m.json", "hash", nil)
+	cp := checkpoint.NewInitial("run-concurrent", "m.json", "hash", nil)
 	cp.Products = make(map[string]*model.ProductCheckpoint)
 
 	for i := 0; i < 50; i++ {

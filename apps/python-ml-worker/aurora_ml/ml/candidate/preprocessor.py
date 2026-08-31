@@ -219,3 +219,8 @@ class CandidatePreprocessor:
     @classmethod
     def from_json(cls, json_str: str) -> "CandidatePreprocessor":
         return cls.from_dict(json.loads(json_str))
+
+    @classmethod
+    def from_json_file(cls, path: str) -> "CandidatePreprocessor":
+        with open(path, encoding="utf-8") as handle:
+            return cls.from_json(handle.read())

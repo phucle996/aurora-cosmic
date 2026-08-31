@@ -3,11 +3,16 @@ pub mod pool;
 pub mod publisher;
 pub mod recovery;
 
+use std::time::Duration;
+use std::time::Instant;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_nats::jetstream::{self, AckKind};
 use chrono::Utc;
+use sha2::{Digest, Sha256};
+use tokio_util::sync::CancellationToken;
 
 pub use pipeline::execute_item_pipeline;
 #[allow(unused_imports)]
@@ -27,6 +32,7 @@ use crate::lineage::{
     build_lineage_object_key, build_lineage_record, LineageOutcome, LineageRecord,
 };
 use crate::observer::Metrics;
+use crate::runtime::RuntimeReporter;
 
 /// Process a single Data Object through the end-to-end flow:
 /// 1. Recovery Check: Load checkpoint — fast-path reuse / terminal guard
@@ -46,7 +52,50 @@ pub async fn process_message(
     lc_cfg: LightCurveConfig,
     img_cfg: ImageConfig,
     metrics: Arc<Metrics>,
+    runtime: RuntimeReporter,
+    job_id: String,
+    worker_id: String,
+    ack_progress_interval: Duration,
     _permit: Option<tokio::sync::OwnedSemaphorePermit>,
+) {
+    let progress_cancel = CancellationToken::new();
+    let progress_message = msg.clone();
+    let progress_cancel_task = progress_cancel.clone();
+    let progress_task = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(ack_progress_interval);
+        interval.tick().await;
+        loop {
+            tokio::select! {
+                _ = progress_cancel_task.cancelled() => break,
+                _ = interval.tick() => {
+                    if let Err(error) = progress_message.ack_with(AckKind::Progress).await {
+                        tracing::warn!(error = %error, "Unable to extend JetStream ACK deadline");
+                    }
+                }
+            }
+        }
+    });
+
+    process_message_inner(
+        msg, minio, jetstream, tmp_dir, lc_cfg, img_cfg, metrics, runtime, job_id, worker_id,
+    )
+    .await;
+    progress_cancel.cancel();
+    let _ = progress_task.await;
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn process_message_inner(
+    msg: jetstream::Message,
+    minio: Arc<MinioClient>,
+    jetstream: jetstream::Context,
+    tmp_dir: PathBuf,
+    lc_cfg: LightCurveConfig,
+    img_cfg: ImageConfig,
+    metrics: Arc<Metrics>,
+    runtime: RuntimeReporter,
+    job_id: String,
+    worker_id: String,
 ) {
     let subject = msg.subject.clone();
     let mut observation = metrics.begin("unknown", 0);
@@ -68,26 +117,53 @@ pub async fn process_message(
                 "Failed to decode bronze event JSON — terminating poison message"
             );
             let _ = msg.ack_with(AckKind::Term).await;
+            runtime.emit(
+                "file_failed",
+                &job_id,
+                &worker_id,
+                "failed",
+                None,
+                None,
+                Some("decode_event".to_string()),
+                None,
+                Some("invalid Bronze event".to_string()),
+            );
             return;
         }
     };
 
     let event_id = event.event_id.clone();
+    if matches!(event.product_kind, ProductKind::Ffi) {
+        tracing::warn!(event_id = %event_id, "retired FFI event ignored");
+        let _ = msg.ack_with(AckKind::Term).await;
+        return;
+    }
+    let runtime_kind = format!("{:?}", event.product_kind).to_lowercase();
+    let runtime_key = event.object_key.clone();
+    let runtime_started = Instant::now();
+    runtime.emit(
+        "file_started",
+        &job_id,
+        &worker_id,
+        "processing",
+        Some(runtime_kind.clone()),
+        Some(runtime_key.clone()),
+        Some("recovery".to_string()),
+        None,
+        None,
+    );
     observation.set_kind(match event.product_kind {
         ProductKind::LightCurve => "lightcurve",
         ProductKind::TargetPixel => "target_pixel",
         ProductKind::Ffi => "ffi",
     });
     observation.set_input_bytes(event.size_bytes);
-    let processor_version = match event.product_kind {
-        ProductKind::LightCurve => "lc-preprocess-v1",
-        ProductKind::TargetPixel => "tpf-preprocess-v1",
-        ProductKind::Ffi => "ffi-preprocess-v1",
-    };
+    let processor_version = processor_version(&event.product_kind, &img_cfg);
+    let processing_fingerprint = processing_fingerprint(&event.product_kind, &lc_cfg, &img_cfg);
 
     // 1. Recovery Check via Durable Checkpoint
     let (recovery_action, mut checkpoint_opt) =
-        match evaluate_recovery(&minio, &event, processor_version).await {
+        match evaluate_recovery(&minio, &event, processor_version, &processing_fingerprint).await {
             Ok(res) => res,
             Err(e) => {
                 tracing::warn!(
@@ -95,7 +171,34 @@ pub async fn process_message(
                     error = %e,
                     "Failed to evaluate checkpoint recovery — falling back to standard processing"
                 );
-                (RecoveryAction::Process, None)
+                let failure = ProcessingFailure::retryable(
+                    ErrorKind::InternalTemporary,
+                    format!("Unable to evaluate durable checkpoint recovery: {e}"),
+                );
+                let mut checkpoint = PreprocessingCheckpoint::new(
+                    &event,
+                    processor_version,
+                    &processing_fingerprint,
+                );
+                let checkpoint_key = build_checkpoint_object_key(&checkpoint.checkpoint_id);
+                handle_failure(
+                    &minio,
+                    &mut checkpoint,
+                    &event.bucket,
+                    &checkpoint_key,
+                    &msg,
+                    failure,
+                    event_id.clone(),
+                    delivery_attempt,
+                    &runtime,
+                    &job_id,
+                    &worker_id,
+                    &runtime_kind,
+                    &runtime_key,
+                    runtime_started,
+                )
+                .await;
+                return;
             }
         };
 
@@ -111,6 +214,17 @@ pub async fn process_message(
                 "Checkpoint marked terminal — resolving without reprocessing"
             );
             let _ = msg.ack_with(AckKind::Term).await;
+            runtime.emit(
+                "file_completed",
+                &job_id,
+                &worker_id,
+                "idle",
+                Some(runtime_kind.clone()),
+                Some(runtime_key.clone()),
+                Some("terminal_checkpoint".to_string()),
+                Some(runtime_started.elapsed().as_millis() as u64),
+                None,
+            );
             return;
         }
     }
@@ -132,6 +246,7 @@ pub async fn process_message(
                     s_size,
                     cp.silver_schema_version.as_deref().unwrap_or("v1"),
                     processor_version,
+                    &processing_fingerprint,
                 );
                 if let Err(e) = publish_silver_event(&jetstream, &silver_event).await {
                     tracing::warn!(
@@ -147,6 +262,17 @@ pub async fn process_message(
                 } else {
                     observation.set_output_bytes(s_size);
                     observation.set_recovered();
+                    runtime.emit(
+                        "file_completed",
+                        &job_id,
+                        &worker_id,
+                        "idle",
+                        Some(runtime_kind.clone()),
+                        Some(runtime_key.clone()),
+                        Some("recovered".to_string()),
+                        Some(runtime_started.elapsed().as_millis() as u64),
+                        None,
+                    );
                     tracing::info!(
                         event_id = %event_id,
                         silver_key = %s_key,
@@ -190,6 +316,7 @@ pub async fn process_message(
                     s_size,
                     cp.silver_schema_version.as_deref().unwrap_or("v1"),
                     processor_version,
+                    &processing_fingerprint,
                 );
                 if let Err(e) = publish_silver_event(&jetstream, &silver_event).await {
                     tracing::warn!(
@@ -205,6 +332,17 @@ pub async fn process_message(
                 }
                 observation.set_output_bytes(s_size);
                 observation.set_recovered();
+                runtime.emit(
+                    "file_completed",
+                    &job_id,
+                    &worker_id,
+                    "idle",
+                    Some(runtime_kind.clone()),
+                    Some(runtime_key.clone()),
+                    Some("recovered".to_string()),
+                    Some(runtime_started.elapsed().as_millis() as u64),
+                    None,
+                );
                 return;
             }
         }
@@ -218,7 +356,7 @@ pub async fn process_message(
             cp.updated_at = Utc::now().to_rfc3339();
             cp
         }
-        None => PreprocessingCheckpoint::new(&event, processor_version),
+        None => PreprocessingCheckpoint::new(&event, processor_version, &processing_fingerprint),
     };
 
     let checkpoint_key = build_checkpoint_object_key(&checkpoint.checkpoint_id);
@@ -226,7 +364,25 @@ pub async fn process_message(
         .save(&minio, &event.bucket, &checkpoint_key)
         .await
     {
-        tracing::warn!(event_id = %event_id, error = %e, "Failed to save initial PROCESSING checkpoint");
+        let failure = ProcessingFailure::retryable(ErrorKind::InternalTemporary, e.to_string());
+        handle_failure(
+            &minio,
+            &mut checkpoint,
+            &event.bucket,
+            &checkpoint_key,
+            &msg,
+            failure,
+            event_id.clone(),
+            delivery_attempt,
+            &runtime,
+            &job_id,
+            &worker_id,
+            &runtime_kind,
+            &runtime_key,
+            runtime_started,
+        )
+        .await;
+        return;
     }
 
     tracing::info!(
@@ -239,9 +395,29 @@ pub async fn process_message(
         processing_attempt = checkpoint.attempts,
         "Worker processing Data Object"
     );
+    runtime.emit(
+        "stage_changed",
+        &job_id,
+        &worker_id,
+        "processing",
+        Some(runtime_kind.clone()),
+        Some(runtime_key.clone()),
+        Some("scientific_transform".to_string()),
+        None,
+        None,
+    );
 
     // Steps 2-5: Ingest, Decode, Preprocess, Serialize
-    let artifact = match execute_item_pipeline(&minio, &event, &tmp_dir, &lc_cfg, &img_cfg).await {
+    let artifact = match execute_item_pipeline(
+        &minio,
+        &event,
+        &tmp_dir,
+        &lc_cfg,
+        &img_cfg,
+        &processing_fingerprint,
+    )
+    .await
+    {
         Ok(a) => a,
         Err(err) => {
             let failure = classify_pipeline_error(&err);
@@ -254,13 +430,31 @@ pub async fn process_message(
                 failure,
                 event_id.clone(),
                 delivery_attempt,
+                &runtime,
+                &job_id,
+                &worker_id,
+                &runtime_kind,
+                &runtime_key,
+                runtime_started,
             )
             .await;
             return;
         }
     };
+    observation.set_science_metadata(&artifact.metadata);
 
     // Step 6: Upload Silver
+    runtime.emit(
+        "stage_changed",
+        &job_id,
+        &worker_id,
+        "processing",
+        Some(runtime_kind.clone()),
+        Some(runtime_key.clone()),
+        Some("silver_upload".to_string()),
+        None,
+        None,
+    );
     if let Err(e) = minio
         .put_file_and_verify(
             &artifact.bucket,
@@ -281,6 +475,12 @@ pub async fn process_message(
             failure,
             event_id.clone(),
             delivery_attempt,
+            &runtime,
+            &job_id,
+            &worker_id,
+            &runtime_kind,
+            &runtime_key,
+            runtime_started,
         )
         .await;
         return;
@@ -303,6 +503,17 @@ pub async fn process_message(
     }
 
     // Step 7: Lineage Commit & Eviction Eligibility
+    runtime.emit(
+        "stage_changed",
+        &job_id,
+        &worker_id,
+        "processing",
+        Some(runtime_kind.clone()),
+        Some(runtime_key.clone()),
+        Some("lineage_commit".to_string()),
+        None,
+        None,
+    );
     let processing_params = build_processing_params(&lc_cfg, &img_cfg, &event.product_kind);
     match build_lineage_record(&minio, &event, &checkpoint, &artifact, processing_params).await {
         Err(e) => {
@@ -378,6 +589,17 @@ pub async fn process_message(
     }
 
     // Publish Silver ready event to NATS
+    runtime.emit(
+        "stage_changed",
+        &job_id,
+        &worker_id,
+        "processing",
+        Some(runtime_kind.clone()),
+        Some(runtime_key.clone()),
+        Some("event_publish".to_string()),
+        None,
+        None,
+    );
     let silver_event = build_silver_event(
         &event,
         &artifact.bucket,
@@ -386,6 +608,7 @@ pub async fn process_message(
         artifact.size_bytes,
         &artifact.schema_version,
         processor_version,
+        &processing_fingerprint,
     );
     if let Err(e) = publish_silver_event(&jetstream, &silver_event).await {
         tracing::warn!(
@@ -397,11 +620,31 @@ pub async fn process_message(
         return;
     }
 
-    observation.set_output_bytes(artifact.size_bytes);
-    observation.set_success();
+    runtime.emit(
+        "stage_changed",
+        &job_id,
+        &worker_id,
+        "processing",
+        Some(runtime_kind.clone()),
+        Some(runtime_key.clone()),
+        Some("ack".to_string()),
+        None,
+        None,
+    );
 
     // Step 8: Final ACK
     if let Err(e) = msg.ack().await {
+        runtime.emit(
+            "file_failed",
+            &job_id,
+            &worker_id,
+            "failed",
+            Some(runtime_kind),
+            Some(runtime_key),
+            Some("ack".to_string()),
+            Some(runtime_started.elapsed().as_millis() as u64),
+            Some(e.to_string()),
+        );
         tracing::error!(
             event_id = %event_id,
             error = %e,
@@ -409,6 +652,19 @@ pub async fn process_message(
             "ACK failed — checkpoint COMPLETED and lineage committed, NATS will redeliver for re-ACK"
         );
     } else {
+        observation.set_output_bytes(artifact.size_bytes);
+        observation.set_success();
+        runtime.emit(
+            "file_completed",
+            &job_id,
+            &worker_id,
+            "idle",
+            Some(runtime_kind),
+            Some(runtime_key),
+            Some("ack".to_string()),
+            Some(runtime_started.elapsed().as_millis() as u64),
+            None,
+        );
         tracing::info!(
             event_id = %event_id,
             silver_key = %artifact.object_key,
@@ -416,6 +672,48 @@ pub async fn process_message(
             "Data Object processed — Silver stored, lineage committed, message ACKed"
         );
     }
+}
+
+fn processor_version(product_kind: &ProductKind, image_config: &ImageConfig) -> &'static str {
+    match product_kind {
+        ProductKind::LightCurve => "lc-preprocess-v1",
+        ProductKind::TargetPixel if image_config.tpf_normalization == "chunk-temporal-median" => {
+            "tpf-preprocess-v2-chunked"
+        }
+        ProductKind::TargetPixel => "tpf-preprocess-v2-streamed",
+        ProductKind::Ffi => "ffi-preprocess-v2",
+    }
+}
+
+fn processing_fingerprint(
+    product_kind: &ProductKind,
+    lc_config: &LightCurveConfig,
+    image_config: &ImageConfig,
+) -> String {
+    let parameters = match product_kind {
+        ProductKind::LightCurve => serde_json::json!({
+            "product_kind": "LIGHT_CURVE",
+            "processor_version": processor_version(product_kind, image_config),
+            "min_points": lc_config.min_points,
+            "quality_mode": lc_config.quality_mode,
+            "allow_sap_fallback": lc_config.allow_sap_fallback,
+            "sigma_clip": lc_config.sigma_clip,
+        }),
+        ProductKind::TargetPixel => serde_json::json!({
+            "product_kind": "TARGET_PIXEL",
+            "processor_version": processor_version(product_kind, image_config),
+            "quality_mode": image_config.tpf_quality_mode,
+            "normalization": image_config.tpf_normalization,
+            "chunk_cadences": image_config.tpf_chunk_cadences,
+        }),
+        ProductKind::Ffi => serde_json::json!({
+            "product_kind": "FFI",
+            "processor_version": processor_version(product_kind, image_config),
+            "normalization": image_config.ffi_normalization,
+        }),
+    };
+    let bytes = serde_json::to_vec(&parameters).expect("static processing parameters serialize");
+    hex::encode(Sha256::digest(bytes))
 }
 
 // ---------------------------------------------------------------------------
@@ -443,7 +741,6 @@ fn build_processing_params(
         }),
         ProductKind::Ffi => serde_json::json!({
             "ffi_normalization": img_cfg.ffi_normalization,
-            "ffi_cutout_size": img_cfg.ffi_cutout_size,
         }),
     }
 }
@@ -463,6 +760,12 @@ async fn handle_failure(
     failure: ProcessingFailure,
     event_id: String,
     delivery_attempt: i64,
+    runtime: &RuntimeReporter,
+    job_id: &str,
+    worker_id: &str,
+    product_kind: &str,
+    object_key: &str,
+    started: Instant,
 ) {
     let is_terminal = failure.class != FailureClass::Retryable;
 
@@ -506,4 +809,15 @@ async fn handle_failure(
     } else {
         let _ = msg.ack_with(AckKind::Nak(None)).await;
     }
+    runtime.emit(
+        "file_failed",
+        job_id,
+        worker_id,
+        "failed",
+        Some(product_kind.to_string()),
+        Some(object_key.to_string()),
+        Some("failed".to_string()),
+        Some(started.elapsed().as_millis() as u64),
+        Some(failure.message),
+    );
 }

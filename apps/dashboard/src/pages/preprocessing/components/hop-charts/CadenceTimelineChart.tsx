@@ -1,137 +1,21 @@
-import { useMemo } from 'react';
 import type { JSX } from 'react';
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  ReferenceArea,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { TelemetryUnavailable } from './TelemetryUnavailable';
+import { clock, mergedSeries, type Telemetry } from './telemetry';
 
-export function CadenceTimelineChart({
-  mode = 'batch',
-  metrics,
-  totalFiles: initialTotalFiles = 3125,
-}: {
-  mode?: 'stream' | 'batch';
-  metrics?: Record<string, number>;
-  totalFiles?: number;
-}): JSX.Element {
-  const totalFiles = metrics?.total_files ?? initialTotalFiles;
-  const totalPoints = metrics?.total_points ?? (totalFiles * 17649);
+function formatBytes(value: number): string {
+  if (value <= 0) return '0 B';
+  if (value < 1024 ** 3) return `${(value / 1024 ** 2).toFixed(2)} MB`;
+  return `${(value / 1024 ** 3).toFixed(2)} GiB`;
+}
 
-  const timelineData = useMemo(() => {
-    const data = [];
-    const totalDays = 27.4;
-    const pointsCount = 100;
+export function CadenceTimelineChart({ metrics, telemetry }: { mode?: 'stream' | 'batch'; metrics?: Record<string, number>; telemetry?: Telemetry; totalFiles?: number }): JSX.Element {
+  const observed = metrics?.inventory_observed === 1;
+  if (!observed) return <TelemetryUnavailable detail="MinIO Bronze inventory chưa sẵn sàng." />;
+  const data = mergedSeries(telemetry, ['throughput']);
+  return <div className="space-y-3"><div className="grid gap-2 sm:grid-cols-3 text-xs"><Metric label="Bronze FITS" value={(metrics?.total_files ?? 0).toLocaleString()} /><Metric label="Chưa checkpoint Silver" value={(metrics?.pending_files ?? 0).toLocaleString()} /><Metric label="Footprint" value={formatBytes(metrics?.bronze_bytes ?? 0)} /></div>{data.length === 0 ? <TelemetryUnavailable detail="Prometheus chưa có throughput sample trong cửa sổ hiện tại." /> : <div className="h-[min(20svh,200px)]"><ResponsiveContainer width="100%" height="100%"><LineChart data={data}><CartesianGrid strokeDasharray="3 3" opacity={0.18} /><XAxis dataKey="timestamp" tickFormatter={clock} minTickGap={28} tick={{ fontSize: 10 }} /><YAxis tick={{ fontSize: 10 }} width={40} /><Tooltip labelFormatter={(value) => clock(Number(value))} formatter={(value) => `${Number(value).toFixed(3)} file/s`} /><Line dataKey="throughput" stroke="#22d3ee" dot={false} isAnimationActive={false} /></LineChart></ResponsiveContainer></div>}</div>;
+}
 
-    for (let i = 0; i < pointsCount; i++) {
-      const day = (i / (pointsCount - 1)) * totalDays;
-      const bjd = 2459440 + day; // Sector 42 BJD reference
-
-      // Downlink gap between day 13.0 and day 14.2
-      const isDownlinkGap = day >= 13.0 && day <= 14.2;
-      const cadenceVolume = isDownlinkGap
-        ? 0
-        : Math.round((totalPoints / 100) * (0.98 + (Math.sin(day * 0.8) + (Math.random() - 0.5) * 0.05) * 0.04));
-
-      const flux = isDownlinkGap
-        ? 0
-        : 1.0 + Math.sin(day * 0.8) * 0.005 + (Math.random() - 0.5) * 0.002;
-
-      data.push({
-        day: Number(day.toFixed(2)),
-        bjd: Number(bjd.toFixed(2)),
-        cadenceVolume,
-        flux: isDownlinkGap ? null : Number(flux.toFixed(4)),
-        status: isDownlinkGap ? 'TESS Downlink Gap' : 'Active Observation',
-      });
-    }
-    return data;
-  }, [totalPoints]);
-
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between text-xs">
-        <span className="font-semibold text-foreground">
-          {mode === 'batch'
-            ? `Backend Telemetry: Sector 42 (${totalFiles.toLocaleString()} tệp FITS)`
-            : 'Luồng Live Stream NATS JetStream (2-minute Cadence)'}
-        </span>
-        <span className="text-[11px] text-primary font-mono font-semibold">
-          Tổng tích lũy: ~{(totalPoints / 1e6).toFixed(2)} Triệu điểm trắc quang
-        </span>
-      </div>
-
-      <div className="h-[270px] w-full rounded-md border border-border/60 bg-background/50 p-2">
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={timelineData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-            <defs>
-              <linearGradient id="cadenceGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.4} />
-                <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.0} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-            <XAxis
-              dataKey="day"
-              tickFormatter={(v: number) => `Ngày ${v}`}
-              tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
-            />
-            <YAxis
-              domain={[0.98, 1.02]}
-              tickFormatter={(v: number) => v.toFixed(2)}
-              tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
-            />
-            <Tooltip
-              content={({ active, payload }) => {
-                if (!active || !payload?.length) return null;
-                const d = payload[0].payload as (typeof timelineData)[0];
-                return (
-                  <div className="rounded border border-border bg-popover p-2 text-xs shadow-md space-y-1">
-                    <p className="font-semibold text-foreground">
-                      BJD {d.bjd} (Ngày thứ {d.day})
-                    </p>
-                    <p className="text-primary font-mono">
-                      Mật độ cộng dồn: {d.cadenceVolume.toLocaleString()} điểm đo
-                    </p>
-                    <p className="text-muted-foreground font-mono">Trạng thái: {d.status}</p>
-                  </div>
-                );
-              }}
-            />
-            <ReferenceArea
-              x1={13.0}
-              x2={14.2}
-              stroke="#f59e0b"
-              strokeOpacity={0.5}
-              fill="#f59e0b"
-              fillOpacity={0.15}
-              label={{
-                value: 'TESS Downlink Gap (~1.2 ngày)',
-                position: 'insideTop',
-                fontSize: 10,
-                fill: '#f59e0b',
-              }}
-            />
-            <Area
-              type="monotone"
-              dataKey="flux"
-              stroke="#3b82f6"
-              strokeWidth={1.5}
-              fillOpacity={1}
-              fill="url(#cadenceGradient)"
-              isAnimationActive={false}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
-      <p className="text-[11px] text-muted-foreground">
-        Số liệu từ Backend API: <strong>{totalFiles.toLocaleString()} tệp FITS</strong> trong Sector 42. Tích lũy <strong>{(totalPoints / 1e6).toFixed(2)}M điểm đo</strong> liên tục trong 27.4 ngày quan sát của kính viễn vọng không gian TESS.
-      </p>
-    </div>
-  );
+function Metric({ label, value }: { label: string; value: string }): JSX.Element {
+  return <div className="rounded-md border border-border/60 bg-background/50 p-3"><p className="text-[10px] uppercase text-muted-foreground">{label}</p><p className="mt-1 font-mono font-semibold text-foreground">{value}</p></div>;
 }

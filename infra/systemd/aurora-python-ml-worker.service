@@ -1,0 +1,26 @@
+[Unit]
+Description=AURORA Python ML worker (native dev)
+Requires=aurora-infra.service
+After=aurora-infra.service
+PartOf=aurora-dev.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Desktop/aurora-cosmic/apps/python-ml-worker
+EnvironmentFile=%h/Desktop/aurora-cosmic/apps/python-ml-worker/.env.example
+EnvironmentFile=%h/Desktop/aurora-cosmic/infra/systemd/aurora-host.env
+Environment=MINIO_ENDPOINT=http://127.0.0.1:9000
+Environment=NATS_URL=nats://127.0.0.1:4222
+Environment=AURORA_CLICKHOUSE_HOST=127.0.0.1
+Environment=AURORA_ML_MAX_VRAM_MB=2000
+Environment=AURORA_ML_DEVICE=auto
+Environment=UV_CACHE_DIR=%h/.cache/uv
+ExecStartPre=%h/.local/bin/uv python install 3.12
+ExecStartPre=%h/.local/bin/uv sync --project %h/Desktop/aurora-cosmic/apps/python-ml-worker --python 3.12
+ExecStart=%h/.local/bin/uv run --project %h/Desktop/aurora-cosmic/apps/python-ml-worker --no-sync python -m aurora_ml.service
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGINT
+
+[Install]
+WantedBy=aurora-dev.target

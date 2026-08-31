@@ -84,6 +84,8 @@ type TrainingJobSpec struct {
 	BatchSize       int
 	Seed            int
 	AutoPromote     bool
+	// ComputeTarget is the explicitly selected execution branch: "cpu" or "gpu".
+	ComputeTarget string
 }
 
 type TrainingJobResult struct {
@@ -94,4 +96,30 @@ type TrainingJobResult struct {
 	Status          string
 	CreatedAt       string
 	Message         string
+	ComputeTarget   string
+}
+
+// TrainingReadiness is the measured supervised-label coverage for an immutable
+// set of Candidate Gold snapshots. Candidate discovery rows may be unlabelled;
+// they must never be silently treated as negative examples for model training.
+type TrainingReadiness struct {
+	SnapshotID      string   `json:"snapshot_id,omitempty"`
+	SnapshotIDs     []string `json:"snapshot_ids"`
+	TotalRows       int64    `json:"total_rows"`
+	PositiveRows    int64    `json:"positive_rows"`
+	NegativeRows    int64    `json:"negative_rows"`
+	UnresolvedRows  int64    `json:"unresolved_rows"`
+	PositiveTargets int64    `json:"positive_targets"`
+	NegativeTargets int64    `json:"negative_targets"`
+	Ready           bool     `json:"ready"`
+	PolicyVersion   string   `json:"policy_version"`
+	Blocker         string   `json:"blocker,omitempty"`
+}
+
+// TrainingLabelOverride is a human-reviewed correction to the derived cohort.
+// It never changes the immutable Candidate Gold row.
+type TrainingLabelOverride struct {
+	SnapshotID      string
+	SourceProductID string
+	TrainingLabel   string
 }

@@ -13,4 +13,5 @@ var (
 	ErrNotFound             = errors.New("resource not found")
 	ErrInvalidManifest      = errors.New("invalid inference job manifest")
 	ErrDispatch             = errors.New("failed to queue inference job")
+	ErrInvalidRequest       = errors.New("invalid request")
 )

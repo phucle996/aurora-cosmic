@@ -91,6 +91,9 @@ pub struct SilverObjectReady {
     /// Algorithm version used for preprocessing.
     pub processor_version: String,
 
+    /// Deterministic fingerprint of the preprocessing configuration.
+    pub processing_fingerprint: String,
+
     /// TESS observing sector number.
     pub sector: u32,
 

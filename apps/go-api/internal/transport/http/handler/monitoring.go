@@ -58,10 +58,14 @@ func (h *MonitoringHandler) Query(c *gin.Context) {
 		mapPoints := func(points []entity.MonitoringPoint) []gin.H {
 			out := make([]gin.H, len(points))
 			for j, p := range points {
-				out[j] = gin.H{
+				point := gin.H{
 					"timestamp": p.Timestamp,
 					"value":     p.Value,
 				}
+				if len(p.Labels) > 0 {
+					point["labels"] = p.Labels
+				}
+				out[j] = point
 			}
 			return out
 		}
@@ -104,7 +108,9 @@ func isMonitoringTab(tab string) bool {
 		"rust-preprocessor",
 		"python-ml-worker",
 		"rust-inference",
+		"gold-builder",
 		"go-api",
+		"dashboard",
 		"minio",
 		"nats",
 		"clickhouse":

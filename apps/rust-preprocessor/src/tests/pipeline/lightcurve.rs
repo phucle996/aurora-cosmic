@@ -174,8 +174,8 @@ fn test_invalid_median_zero_error() {
 fn test_transit_preservation() {
     // 20 points, baseline 1000.0 with a shallow 1% transit dip in points 8..12
     let mut fluxes = vec![1000.0; 20];
-    for i in 8..12 {
-        fluxes[i] = 990.0; // 1% transit dip
+    for flux in fluxes.iter_mut().take(12).skip(8) {
+        *flux = 990.0; // 1% transit dip
     }
     let raw = make_raw_lc(fluxes, vec![0; 20]);
     let event = make_event();

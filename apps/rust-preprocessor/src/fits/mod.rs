@@ -3,10 +3,10 @@ pub mod lightcurve;
 
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 
 use crate::event::{BronzeObjectReady, ProductKind};
-pub use image::{RawFfi, RawTargetPixel};
+pub use image::{RawFfi, RawTargetPixel, TargetPixelChunkReader};
 pub use lightcurve::RawLightCurve;
 
 /// Decoded FITS product — one variant per product kind.
@@ -16,7 +16,6 @@ pub use lightcurve::RawLightCurve;
 #[derive(Debug)]
 pub enum DecodedProduct {
     LightCurve(RawLightCurve),
-    TargetPixel(RawTargetPixel),
     Ffi(RawFfi),
 }
 
@@ -42,8 +41,7 @@ pub fn decode(path: &Path, event: &BronzeObjectReady) -> Result<DecodedProduct> 
             Ok(DecodedProduct::LightCurve(lc))
         }
         ProductKind::TargetPixel => {
-            let tpf = image::decode_tpf(path, event)?;
-            Ok(DecodedProduct::TargetPixel(tpf))
+            bail!("Target Pixel products must be decoded through TargetPixelChunkReader")
         }
         ProductKind::Ffi => {
             let ffi = image::decode_ffi(path, event)?;

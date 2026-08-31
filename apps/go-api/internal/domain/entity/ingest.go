@@ -14,6 +14,39 @@ type IngestProduct struct {
 	UpdatedAt time.Time
 }
 
+type IngestKindSummary struct {
+	Planned     int `json:"planned"`
+	Completed   int `json:"completed"`
+	Downloading int `json:"downloading"`
+	Failed      int `json:"failed"`
+}
+
+type IngestCatalogProgress struct {
+	State       string `json:"state"`
+	Stage       string `json:"stage"`
+	TICRows     int    `json:"tic_rows"`
+	TOIRows     int    `json:"toi_rows"`
+	Completed   int    `json:"completed"`
+	Total       int    `json:"total"`
+	SnapshotTIC string `json:"tic_snapshot_id,omitempty"`
+	SnapshotTOI string `json:"toi_snapshot_id,omitempty"`
+	Error       string `json:"error,omitempty"`
+}
+
+type IngestManifestProgress struct {
+	State              string            `json:"state"`
+	Stage              string            `json:"stage"`
+	Completed          int               `json:"completed"`
+	Total              int               `json:"total"`
+	DiscoveredProducts int               `json:"discovered_products"`
+	PairedSamples      int               `json:"paired_samples"`
+	SelectedSamples    int               `json:"selected_samples"`
+	PrioritySamples    int               `json:"priority_samples"`
+	CatalogSnapshots   map[string]string `json:"catalog_snapshots,omitempty"`
+	Error              string            `json:"error,omitempty"`
+	UpdatedAt          time.Time         `json:"updated_at"`
+}
+
 type IngestStatus struct {
 	Observed          bool
 	Source            string
@@ -37,6 +70,9 @@ type IngestStatus struct {
 	ObservedAt        time.Time
 	Products          []IngestProduct
 	ProductsTruncated bool
+	ProductKinds      map[string]IngestKindSummary
+	CatalogProgress   *IngestCatalogProgress
+	ManifestProgress  *IngestManifestProgress
 }
 
 type IngestStartRequest struct {

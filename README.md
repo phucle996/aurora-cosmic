@@ -54,6 +54,27 @@ make down
 
 # Stop and remove Compose volumes/data
 make clean
+
+# Fast native development: Docker only runs infrastructure; applications run
+# from the host under systemd --user.
+make dev-up
+make dev-status
+make dev-restart
+make dev-down
+```
+
+The native development stack keeps Go/Rust/Python/Node caches on the host, so
+editing application code does not rebuild application images. The first start
+may download compilers and Python dependencies. Use `journalctl --user -u
+aurora-go-api.service -f` (replace the unit name as needed) to follow logs.
+
+`make dev-up` also starts `aurora-systemd-exporter.service`. Prometheus reaches
+native application metrics through Docker's host gateway and records the
+systemd health of every AURORA user service, including Gold Builder and the
+dashboard. Check it with:
+
+```bash
+curl 'http://127.0.0.1:9090/api/v1/query?query=aurora_systemd_unit_active'
 ```
 
 ---

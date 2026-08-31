@@ -26,7 +26,7 @@ fn make_event() -> BronzeObjectReady {
 #[test]
 fn test_checkpoint_serialization_roundtrip() {
     let event = make_event();
-    let mut cp = PreprocessingCheckpoint::new(&event, "lc-preprocess-v1");
+    let mut cp = PreprocessingCheckpoint::new(&event, "lc-preprocess-v1", "test-config");
 
     assert_eq!(cp.schema_version, CURRENT_CHECKPOINT_SCHEMA_VERSION);
     assert_eq!(cp.state, ProcessingState::Processing);
@@ -61,7 +61,7 @@ fn test_checkpoint_serialization_roundtrip() {
 #[test]
 fn test_schema_version_validation() {
     let event = make_event();
-    let mut cp = PreprocessingCheckpoint::new(&event, "lc-preprocess-v1");
+    let mut cp = PreprocessingCheckpoint::new(&event, "lc-preprocess-v1", "test-config");
     assert!(cp.validate_schema_version().is_ok());
 
     cp.schema_version = 999;
@@ -70,12 +70,15 @@ fn test_schema_version_validation() {
 
 #[test]
 fn test_deterministic_checkpoint_id() {
-    let id1 = derive_checkpoint_id("product-001", "v1");
-    let id2 = derive_checkpoint_id("product-001", "v1");
+    let id1 = derive_checkpoint_id("product-001", "v1", "config-a");
+    let id2 = derive_checkpoint_id("product-001", "v1", "config-a");
     assert_eq!(id1, id2);
 
-    let id_v2 = derive_checkpoint_id("product-001", "v2");
+    let id_v2 = derive_checkpoint_id("product-001", "v2", "config-a");
     assert_ne!(id1, id_v2);
+
+    let id_config_b = derive_checkpoint_id("product-001", "v1", "config-b");
+    assert_ne!(id1, id_config_b);
 
     let key = build_checkpoint_object_key(&id1);
     assert_eq!(key, format!("checkpoints/preprocessing/objects/{id1}.json"));
@@ -84,7 +87,7 @@ fn test_deterministic_checkpoint_id() {
 #[test]
 fn test_checkpoint_failure_state() {
     let event = make_event();
-    let mut cp = PreprocessingCheckpoint::new(&event, "lc-preprocess-v1");
+    let mut cp = PreprocessingCheckpoint::new(&event, "lc-preprocess-v1", "test-config");
 
     cp.mark_failed("MinIO upload timeout");
     assert_eq!(cp.state, ProcessingState::Failed);

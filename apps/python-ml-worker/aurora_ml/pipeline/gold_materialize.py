@@ -1,7 +1,8 @@
 """Gold Dataset Materializer, PyArrow Explicit Schemas & Recovery Commit Manager.
 
-Converts Stage 5 scientific feature/enrichment records into durable, immutable, reproducible
-Gold Parquet datasets (gold-candidate-v1, gold-anomaly-v1).
+Converts scientific feature/enrichment records into durable, immutable, reproducible
+Gold Parquet datasets. Candidate Gold is the discovery-evidence contract used
+by the v4 Gold builder; supervised labels live in a separate curated cohort.
 """
 
 import hashlib
@@ -31,7 +32,7 @@ class GoldArtifactConflictError(GoldMaterializeError):
 
 
 def get_candidate_arrow_schema() -> pa.Schema:
-    """Explicit PyArrow schema for Candidate Gold dataset (gold-candidate-v1)."""
+    """Explicit schema for the unlabeled Candidate Gold evidence dataset."""
     return pa.schema(
         [
             # Identity
@@ -65,7 +66,6 @@ def get_candidate_arrow_schema() -> pa.Schema:
             ("bls_depth", pa.float64()),
             ("bls_power", pa.float64()),
             # TPF Model Inputs
-            ("tpf_evidence_available", pa.bool_()),
             ("pixel_mad_median", pa.float64()),
             ("variability_peak_fraction", pa.float64()),
             ("transit_evidence_available", pa.bool_()),
@@ -75,19 +75,18 @@ def get_candidate_arrow_schema() -> pa.Schema:
             ("transit_deficit_center_offset_pixels", pa.float64()),
             # TIC Model Inputs
             ("tic_available", pa.bool_()),
+            ("ra_deg", pa.float64()),
+            ("dec_deg", pa.float64()),
             ("tmag", pa.float64()),
             ("teff", pa.float64()),
             ("stellar_radius", pa.float64()),
             ("stellar_mass", pa.float64()),
             ("logg", pa.float64()),
-            # Audit & Supervision
+            # TOI evidence. TCE and supervised labels belong to a separately
+            # curated training cohort, never to discovery Candidate Gold.
             ("matched_toi_id", pa.string()),
             ("toi_match_status", pa.string()),
             ("toi_period_error", pa.float64()),
-            ("matched_tce_id", pa.string()),
-            ("tce_match_status", pa.string()),
-            ("training_label", pa.string()),
-            ("label_policy_version", pa.string()),
         ]
     )
 

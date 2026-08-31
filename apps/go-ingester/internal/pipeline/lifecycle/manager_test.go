@@ -543,3 +543,13 @@ func TestCheckProjectedCapacity_BelowHigh(t *testing.T) {
 		t.Fatalf("unexpected error below HIGH: %v", err)
 	}
 }
+
+func TestCheckProjectedCapacity_PausesAtActiveWaveLimitWithoutEvictableLineage(t *testing.T) {
+	fs := newFakeStorage()
+	fs.bronzeObjects["bronze/current-wave.fits"] = 44 * mib
+	mgr := newManager(t, fs)
+	err := mgr.CheckProjectedCapacity(context.Background(), 2*mib)
+	if !errors.Is(err, lifecycle.ErrStoragePressure) {
+		t.Fatalf("expected storage pressure at HIGH watermark, got %v", err)
+	}
+}

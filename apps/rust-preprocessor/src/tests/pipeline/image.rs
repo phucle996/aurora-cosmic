@@ -45,8 +45,8 @@ fn default_image_config() -> ImageConfig {
     ImageConfig {
         tpf_quality_mode: "strict".to_string(),
         tpf_normalization: "temporal-median".to_string(),
+        tpf_chunk_cadences: 256,
         ffi_normalization: "median".to_string(),
-        ffi_cutout_size: 32,
     }
 }
 
@@ -213,6 +213,31 @@ fn test_tpf_none_normalization_preserves_flux() {
 }
 
 #[test]
+fn test_tpf_chunk_temporal_median_is_versioned_separately() {
+    let raw = RawTargetPixel {
+        time: vec![1.0, 2.0],
+        quality: vec![0, 0],
+        flux: vec![vec![vec![100.0]], vec![vec![110.0]]],
+        rows: 1,
+        cols: 1,
+        tic_id: Some(123456789),
+    };
+    let event = make_tpf_event();
+    let mut cfg = default_image_config();
+    cfg.tpf_normalization = "chunk-temporal-median".to_string();
+
+    let result = preprocess_target_pixel(raw, &event, &cfg).unwrap();
+    assert_eq!(
+        result.processing.processor_version,
+        "tpf-preprocess-v2-chunked"
+    );
+    assert_eq!(
+        result.processing.normalization_mode,
+        "chunk-temporal-median"
+    );
+}
+
+#[test]
 fn test_tpf_determinism() {
     let raw1 = RawTargetPixel {
         time: vec![1.0, 2.0],
@@ -269,8 +294,8 @@ fn test_ffi_statistics_and_non_finite_handling() {
     assert_eq!(res.height, 4);
     assert_eq!(res.statistics.finite_pixel_count, 14);
     assert!((res.statistics.finite_pixel_fraction - 14.0 / 16.0).abs() < 1e-6);
-    assert_eq!(res.statistics.min, 10.0);
-    assert_eq!(res.statistics.max, 160.0);
+    assert!((res.statistics.min - (10.0 / 95.0 - 1.0)).abs() < 1e-6);
+    assert!((res.statistics.max - (160.0 / 95.0 - 1.0)).abs() < 1e-6);
 }
 
 #[test]
@@ -296,8 +321,12 @@ fn test_ffi_cutout_extraction() {
     assert_eq!(cutout.y, 1);
     assert_eq!(cutout.width, 2);
     assert_eq!(cutout.height, 2);
-    // Rows 1 and 2, cols 1 and 2 -> values: 6.0, 7.0, 10.0, 11.0
-    assert_eq!(cutout.pixels, vec![6.0, 7.0, 10.0, 11.0]);
+    // Rows 1 and 2, cols 1 and 2, normalized against the image median 8.5.
+    let expected = vec![6.0, 7.0, 10.0, 11.0]
+        .into_iter()
+        .map(|pixel| pixel / 8.5 - 1.0)
+        .collect::<Vec<f32>>();
+    assert_eq!(cutout.pixels, expected);
 }
 
 #[test]

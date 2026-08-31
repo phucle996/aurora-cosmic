@@ -7,13 +7,16 @@ class Config:
         self.log_level = self._require_env("AURORA_LOG_LEVEL")
         self.minio_endpoint = self._require_env("MINIO_ENDPOINT")
         self.minio_bucket = self._require_env("MINIO_BUCKET")
+        self.minio_access_key = self._require_env("MINIO_ACCESS_KEY")
+        self.minio_secret_key = self._require_env("MINIO_SECRET_KEY")
+        self.minio_secure = self.minio_endpoint.startswith("https://")
         self.nats_url = self._require_env("NATS_URL")
         self.metrics_addr = os.getenv("AURORA_METRICS_ADDR", "0.0.0.0:8083")
 
         self.device = self._require_env("AURORA_ML_DEVICE").lower()
-        if self.device != "cuda":
+        if self.device not in ("auto", "cuda", "cpu"):
             raise ValueError(
-                f"Invalid AURORA_ML_DEVICE: '{self.device}'. GPU-only training requires 'cuda'"
+                f"Invalid AURORA_ML_DEVICE: '{self.device}'. Allowed: auto, cuda, cpu"
             )
 
         try:
@@ -29,6 +32,10 @@ class Config:
                 raise ValueError()
         except ValueError:
             raise ValueError("AURORA_ML_MAX_VRAM_MB must be a non-negative integer.")
+
+        # The directory is a recoverable local workspace only.  MinIO remains
+        # the source of truth for committed jobs, models and evaluations.
+        self.work_dir = os.getenv("AURORA_ML_WORK_DIR", ".runtime/ml-worker")
 
         # Stage 5 LC Feature Extraction Configuration
         self.lc_feature_version = os.getenv(

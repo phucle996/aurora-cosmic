@@ -12,6 +12,9 @@ import (
 	"go-ingester/internal/model"
 	"go-ingester/internal/observer"
 	"go-ingester/internal/pipeline/checkpoint"
+	"go-ingester/internal/pipeline/event"
+	"go-ingester/internal/pipeline/plan"
+	"go-ingester/internal/pipeline/storage"
 )
 
 // SourceReader is the application-facing contract for streaming a source
@@ -22,8 +25,8 @@ type SourceReader interface {
 }
 
 // ProgressEvent is emitted once for every manifest product when it reaches a
-// terminal state. It is intentionally transport-agnostic so CLI, JSON logs,
-// or a future metrics exporter can render the same progress data.
+// terminal state. It is transport-agnostic so telemetry sinks can render the
+// same progress data without coupling the data plane to a delivery mechanism.
 type ProgressEvent struct {
 	Result            model.ProductResult
 	CompletedProducts int64
@@ -40,107 +43,87 @@ type ProgressEvent struct {
 // return quickly; a slow reporter back-pressures workers by design.
 type ProgressReporter func(ProgressEvent)
 
-// Pipeline manages the bounded concurrent streaming of FITS files into MinIO and event publishing with Checkpoint persistence.
+// CapacityGate blocks until one more Bronze object can be admitted safely.
+// It is deliberately a small port: storage pressure belongs to the lifecycle
+// policy, while the ingestion data plane only needs permission per product.
+type CapacityGate interface {
+	Acquire(context.Context, int64) (release func(), err error)
+}
+
+// Dependencies are the ports required by the ingestion data plane.
+type Dependencies struct {
+	Source      SourceReader
+	Storage     storage.Client
+	Publisher   event.Publisher
+	Checkpoints *checkpoint.Manager
+}
+
+// Options are immutable for a single ingestion run.
+type Options struct {
+	Bucket             string
+	WorkerCount        int
+	CheckpointInterval time.Duration
+	CapacityGate       CapacityGate
+	Progress           ProgressReporter
+	Metrics            *observer.Metrics
+	Logger             *slog.Logger
+}
+
+// Pipeline manages bounded concurrent FITS streaming, durable checkpoints,
+// and post-storage event publication. It has no HTTP or environment coupling.
 type Pipeline struct {
 	sourceReader       SourceReader
-	minioClient        model.Client
-	publisher          model.Publisher
+	minioClient        storage.Client
+	publisher          event.Publisher
 	cpManager          *checkpoint.Manager
 	bucket             string
 	concurrency        int
 	checkpointInterval time.Duration
-	maxRunBytes        int64
+	capacityGate       CapacityGate
 	progress           ProgressReporter
 	metrics            *observer.Metrics
 	log                *slog.Logger
 }
 
-type runByteBudget struct {
-	limit int64
-	used  atomic.Int64
-}
-
-func (b *runByteBudget) reserve(size int64) bool {
-	if b == nil || b.limit <= 0 || size <= 0 {
-		return true
+// NewPipeline constructs a fully configured ingestion data plane.
+func NewPipeline(dependencies Dependencies, options Options) *Pipeline {
+	if options.WorkerCount <= 0 {
+		options.WorkerCount = 4
 	}
-	for {
-		current := b.used.Load()
-		if size > b.limit-current {
-			return false
-		}
-		if b.used.CompareAndSwap(current, current+size) {
-			return true
-		}
+	if options.Logger == nil {
+		options.Logger = slog.Default()
 	}
-}
-
-func (b *runByteBudget) release(size int64) {
-	if b == nil || size <= 0 {
-		return
-	}
-	b.used.Add(-size)
-}
-
-// NewPipeline constructs an ingestion Pipeline.
-func NewPipeline(sourceReader SourceReader, minioClient model.Client, publisher model.Publisher, cpManager *checkpoint.Manager, bucket string, concurrency int, log *slog.Logger) *Pipeline {
-	if concurrency <= 0 {
-		concurrency = 4
-	}
-	if log == nil {
-		log = slog.Default()
+	if options.CheckpointInterval <= 0 {
+		options.CheckpointInterval = 5 * time.Second
 	}
 	return &Pipeline{
-		sourceReader:       sourceReader,
-		minioClient:        minioClient,
-		publisher:          publisher,
-		cpManager:          cpManager,
-		bucket:             bucket,
-		concurrency:        concurrency,
-		checkpointInterval: 5 * time.Second,
-		log:                log,
+		sourceReader:       dependencies.Source,
+		minioClient:        dependencies.Storage,
+		publisher:          dependencies.Publisher,
+		cpManager:          dependencies.Checkpoints,
+		bucket:             options.Bucket,
+		concurrency:        options.WorkerCount,
+		checkpointInterval: options.CheckpointInterval,
+		capacityGate:       options.CapacityGate,
+		progress:           options.Progress,
+		metrics:            options.Metrics,
+		log:                options.Logger,
 	}
-}
-
-// SetMaxRunBytes rejects a manifest larger than the configured Bronze budget
-// before any network or storage work begins. Existing-object usage is enforced
-// by the lifecycle cleanup command; this guard protects a single run.
-func (p *Pipeline) SetMaxRunBytes(maxBytes int64) {
-	if maxBytes > 0 {
-		p.maxRunBytes = maxBytes
-	}
-}
-
-// SetCheckpointInterval controls how often progress is persisted to MinIO.
-// Progress remains in memory between flushes, avoiding a serialized pair of
-// object writes for every product while keeping crash recovery bounded.
-func (p *Pipeline) SetCheckpointInterval(interval time.Duration) {
-	if interval > 0 {
-		p.checkpointInterval = interval
-	}
-}
-
-// SetProgressReporter attaches an optional per-product progress callback.
-func (p *Pipeline) SetProgressReporter(reporter ProgressReporter) {
-	p.progress = reporter
-}
-
-// SetObserver attaches the bounded Prometheus instrumentation for this
-// pipeline. The pipeline remains usable without it in unit tests and CLI
-// modes that do not need metrics.
-func (p *Pipeline) SetObserver(metrics *observer.Metrics) {
-	p.metrics = metrics
 }
 
 // IngestManifest processes all products in the manifest using bounded worker goroutines.
-func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun bool) (*model.Summary, []model.ProductResult, error) {
+func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest) (*model.Summary, []model.ProductResult, error) {
 	startTime := time.Now()
 	if m == nil {
 		return nil, nil, fmt.Errorf("ingest: manifest is nil")
 	}
+	if p.minioClient == nil {
+		return nil, nil, fmt.Errorf("ingest: storage is not configured")
+	}
 
-	// 1. Collect all products from manifest.
-	allProducts := m.Products()
+	// Target products are scheduled as adjacent TPF + light-curve pairs. The
+	// ingestion data plane no longer probes detector headers or downloads FFIs.
+	allProducts := plan.Products(m)
 
 	if len(allProducts) == 0 {
 		if p.metrics != nil {
@@ -153,23 +136,9 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun
 			return nil, nil, fmt.Errorf("ingest: product %q has negative size %d", prod.SourceProductID, prod.SizeBytes)
 		}
 	}
-	if p.maxRunBytes > 0 {
-		var runBytes int64
-		for _, prod := range allProducts {
-			if prod.SizeBytes > p.maxRunBytes-runBytes {
-				return nil, nil, fmt.Errorf("ingest: manifest size exceeds configured run budget %d", p.maxRunBytes)
-			}
-			runBytes += prod.SizeBytes
-		}
-	}
-	runBudget := &runByteBudget{limit: p.maxRunBytes}
-
 	// Ensure destination bucket exists only after cheap manifest validation.
-	// An oversized run must fail without opening a storage connection.
-	if !dryRun && p.minioClient != nil {
-		if err := p.minioClient.EnsureBucket(ctx, p.bucket); err != nil {
-			return nil, nil, fmt.Errorf("ingest: bucket check %q: %w", p.bucket, err)
-		}
+	if err := p.minioClient.EnsureBucket(ctx, p.bucket); err != nil {
+		return nil, nil, fmt.Errorf("ingest: bucket check %q: %w", p.bucket, err)
 	}
 
 	plannedProducts := len(allProducts)
@@ -224,7 +193,7 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun
 		sha256    string
 	}
 	prevDone := make(map[string]prevEntry) // productID → stored object info
-	if !dryRun && p.cpManager != nil {
+	if p.cpManager != nil {
 		if prev := p.cpManager.PreviousCheckpoint(); prev != nil {
 			for id, pc := range prev.Products {
 				if pc != nil && (pc.State == model.StatePublished || pc.State == model.StateStored) && pc.ObjectKey != "" {
@@ -309,7 +278,7 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun
 	var checkpointDirty atomic.Int64
 	checkpointStop := make(chan struct{})
 	var checkpointWG sync.WaitGroup
-	if p.cpManager != nil && !dryRun {
+	if p.cpManager != nil {
 		checkpointWG.Add(1)
 		go func() {
 			defer checkpointWG.Done()
@@ -338,6 +307,9 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun
 		go func() {
 			defer wg.Done()
 			for prod := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
 				if p.metrics != nil {
 					p.metrics.SetQueueDepth(len(jobs))
 					p.metrics.ProductStarted()
@@ -360,7 +332,7 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun
 					if p.cpManager != nil {
 						p.cpManager.UpdateProductState(prod.SourceProductID, model.StateDownloading, 0, "", nil)
 					}
-					res = p.ingestProduct(ctx, prod, dryRun, runBudget)
+					res = p.ingestProduct(ctx, prod)
 				}
 				activeWorkers.Add(-1)
 				if p.metrics != nil {
@@ -371,7 +343,7 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun
 				}
 
 				// Update checkpoint state after download worker completes.
-				if p.cpManager != nil && !dryRun {
+				if p.cpManager != nil {
 					switch res.Status {
 					case model.StatusPublished:
 						p.cpManager.UpdateProductState(prod.SourceProductID, model.StatePublished, res.SizeBytes, res.SHA256, nil)
@@ -391,12 +363,15 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun
 		}()
 	}
 
+enqueue:
 	for _, prod := range productsToDownload {
-		// Keep enqueueing even after cancellation so workers can emit a
-		// deterministic FAILED result for every planned product.
-		jobs <- prod
-		if p.metrics != nil {
-			p.metrics.SetQueueDepth(len(jobs))
+		select {
+		case jobs <- prod:
+			if p.metrics != nil {
+				p.metrics.SetQueueDepth(len(jobs))
+			}
+		case <-ctx.Done():
+			break enqueue
 		}
 	}
 	close(jobs)
@@ -438,7 +413,7 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest, dryRun
 		summary.ThroughputBps = float64(summary.StoredBytes) / summary.Elapsed.Seconds()
 	}
 
-	if p.cpManager != nil && !dryRun {
+	if p.cpManager != nil {
 		p.cpManager.FinalizeRun()
 		flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer flushCancel()

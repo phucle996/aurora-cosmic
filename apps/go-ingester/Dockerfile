@@ -3,7 +3,7 @@ FROM golang:alpine AS builder
 WORKDIR /app
 COPY go.mod ./
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o /app/aurora-ingester ./cmd/aurora-ingester
+RUN CGO_ENABLED=0 GOOS=linux go build -o /app/aurora-ingester ./cmd
 
 # Runtime Stage
 FROM alpine:latest

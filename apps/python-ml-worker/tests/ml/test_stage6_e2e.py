@@ -16,15 +16,13 @@ from aurora_ml.ml.candidate.model import (
     CandidateTabularMLP,
     CANDIDATE_MODEL_INPUT_FEATURES,
 )
+from aurora_ml.ml.candidate.checkpoint import TrainingRunManifest
 from aurora_ml.ml.candidate.preprocessor import CandidatePreprocessor
 from aurora_ml.ml.datasets.splits import (
     build_candidate_ml_view,
     create_deterministic_group_split,
 )
-from aurora_ml.ml.evaluate import (
-    build_evaluation_cohort,
-    evaluate_candidate_model,
-)
+from aurora_ml.ml.evaluate import evaluate_candidate_model
 from aurora_ml.ml.registry import ModelRegistry
 from aurora_ml.pipeline.gold import GoldSnapshotManifest
 
@@ -178,34 +176,49 @@ def test_stage6_candidate_end_to_end_lifecycle():
                     "best_validation_loss": 0.05,
                     "model_sha256": model_sha,
                     "metrics_sha256": "m" * 64,
+                    "counts": {
+                        "train_row_count": split.train_row_count,
+                        "validation_row_count": split.validation_row_count,
+                    },
+                    "artifacts": {
+                        "model_pt_sha256": model_sha,
+                        "preprocessing_json_sha256": prep_sha,
+                        "metrics_json_sha256": "m" * 64,
+                    },
                     "created_at": "2026-08-08T00:00:00Z",
                 },
                 f,
             )
 
         # 5. Build Cohorts & Evaluate
-        golden_cohort = build_evaluation_cohort(
-            "candidate_vetting", "GOLDEN", gold_manifest, rows
-        )
-        recent_cohort = build_evaluation_cohort(
-            "candidate_vetting", "RECENT", gold_manifest, rows
-        )
-        golden_path = os.path.join(tmp_dir, "golden_cohort.json")
-        recent_path = os.path.join(tmp_dir, "recent_cohort.json")
-        with open(golden_path, "w", encoding="utf-8") as f:
-            json.dump(golden_cohort.to_dict(), f)
-        with open(recent_path, "w", encoding="utf-8") as f:
-            json.dump(recent_cohort.to_dict(), f)
-
         eval_dir = os.path.join(tmp_dir, "eval_out")
-        evaluate_candidate_model(
-            training_run_manifest_path=train_manifest_path,
-            preprocessing_json_path=prep_path,
-            golden_cohort_path=golden_path,
-            recent_cohort_path=recent_path,
-            output_dir=eval_dir,
+        from aurora_ml.ml.evaluate.cohort import (
+            build_candidate_golden_cohort,
+            build_candidate_recent_cohort,
         )
-        eval_manifest_path = os.path.join(eval_dir, "manifest.json")
+
+        golden_cohort = build_candidate_golden_cohort(gold_manifest, rows, split)
+        recent_cohort = build_candidate_recent_cohort(
+            gold_manifest, rows, split, golden_cohort
+        )
+        training_manifest = TrainingRunManifest.from_dict(
+            json.loads(open(train_manifest_path, encoding="utf-8").read())
+        )
+        evaluation_manifest, _, _ = evaluate_candidate_model(
+            training_manifest=training_manifest,
+            training_split=split,
+            golden_cohort=golden_cohort,
+            training_rows=train_rows,
+            golden_rows=rows,
+            model_state_dict=model.state_dict(),
+            preprocessing_json_path=prep_path,
+            recent_cohort=recent_cohort,
+            recent_rows=rows,
+            dest_dir=eval_dir,
+        )
+        eval_manifest_path = os.path.join(
+            eval_dir, evaluation_manifest.evaluation_run_id, "manifest.json"
+        )
 
         # 6. Model Registry Packaging & Bootstrap Champion
         registry = ModelRegistry(registry_root=os.path.join(tmp_dir, "models"))

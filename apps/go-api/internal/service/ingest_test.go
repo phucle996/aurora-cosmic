@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -55,6 +56,30 @@ func (f fakeRuntimeIngestController) Cancel(context.Context, string) (*entity.In
 }
 func (f fakeRuntimeIngestController) Current(context.Context) (*entity.IngestControlJob, error) {
 	return f.job, nil
+}
+
+type failingIngestController struct{}
+
+func (failingIngestController) Start(context.Context, entity.IngestStartRequest) (*entity.IngestControlJob, error) {
+	return nil, errors.New("unavailable")
+}
+func (failingIngestController) Cancel(context.Context, string) (*entity.IngestControlJob, error) {
+	return nil, errors.New("unavailable")
+}
+
+func TestIngestCancelDoesNotFabricateStateOrRewriteCheckpoint(t *testing.T) {
+	checkpoint := []byte(`{"run_id":"run-1","status":"RUNNING","products":{"a":{"state":"DOWNLOADING"}}}`)
+	objects := fakeIngestObjects{objects: map[string][]byte{
+		"checkpoints/ingestion/current.json":    []byte(`{"active_run_id":"run-1"}`),
+		"checkpoints/ingestion/runs/run-1.json": checkpoint,
+	}}
+	service := NewIngestServiceWithEvents(objects, nil, "aurora", failingIngestController{}, nil)
+	if _, err := service.Cancel(context.Background(), "run-1"); err == nil {
+		t.Fatal("cancel succeeded even though the ingester rejected it")
+	}
+	if got := string(objects.objects["checkpoints/ingestion/runs/run-1.json"]); got != string(checkpoint) {
+		t.Fatalf("API rewrote ingester checkpoint: %s", got)
+	}
 }
 
 func TestIngestStatusReadsCheckpointAndTelemetry(t *testing.T) {

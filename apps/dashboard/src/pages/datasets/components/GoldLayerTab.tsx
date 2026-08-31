@@ -33,6 +33,16 @@ export function GoldLayerTab({
     onSearch(searchPrefix.trim() ? searchPrefix.trim() : 'gold/');
   };
 
+  const goldDetailLink = (key: string): string | undefined => {
+    const manifest = /^gold\/snapshots\/(gold-v1-[^/]+)\/manifest\.json$/.exec(key);
+    if (manifest) return `/gold/snapshots/${encodeURIComponent(manifest[1])}`;
+
+    const artifact = /^gold\/snapshots\/(gold-v1-[^/]+)\/data\/(candidate)\/sector=(\d+)\/[^/]+\.parquet$/.exec(key);
+    if (!artifact) return undefined;
+    const dataset = artifact[2];
+    return `/gold/snapshots/${encodeURIComponent(artifact[1])}/files/${encodeURIComponent(dataset)}/${artifact[3]}`;
+  };
+
   return (
     <div className="space-y-6">
       {/* Active Champion Snapshot Banner & Feature Dictionary */}
@@ -70,6 +80,7 @@ export function GoldLayerTab({
             page={page}
             totalPages={totalPages}
             onPageChange={onPageChange}
+            linkForObject={goldDetailLink}
           />
         </CardContent>
       </Card>

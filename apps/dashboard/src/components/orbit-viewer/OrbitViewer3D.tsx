@@ -34,7 +34,7 @@ export function OrbitViewer3D({
   const [isPlaying, setIsPlaying] = useState(true);
   const [speedMultiplier, setSpeedMultiplier] = useState(1);
   const [showHabitableZone, setShowHabitableZone] = useState(true);
-  const [showOrbits, setShowOrbits] = useState(true);
+  const showOrbits = true;
   const [showGrid, setShowGrid] = useState(true);
   const [showTrails, setShowTrails] = useState(true);
   const [showDistanceRuler, setShowDistanceRuler] = useState(true);
@@ -62,8 +62,9 @@ export function OrbitViewer3D({
   const trailsRef = useRef<Record<number, TrailPoint[]>>({});
 
   // Physics & Styling
-  const teff = star.teff > 0 ? star.teff : 5778;
-  const radius = star.radius > 0 ? star.radius : 1.0;
+  const hasMeasuredStar = Number.isFinite(star.teff) && Number.isFinite(star.radius) && star.teff > 0 && star.radius > 0;
+  const teff = hasMeasuredStar ? star.teff : 0;
+  const radius = hasMeasuredStar ? star.radius : 0;
   const hz = calculateHabitableZone(radius, teff);
   const starStyle = getStarColor(teff);
 
@@ -267,7 +268,19 @@ export function OrbitViewer3D({
 
       renderObjects.push({ type: 'star', x: cx, y: cy, depth: 0, screenRadius: starScreenR });
 
-      let activePlanetProj: { x: number; y: number; radiusAu: number } | null = null;
+      const activePlanetForRuler = planets[selectedPlanetIndex] ?? planets[0];
+      const activePlanetProj = activePlanetForRuler
+        ? (() => {
+            const period = Math.max(0.1, activePlanetForRuler.periodDays);
+            const orbitalSpeedFactor = Math.pow(10.0 / period, 0.65);
+            const meanAnom = (activePlanetForRuler.initialPhase ?? 0) + (timeRef.current * orbitalSpeedFactor * 0.12) * Math.PI * 2;
+            const ecc = activePlanetForRuler.eccentricity ?? 0.04;
+            const periRad = ((activePlanetForRuler.periapsisDeg ?? 0) * Math.PI) / 180;
+            const orbit = solveKeplerOrbit(meanAnom, ecc, activePlanetForRuler.semiMajorAxisAu, periRad);
+            const projection = project(orbit.xAu, orbit.zAu);
+            return { x: projection.x, y: projection.y, radiusAu: orbit.radiusAu };
+          })()
+        : null;
 
       planets.forEach((p, idx) => {
         const period = Math.max(0.1, p.periodDays);
@@ -277,10 +290,6 @@ export function OrbitViewer3D({
         const periRad = ((p.periapsisDeg ?? 0) * Math.PI) / 180;
         const { xAu: orbX, zAu: orbZ, radiusAu } = solveKeplerOrbit(meanAnom, ecc, p.semiMajorAxisAu, periRad);
         const proj = project(orbX, orbZ);
-
-        if (idx === selectedPlanetIndex) {
-          activePlanetProj = { x: proj.x, y: proj.y, radiusAu };
-        }
 
         // Planet Sizing: Compact in normal overview (4-8px), expanding smoothly on deep zoom / focus planet
         const basePlanetR = 2.4 + 1.2 * Math.sqrt(Math.max(0.5, p.radiusEarth));
@@ -404,6 +413,7 @@ export function OrbitViewer3D({
     hz,
     radius,
     starStyle,
+    starfield,
     onTimeUpdate,
   ]);
 
@@ -453,6 +463,10 @@ export function OrbitViewer3D({
   };
 
   const currentZoomLevel = 1 / cameraRef.current.distance;
+
+  if (!hasMeasuredStar) {
+    return <div className="flex h-full min-h-64 items-center justify-center p-6 text-center text-sm text-muted-foreground">A measured stellar temperature and radius are required for this visualization.</div>;
+  }
 
   return (
     <div

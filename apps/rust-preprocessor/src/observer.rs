@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use prometheus::{
-    Encoder, Gauge, HistogramVec, IntCounterVec, IntGauge, Opts, Registry, TextEncoder,
+    Encoder, Gauge, GaugeVec, HistogramVec, IntCounterVec, IntGauge, Opts, Registry, TextEncoder,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -28,6 +28,8 @@ pub struct Metrics {
     backlog_pending: IntGauge,
     backlog_ack_pending: IntGauge,
     bytes: IntCounterVec,
+    samples: IntCounterVec,
+    finite_pixel_fraction: GaugeVec,
     last_success: Gauge,
 }
 
@@ -80,6 +82,20 @@ impl Metrics {
             ),
             &["kind", "stage"],
         )?;
+        let samples = IntCounterVec::new(
+            Opts::new(
+                "aurora_preprocessor_science_samples_total",
+                "Scientific samples observed by preprocessing, grouped by bounded outcome.",
+            ),
+            &["kind", "outcome"],
+        )?;
+        let finite_pixel_fraction = GaugeVec::new(
+            Opts::new(
+                "aurora_preprocessor_finite_pixel_fraction",
+                "Latest measured finite-pixel fraction for an image product.",
+            ),
+            &["kind"],
+        )?;
         let last_success = Gauge::new(
             "aurora_preprocessor_last_success_timestamp_seconds",
             "Unix timestamp of the last successful or recovered product.",
@@ -93,6 +109,8 @@ impl Metrics {
         registry.register(Box::new(backlog_pending.clone()))?;
         registry.register(Box::new(backlog_ack_pending.clone()))?;
         registry.register(Box::new(bytes.clone()))?;
+        registry.register(Box::new(samples.clone()))?;
+        registry.register(Box::new(finite_pixel_fraction.clone()))?;
         registry.register(Box::new(last_success.clone()))?;
 
         Ok(Self {
@@ -105,6 +123,8 @@ impl Metrics {
             backlog_pending,
             backlog_ack_pending,
             bytes,
+            samples,
+            finite_pixel_fraction,
             last_success,
         })
     }
@@ -133,6 +153,12 @@ impl Metrics {
             started: Instant::now(),
             input_bytes,
             output_bytes: 0,
+            input_samples: 0,
+            output_samples: 0,
+            quality_removed: 0,
+            invalid_removed: 0,
+            outlier_removed: 0,
+            finite_pixel_fraction: None,
         }
     }
 
@@ -144,6 +170,25 @@ impl Metrics {
         self.inflight.dec();
         self.products.with_label_values(&[kind, status]).inc();
         self.duration.with_label_values(&[kind]).observe(elapsed);
+
+        for (outcome, value) in [
+            ("input", observation.input_samples),
+            ("output", observation.output_samples),
+            ("quality_removed", observation.quality_removed),
+            ("invalid_removed", observation.invalid_removed),
+            ("outlier_removed", observation.outlier_removed),
+        ] {
+            if value > 0 {
+                self.samples
+                    .with_label_values(&[kind, outcome])
+                    .inc_by(value);
+            }
+        }
+        if let Some(value) = observation.finite_pixel_fraction {
+            self.finite_pixel_fraction
+                .with_label_values(&[kind])
+                .set(value);
+        }
 
         if status == STATUS_FAILED {
             self.errors.with_label_values(&[kind]).inc();
@@ -187,6 +232,12 @@ pub struct ProductObservation {
     started: Instant,
     input_bytes: u64,
     output_bytes: u64,
+    input_samples: u64,
+    output_samples: u64,
+    quality_removed: u64,
+    invalid_removed: u64,
+    outlier_removed: u64,
+    finite_pixel_fraction: Option<f64>,
 }
 
 impl ProductObservation {
@@ -208,6 +259,23 @@ impl ProductObservation {
 
     pub fn set_output_bytes(&mut self, bytes: u64) {
         self.output_bytes = bytes;
+    }
+
+    pub fn set_science_metadata(&mut self, metadata: &std::collections::HashMap<String, String>) {
+        let integer = |keys: &[&str]| -> u64 {
+            keys.iter()
+                .find_map(|key| metadata.get(*key).and_then(|value| value.parse().ok()))
+                .unwrap_or(0)
+        };
+        self.input_samples = integer(&["input-points", "input-cadences"]);
+        self.output_samples = integer(&["output-points", "output-cadences"]);
+        self.quality_removed = integer(&["quality-removed"]);
+        self.invalid_removed = integer(&["invalid-removed", "invalid-time-removed"]);
+        self.outlier_removed = integer(&["outlier-removed"]);
+        self.finite_pixel_fraction = metadata
+            .get("finite-pixel-fraction")
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|value| value.is_finite());
     }
 }
 
@@ -309,6 +377,12 @@ mod tests {
         let metrics = Arc::new(Metrics::new().unwrap());
         let mut observation = metrics.begin("LIGHT_CURVE", 128);
         observation.set_output_bytes(64);
+        observation.set_science_metadata(&std::collections::HashMap::from([
+            ("input-points".to_string(), "100".to_string()),
+            ("output-points".to_string(), "75".to_string()),
+            ("quality-removed".to_string(), "20".to_string()),
+            ("outlier-removed".to_string(), "5".to_string()),
+        ]));
         observation.set_success();
         drop(observation);
 
@@ -324,5 +398,9 @@ mod tests {
             .contains("aurora_preprocessor_bytes_total{kind=\"lightcurve\",stage=\"bronze\"} 128"));
         assert!(text
             .contains("aurora_preprocessor_bytes_total{kind=\"lightcurve\",stage=\"silver\"} 64"));
+        assert!(text.contains(
+            "aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"input\"} 100"
+        ));
+        assert!(text.contains("aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"outlier_removed\"} 5"));
     }
 }

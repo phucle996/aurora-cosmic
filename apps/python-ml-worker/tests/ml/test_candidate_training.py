@@ -242,10 +242,7 @@ def test_training_spec_fingerprint_determinism():
 # --- Integration Tests ---
 
 
-@pytest.mark.skipif(
-    not torch.cuda.is_available(), reason="full training integration requires CUDA"
-)
-def test_full_candidate_training_flow():
+def test_full_candidate_training_flow_on_cpu():
     """Integration test: Execute train_candidate_model and verify artifacts."""
     manifest = sample_gold_manifest()
     rows = sample_training_rows()
@@ -263,6 +260,7 @@ def test_full_candidate_training_flow():
             batch_size=4,
             early_stopping_patience=3,
             dest_dir=tmp_dir,
+            device_str="cpu",
         )
 
         assert isinstance(run_manifest, TrainingRunManifest)
@@ -280,8 +278,9 @@ def test_full_candidate_training_flow():
             manifest_dict = json.load(f)
             assert manifest_dict["gold_snapshot_id"] == manifest.snapshot_id
             assert manifest_dict["split_id"] == split.split_id
-            assert manifest_dict["dataset_view_version"] == "candidate-ml-view-v1"
-            assert len(manifest_dict["feature_order"]) == 32
+            assert manifest_dict["dataset_view_version"] == "candidate-ml-view-v2"
+            assert len(manifest_dict["feature_order"]) == 31
+            assert manifest_dict["hyperparameters"]["compute_target"] == "cpu"
 
 
 def test_mismatched_gold_snapshot_rejection():

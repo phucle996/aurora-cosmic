@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "astropy",
+    "clickhouse-connect",
     "minio>=7.2,<8",
     "nats-py>=2.7,<3",
     "numpy",
@@ -25,7 +26,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["aurora_gold_builder"]
+packages = ["src/aurora"]
 
 [tool.ruff]
 target-version = "py312"

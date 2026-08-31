@@ -4,7 +4,7 @@ use crate::config::{ImageConfig, LightCurveConfig};
 use crate::event::{BronzeObjectReady, ProductKind};
 use crate::output::silver::{
     build_ffi_key, build_lc_key, build_tpf_key, serialize_ffi, serialize_lightcurve,
-    serialize_target_pixel,
+    TargetPixelStreamWriter,
 };
 use crate::pipeline::image::{preprocess_ffi, preprocess_target_pixel};
 use crate::pipeline::lightcurve::preprocess_lc;
@@ -41,8 +41,8 @@ fn default_img_config() -> ImageConfig {
     ImageConfig {
         tpf_quality_mode: "strict".to_string(),
         tpf_normalization: "temporal-median".to_string(),
+        tpf_chunk_cadences: 256,
         ffi_normalization: "median".to_string(),
-        ffi_cutout_size: 32,
     }
 }
 
@@ -68,7 +68,7 @@ fn test_e2e_light_curve_pipeline_flow() {
     assert_eq!(processed.processing.processor_version, "lc-preprocess-v1");
 
     // 2. Parquet Arrow Serialization
-    let artifact = serialize_lightcurve(&processed, &event, tmp_dir.path()).unwrap();
+    let artifact = serialize_lightcurve(&processed, &event, tmp_dir.path(), "test-config").unwrap();
 
     // 3. Verification of Silver Metadata & Key
     let expected_key = build_lc_key(
@@ -76,6 +76,7 @@ fn test_e2e_light_curve_pipeline_flow() {
         event.tic_id,
         &event.source_product_id,
         "lc-preprocess-v1",
+        "test-config",
     );
     assert_eq!(artifact.object_key, expected_key);
     assert_eq!(artifact.schema_version, "silver-lightcurve-v1");
@@ -105,12 +106,24 @@ fn test_e2e_tpf_pipeline_flow() {
     let processed = preprocess_target_pixel(raw_tpf, &event, &img_cfg).unwrap();
     assert_eq!(processed.processing.processor_version, "tpf-preprocess-v1");
 
-    let artifact = serialize_target_pixel(&processed, &event, tmp_dir.path()).unwrap();
+    let mut writer = TargetPixelStreamWriter::new(tmp_dir.path()).unwrap();
+    writer.write_chunk(&processed).unwrap();
+    let artifact = writer
+        .finish(
+            &event,
+            event.tic_id,
+            processed.processing.clone(),
+            1,
+            processed.time.len(),
+            "test-config",
+        )
+        .unwrap();
     let expected_key = build_tpf_key(
         event.sector,
         event.tic_id,
         &event.source_product_id,
         "tpf-preprocess-v1",
+        "test-config",
     );
     assert_eq!(artifact.object_key, expected_key);
     assert_eq!(artifact.schema_version, "silver-target-pixel-v1");
@@ -136,13 +149,14 @@ fn test_e2e_ffi_pipeline_flow() {
     assert_eq!(processed.processing.processor_version, "ffi-preprocess-v1");
     assert_eq!(processed.cutouts.len(), 1);
 
-    let artifact = serialize_ffi(&processed, &event, tmp_dir.path()).unwrap();
+    let artifact = serialize_ffi(&processed, &event, tmp_dir.path(), "test-config").unwrap();
     let expected_key = build_ffi_key(
         event.sector,
         event.camera,
         event.ccd,
         &event.source_product_id,
         "ffi-preprocess-v1",
+        "test-config",
     );
     assert_eq!(artifact.object_key, expected_key);
     assert_eq!(artifact.schema_version, "silver-ffi-v1");

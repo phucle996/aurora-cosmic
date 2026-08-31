@@ -1,0 +1,21 @@
+[Unit]
+Description=AURORA Rust inference (native dev)
+Requires=aurora-infra.service
+After=aurora-infra.service
+PartOf=aurora-dev.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Desktop/aurora-cosmic/apps/rust-inference
+EnvironmentFile=%h/Desktop/aurora-cosmic/apps/rust-inference/.env.example
+EnvironmentFile=%h/Desktop/aurora-cosmic/infra/systemd/aurora-host.env
+Environment=MINIO_ENDPOINT=http://127.0.0.1:9000
+Environment=NATS_URL=nats://127.0.0.1:4222
+Environment=CUDA_VISIBLE_DEVICES=0
+ExecStart=%h/.local/bin/cargo run
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGINT
+
+[Install]
+WantedBy=aurora-dev.target

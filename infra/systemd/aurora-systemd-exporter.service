@@ -1,0 +1,15 @@
+[Unit]
+Description=AURORA systemd user-service Prometheus exporter
+PartOf=aurora-dev.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Desktop/aurora-cosmic
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 %h/Desktop/aurora-cosmic/infra/systemd/systemd_exporter.py
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGINT
+
+[Install]
+WantedBy=aurora-dev.target

@@ -32,7 +32,6 @@ from aurora_ml.ml.datasets.splits import (
 from aurora_ml.ml.evaluate.cohort import (
     EvaluationCohort,
     check_group_contamination,
-    load_evaluation_cohort,
 )
 from aurora_ml.ml.evaluate.metrics import (
     apply_synthetic_standardized_shift,
@@ -41,6 +40,13 @@ from aurora_ml.ml.evaluate.metrics import (
     select_anomaly_validation_threshold,
     select_candidate_validation_threshold,
 )
+
+
+def _candidate_artifact_sha(manifest: TrainingRunManifest, key: str) -> str:
+    value = manifest.artifacts.get(key, "")
+    if not value:
+        raise ValueError(f"MISSING_TRAINING_ARTIFACT_SHA: {key}")
+    return value
 
 
 @dataclass(frozen=True)
@@ -112,139 +118,7 @@ def derive_evaluation_run_identity(
 
 
 def evaluate_candidate_model(*args: Any, **kwargs: Any) -> Any:
-    """Execute complete candidate model evaluation against frozen Golden Test and Recent Holdout cohorts.
-
-    Supports both in-memory object calls:
-        evaluate_candidate_model(training_manifest, training_split, golden_cohort, ...) -> (manifest, thresh, metrics)
-    And file-path based calls:
-        evaluate_candidate_model(training_run_manifest_path=..., preprocessing_json_path=..., ...) -> manifest
-    """
-    if "training_run_manifest_path" in kwargs or (
-        len(args) == 0 and "output_dir" in kwargs
-    ):
-        # File path based execution
-        train_manifest_path = kwargs.get("training_run_manifest_path", "")
-        with open(train_manifest_path, "r", encoding="utf-8") as f:
-            t_data = json.load(f)
-
-        train_manifest_sha = hashlib.sha256(
-            json.dumps(t_data, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        ).hexdigest()
-
-        golden_cohort_path = kwargs.get("golden_cohort_path", "")
-        golden_cohort = load_evaluation_cohort(golden_cohort_path)
-
-        recent_cohort_path = kwargs.get("recent_cohort_path")
-        recent_cohort = (
-            load_evaluation_cohort(recent_cohort_path)
-            if recent_cohort_path and os.path.exists(recent_cohort_path)
-            else None
-        )
-
-        output_dir = kwargs.get("output_dir", ".")
-
-        decision_threshold = 0.5
-        threshold_data = {
-            "schema_version": 1,
-            "task": "candidate_vetting",
-            "threshold_policy_version": "candidate-threshold-max-f1-v1",
-            "decision_threshold": decision_threshold,
-            "selection_source": "VALIDATION",
-            "validation_row_count": t_data.get("validation_row_count", 0),
-            "validation_f1": 0.95,
-            "validation_precision": 0.95,
-            "validation_recall": 0.95,
-        }
-        threshold_json = json.dumps(threshold_data, indent=2, sort_keys=True)
-        threshold_sha = hashlib.sha256(threshold_json.encode("utf-8")).hexdigest()
-
-        metrics_data: Dict[str, Any] = {
-            "golden_pr_auc": 0.98,
-            "golden_roc_auc": 0.99,
-            "golden_precision": 0.95,
-            "golden_recall": 0.95,
-            "golden_f1": 0.95,
-            "golden_confusion_matrix": [[1, 0], [0, 1]],
-            "golden_row_count": golden_cohort.row_count,
-            "golden_positive_count": golden_cohort.positive_count or 1,
-            "golden_negative_count": golden_cohort.negative_count or 1,
-        }
-        if recent_cohort:
-            metrics_data["recent_pr_auc"] = 0.97
-            metrics_data["recent_roc_auc"] = 0.98
-            metrics_data["recent_precision"] = 0.94
-            metrics_data["recent_recall"] = 0.94
-            metrics_data["recent_f1"] = 0.94
-            metrics_data["recent_confusion_matrix"] = [[1, 0], [0, 1]]
-            metrics_data["recent_row_count"] = recent_cohort.row_count
-            metrics_data["recent_positive_count"] = recent_cohort.positive_count or 1
-            metrics_data["recent_negative_count"] = recent_cohort.negative_count or 1
-
-        metrics_json = json.dumps(metrics_data, indent=2, sort_keys=True)
-        metrics_sha = hashlib.sha256(metrics_json.encode("utf-8")).hexdigest()
-
-        eval_run_id, eval_spec_fp = derive_evaluation_run_identity(
-            task="candidate_vetting",
-            training_run_id=t_data["training_run_id"],
-            training_run_manifest_sha256=train_manifest_sha,
-            model_sha256=t_data.get("model_sha256", "0" * 64),
-            preprocessing_sha256=t_data.get("preprocessing_sha256", "0" * 64),
-            golden_cohort_id=golden_cohort.cohort_id,
-            golden_cohort_manifest_sha256=golden_cohort.cohort_fingerprint,
-            recent_cohort_id=recent_cohort.cohort_id if recent_cohort else None,
-            recent_cohort_manifest_sha256=recent_cohort.cohort_fingerprint
-            if recent_cohort
-            else None,
-            evaluation_policy_version="candidate-evaluation-v1",
-            threshold_policy_version="candidate-threshold-max-f1-v1",
-        )
-
-        manifest = EvaluationRunManifest(
-            schema_version=1,
-            evaluation_run_id=eval_run_id,
-            evaluation_spec_fingerprint=eval_spec_fp,
-            task="candidate_vetting",
-            training_run_id=t_data["training_run_id"],
-            training_run_manifest_sha256=train_manifest_sha,
-            model_version=t_data.get("model_version", "candidate-tabular-mlp-v1"),
-            model_sha256=t_data.get("model_sha256", "0" * 64),
-            preprocessing_version=t_data.get(
-                "preprocessing_version", "candidate-preprocess-v1"
-            ),
-            preprocessing_sha256=t_data.get("preprocessing_sha256", "0" * 64),
-            golden_cohort_id=golden_cohort.cohort_id,
-            golden_cohort_manifest_sha256=golden_cohort.cohort_fingerprint,
-            recent_cohort_id=recent_cohort.cohort_id if recent_cohort else None,
-            recent_cohort_manifest_sha256=recent_cohort.cohort_fingerprint
-            if recent_cohort
-            else None,
-            evaluation_policy_version="candidate-evaluation-v1",
-            threshold_policy_version="candidate-threshold-max-f1-v1",
-            decision_threshold=decision_threshold,
-            threshold_sha256=threshold_sha,
-            metrics_sha256=metrics_sha,
-            metrics=metrics_data,
-            created_at=datetime.now(timezone.utc).isoformat(),
-        )
-
-        if output_dir:
-            os.makedirs(output_dir, exist_ok=True)
-            with open(
-                os.path.join(output_dir, "threshold.json"), "w", encoding="utf-8"
-            ) as f:
-                f.write(threshold_json)
-            with open(
-                os.path.join(output_dir, "metrics.json"), "w", encoding="utf-8"
-            ) as f:
-                f.write(metrics_json)
-            with open(
-                os.path.join(output_dir, "manifest.json"), "w", encoding="utf-8"
-            ) as f:
-                json.dump(manifest.to_dict(), f, indent=2, sort_keys=True)
-
-        return manifest
-
-    # Direct in-memory invocation
+    """Evaluate one loaded model against real, frozen cohorts only."""
     training_manifest: TrainingRunManifest = (
         args[0] if len(args) > 0 else kwargs["training_manifest"]
     )
@@ -264,7 +138,9 @@ def evaluate_candidate_model(*args: Any, **kwargs: Any) -> Any:
         args[5] if len(args) > 5 else kwargs["model_state_dict"]
     )
     preprocessor_json_path: str = (
-        args[6] if len(args) > 6 else kwargs["preprocessor_json_path"]
+        args[6]
+        if len(args) > 6
+        else kwargs.get("preprocessor_json_path") or kwargs["preprocessing_json_path"]
     )
     recent_cohort: Optional[EvaluationCohort] = (
         args[7] if len(args) > 7 else kwargs.get("recent_cohort")
@@ -303,7 +179,8 @@ def evaluate_candidate_model(*args: Any, **kwargs: Any) -> Any:
         and r.get("training_label") in ("POSITIVE", "NEGATIVE")
     ]
 
-    val_tensors, val_labels = preprocessor.transform(val_candidate_rows)
+    val_tensors = torch.from_numpy(preprocessor.transform_features(val_candidate_rows))
+    val_labels = torch.from_numpy(preprocessor.transform_labels(val_candidate_rows))
 
     with torch.no_grad():
         val_logits = model(val_tensors)
@@ -324,7 +201,8 @@ def evaluate_candidate_model(*args: Any, **kwargs: Any) -> Any:
         and r.get("training_label") in ("POSITIVE", "NEGATIVE")
     ]
 
-    golden_tensors, golden_labels = preprocessor.transform(golden_eval_rows)
+    golden_tensors = torch.from_numpy(preprocessor.transform_features(golden_eval_rows))
+    golden_labels = torch.from_numpy(preprocessor.transform_labels(golden_eval_rows))
 
     with torch.no_grad():
         golden_logits = model(golden_tensors)
@@ -347,7 +225,12 @@ def evaluate_candidate_model(*args: Any, **kwargs: Any) -> Any:
             and r.get("training_label") in ("POSITIVE", "NEGATIVE")
         ]
         if recent_eval_rows:
-            recent_tensors, recent_labels = preprocessor.transform(recent_eval_rows)
+            recent_tensors = torch.from_numpy(
+                preprocessor.transform_features(recent_eval_rows)
+            )
+            recent_labels = torch.from_numpy(
+                preprocessor.transform_labels(recent_eval_rows)
+            )
             with torch.no_grad():
                 recent_logits = model(recent_tensors)
                 recent_probs = torch.sigmoid(recent_logits).numpy().flatten()
@@ -427,8 +310,10 @@ def evaluate_candidate_model(*args: Any, **kwargs: Any) -> Any:
         task="candidate_vetting",
         training_run_id=training_manifest.training_run_id,
         training_run_manifest_sha256=training_manifest_sha,
-        model_sha256=training_manifest.model_sha256,
-        preprocessing_sha256=training_manifest.preprocessing_sha256,
+        model_sha256=_candidate_artifact_sha(training_manifest, "model_pt_sha256"),
+        preprocessing_sha256=_candidate_artifact_sha(
+            training_manifest, "preprocessing_json_sha256"
+        ),
         golden_cohort_id=golden_cohort.cohort_id,
         golden_cohort_manifest_sha256=golden_cohort_sha,
         recent_cohort_id=recent_cohort.cohort_id if recent_cohort else None,
@@ -447,9 +332,11 @@ def evaluate_candidate_model(*args: Any, **kwargs: Any) -> Any:
         training_run_id=training_manifest.training_run_id,
         training_run_manifest_sha256=training_manifest_sha,
         model_version=training_manifest.model_version,
-        model_sha256=training_manifest.model_sha256,
+        model_sha256=_candidate_artifact_sha(training_manifest, "model_pt_sha256"),
         preprocessing_version=training_manifest.preprocessing_version,
-        preprocessing_sha256=training_manifest.preprocessing_sha256,
+        preprocessing_sha256=_candidate_artifact_sha(
+            training_manifest, "preprocessing_json_sha256"
+        ),
         golden_cohort_id=golden_cohort.cohort_id,
         golden_cohort_manifest_sha256=golden_cohort_sha,
         recent_cohort_id=recent_cohort.cohort_id if recent_cohort else None,
@@ -478,136 +365,7 @@ def evaluate_candidate_model(*args: Any, **kwargs: Any) -> Any:
 
 
 def evaluate_anomaly_model(*args: Any, **kwargs: Any) -> Any:
-    """Execute complete anomaly autoencoder evaluation against frozen Golden Test and Recent Holdout cohorts."""
-    if "training_run_manifest_path" in kwargs or (
-        len(args) == 0 and "output_dir" in kwargs
-    ):
-        train_manifest_path = kwargs.get("training_run_manifest_path", "")
-        with open(train_manifest_path, "r", encoding="utf-8") as f:
-            t_data = json.load(f)
-
-        train_manifest_sha = hashlib.sha256(
-            json.dumps(t_data, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        ).hexdigest()
-
-        golden_cohort_path = kwargs.get("golden_cohort_path", "")
-        golden_cohort = load_evaluation_cohort(golden_cohort_path)
-
-        recent_cohort_path = kwargs.get("recent_cohort_path")
-        recent_cohort = (
-            load_evaluation_cohort(recent_cohort_path)
-            if recent_cohort_path and os.path.exists(recent_cohort_path)
-            else None
-        )
-
-        output_dir = kwargs.get("output_dir", ".")
-
-        decision_threshold = 0.05
-        threshold_data = {
-            "schema_version": 1,
-            "task": "astronomical_anomaly_detection",
-            "threshold_policy_version": "anomaly-threshold-validation-p99-v1",
-            "decision_threshold": decision_threshold,
-            "quantile": 0.99,
-            "quantile_method": "linear",
-            "selection_source": "VALIDATION",
-            "validation_score_count": t_data.get("validation_row_count", 0),
-            "score_definition_version": "reconstruction-mse-v1",
-        }
-        threshold_json = json.dumps(threshold_data, indent=2, sort_keys=True)
-        threshold_sha = hashlib.sha256(threshold_json.encode("utf-8")).hexdigest()
-
-        metrics_data: Dict[str, Any] = {
-            "golden_reference_alert_rate": 0.01,
-            "golden_score_mean": 0.01,
-            "golden_score_median": 0.01,
-            "golden_score_p95": 0.03,
-            "golden_score_p99": 0.05,
-            "golden_score_max": 0.08,
-            "golden_synthetic_detection_rate": 1.0,
-            "golden_synthetic_score_mean": 36.0,
-            "golden_synthetic_score_median": 36.0,
-            "golden_synthetic_score_p95": 36.0,
-            "synthetic_score_separation": 35.99,
-            "golden_row_count": golden_cohort.row_count,
-        }
-        if recent_cohort:
-            metrics_data["recent_reference_alert_rate"] = 0.01
-            metrics_data["recent_synthetic_detection_rate"] = 1.0
-            metrics_data["recent_score_mean"] = 0.01
-            metrics_data["recent_score_median"] = 0.01
-            metrics_data["recent_score_p95"] = 0.03
-            metrics_data["recent_score_p99"] = 0.05
-            metrics_data["recent_score_max"] = 0.08
-            metrics_data["recent_row_count"] = recent_cohort.row_count
-
-        metrics_json = json.dumps(metrics_data, indent=2, sort_keys=True)
-        metrics_sha = hashlib.sha256(metrics_json.encode("utf-8")).hexdigest()
-
-        eval_run_id, eval_spec_fp = derive_evaluation_run_identity(
-            task="astronomical_anomaly_detection",
-            training_run_id=t_data["training_run_id"],
-            training_run_manifest_sha256=train_manifest_sha,
-            model_sha256=t_data.get("model_sha256", "0" * 64),
-            preprocessing_sha256=t_data.get("preprocessing_sha256", "0" * 64),
-            golden_cohort_id=golden_cohort.cohort_id,
-            golden_cohort_manifest_sha256=golden_cohort.cohort_fingerprint,
-            recent_cohort_id=recent_cohort.cohort_id if recent_cohort else None,
-            recent_cohort_manifest_sha256=recent_cohort.cohort_fingerprint
-            if recent_cohort
-            else None,
-            evaluation_policy_version="anomaly-evaluation-v1",
-            threshold_policy_version="anomaly-threshold-validation-p99-v1",
-        )
-
-        manifest = EvaluationRunManifest(
-            schema_version=1,
-            evaluation_run_id=eval_run_id,
-            evaluation_spec_fingerprint=eval_spec_fp,
-            task="astronomical_anomaly_detection",
-            training_run_id=t_data["training_run_id"],
-            training_run_manifest_sha256=train_manifest_sha,
-            model_version=t_data.get(
-                "model_version", "anomaly-lightcurve-autoencoder-v1"
-            ),
-            model_sha256=t_data.get("model_sha256", "0" * 64),
-            preprocessing_version=t_data.get(
-                "preprocessing_version", "anomaly-lightcurve-preprocess-v1"
-            ),
-            preprocessing_sha256=t_data.get("preprocessing_sha256", "0" * 64),
-            golden_cohort_id=golden_cohort.cohort_id,
-            golden_cohort_manifest_sha256=golden_cohort.cohort_fingerprint,
-            recent_cohort_id=recent_cohort.cohort_id if recent_cohort else None,
-            recent_cohort_manifest_sha256=recent_cohort.cohort_fingerprint
-            if recent_cohort
-            else None,
-            evaluation_policy_version="anomaly-evaluation-v1",
-            threshold_policy_version="anomaly-threshold-validation-p99-v1",
-            decision_threshold=decision_threshold,
-            threshold_sha256=threshold_sha,
-            metrics_sha256=metrics_sha,
-            metrics=metrics_data,
-            created_at=datetime.now(timezone.utc).isoformat(),
-        )
-
-        if output_dir:
-            os.makedirs(output_dir, exist_ok=True)
-            with open(
-                os.path.join(output_dir, "threshold.json"), "w", encoding="utf-8"
-            ) as f:
-                f.write(threshold_json)
-            with open(
-                os.path.join(output_dir, "metrics.json"), "w", encoding="utf-8"
-            ) as f:
-                f.write(metrics_json)
-            with open(
-                os.path.join(output_dir, "manifest.json"), "w", encoding="utf-8"
-            ) as f:
-                json.dump(manifest.to_dict(), f, indent=2, sort_keys=True)
-
-        return manifest
-
-    # Direct in-memory invocation
+    """Evaluate one loaded anomaly model against real, frozen cohorts only."""
     training_manifest: AnomalyTrainingRunManifest = (
         args[0] if len(args) > 0 else kwargs["training_manifest"]
     )
@@ -627,7 +385,9 @@ def evaluate_anomaly_model(*args: Any, **kwargs: Any) -> Any:
         args[5] if len(args) > 5 else kwargs["model_state_dict"]
     )
     preprocessor_json_path: str = (
-        args[6] if len(args) > 6 else kwargs["preprocessor_json_path"]
+        args[6]
+        if len(args) > 6
+        else kwargs.get("preprocessor_json_path") or kwargs["preprocessing_json_path"]
     )
     recent_cohort: Optional[EvaluationCohort] = (
         args[7] if len(args) > 7 else kwargs.get("recent_cohort")
@@ -661,7 +421,7 @@ def evaluate_anomaly_model(*args: Any, **kwargs: Any) -> Any:
     }
     val_anomaly_rows = [r for r in training_rows if derive_group_key(r) in val_groups]
 
-    val_tensors = preprocessor.transform(val_anomaly_rows)
+    val_tensors = torch.from_numpy(preprocessor.transform_features(val_anomaly_rows))
 
     with torch.no_grad():
         val_reconstructed = model(val_tensors)
@@ -676,7 +436,7 @@ def evaluate_anomaly_model(*args: Any, **kwargs: Any) -> Any:
     ]
     golden_pids = [str(r.get("source_product_id")) for r in golden_eval_rows]
 
-    golden_tensors = preprocessor.transform(golden_eval_rows)
+    golden_tensors = torch.from_numpy(preprocessor.transform_features(golden_eval_rows))
 
     with torch.no_grad():
         golden_reconstructed = model(golden_tensors)
@@ -715,7 +475,9 @@ def evaluate_anomaly_model(*args: Any, **kwargs: Any) -> Any:
         ]
         if recent_eval_rows:
             recent_pids = [str(r.get("source_product_id")) for r in recent_eval_rows]
-            recent_tensors = preprocessor.transform(recent_eval_rows)
+            recent_tensors = torch.from_numpy(
+                preprocessor.transform_features(recent_eval_rows)
+            )
 
             with torch.no_grad():
                 recent_reconstructed = model(recent_tensors)

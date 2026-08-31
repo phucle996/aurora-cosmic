@@ -62,8 +62,11 @@ export function getStarColor(teff: number): StarStyle {
 // KOPPARAPU ET AL. (2013/2014) HABITABLE ZONE MODEL
 // ============================================================================
 export function calculateHabitableZone(radius: number, teff: number): HabitableZoneBoundaries {
-  const safeTeff = teff > 0 ? teff : 5778;
-  const safeRadius = radius > 0 ? radius : 1.0;
+	if (!Number.isFinite(radius) || !Number.isFinite(teff) || radius <= 0 || teff <= 0) {
+		return { optInnerAu: 0, consInnerAu: 0, consOuterAu: 0, optOuterAu: 0, luminosity: 0 };
+	}
+	const safeTeff = teff;
+	const safeRadius = radius;
   // Stefan-Boltzmann Luminosity L/L☉ = (R/R☉)^2 * (Teff/5778)^4
   const luminosity = Math.pow(safeRadius, 2) * Math.pow(safeTeff / 5778, 4);
 
@@ -232,18 +235,6 @@ export function solveKeplerOrbit(
 }
 
 // ============================================================================
-// PSEUDORANDOM DETERMINISTIC SEED (Unique & Stable per TIC ID)
-// ============================================================================
-function createSeededRandom(seed: number) {
-  let s = Math.abs(seed) % 2147483647;
-  if (s === 0) s = 123456789;
-  return () => {
-    s = (s * 16807) % 2147483647;
-    return (s - 1) / 2147483646;
-  };
-}
-
-// ============================================================================
 // ACCURATE ASTRONOMICAL PLANETARY SYSTEM DERIVATION (1:1 with Real Data)
 // ============================================================================
 export function derivePlanetarySystemForTarget(
@@ -266,7 +257,7 @@ export function derivePlanetarySystemForTarget(
     insolation_earth?: number | null;
     hz_classification?: string | null;
   } | PlanetPhysics | null,
-  evidence?: {
+  _evidence?: {
     teff?: number | null;
     stellar_radius?: number | null;
     stellar_mass?: number | null;
@@ -281,90 +272,32 @@ export function derivePlanetarySystemForTarget(
 ): PlanetParams[] {
   if (!target) return [];
 
-  const ticNumber = typeof target.tic_id === 'number'
-    ? target.tic_id
-    : parseInt(String(target.tic_id).replace(/\D/g, ''), 10) || 42;
-  const rand = createSeededRandom(ticNumber);
+	const period = physics?.orbital_period_days;
+	const semiMajorAxis = physics?.semi_major_axis_au;
+	const radiusEarth = physics?.planet_radius_earth;
+	if (!Number.isFinite(period) || !Number.isFinite(semiMajorAxis) || !Number.isFinite(radiusEarth) || period! <= 0 || semiMajorAxis! <= 0 || radiusEarth! <= 0) {
+		return [];
+	}
+	const observedPeriod = period as number;
+	const observedSemiMajorAxis = semiMajorAxis as number;
+	const observedRadiusEarth = radiusEarth as number;
 
-  const starRadius = (target.radius && target.radius > 0) ? target.radius : (evidence?.stellar_radius || 1.0);
-  const starTeff = (target.effective_t && target.effective_t > 0) ? target.effective_t : (evidence?.teff || 5778);
-  const starMass = (evidence?.stellar_mass && evidence.stellar_mass > 0)
-    ? evidence.stellar_mass
-    : Math.max(0.12, Math.min(3.5, Math.pow(starRadius, 1.25)));
-
-  const hz = calculateHabitableZone(starRadius, starTeff);
-
-  // CASE 1: Real ML Vetted Candidate Physics Exists
-  if (physics && (physics.orbital_period_days || physics.planet_radius_earth || physics.semi_major_axis_au)) {
-    const period = physics.orbital_period_days ?? (2.5 + rand() * 32.0);
-    // Kepler's Third Law: a = (P_yr^2 * M_*)^(1/3)
-    const au = physics.semi_major_axis_au ?? Math.pow(Math.pow(period / 365.25, 2) * starMass, 1 / 3);
-    const radiusE = physics.planet_radius_earth ?? (0.85 + rand() * 3.2);
-    const tempK = physics.equilibrium_temperature_k ?? Math.round(starTeff * Math.pow(starRadius / (2 * Math.max(0.01, au) * 215.03), 0.5));
-    const vOrb = 29.78 * Math.sqrt(starMass / Math.max(0.01, au));
-
-    return [
-      {
-        name: physics.planet_candidate_id || `Candidate b (TIC ${target.tic_id})`,
-        radiusEarth: radiusE,
-        periodDays: period,
-        semiMajorAxisAu: au,
-        tempK,
-        habitabilityTier: (habitability?.tier ?? physics.hz_classification) || undefined,
-        habitabilityScore: habitability?.physics_score ?? (habitability?.tier === 'promising' ? 88 : 65),
-        eccentricity: 0.02 + rand() * 0.06,
-        periapsisDeg: rand() * 360,
-        initialPhase: rand() * Math.PI * 2,
-        inclinationDeg: 87.0 + rand() * 2.5,
-        axialTiltDeg: 5.0 + rand() * 20.0,
-        rotationPeriodHours: Math.max(10, Math.min(72, period < 5 ? period * 24 : 16 + rand() * 28)),
-        insolationEarth: physics.insolation_earth ?? Math.pow(starRadius / au, 2) * Math.pow(starTeff / 5778, 4),
-        orbitalVelocityKms: vOrb,
-        massEarth: Math.pow(radiusE, 2.06),
-        isCandidate: true,
-      },
-    ];
-  }
-
-  // CASE 2: Candidate Flagged from Classifier / Transit Detection
-  if (target.has_candidate || target.matched_toi) {
-    const period = (evidence?.bls_period && evidence.bls_period > 0)
-      ? evidence.bls_period
-      : (2.0 + rand() * 52.0);
-    const depth = (evidence?.bls_depth && evidence.bls_depth > 0)
-      ? evidence.bls_depth
-      : (0.0004 + rand() * 0.0036);
-    const radiusE = Math.max(0.6, Math.min(25.0, Math.sqrt(depth) * starRadius * 109.2));
-    // Kepler's Third Law: a = (P_yr^2 * M_*)^(1/3)
-    const au = Math.pow(Math.pow(period / 365.25, 2) * starMass, 1 / 3);
-    const tempK = Math.round(starTeff * Math.pow(starRadius / (2 * Math.max(0.015, au) * 215.03), 0.5));
-    const isHz = au >= hz.optInnerAu && au <= hz.optOuterAu;
-
-    return [
-      {
-        name: target.matched_toi ? `TOI ${target.matched_toi}.01` : `Candidate b (Score ${((target.candidate_score || 0.85) * 100).toFixed(0)}%)`,
-        radiusEarth: radiusE,
-        periodDays: period,
-        semiMajorAxisAu: Math.max(0.015, au),
-        tempK,
-        habitabilityTier: isHz ? 'optimistic_hz' : tempK > 400 ? 'too_hot' : 'too_cold',
-        habitabilityScore: isHz ? 82 : (target.candidate_score ? target.candidate_score * 70 : 45),
-        eccentricity: 0.02 + rand() * 0.08,
-        periapsisDeg: rand() * 360,
-        initialPhase: rand() * Math.PI * 2,
-        inclinationDeg: 86.5 + rand() * 3.0,
-        axialTiltDeg: 8.0 + rand() * 18.0,
-        rotationPeriodHours: 24,
-        insolationEarth: Math.pow(starRadius / au, 2) * Math.pow(starTeff / 5778, 4),
-        orbitalVelocityKms: 29.78 * Math.sqrt(starMass / Math.max(0.015, au)),
-        massEarth: Math.pow(radiusE, 2.06),
-        isCandidate: true,
-      },
-    ];
-  }
-
-  // CASE 3: General Host Star without detected candidates (no phantom planets)
-  return [];
+	// Only recorded Gold/physics quantities are rendered. Orientation is a
+	// declared circular display convention, never a fabricated observation.
+	return [{
+		name: physics?.planet_candidate_id || `Candidate (TIC ${target.tic_id})`,
+		radiusEarth: observedRadiusEarth,
+		periodDays: observedPeriod,
+		semiMajorAxisAu: observedSemiMajorAxis,
+		tempK: physics?.equilibrium_temperature_k ?? undefined,
+		habitabilityTier: habitability?.tier ?? physics?.hz_classification ?? undefined,
+		habitabilityScore: habitability?.physics_score ?? undefined,
+		eccentricity: 0,
+		periapsisDeg: 0,
+		initialPhase: 0,
+		insolationEarth: physics?.insolation_earth ?? undefined,
+		isCandidate: true,
+	}];
 }
 
 // ============================================================================

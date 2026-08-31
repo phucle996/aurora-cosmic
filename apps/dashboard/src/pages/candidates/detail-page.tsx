@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
 import { ArrowLeft, CircleAlert, Database, FlaskConical, LoaderCircle, Orbit, Rotate3D, Sparkles, Star, ThermometerSun } from 'lucide-react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -23,7 +23,9 @@ function tierLabel(tier: string): string {
 
 export default function CandidateDetailPage(): JSX.Element {
   const { predictionId = '' } = useParams();
+  const location = useLocation();
   const [search] = useSearchParams();
+  const queuePath = location.pathname.startsWith('/research-factory/') ? '/research-factory/transit-candidates' : '/candidates';
   const snapshot = search.get('snapshot_id') ?? '';
   const [detail, setDetail] = useState<CandidateDetailResponse>();
   const [curve, setCurve] = useState<LightcurveResponse>();
@@ -49,14 +51,9 @@ export default function CandidateDetailPage(): JSX.Element {
     return () => { active = false; };
   }, [predictionId, snapshot]);
 
-  if (!snapshot) return <Message title="Thiếu snapshot" detail="Candidate detail cần snapshot_id để bảo đảm dữ liệu và model result cùng một phiên bản." />;
-  if (error) return <Message title="Không tải được candidate" detail={error} destructive />;
-  if (!detail) return <div className="flex items-center justify-center gap-2 py-24 text-sm text-muted-foreground"><LoaderCircle className="animate-spin" />Loading candidate physics…</div>;
-
-  const { candidate, evidence, planet_physics: physics, habitability } = detail;
-  const physicsScore = habitability.physics_score;
-
   const planets = useMemo(() => {
+		if (!detail) return [];
+		const { candidate, evidence, planet_physics: physics, habitability } = detail;
     return derivePlanetarySystemForTarget(
       {
         tic_id: candidate.tic_id,
@@ -71,16 +68,25 @@ export default function CandidateDetailPage(): JSX.Element {
       evidence,
       habitability
     );
-  }, [candidate, evidence, physics, habitability]);
+  }, [detail]);
+
+  if (!snapshot) return <Message queuePath={queuePath} title="Thiếu snapshot" detail="Candidate detail cần snapshot_id để bảo đảm dữ liệu và model result cùng một phiên bản." />;
+  if (error) return <Message queuePath={queuePath} title="Không tải được candidate" detail={error} destructive />;
+  if (!detail) return <div className="flex items-center justify-center gap-2 py-24 text-sm text-muted-foreground"><LoaderCircle className="animate-spin" />Loading candidate physics…</div>;
+
+  const { candidate, evidence, planet_physics: physics, habitability } = detail;
+  const physicsScore = habitability.physics_score;
+  const has3DInputs = evidence.teff > 0 && evidence.stellar_radius > 0 && evidence.stellar_mass > 0 &&
+    (physics.orbital_period_days ?? 0) > 0 && (physics.semi_major_axis_au ?? 0) > 0 && (physics.planet_radius_earth ?? 0) > 0;
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
-          <Button asChild variant="ghost" size="sm" className="mb-3 -ml-3"><Link to="/candidates"><ArrowLeft />Candidate queue</Link></Button>
+          <Button asChild variant="ghost" size="sm" className="mb-3 -ml-3"><Link to={queuePath}><ArrowLeft />Candidate queue</Link></Button>
           <div className="flex flex-wrap items-center gap-2"><h2 className="font-heading text-2xl font-semibold md:text-3xl">TIC {candidate.tic_id}</h2><Badge variant={candidate.above_threshold ? 'default' : 'outline'}>{candidate.above_threshold ? 'priority review' : 'ranked'}</Badge><Badge variant="secondary">Sector {candidate.sector}</Badge></div>
           <p className="mt-2 font-mono text-xs text-muted-foreground">{physics.planet_candidate_id} · {physics.model_version}</p>
         </div>
-        <Button asChild variant="outline"><Link to={`/targets/${candidate.tic_id}?sector=${candidate.sector}`}><Star />Open host target</Link></Button>
+        <Button asChild variant="outline"><Link to={`/targets/${candidate.tic_id}?sector=${candidate.sector}&snapshot_id=${encodeURIComponent(snapshot)}`}><Star />Open host target</Link></Button>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(300px,0.72fr)_minmax(0,1.28fr)]">
@@ -105,7 +111,7 @@ export default function CandidateDetailPage(): JSX.Element {
       </div>
 
       {/* 3D Planetary Orbit & System Simulation */}
-      <Card className="overflow-hidden border-primary/25 bg-card shadow-lg">
+      {has3DInputs ? <Card className="overflow-hidden border-primary/25 bg-card shadow-lg">
         <CardHeader className="bg-muted/15 border-b border-border/60 pb-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -126,31 +132,27 @@ export default function CandidateDetailPage(): JSX.Element {
         </CardHeader>
         <CardContent className="p-0">
           <OrbitViewer3D
-            star={{
-              name: `TIC ${candidate.tic_id}`,
-              teff: evidence.teff || 5778,
-              radius: evidence.stellar_radius || 1.0,
-              mass: evidence.stellar_mass || 1.0,
-              mag: evidence.tmag || 10.0,
-            }}
+            star={{ name: `TIC ${candidate.tic_id}`, teff: evidence.teff, radius: evidence.stellar_radius, mass: evidence.stellar_mass, mag: evidence.tmag }}
             planets={planets}
             height="620px"
             onTimeUpdate={setTransitSync}
           />
         </CardContent>
-      </Card>
+      </Card> : <Card className="border-amber-500/30"><CardHeader><CardTitle>3D system unavailable</CardTitle><CardDescription>Không đủ stellar/transit input đo được để dựng mô hình 3D. Không dùng giá trị Solar mặc định.</CardDescription></CardHeader></Card>}
 
       <div className="grid gap-6 xl:grid-cols-2">
         <Card><CardHeader><CardTitle>Score breakdown</CardTitle><CardDescription>Mỗi thành phần cho biết điểm đến từ đâu và dữ liệu nào còn thiếu.</CardDescription></CardHeader><CardContent className="space-y-4">{habitability.components.map((component) => <div key={component.key}><div className="mb-1.5 flex items-center justify-between gap-3 text-sm"><span className={component.available ? 'font-medium' : 'text-muted-foreground'}>{component.label}</span><span className="font-mono">{component.available ? component.score.toFixed(1) : '—'} / {component.max_score}</span></div><Progress value={component.available ? component.score / component.max_score * 100 : 0} /><p className="mt-1.5 text-xs text-muted-foreground">{component.reason}</p></div>)}</CardContent></Card>
-        <Card><CardHeader><CardTitle>Transit & host evidence</CardTitle><CardDescription>Catalog context used to derive the physical read model.</CardDescription></CardHeader><CardContent><dl className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm"><Info label="Transit depth" value={evidence.bls_available ? number(evidence.bls_depth, 6) : '—'} /><Info label="BLS power" value={number(evidence.bls_power, 3)} /><Info label="Stellar Teff" value={`${number(evidence.teff, 0)} K`} /><Info label="Stellar radius" value={`${number(evidence.stellar_radius)} R☉`} /><Info label="Stellar mass" value={`${number(evidence.stellar_mass)} M☉`} /><Info label="TESS magnitude" value={number(evidence.tmag)} /><Info label="TOI match" value={evidence.matched_toi_id || evidence.toi_match_status || 'unmatched'} /><Info label="TCE match" value={evidence.matched_tce_id || evidence.tce_match_status || 'unmatched'} /></dl>{physics.warnings.length > 0 && <div className="mt-5 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">{physics.warnings.map((warning) => warning.replace(/_/g, ' ')).join(' · ')}</div>}</CardContent></Card>
+        <Card><CardHeader><CardTitle>Transit & host evidence</CardTitle><CardDescription>Measured LC/TPF evidence and immutable TIC/TOI catalog context used to derive the physical read model.</CardDescription></CardHeader><CardContent><dl className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm"><Info label="Transit depth" value={evidence.bls_available ? number(evidence.bls_depth, 6) : '—'} /><Info label="BLS power" value={number(evidence.bls_power, 3)} /><Info label="Stellar Teff" value={`${number(evidence.teff, 0)} K`} /><Info label="Stellar radius" value={`${number(evidence.stellar_radius)} R☉`} /><Info label="Stellar mass" value={`${number(evidence.stellar_mass)} M☉`} /><Info label="TESS magnitude" value={number(evidence.tmag)} /><Info label="TOI match" value={evidence.matched_toi_id || evidence.toi_match_status || 'unmatched'} /></dl>{physics.warnings.length > 0 && <div className="mt-5 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">{physics.warnings.map((warning) => warning.replace(/_/g, ' ')).join(' · ')}</div>}</CardContent></Card>
       </div>
 
       {/* SYNCHRONIZED LIGHT CURVE WITH 3D SCANNER & AI TRANSIT EVENT FLAGS */}
       <SynchronizedLightCurve
         time={curve?.time ?? []}
         flux={curve?.flux ?? []}
-        blsPeriod={physics.orbital_period_days || evidence.bls_period || 10.0}
-        blsDepth={evidence.bls_depth || 0.0015}
+        blsPeriod={physics.orbital_period_days ?? evidence.bls_period ?? undefined}
+        blsDepth={evidence.bls_depth ?? undefined}
+				blsDurationDays={evidence.bls_duration ?? undefined}
+				blsTransitTime={evidence.bls_transit_time ?? undefined}
         transitInfo={transitSync}
         planetName={physics.planet_candidate_id || `Candidate b`}
       />
@@ -160,4 +162,4 @@ export default function CandidateDetailPage(): JSX.Element {
 
 function PhysicsMetric({ icon: Icon, label, value, source }: { icon: typeof Orbit; label: string; value: string; source: string }): JSX.Element { return <div className="rounded-lg border border-border bg-muted/20 p-4"><div className="flex items-center gap-2 text-xs text-muted-foreground"><Icon className="size-4 text-primary" />{label}</div><p className="mt-2 text-xl font-semibold">{value}</p><Badge variant="outline" className="mt-2">{source}</Badge></div>; }
 function Info({ label, value }: { label: string; value: string }): JSX.Element { return <div><dt className="text-xs text-muted-foreground">{label}</dt><dd className="mt-1 font-medium">{value}</dd></div>; }
-function Message({ title, detail, destructive = false }: { title: string; detail: string; destructive?: boolean }): JSX.Element { return <Card className={destructive ? 'border-destructive/40' : ''}><CardContent className="flex gap-3 p-6"><CircleAlert className={destructive ? 'text-destructive' : 'text-primary'} /><div><p className="font-medium">{title}</p><p className="mt-1 text-sm text-muted-foreground">{detail}</p><Button asChild variant="outline" size="sm" className="mt-4"><Link to="/candidates"><Database />Candidate queue</Link></Button></div></CardContent></Card>; }
+function Message({ queuePath, title, detail, destructive = false }: { queuePath: string; title: string; detail: string; destructive?: boolean }): JSX.Element { return <Card className={destructive ? 'border-destructive/40' : ''}><CardContent className="flex gap-3 p-6"><CircleAlert className={destructive ? 'text-destructive' : 'text-primary'} /><div><p className="font-medium">{title}</p><p className="mt-1 text-sm text-muted-foreground">{detail}</p><Button asChild variant="outline" size="sm" className="mt-4"><Link to={queuePath}><Database />Candidate queue</Link></Button></div></CardContent></Card>; }

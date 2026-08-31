@@ -14,8 +14,10 @@ type CoreConfig struct {
 }
 
 type MinIOConfig struct {
-	Endpoint string
-	Bucket   string
+	Endpoint  string
+	Bucket    string
+	AccessKey string
+	SecretKey string
 }
 
 type NATSConfig struct {
@@ -43,27 +45,19 @@ type BronzeConfig struct {
 
 type MASTConfig struct {
 	APIURL   string
-	Timeout  string
+	Timeout  time.Duration
 	PageSize int
 }
 
-type ManifestConfig struct {
-	IncludeTPF  bool
-	IncludeLC   bool
-	IncludeFFI  bool
-	RequirePair bool
-}
-
 type Config struct {
-	Core     CoreConfig
-	MinIO    MinIOConfig
-	NATS     NATSConfig
-	Metrics  MetricsConfig
-	Control  ControlConfig
-	Ingest   IngestConfig
-	Bronze   BronzeConfig
-	MAST     MASTConfig
-	Manifest ManifestConfig
+	Core    CoreConfig
+	MinIO   MinIOConfig
+	NATS    NATSConfig
+	Metrics MetricsConfig
+	Control ControlConfig
+	Ingest  IngestConfig
+	Bronze  BronzeConfig
+	MAST    MASTConfig
 }
 
 func Load() (*Config, error) {
@@ -102,19 +96,26 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
-	highWMBytes, err := optionalEnvInt64("AURORA_BRONZE_HIGH_WATERMARK_BYTES", 48318382080) // 45 GiB
+	highWMBytes, err := optionalEnvInt64("AURORA_BRONZE_HIGH_WATERMARK_BYTES", 53687091200) // 50 GiB active wave
 	if err != nil {
 		return nil, err
 	}
 
-	lowWMBytes, err := optionalEnvInt64("AURORA_BRONZE_LOW_WATERMARK_BYTES", 32212254720) // 30 GiB
+	lowWMBytes, err := optionalEnvInt64("AURORA_BRONZE_LOW_WATERMARK_BYTES", 10737418240) // 10 GiB retained after cleanup
+	if err != nil {
+		return nil, err
+	}
+	maxBytes, err := optionalEnvInt64("AURORA_BRONZE_MAX_BYTES", 107374182400) // 100 GiB
 	if err != nil {
 		return nil, err
 	}
 
 	// MAST configuration — optional, fallback to defaults if not set.
 	mastURL := optionalEnv("MAST_API_URL", "https://mast.stsci.edu/api/v0/invoke")
-	mastTimeout := optionalEnv("MAST_TIMEOUT", "90s")
+	mastTimeout, err := optionalEnvDuration("MAST_TIMEOUT", 90*time.Second)
+	if err != nil {
+		return nil, err
+	}
 	mastPageSize, _ := optionalEnvInt("MAST_PAGE_SIZE", 1000)
 
 	cfg := &Config{
@@ -123,8 +124,10 @@ func Load() (*Config, error) {
 			LogLevel: logLevel,
 		},
 		MinIO: MinIOConfig{
-			Endpoint: minioEndpoint,
-			Bucket:   minioBucket,
+			Endpoint:  minioEndpoint,
+			Bucket:    minioBucket,
+			AccessKey: optionalEnv("MINIO_ACCESS_KEY", "minioadmin"),
+			SecretKey: optionalEnv("MINIO_SECRET_KEY", "minioadmin"),
 		},
 		NATS: NATSConfig{
 			URL: natsURL,
@@ -138,7 +141,7 @@ func Load() (*Config, error) {
 			CheckpointInterval: checkpointInterval,
 		},
 		Bronze: BronzeConfig{
-			MaxBytes:           optionalEnvInt64OrDefault("AURORA_BRONZE_MAX_BYTES", 53687091200), // 50 GiB
+			MaxBytes:           maxBytes,
 			HighWatermarkBytes: highWMBytes,
 			LowWatermarkBytes:  lowWMBytes,
 		},
@@ -146,16 +149,6 @@ func Load() (*Config, error) {
 			APIURL:   mastURL,
 			Timeout:  mastTimeout,
 			PageSize: mastPageSize,
-		},
-		Manifest: ManifestConfig{
-			IncludeTPF: optionalEnvBool("AURORA_INCLUDE_TPF", true),
-			IncludeLC:  optionalEnvBool("AURORA_INCLUDE_LIGHTCURVE", true),
-			IncludeFFI: optionalEnvBool("AURORA_INCLUDE_FFI", true),
-			// MAST's observation catalog commonly exposes a light-curve row
-			// without a matching TPF row in the same bounded page. Keep LC-only
-			// samples ingestible by default; deployments that require paired
-			// TPF/LC science products can opt into the strict policy explicitly.
-			RequirePair: optionalEnvBool("AURORA_REQUIRE_TPF_LC_PAIR", false),
 		},
 	}
 
@@ -187,6 +180,9 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("AURORA_BRONZE_HIGH_WATERMARK_BYTES (%d) must be < AURORA_BRONZE_MAX_BYTES (%d)",
 			c.Bronze.HighWatermarkBytes, c.Bronze.MaxBytes)
 	}
+	if c.MAST.Timeout <= 0 {
+		return fmt.Errorf("MAST_TIMEOUT must be positive")
+	}
 	return nil
 }
 
@@ -217,30 +213,6 @@ func requireEnvInt(key string) (int, error) {
 	return i, nil
 }
 
-func requireEnvInt64(key string) (int64, error) {
-	val, err := requireEnv(key)
-	if err != nil {
-		return 0, err
-	}
-	i, err := strconv.ParseInt(val, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid int64 value for '%s'", key)
-	}
-	return i, nil
-}
-
-func requireEnvFloat(key string) (float64, error) {
-	val, err := requireEnv(key)
-	if err != nil {
-		return 0, err
-	}
-	f, err := strconv.ParseFloat(val, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid float value for '%s'", key)
-	}
-	return f, nil
-}
-
 // optionalEnvInt64 returns the env var parsed as int64 or the given default.
 func optionalEnvInt64(key string, defaultVal int64) (int64, error) {
 	v := os.Getenv(key)
@@ -252,19 +224,6 @@ func optionalEnvInt64(key string, defaultVal int64) (int64, error) {
 		return defaultVal, fmt.Errorf("invalid int64 value for '%s'", key)
 	}
 	return i, nil
-}
-
-// optionalEnvInt64OrDefault reads an env var as int64 with a default — never errors.
-func optionalEnvInt64OrDefault(key string, defaultVal int64) int64 {
-	v := os.Getenv(key)
-	if v == "" {
-		return defaultVal
-	}
-	i, err := strconv.ParseInt(v, 10, 64)
-	if err != nil {
-		return defaultVal
-	}
-	return i
 }
 
 // optionalEnv returns the env var value or the given default when unset.
@@ -298,20 +257,4 @@ func optionalEnvDuration(key string, defaultVal time.Duration) (time.Duration, e
 		return defaultVal, fmt.Errorf("invalid duration value for '%s': %w", key, err)
 	}
 	return d, nil
-}
-
-// optionalEnvBool returns the env var parsed as bool or the given default.
-// Accepted true values: "true", "1", "yes".
-func optionalEnvBool(key string, defaultVal bool) bool {
-	v := os.Getenv(key)
-	if v == "" {
-		return defaultVal
-	}
-	switch v {
-	case "true", "1", "yes":
-		return true
-	case "false", "0", "no":
-		return false
-	}
-	return defaultVal
 }

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
 import {
   Activity,
@@ -31,7 +31,8 @@ export interface SynchronizedLightCurveProps {
   flux: number[];
   blsPeriod?: number; // In days, e.g. 12.5
   blsDepth?: number; // e.g. 0.0015
-  blsDurationHours?: number; // e.g. 2.8
+  blsDurationDays?: number;
+  blsTransitTime?: number; // BTJD from measured BLS ephemeris
   transitInfo?: TransitSyncEvent;
   planetName?: string;
   className?: string;
@@ -41,47 +42,49 @@ export function SynchronizedLightCurve({
   time,
   flux,
   blsPeriod,
-  blsDepth = 0.0015,
-  blsDurationHours = 3.0,
+  blsDepth,
+  blsDurationDays,
+  blsTransitTime,
   transitInfo,
   planetName = 'Candidate Planet',
   className = '',
 }: SynchronizedLightCurveProps): JSX.Element {
-  const [viewMode, setViewMode] = useState<'folded' | 'timeseries'>('folded');
+  const hasMeasuredEphemeris = Number.isFinite(blsPeriod) && (blsPeriod ?? 0) > 0
+    && Number.isFinite(blsTransitTime);
+  const [viewMode, setViewMode] = useState<'folded' | 'timeseries'>(() => hasMeasuredEphemeris ? 'folded' : 'timeseries');
+
+  useEffect(() => {
+    if (!hasMeasuredEphemeris) setViewMode('timeseries');
+  }, [hasMeasuredEphemeris]);
 
   // 1. Full Time Series Data preparation
   const timeSeriesData = useMemo(() => {
-    if (!time || !flux || time.length === 0) return [];
-    return time.map((t, idx) => ({
-      time: t,
-      flux: flux[idx] ?? 1.0,
-    }));
+    const pointCount = Math.min(time?.length ?? 0, flux?.length ?? 0);
+    return Array.from({ length: pointCount }, (_, index) => ({
+      time: time[index],
+      flux: flux[index],
+    })).filter((point) => Number.isFinite(point.time) && Number.isFinite(point.flux));
   }, [time, flux]);
 
   const minTime = timeSeriesData[0]?.time ?? 0;
   const maxTime = timeSeriesData[timeSeriesData.length - 1]?.time ?? 1;
   const timeSpan = maxTime - minTime;
+  const measuredMedianFlux = useMemo(() => {
+    const values = timeSeriesData.map((point) => point.flux).filter(Number.isFinite).sort((a, b) => a - b);
+    if (values.length === 0) return undefined;
+    const middle = Math.floor(values.length / 2);
+    return values.length % 2 === 0 ? (values[middle - 1] + values[middle]) / 2 : values[middle];
+  }, [timeSeriesData]);
 
-  // 2. Compute AI Predicted Transit Epochs across time series
+  // 2. Project measured BLS ephemerides across the observed time series.
   const transitEpochs = useMemo(() => {
-    if (!blsPeriod || blsPeriod <= 0 || timeSeriesData.length === 0) return [];
-
-    // Find the minimum flux dip as reference epoch T0
-    let minFlux = 1.0;
-    let t0 = minTime + blsPeriod * 0.5;
-    for (let i = 0; i < timeSeriesData.length; i++) {
-      if (timeSeriesData[i].flux < minFlux) {
-        minFlux = timeSeriesData[i].flux;
-        t0 = timeSeriesData[i].time;
-      }
-    }
-
-    const durationDays = blsDurationHours / 24;
+    if (!blsPeriod || blsPeriod <= 0 || !blsTransitTime || !blsDurationDays || blsDurationDays <= 0 || timeSeriesData.length === 0) return [];
+    const durationDays = blsDurationDays;
     const epochs: { id: number; center: number; start: number; end: number; depth: number }[] = [];
 
     // Find first epoch before minTime
-    let epochTime = t0;
-    while (epochTime > minTime) {
+    let epochTime = blsTransitTime;
+    while (epochTime - blsPeriod >= minTime) {
       epochTime -= blsPeriod;
     }
     while (epochTime < minTime) {
@@ -95,20 +98,21 @@ export function SynchronizedLightCurve({
         center: epochTime,
         start: Math.max(minTime, epochTime - durationDays * 0.5),
         end: Math.min(maxTime, epochTime + durationDays * 0.5),
-        depth: blsDepth,
+        depth: blsDepth ?? 0,
       });
       epochTime += blsPeriod;
       epochIndex++;
     }
 
     return epochs;
-  }, [blsPeriod, blsDepth, blsDurationHours, minTime, maxTime, timeSeriesData]);
+  }, [blsPeriod, blsDepth, blsDurationDays, blsTransitTime, minTime, maxTime, timeSeriesData]);
 
   // 3. Compute Phase-Folded Light Curve (Phase phi in [-0.5, +0.5])
   const phaseFoldedData = useMemo(() => {
     if (timeSeriesData.length === 0) return [];
-    const period = blsPeriod && blsPeriod > 0 ? blsPeriod : 10.0;
-    const t0 = transitEpochs[0]?.center ?? minTime;
+    if (!blsPeriod || blsPeriod <= 0 || !blsTransitTime) return [];
+    const period = blsPeriod;
+    const t0 = blsTransitTime;
 
     const rawFolded = timeSeriesData.map((d) => {
       let phase = ((d.time - t0) % period) / period;
@@ -139,7 +143,7 @@ export function SynchronizedLightCurve({
         phase: b.phase,
         flux: b.fluxSum / b.count,
       }));
-  }, [timeSeriesData, blsPeriod, transitEpochs, minTime]);
+  }, [timeSeriesData, blsPeriod, blsTransitTime]);
 
   // 4. Current Synchronized Playhead Position
   const currentPhase = transitInfo?.phase ?? 0.0;
@@ -154,7 +158,7 @@ export function SynchronizedLightCurve({
 
   // Calculate live flux reduction during transit
   const liveFluxDipPercent = transitInfo?.isTransit
-    ? (blsDepth * 100 * (transitInfo.transitDepthRatio ?? 1.0)).toFixed(3)
+    ? ((blsDepth ?? 0) * 100 * (transitInfo.transitDepthRatio ?? 1.0)).toFixed(3)
     : '0.000';
 
   if (timeSeriesData.length === 0) {
@@ -185,17 +189,17 @@ export function SynchronizedLightCurve({
               {isCurrentlyInTransit ? (
                 <Badge className="bg-rose-500/20 text-rose-300 border-rose-500/40 animate-pulse font-mono text-[11px]">
                   <TrendingDown className="size-3 mr-1" />
-                  AI TRANSIT ECLIPSE (-{liveFluxDipPercent}%)
+                  Visual orbit phase (-{liveFluxDipPercent}%)
                 </Badge>
               ) : (
                 <Badge variant="outline" className="text-emerald-400 border-emerald-500/30 text-[11px] font-mono">
                   <CheckCircle2 className="size-3 mr-1" />
-                  Baseline Flux (1.0000)
+                  Median Flux ({measuredMedianFlux?.toFixed(4) ?? '—'})
                 </Badge>
               )}
             </div>
             <CardDescription className="mt-1">
-              Đồng bộ thời gian thực với mô hình 3D — Vạch quét laser hiển thị tương quan giữa bóng che 3D và hố sụt giảm độ sáng.
+              Transit markers use the measured BLS ephemeris when period, epoch and duration are available. The 3D cursor is illustrative only.
             </CardDescription>
           </div>
 
@@ -206,6 +210,8 @@ export function SynchronizedLightCurve({
               size="sm"
               className="h-8 text-xs font-mono"
               onClick={() => setViewMode('folded')}
+              disabled={!hasMeasuredEphemeris}
+              title={hasMeasuredEphemeris ? 'Fold by the measured BLS period and epoch' : 'Measured BLS period and epoch are required'}
             >
               <Orbit className="size-3.5 mr-1.5" />
               Phase-Folded Curve
@@ -220,6 +226,11 @@ export function SynchronizedLightCurve({
               Full Sector Timeline
             </Button>
           </div>
+          {!hasMeasuredEphemeris && (
+            <p className="basis-full text-[11px] text-muted-foreground">
+              Phase-fold is unavailable because this target has no measured BLS period and epoch. Showing the measured sector timeline.
+            </p>
+          )}
         </div>
       </CardHeader>
 
@@ -259,14 +270,7 @@ export function SynchronizedLightCurve({
                   }}
                 />
 
-                {/* Shaded AI Transit Window Area at Phase 0.0 */}
-                <ReferenceArea
-                  x1={-0.05}
-                  x2={0.05}
-                  fill="rgba(239, 68, 68, 0.12)"
-                  stroke="rgba(239, 68, 68, 0.3)"
-                  strokeDasharray="3 3"
-                />
+                {blsDurationDays && blsPeriod ? <ReferenceArea x1={-blsDurationDays / blsPeriod / 2} x2={blsDurationDays / blsPeriod / 2} fill="rgba(239, 68, 68, 0.12)" stroke="rgba(239, 68, 68, 0.3)" strokeDasharray="3 3" /> : null}
 
                 {/* Center of Transit Line */}
                 <ReferenceLine
@@ -274,7 +278,7 @@ export function SynchronizedLightCurve({
                   stroke="rgba(239, 68, 68, 0.6)"
                   strokeDasharray="4 4"
                   label={{
-                    value: 'Mid-Transit (φ=0.0)',
+                    value: 'Measured BLS epoch (φ=0.0)',
                     fill: '#f87171',
                     fontSize: 10,
                     position: 'top',
@@ -287,7 +291,7 @@ export function SynchronizedLightCurve({
                   stroke={isCurrentlyInTransit ? '#f43f5e' : '#38bdf8'}
                   strokeWidth={2.5}
                   label={{
-                    value: isCurrentlyInTransit ? '● ECLIPSE DIP' : '● 3D SCANNER',
+                    value: '● visual orbit phase',
                     fill: isCurrentlyInTransit ? '#f43f5e' : '#38bdf8',
                     fontSize: 10,
                     fontWeight: 'bold',
@@ -334,7 +338,7 @@ export function SynchronizedLightCurve({
                   }}
                 />
 
-                {/* Highlight each AI Predicted Transit Event Area */}
+                {/* Measured BLS transit windows */}
                 {transitEpochs.map((epoch) => (
                   <ReferenceArea
                     key={epoch.id}
@@ -346,7 +350,7 @@ export function SynchronizedLightCurve({
                   />
                 ))}
 
-                {/* AI Transit Epoch Flags */}
+                {/* Measured BLS transit epochs */}
                 {transitEpochs.map((epoch) => (
                   <ReferenceLine
                     key={`line-${epoch.id}`}
@@ -355,7 +359,7 @@ export function SynchronizedLightCurve({
                     strokeWidth={1.5}
                     strokeDasharray="3 3"
                     label={{
-                      value: `🎯 Transit #${epoch.id}`,
+                      value: `BLS transit #${epoch.id}`,
                       fill: '#fb7185',
                       fontSize: 10,
                       position: 'top',
@@ -369,7 +373,7 @@ export function SynchronizedLightCurve({
                   stroke="#38bdf8"
                   strokeWidth={2}
                   label={{
-                    value: '● 3D SCANNER',
+                  value: '● visual orbit phase',
                     fill: '#38bdf8',
                     fontSize: 10,
                     position: 'bottom',
@@ -391,7 +395,7 @@ export function SynchronizedLightCurve({
         {/* AI TRANSIT DIAGNOSTIC & TELEMETRY FOOTER */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t border-border/50 text-xs">
           <div className="p-2.5 rounded-lg border border-border/40 bg-muted/20">
-            <p className="text-muted-foreground text-[11px]">AI Detected Period (P)</p>
+            <p className="text-muted-foreground text-[11px]">Measured BLS period (P)</p>
             <p className="font-mono font-semibold text-sm mt-0.5">
               {blsPeriod ? `${blsPeriod.toFixed(3)} days` : '—'}
             </p>
@@ -400,21 +404,21 @@ export function SynchronizedLightCurve({
           <div className="p-2.5 rounded-lg border border-border/40 bg-muted/20">
             <p className="text-muted-foreground text-[11px]">Transit Depth (ΔF/F)</p>
             <p className="font-mono font-semibold text-sm text-rose-400 mt-0.5">
-              {(blsDepth * 100).toFixed(3)}% ({(blsDepth * 1e6).toFixed(0)} ppm)
+              {blsDepth == null ? '—' : `${(blsDepth * 100).toFixed(3)}% (${(blsDepth * 1e6).toFixed(0)} ppm)`}
             </p>
           </div>
 
           <div className="p-2.5 rounded-lg border border-border/40 bg-muted/20">
             <p className="text-muted-foreground text-[11px]">Transit Epochs in Sector</p>
             <p className="font-mono font-semibold text-sm text-sky-400 mt-0.5">
-              {transitEpochs.length} AI Event Flags
+              {hasMeasuredEphemeris ? `${transitEpochs.length} measured BLS events` : 'Not available'}
             </p>
           </div>
 
           <div className="p-2.5 rounded-lg border border-border/40 bg-muted/20">
             <p className="text-muted-foreground text-[11px]">Estimated Duration (Δt)</p>
             <p className="font-mono font-semibold text-sm mt-0.5">
-              {blsDurationHours.toFixed(1)} hours
+              {blsDurationDays == null ? '—' : `${(blsDurationDays * 24).toFixed(1)} hours`}
             </p>
           </div>
         </div>

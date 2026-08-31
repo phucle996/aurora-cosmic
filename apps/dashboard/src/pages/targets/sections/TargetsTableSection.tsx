@@ -26,6 +26,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { apiFetch } from '@/lib/api';
 
 type TargetRecord = {
+	gold_snapshot_id: string;
   tic_id: number;
   tess_mag: number;
   ra: number;
@@ -43,10 +44,8 @@ type TargetRecord = {
   candidate_prediction_id: string;
   candidate_score: number;
   candidate_above_threshold: boolean;
-  has_anomaly: boolean;
-  anomaly_prediction_id: string;
-  anomaly_score: number;
   pipeline_status: 'discovered' | 'ingested' | 'scored' | string;
+  tic_context_available: boolean;
 };
 
 type TargetResponse = {
@@ -69,7 +68,6 @@ type TargetFilters = {
   pipeline_status: string;
   has_lightcurve: string;
   has_candidate: string;
-  has_anomaly: string;
   sort: string;
 };
 
@@ -87,7 +85,6 @@ const emptyFilters: TargetFilters = {
   pipeline_status: '',
   has_lightcurve: '',
   has_candidate: '',
-  has_anomaly: '',
   sort: '',
 };
 
@@ -168,7 +165,7 @@ export default function TargetsTableSection(): JSX.Element {
   };
 
   const visibleLightcurves = targets.filter((target) => target.has_lightcurve).length;
-  const visibleScored = targets.filter((target) => target.has_candidate || target.has_anomaly).length;
+  const visibleScored = targets.filter((target) => target.has_candidate).length;
   const sectorCount = useMemo(
     () => new Set(targets.map((target) => target.sector)).size,
     [targets]
@@ -227,7 +224,7 @@ export default function TargetsTableSection(): JSX.Element {
           icon={Gauge}
           label="ML scored"
           value={visibleScored}
-          detail="Candidate or anomaly"
+          detail="Candidate vetting"
         />
       </div>
 
@@ -354,7 +351,6 @@ export default function TargetsTableSection(): JSX.Element {
                     <SelectItem value="teff_asc">Coolest first</SelectItem>
                     <SelectItem value="teff_desc">Hottest first</SelectItem>
                     <SelectItem value="candidate_desc">Candidate score</SelectItem>
-                    <SelectItem value="anomaly_desc">Anomaly score</SelectItem>
                   </SelectContent>
                 </Select>
               </FilterField>
@@ -377,11 +373,6 @@ export default function TargetsTableSection(): JSX.Element {
                 label="Candidate"
                 value={filters.has_candidate}
                 onChange={(value) => setFilter('has_candidate', value)}
-              />
-              <FilterToggle
-                label="Anomaly"
-                value={filters.has_anomaly}
-                onChange={(value) => setFilter('has_anomaly', value)}
               />
             </div>
           </form>
@@ -437,7 +428,7 @@ export default function TargetsTableSection(): JSX.Element {
                     <TableHead>Radius</TableHead>
                     <TableHead>Coordinates (RA / Dec)</TableHead>
                     <TableHead>Observation Data</TableHead>
-                    <TableHead>ML Candidate / Anomaly</TableHead>
+                    <TableHead>ML Candidate</TableHead>
                     <TableHead>Pipeline Status</TableHead>
                     <TableHead className="text-right pr-6">Action</TableHead>
                   </TableRow>
@@ -445,7 +436,8 @@ export default function TargetsTableSection(): JSX.Element {
                 <TableBody>
                   {targets.map((target) => {
                     const key = `${target.tic_id}-${target.sector}`;
-                    const targetUrl = `/targets/${target.tic_id}?sector=${target.sector}`;
+							const snapshotQuery = target.gold_snapshot_id ? `&snapshot_id=${encodeURIComponent(target.gold_snapshot_id)}` : '';
+                    const targetUrl = `/targets/${target.tic_id}?sector=${target.sector}${snapshotQuery}`;
                     return (
                       <TableRow
                         key={key}
@@ -468,16 +460,18 @@ export default function TargetsTableSection(): JSX.Element {
                           </p>
                         </TableCell>
                         <TableCell className="font-mono font-medium">
-                          {formatNumber(target.tess_mag, 2)}
+                          {target.tic_context_available ? formatNumber(target.tess_mag, 2) : '—'}
                         </TableCell>
                         <TableCell className="font-mono">
-                          {formatNumber(target.effective_t, 0)} K
+                          {target.tic_context_available ? `${formatNumber(target.effective_t, 0)} K` : '—'}
                         </TableCell>
                         <TableCell className="font-mono text-muted-foreground">
-                          {formatNumber(target.radius, 2)} R☉
+                          {target.tic_context_available ? `${formatNumber(target.radius, 2)} R☉` : '—'}
                         </TableCell>
                         <TableCell className="font-mono text-xs text-muted-foreground">
-                          {formatNumber(target.ra, 3)}° / {formatNumber(target.dec, 3)}°
+                          {target.tic_context_available
+                            ? `${formatNumber(target.ra, 3)}° / ${formatNumber(target.dec, 3)}°`
+                            : '—'}
                         </TableCell>
                         <TableCell>
                           <Badge variant={target.has_lightcurve ? 'secondary' : 'outline'}>
@@ -493,12 +487,7 @@ export default function TargetsTableSection(): JSX.Element {
                                 Cand {(target.candidate_score * 100).toFixed(1)}%
                               </Badge>
                             )}
-                            {target.has_anomaly && (
-                              <Badge variant="destructive" className="text-[11px] font-mono ml-1">
-                                Anom {formatNumber(target.anomaly_score, 3)}
-                              </Badge>
-                            )}
-                            {!target.has_candidate && !target.has_anomaly && (
+                            {!target.has_candidate && (
                               <span className="text-xs text-muted-foreground">—</span>
                             )}
                           </div>

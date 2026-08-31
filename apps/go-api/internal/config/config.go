@@ -86,13 +86,13 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	minioAccessKey := os.Getenv("MINIO_ACCESS_KEY")
-	if minioAccessKey == "" {
-		minioAccessKey = "minioadmin"
+	minioAccessKey, err := requireEnv("MINIO_ACCESS_KEY")
+	if err != nil {
+		return nil, err
 	}
-	minioSecretKey := os.Getenv("MINIO_SECRET_KEY")
-	if minioSecretKey == "" {
-		minioSecretKey = "minioadmin"
+	minioSecretKey, err := requireEnv("MINIO_SECRET_KEY")
+	if err != nil {
+		return nil, err
 	}
 
 	clickHouseEndpoint, err := requireEnv("AURORA_CLICKHOUSE_ENDPOINT")

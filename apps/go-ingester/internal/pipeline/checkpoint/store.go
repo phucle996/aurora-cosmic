@@ -3,23 +3,23 @@ package checkpoint
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"time"
 
 	"go-ingester/internal/model"
+	"go-ingester/internal/pipeline/storage"
 )
 
 // Store handles JSON serialization and MinIO persistence for Checkpoint objects.
 type Store struct {
-	client model.Client
+	client storage.Client
 	bucket string
 }
 
 // NewStore constructs a Checkpoint Store.
-func NewStore(client model.Client, bucket string) *Store {
+func NewStore(client storage.Client, bucket string) *Store {
 	return &Store{
 		client: client,
 		bucket: bucket,
@@ -33,12 +33,12 @@ func (s *Store) Save(ctx context.Context, cp *model.Checkpoint) error {
 	}
 
 	cp.UpdatedAt = time.Now().UTC()
-	data, err := json.MarshalIndent(cp, "", "  ")
+	data, err := marshalCheckpoint(cp)
 	if err != nil {
 		return fmt.Errorf("checkpoint marshal: %w", err)
 	}
 
-	runKey := model.RunKey(cp.RunID)
+	runKey := RunKey(cp.RunID)
 	err = s.client.PutObject(ctx, s.bucket, runKey, bytes.NewReader(data), int64(len(data)), map[string]string{
 		"run-id":        cp.RunID,
 		"manifest-path": cp.ManifestPath,
@@ -53,14 +53,14 @@ func (s *Store) Save(ctx context.Context, cp *model.Checkpoint) error {
 		ManifestHash:  cp.ManifestHash,
 		LastUpdatedAt: cp.UpdatedAt,
 	}
-	pointerData, err := json.MarshalIndent(pointer, "", "  ")
+	pointerData, err := marshalPointer(pointer)
 	if err != nil {
 		return fmt.Errorf("pointer marshal: %w", err)
 	}
 
-	err = s.client.PutObject(ctx, s.bucket, model.PointerKey, bytes.NewReader(pointerData), int64(len(pointerData)), nil)
+	err = s.client.PutObject(ctx, s.bucket, PointerKey, bytes.NewReader(pointerData), int64(len(pointerData)), nil)
 	if err != nil {
-		return fmt.Errorf("checkpoint save pointer %s: %w", model.PointerKey, err)
+		return fmt.Errorf("checkpoint save pointer %s: %w", PointerKey, err)
 	}
 
 	return nil
@@ -68,27 +68,27 @@ func (s *Store) Save(ctx context.Context, cp *model.Checkpoint) error {
 
 // Load fetches a Checkpoint by runID from MinIO.
 func (s *Store) Load(ctx context.Context, runID string) (*model.Checkpoint, bool, error) {
-	runKey := model.RunKey(runID)
+	runKey := RunKey(runID)
 	cp, exists, err := s.fetchJSON(ctx, runKey)
 	if err != nil || !exists {
 		return nil, exists, err
 	}
-	var checkpoint model.Checkpoint
-	if err := json.Unmarshal(cp, &checkpoint); err != nil {
+	checkpoint, err := unmarshalCheckpoint(cp)
+	if err != nil {
 		return nil, true, fmt.Errorf("checkpoint unmarshal %s: %w", runKey, err)
 	}
-	return &checkpoint, true, nil
+	return checkpoint, true, nil
 }
 
 // LoadCurrent fetches the active Checkpoint referenced by current.json.
 func (s *Store) LoadCurrent(ctx context.Context) (*model.Checkpoint, bool, error) {
-	ptrBytes, exists, err := s.fetchJSON(ctx, model.PointerKey)
+	ptrBytes, exists, err := s.fetchJSON(ctx, PointerKey)
 	if err != nil || !exists {
 		return nil, false, err
 	}
 
-	var ptr model.CurrentPointer
-	if err := json.Unmarshal(ptrBytes, &ptr); err != nil {
+	ptr, err := unmarshalPointer(ptrBytes)
+	if err != nil {
 		return nil, true, fmt.Errorf("pointer unmarshal: %w", err)
 	}
 
@@ -98,7 +98,7 @@ func (s *Store) LoadCurrent(ctx context.Context) (*model.Checkpoint, bool, error
 func (s *Store) fetchJSON(ctx context.Context, key string) ([]byte, bool, error) {
 	rc, err := s.client.GetObject(ctx, s.bucket, key)
 	if err != nil {
-		if errors.Is(err, model.ErrObjectNotFound) {
+		if errors.Is(err, storage.ErrObjectNotFound) {
 			return nil, false, nil
 		}
 		return nil, false, fmt.Errorf("get json object %s: %w", key, err)
@@ -107,7 +107,7 @@ func (s *Store) fetchJSON(ctx context.Context, key string) ([]byte, bool, error)
 
 	data, err := io.ReadAll(rc)
 	if err != nil {
-		if errors.Is(err, model.ErrObjectNotFound) {
+		if errors.Is(err, storage.ErrObjectNotFound) {
 			return nil, false, nil
 		}
 		return nil, false, fmt.Errorf("read json object %s: %w", key, err)

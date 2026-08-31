@@ -14,7 +14,7 @@ import (
 	"go-ingester/infra/mast"
 	"go-ingester/internal/model"
 	"go-ingester/internal/pipeline/checkpoint"
-	"go-ingester/internal/pipeline/ingest"
+	"go-ingester/internal/pipeline/plan"
 )
 
 func TestE2EIngestionOfflinePipeline(t *testing.T) {
@@ -80,10 +80,9 @@ func TestE2EIngestionOfflinePipeline(t *testing.T) {
 		Source:        "test-e2e",
 		Samples: []model.Sample{
 			{
-				SampleID:    model.SampleID(123456789, 42),
+				SampleID:    plan.SampleID(123456789, 42),
 				TICID:       123456789,
 				Sector:      42,
-				PairStatus:  model.PairStatusPaired,
 				TargetPixel: &tpfProd,
 				LightCurve:  &lcProd,
 			},
@@ -94,30 +93,13 @@ func TestE2EIngestionOfflinePipeline(t *testing.T) {
 		},
 	}
 
-	// 3. Test Phase A: Dry-Run Ingestion (No Storage writes, No NATS events)
-	dryPipe := ingest.NewPipeline(mastClient, mockStorage, mockPub, nil, "aurora", 2, logger)
-	drySummary, dryResults, err := dryPipe.IngestManifest(context.Background(), man, true)
-	if err != nil {
-		t.Fatalf("dry-run ingestion failed: %v", err)
-	}
-
-	if drySummary.SkippedCount != 2 || len(dryResults) != 2 {
-		t.Errorf("dry-run expected 2 skipped products, got %d", drySummary.SkippedCount)
-	}
-	if len(mockStorage.objects) != 0 {
-		t.Errorf("dry-run modified storage, found %d objects", len(mockStorage.objects))
-	}
-	if len(mockPub.published) != 0 {
-		t.Errorf("dry-run published NATS events, found %d events", len(mockPub.published))
-	}
-
-	// 4. Test Phase B: Real Ingestion Run with Checkpoint Manager
+	// 3. Run the real ingestion workflow with durable checkpoints.
 	cpStore := checkpoint.NewStore(mockStorage, "aurora")
-	initCp := model.CreateNewInitialCheckpoint("run-e2e-1", "manifest.json", "hash-e2e", []model.ManifestProduct{tpfProd, lcProd})
+	initCp := checkpoint.NewInitial("run-e2e-1", "manifest.json", "hash-e2e", []model.ManifestProduct{tpfProd, lcProd})
 	mgr := checkpoint.NewManager(cpStore, initCp)
 
-	realPipe := ingest.NewPipeline(mastClient, mockStorage, mockPub, mgr, "aurora", 2, logger)
-	summary, results, err := realPipe.IngestManifest(context.Background(), man, false)
+	realPipe := newTestPipeline(mastClient, mockStorage, mockPub, mgr, "aurora", 2, logger)
+	summary, results, err := realPipe.IngestManifest(context.Background(), man)
 	if err != nil {
 		t.Fatalf("real ingestion failed: %v", err)
 	}
@@ -162,7 +144,7 @@ func TestE2EIngestionOfflinePipeline(t *testing.T) {
 	}
 
 	// 5. Test Phase C: Idempotent Rerun (0 extra downloads, 0 extra NATS publishes)
-	rerunSummary, _, err := realPipe.IngestManifest(context.Background(), man, false)
+	rerunSummary, _, err := realPipe.IngestManifest(context.Background(), man)
 	if err != nil {
 		t.Fatalf("idempotent rerun failed: %v", err)
 	}

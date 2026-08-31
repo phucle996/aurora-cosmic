@@ -14,6 +14,8 @@ func setDummyEnv() {
 	os.Setenv("AURORA_API_PORT", "8080")
 	os.Setenv("MINIO_ENDPOINT", "http://minio:9000")
 	os.Setenv("MINIO_BUCKET", "aurora")
+	os.Setenv("MINIO_ACCESS_KEY", "test-access-key")
+	os.Setenv("MINIO_SECRET_KEY", "test-secret-key")
 	os.Setenv("AURORA_CLICKHOUSE_ENDPOINT", "http://clickhouse:8123")
 	os.Setenv("AURORA_CLICKHOUSE_DATABASE", "aurora")
 	os.Setenv("AURORA_CLICKHOUSE_USER", "aurora")
@@ -49,5 +51,10 @@ func TestLoadRequiredEnv(t *testing.T) {
 	os.Unsetenv("AURORA_ENV")
 	if _, err := config.Load(); err == nil {
 		t.Fatal("expected error when AURORA_ENV is missing, got nil")
+	}
+	os.Setenv("AURORA_ENV", "development")
+	os.Unsetenv("MINIO_ACCESS_KEY")
+	if _, err := config.Load(); err == nil {
+		t.Fatal("expected error when MINIO_ACCESS_KEY is missing, got nil")
 	}
 }

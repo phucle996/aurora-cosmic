@@ -33,7 +33,7 @@ func (fakeAnalytics) GetAnomalyDetail(context.Context, string, string) (*entity.
 func (fakeAnalytics) ListTargets(context.Context, entity.TargetQuery) (entity.Page[entity.Target], error) {
 	return entity.Page[entity.Target]{Items: []entity.Target{}, Limit: 100}, nil
 }
-func (fakeAnalytics) GetTarget(context.Context, int64, int) (*entity.TargetDetail, error) {
+func (fakeAnalytics) GetTarget(context.Context, int64, int, string) (*entity.TargetDetail, error) {
 	return &entity.TargetDetail{}, nil
 }
 func (fakeAnalytics) GetLightcurve(context.Context, int64, int, entity.PageRequest) (*entity.Lightcurve, error) {
@@ -44,6 +44,14 @@ type fakeModels struct{}
 
 func (fakeModels) ListModels(context.Context, string) ([]entity.Model, error) {
 	return []entity.Model{}, nil
+}
+
+func (fakeModels) TrainingReadiness(context.Context, []string) (*entity.TrainingReadiness, error) {
+	return &entity.TrainingReadiness{Ready: true}, nil
+}
+
+func (fakeModels) OverrideTrainingLabel(context.Context, entity.TrainingLabelOverride) error {
+	return nil
 }
 
 func (fakeModels) StartTrainingJob(context.Context, entity.TrainingJobSpec) (*entity.TrainingJobResult, error) {
@@ -90,6 +98,31 @@ func (fakePreprocessing) Start(context.Context, entity.PreprocessingStartRequest
 func (fakePreprocessing) Stop(context.Context, string) (*entity.PreprocessingControlJob, error) {
 	return &entity.PreprocessingControlJob{JobID: "preprocess-job-test", Status: "cancelling", Mode: "stream"}, nil
 }
+func (fakePreprocessing) ObserveRuntime(entity.PreprocessingRuntimeEvent) {}
+
+type fakeGoldControl struct{}
+
+func (fakeGoldControl) Query(context.Context) (*entity.GoldControlOverview, error) {
+	return &entity.GoldControlOverview{Control: entity.GoldControlState{Mode: "PAUSED", IdleFlushSeconds: 180}}, nil
+}
+func (fakeGoldControl) Start(context.Context, entity.GoldControlStartRequest) (*entity.GoldControlOverview, error) {
+	return &entity.GoldControlOverview{Control: entity.GoldControlState{Mode: "STREAM", IdleFlushSeconds: 180}}, nil
+}
+func (fakeGoldControl) Stop(context.Context) (*entity.GoldControlOverview, error) {
+	return &entity.GoldControlOverview{Control: entity.GoldControlState{Mode: "PAUSED", IdleFlushSeconds: 180}}, nil
+}
+func (fakeGoldControl) ResolveLineage(_ context.Context, inputs []entity.GoldLineageLookup) ([]entity.GoldLineageResolution, error) {
+	return make([]entity.GoldLineageResolution, 0, len(inputs)), nil
+}
+func (fakeGoldControl) ListSnapshots(context.Context, int) ([]entity.GoldSnapshotSummary, error) {
+	return []entity.GoldSnapshotSummary{{SnapshotID: "gold-v1-test", Status: "COMMITTED"}}, nil
+}
+func (fakeGoldControl) Snapshot(_ context.Context, snapshotID string) (*entity.GoldSnapshotDetail, error) {
+	return &entity.GoldSnapshotDetail{SnapshotID: snapshotID, Artifacts: []entity.GoldArtifact{}}, nil
+}
+func (fakeGoldControl) Artifact(_ context.Context, snapshotID, dataset string, sector int, _ entity.GoldArtifactPreviewQuery) (*entity.GoldArtifactDetail, error) {
+	return &entity.GoldArtifactDetail{SnapshotID: snapshotID, Artifact: entity.GoldArtifact{Dataset: dataset, Sector: sector}}, nil
+}
 
 type fakeIngest struct{}
 
@@ -120,13 +153,14 @@ func newTestRouter() *app.Router {
 		SystemHandler:        handler.NewSystemHandler(fakeReadiness{}),
 		MonitoringHandler:    handler.NewMonitoringHandler(fakeMonitoring{}),
 		PreprocessingHandler: handler.NewPreprocessingHandler(fakePreprocessing{}),
+		GoldControlHandler:   handler.NewGoldControlHandler(fakeGoldControl{}),
 		IngestHandler:        handler.NewIngestHandler(fakeIngest{}),
 	}, observer.New())
 }
 
 func TestRouterEndpoints(t *testing.T) {
 	router := newTestRouter()
-	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/preprocessing/graph", "/api/v1/ingest/status", "/api/v1/storage?prefix=bronze/&limit=10", "/api/v1/targets", "/api/v1/targets/101?sector=42", "/api/v1/candidates?snapshot_id=gold-v1-test", "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", "/api/v1/anomalies?snapshot_id=gold-v1-test", "/api/v1/lightcurves?tic_id=101&sector=42"} {
+	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/preprocessing/graph", "/api/v1/gold/control", "/api/v1/gold/snapshots", "/api/v1/gold/snapshots/gold-v1-test", "/api/v1/gold/snapshots/gold-v1-test/artifacts/candidate/42", "/api/v1/ingest/status", "/api/v1/storage?prefix=bronze/&limit=10", "/api/v1/targets", "/api/v1/targets/101?sector=42", "/api/v1/candidates?snapshot_id=gold-v1-test", "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", "/api/v1/lightcurves?tic_id=101&sector=42"} {
 		req := httptest.NewRequest(http.MethodGet, endpoint, nil)
 		recorder := httptest.NewRecorder()
 		router.ServeHTTP(recorder, req)
@@ -136,6 +170,23 @@ func TestRouterEndpoints(t *testing.T) {
 		if recorder.Header().Get("Content-Type") != "application/json; charset=utf-8" {
 			t.Errorf("endpoint %s missing JSON content-type header", endpoint)
 		}
+	}
+}
+
+func TestGoldControlStartAndStop(t *testing.T) {
+	router := newTestRouter()
+	start := httptest.NewRequest(http.MethodPost, "/api/v1/gold/control/start", strings.NewReader(`{"mode":"stream","idle_flush_seconds":180}`))
+	start.Header.Set("Content-Type", "application/json")
+	startRecorder := httptest.NewRecorder()
+	router.ServeHTTP(startRecorder, start)
+	if startRecorder.Code != http.StatusAccepted {
+		t.Fatalf("gold start returned HTTP %d", startRecorder.Code)
+	}
+	stop := httptest.NewRequest(http.MethodPost, "/api/v1/gold/control/stop", nil)
+	stopRecorder := httptest.NewRecorder()
+	router.ServeHTTP(stopRecorder, stop)
+	if stopRecorder.Code != http.StatusAccepted {
+		t.Fatalf("gold stop returned HTTP %d", stopRecorder.Code)
 	}
 }
 
@@ -172,7 +223,7 @@ func TestMonitoringTabValidation(t *testing.T) {
 }
 
 func TestPreprocessingStart(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/preprocessing/jobs", strings.NewReader(`{"mode":"batch"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/preprocessing/jobs", strings.NewReader(`{"mode":"batch","worker_count":2}`))
 	req.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	newTestRouter().ServeHTTP(recorder, req)
@@ -190,21 +241,12 @@ func TestPreprocessingStop(t *testing.T) {
 	}
 }
 
-func TestSnapshotIsRequired(t *testing.T) {
+func TestRetiredAnomalyRoutesAreNotExposed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/anomalies", nil)
 	recorder := httptest.NewRecorder()
 	newTestRouter().ServeHTTP(recorder, req)
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("anomaly endpoint returned HTTP %d, expected 400", recorder.Code)
-	}
-}
-
-func TestAnomalyFlagFilterValidation(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/anomalies?snapshot_id=gold-v1-test&only_flagged=maybe", nil)
-	recorder := httptest.NewRecorder()
-	newTestRouter().ServeHTTP(recorder, req)
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("anomaly only_flagged filter returned HTTP %d, expected 400", recorder.Code)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("retired anomaly endpoint returned HTTP %d, expected 404", recorder.Code)
 	}
 }
 

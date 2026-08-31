@@ -177,6 +177,25 @@ def test_toi_candidate_matching_ambiguous():
     assert status == "AMBIGUOUS"
 
 
+def test_toi_candidate_distinguishes_catalog_absence_from_period_mismatch():
+    lc_feat = sample_lc_features()
+
+    no_toi, no_toi_status, no_toi_error = match_toi_candidate(lc_feat, [])
+    assert no_toi is None
+    assert no_toi_status == "NO_TOI_FOR_TARGET"
+    assert no_toi_error is None
+
+    different_period = ToiCatalogRecord(
+        toi_id="123.02", tic_id=12345678, catalog_period=30.0
+    )
+    mismatch, mismatch_status, mismatch_error = match_toi_candidate(
+        lc_feat, [different_period]
+    )
+    assert mismatch is None
+    assert mismatch_status == "PERIOD_MISMATCH"
+    assert mismatch_error is None
+
+
 def test_label_policy_conservative():
     # 1. Confirmed planet -> POSITIVE
     toi_kp = ToiCatalogRecord(

@@ -9,7 +9,6 @@ import { StorageListing } from '../types';
 import { ObjectBrowserTable } from './ObjectBrowserTable';
 import { SchemaCatalogCard } from './SchemaCatalogCard';
 import {
-  bronzeFfiFitsSchema,
   bronzeLightCurveFitsSchema,
   bronzeManifestSchema,
   bronzeTargetPixelFitsSchema,
@@ -79,7 +78,6 @@ export function BronzeLayerTab({
       <SchemaCatalogCard catalog={bronzeManifestSchema} />
       <SchemaCatalogCard catalog={bronzeLightCurveFitsSchema} />
       <SchemaCatalogCard catalog={bronzeTargetPixelFitsSchema} />
-      <SchemaCatalogCard catalog={bronzeFfiFitsSchema} />
     </div>
   );
 }

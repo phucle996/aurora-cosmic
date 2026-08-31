@@ -1,0 +1,20 @@
+[Unit]
+Description=AURORA Go ingester (native dev)
+Requires=aurora-infra.service
+After=aurora-infra.service
+PartOf=aurora-dev.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Desktop/aurora-cosmic/apps/go-ingester
+EnvironmentFile=%h/Desktop/aurora-cosmic/apps/go-ingester/.env.example
+EnvironmentFile=%h/Desktop/aurora-cosmic/infra/systemd/aurora-host.env
+Environment=MINIO_ENDPOINT=http://127.0.0.1:9000
+Environment=NATS_URL=nats://127.0.0.1:4222
+ExecStart=%h/.local/go/bin/go run ./cmd
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGINT
+
+[Install]
+WantedBy=aurora-dev.target

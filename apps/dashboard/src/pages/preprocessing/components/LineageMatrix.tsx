@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
 import {
-  AlertCircle,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -9,16 +8,11 @@ import {
   ChevronsRight,
   Clock,
   Copy,
-  Database,
   Layers,
   Loader2,
-  Play,
   RefreshCw,
   Search,
-  ShieldAlert,
   ShieldCheck,
-  Workflow,
-  XCircle,
 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -45,10 +39,24 @@ type StorageResponse = {
   objects: StorageObject[];
 };
 
+type GoldLineageResolution = {
+  source_product_id: string;
+  silver_object_key?: string;
+  status: 'EXTRACTED' | 'PENDING';
+  snapshot_id?: string;
+  datasets?: string[];
+};
+
+type GoldLineageResponse = {
+  items: GoldLineageResolution[];
+};
+
 export type AccurateLineageRecord = {
   tic_id: string;
   sector: number;
   target_name: string;
+  source_product_id: string;
+  bronze_source_count: number;
   // Stage 1: Bronze
   bronze_status: 'STORED_IN_BRONZE' | 'MISSING';
   source_fits_key: string;
@@ -67,6 +75,8 @@ export type AccurateLineageRecord = {
   silver_records?: number;
   // Stage 4: Gold & ML Features
   gold_status: 'EXTRACTED' | 'PENDING';
+  gold_snapshot_id?: string;
+  gold_datasets?: string[];
   features?: {
     transit_depth_ppm: number;
     period_days: number;
@@ -74,6 +84,13 @@ export type AccurateLineageRecord = {
     snr: number;
   };
 };
+
+function sourceProductIDFromBronzeKey(key: string): string {
+  const filename = key.split('/').pop() ?? '';
+  return filename
+    .replace(/\.(?:fits|fit)(?:\.gz)?$/i, '')
+    .replace(/_(?:lc|tp|ffi)$/i, '');
+}
 
 export function LineageMatrix(): JSX.Element {
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -108,11 +125,14 @@ export function LineageMatrix(): JSX.Element {
           const sector = sectorMatch ? parseInt(sectorMatch[1], 10) : 42;
 
           const cleanEtag = obj.etag ? obj.etag.replace(/"/g, '') : 'N/A';
+          const sourceProductID = sourceProductIDFromBronzeKey(obj.key);
 
           return {
             tic_id: ticId,
             sector,
             target_name: `TIC ${ticId}`,
+            source_product_id: sourceProductID,
+            bronze_source_count: 1,
             // Stage 1: Bronze (Thực tế đã tải về)
             bronze_status: 'STORED_IN_BRONZE',
             source_fits_key: obj.key,
@@ -129,16 +149,63 @@ export function LineageMatrix(): JSX.Element {
             silver_parquet_key: `silver/tess/lightcurve/processor=v1.2.0/sector=${String(sector).padStart(4, '0')}/tic=${ticId}.parquet`,
             silver_etag: silverTotal > 0 ? 'etag-silver-sha256' : undefined,
             silver_records: silverTotal > 0 ? Math.round(obj.size_bytes / 107) : undefined,
-            // Stage 4: Gold
-            gold_status: silverTotal > 0 ? 'EXTRACTED' : 'PENDING',
+            // Stage 4 is resolved below against committed Gold manifests.
+            // A non-zero global Silver count is never evidence for this TIC.
+            gold_status: 'PENDING',
           };
         });
 
-        setLineageList(mapped);
-        setTotalRecords(res.total || mapped.length);
-        if (!selectedRecord || !mapped.some((r) => r.tic_id === selectedRecord.tic_id)) {
-          setSelectedRecord(mapped[0]);
+        // A TIC can legitimately have several Bronze FITS sources.  The left
+        // column is a target list, so keep one representative (newest) source
+        // per TIC and retain the real number of Bronze inputs for disclosure.
+        const targets = new Map<string, AccurateLineageRecord>();
+        for (const record of mapped) {
+          const current = targets.get(record.tic_id);
+          if (!current) {
+            targets.set(record.tic_id, record);
+            continue;
+          }
+          const sourceCount = current.bronze_source_count + 1;
+          const currentTime = Date.parse(current.ingested_at);
+          const recordTime = Date.parse(record.ingested_at);
+          const newest = Number.isNaN(currentTime) || (!Number.isNaN(recordTime) && recordTime > currentTime)
+            ? record
+            : current;
+          targets.set(record.tic_id, { ...newest, bronze_source_count: sourceCount });
         }
+        let uniqueTargets = [...targets.values()];
+
+        // Resolve the whole page in one request. The API reads only immutable
+        // COMMITTED Gold manifests and matches their recorded source product,
+        // so another target's Silver/Gold data cannot leak into this row.
+        try {
+          const gold = await apiFetch<GoldLineageResponse>('/v1/gold/lineage/resolve', {
+            method: 'POST',
+            body: JSON.stringify({
+              inputs: uniqueTargets.map((record) => ({
+                source_product_id: record.source_product_id,
+                silver_object_key: record.silver_parquet_key,
+              })),
+            }),
+          });
+          uniqueTargets = uniqueTargets.map((record, index) => {
+            const resolution = gold.items[index];
+            if (!resolution || resolution.status !== 'EXTRACTED') return record;
+            return {
+              ...record,
+              gold_status: 'EXTRACTED',
+              gold_snapshot_id: resolution.snapshot_id,
+              gold_datasets: resolution.datasets,
+            };
+          });
+        } catch {
+          // Never promote a row on a failed provenance query. PENDING is the
+          // safe and truthful display until the next refresh succeeds.
+        }
+
+        setLineageList(uniqueTargets);
+        setTotalRecords(res.total || mapped.length);
+        setSelectedRecord((current) => uniqueTargets.find((record) => record.tic_id === current?.tic_id) ?? uniqueTargets[0] ?? null);
       } else {
         setLineageList([]);
         setTotalRecords(0);
@@ -149,7 +216,7 @@ export function LineageMatrix(): JSX.Element {
     } finally {
       setLoading(false);
     }
-  }, [selectedRecord]);
+  }, []);
 
   useEffect(() => {
     loadLineageFromStorage(page, pageSize);
@@ -282,7 +349,7 @@ export function LineageMatrix(): JSX.Element {
                     </p>
                     <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground font-mono">
                       <span>Sector {rec.sector}</span>
-                      <span>{(rec.size_bytes / (1024 * 1024)).toFixed(2)} MB</span>
+                      <span>{rec.bronze_source_count > 1 ? `${rec.bronze_source_count} FITS` : `${(rec.size_bytes / (1024 * 1024)).toFixed(2)} MB`}</span>
                     </div>
                   </button>
                 );
@@ -395,6 +462,11 @@ export function LineageMatrix(): JSX.Element {
                   <p className="mt-2 font-mono text-[11px] text-foreground break-all bg-background/80 p-2 rounded border border-border/50">
                     {selectedRecord.source_fits_key}
                   </p>
+                  {selectedRecord.bronze_source_count > 1 && (
+                    <p className="mt-1.5 text-[11px] text-muted-foreground">
+                      Đang hiển thị FITS mới nhất trong {selectedRecord.bronze_source_count} Bronze sources của TIC này.
+                    </p>
+                  )}
                   <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-muted-foreground font-mono">
                     <div>
                       <span>Dung lượng:</span>{' '}
@@ -571,7 +643,7 @@ export function LineageMatrix(): JSX.Element {
                           : 'text-muted-foreground border-border bg-muted/40'
                       }`}
                     >
-                      {selectedRecord.gold_status === 'EXTRACTED' ? 'ĐÃ TRÍCH XUẤT' : 'CHỜ DỮ LIỆU SILVER'}
+                      {selectedRecord.gold_status === 'EXTRACTED' ? 'ĐÃ TRÍCH XUẤT' : 'CHỜ GOLD BUILDER'}
                     </Badge>
                   </div>
 
@@ -602,9 +674,19 @@ export function LineageMatrix(): JSX.Element {
                         </span>
                       </div>
                     </div>
+                  ) : selectedRecord.gold_status === 'EXTRACTED' ? (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Gold output đã được xác minh bằng manifest; xem trang chi tiết Gold để xem schema và dữ liệu mẫu của artifact.
+                    </p>
                   ) : (
                     <p className="mt-2 text-xs text-muted-foreground">
-                      Chưa trích xuất đặc trưng vật lý. Cần hoàn thành tiền xử lý Silver trước khi nạp vào mô hình AI Vetting (ONNX / PyTorch).
+                      Chưa có Gold manifest <code>COMMITTED</code> nào ghi nhận Silver input của TIC này. Gold chỉ được đánh dấu sau khi Gold Builder vật liệu hóa output thực tế.
+                    </p>
+                  )}
+                  {selectedRecord.gold_status === 'EXTRACTED' && (
+                    <p className="mt-2 text-[11px] font-mono text-purple-400">
+                      Manifest: {selectedRecord.gold_snapshot_id ?? 'verified'}
+                      {selectedRecord.gold_datasets?.length ? ` • Datasets: ${selectedRecord.gold_datasets.join(', ')}` : ''}
                     </p>
                   )}
                 </div>

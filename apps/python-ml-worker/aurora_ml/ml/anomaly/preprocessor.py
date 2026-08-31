@@ -170,3 +170,8 @@ class AnomalyPreprocessor:
         """Instantiate AnomalyPreprocessor from JSON string."""
         d = json.loads(json_str)
         return cls.from_dict(d)
+
+    @classmethod
+    def from_json_file(cls, path: str) -> "AnomalyPreprocessor":
+        with open(path, encoding="utf-8") as handle:
+            return cls.from_json(handle.read())

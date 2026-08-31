@@ -21,8 +21,8 @@ export function LakehouseTierCards({
   silverData,
   goldData,
 }: LakehouseTierCardsProps): JSX.Element {
-  // Rolling storage budget for Bronze (50 GiB max policy)
-  const bronzeBufferCapacity = 50 * 1024 * 1024 * 1024;
+  // Rolling storage budget for Bronze (100 GiB max policy)
+  const bronzeBufferCapacity = 100 * 1024 * 1024 * 1024;
   const bronzeUsedPercent = Math.min(
     100,
     Math.round(((bronzeData?.total_bytes ?? 0) / bronzeBufferCapacity) * 100),
@@ -48,7 +48,7 @@ export function LakehouseTierCards({
             </Badge>
           </div>
           <CardDescription className="text-xs">
-            Dữ liệu thô tải từ NASA MAST. Lưu trữ xoay vòng ~50 GiB.
+            Dữ liệu thô tải từ NASA MAST. Lưu trữ xoay vòng ~100 GiB.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -62,7 +62,7 @@ export function LakehouseTierCards({
           </div>
           <div className="mt-3 space-y-1">
             <div className="flex justify-between text-[11px] text-muted-foreground">
-              <span>Vùng đệm 50 GiB</span>
+              <span>Vùng đệm 100 GiB</span>
               <span>{bronzeUsedPercent}%</span>
             </div>
             <Progress value={bronzeUsedPercent} className="h-1.5" />

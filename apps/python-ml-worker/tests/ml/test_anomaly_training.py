@@ -211,10 +211,7 @@ def test_anomaly_spec_fingerprint_determinism():
 # --- Integration Tests ---
 
 
-@pytest.mark.skipif(
-    not torch.cuda.is_available(), reason="full training integration requires CUDA"
-)
-def test_full_anomaly_training_flow():
+def test_full_anomaly_training_flow_on_cpu():
     """Integration test: Execute train_anomaly_model and verify artifacts."""
     manifest = sample_gold_anomaly_manifest()
     rows = sample_anomaly_training_rows()
@@ -232,6 +229,7 @@ def test_full_anomaly_training_flow():
             batch_size=4,
             early_stopping_patience=3,
             dest_dir=tmp_dir,
+            device_str="cpu",
         )
 
         assert isinstance(run_manifest, AnomalyTrainingRunManifest)
@@ -250,9 +248,10 @@ def test_full_anomaly_training_flow():
             manifest_dict = json.load(f)
             assert manifest_dict["gold_snapshot_id"] == manifest.snapshot_id
             assert manifest_dict["split_id"] == split.split_id
-            assert manifest_dict["model_version"] == "anomaly-lightcurve-autoencoder-v1"
+            assert manifest_dict["model_version"] == "anomaly-deep-autoencoder-v1"
             assert manifest_dict["score_definition_version"] == "reconstruction-mse-v1"
             assert len(manifest_dict["feature_order"]) == 14
+            assert manifest_dict["hyperparameters"]["compute_target"] == "cpu"
 
 
 def test_mismatched_gold_anomaly_snapshot_rejection():

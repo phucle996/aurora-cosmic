@@ -36,18 +36,16 @@ export type TrainingResponse = {
   job_id: string;
   task: string;
   gold_snapshot_id: string;
+  gold_snapshot_ids?: string[];
   status: string;
   created_at: string;
   message: string;
+  compute_target: 'cpu' | 'gpu';
 };
 
 export type ModelResponse = { models: ModelRecord[] };
 export type JobResponse = { jobs: InferenceJob[] };
-export type StorageResponse = {
-  objects: { key: string; size_bytes?: number; last_modified?: string }[];
-  total?: number;
-  truncated?: boolean;
-};
+export type GoldSnapshotInventoryResponse = { snapshots: Array<{ snapshot_id: string; manifest_key: string; size_bytes: number; last_modified: string; created_at: string; status: string }> };
 export type ModelDeployResponse = { status: string; model_id: string; task: string; active: boolean; message: string };
 
 export type GoldSnapshotItem = {
@@ -65,14 +63,14 @@ export interface ActiveTrainingState {
   snapshotCount: number;
   baseModel: string;
   epochs: number;
+  computeTarget?: 'cpu' | 'gpu';
   startedAt: number;
 }
 
-export type TaskType = 'all' | 'candidate_vetting' | 'astronomical_anomaly_detection';
+export type TaskType = 'all' | 'candidate_vetting';
 
 export const taskLabel: Record<string, string> = {
   candidate_vetting: 'Candidate vetting (Exoplanets)',
-  astronomical_anomaly_detection: 'Anomaly detection (Autoencoder)',
 };
 
 export function formatBytes(bytes: number): string {

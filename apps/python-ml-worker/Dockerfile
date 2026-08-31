@@ -11,4 +11,4 @@ COPY aurora_ml ./aurora_ml
 RUN python -m pip install --no-cache-dir -e .
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD python -c "import torch; assert torch.cuda.is_available(), 'CUDA is required'"
-CMD ["python", "-m", "aurora_ml.main"]
+CMD ["python", "-m", "aurora_ml.service"]

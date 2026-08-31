@@ -62,7 +62,7 @@ export function ModelRegistryTable({
           <CardDescription>Danh sách các package mô hình ML đã được đóng gói và kiểm thử đối sánh.</CardDescription>
         </div>
         <div className="flex shrink-0 flex-wrap gap-1 rounded-md border border-border p-1 text-xs">
-          {(['all', 'candidate_vetting', 'astronomical_anomaly_detection'] as const).map((filter) => (
+          {(['all', 'candidate_vetting'] as const).map((filter) => (
             <button
               key={filter}
               type="button"
@@ -73,7 +73,7 @@ export function ModelRegistryTable({
               className={`whitespace-nowrap rounded px-2.5 py-1 transition-colors ${taskFilter === filter ? 'bg-primary text-primary-foreground font-medium' : 'text-muted-foreground hover:bg-muted'
                 }`}
             >
-              {filter === 'all' ? 'All' : filter === 'candidate_vetting' ? 'Candidate Vetting' : 'Anomaly Autoencoder'}
+              {filter === 'all' ? 'All' : 'Candidate Vetting'}
             </button>
           ))}
         </div>

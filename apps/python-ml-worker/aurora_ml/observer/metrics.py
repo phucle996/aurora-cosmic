@@ -36,7 +36,7 @@ def _status(value: str) -> str:
 
 
 class Metrics:
-    """Own the worker registry and expose seven low-cardinality metric families."""
+    """Own low-cardinality worker and hardware telemetry metrics."""
 
     def __init__(self) -> None:
         self.registry = CollectorRegistry(auto_describe=True)
@@ -79,7 +79,49 @@ class Metrics:
             "Unix timestamp of the last successful ML job.",
             registry=self.registry,
         )
+        self.gpu_available = Gauge(
+            "aurora_ml_gpu_available",
+            "Whether the ML worker can see an NVIDIA GPU through NVML.",
+            registry=self.registry,
+        )
+        self.gpu_utilization = Gauge(
+            "aurora_ml_gpu_utilization_percent",
+            "NVIDIA GPU utilization percentage for the training worker device.",
+            registry=self.registry,
+        )
+        self.gpu_memory_used = Gauge(
+            "aurora_ml_gpu_memory_used_bytes",
+            "NVIDIA GPU memory used in bytes for the training worker device.",
+            registry=self.registry,
+        )
+        self.gpu_memory_total = Gauge(
+            "aurora_ml_gpu_memory_total_bytes",
+            "NVIDIA GPU memory capacity in bytes for the training worker device.",
+            registry=self.registry,
+        )
+        self._nvml_ready = False
         self.queue_depth.set(0)
+
+    def refresh_hardware(self) -> None:
+        """Collect instantaneous GPU state without adding high-cardinality labels."""
+        try:
+            import pynvml
+
+            if not self._nvml_ready:
+                pynvml.nvmlInit()
+                self._nvml_ready = True
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            utilization = pynvml.nvmlDeviceGetUtilizationRates(handle)
+            memory = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            self.gpu_available.set(1)
+            self.gpu_utilization.set(utilization.gpu)
+            self.gpu_memory_used.set(memory.used)
+            self.gpu_memory_total.set(memory.total)
+        except Exception:
+            self.gpu_available.set(0)
+            self.gpu_utilization.set(0)
+            self.gpu_memory_used.set(0)
+            self.gpu_memory_total.set(0)
 
     def job(self, operation: str, rows: int = 0) -> JobObservation:
         """Return a context manager that records one terminal job outcome."""

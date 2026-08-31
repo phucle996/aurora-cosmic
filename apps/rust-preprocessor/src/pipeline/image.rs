@@ -1,8 +1,9 @@
-use anyhow::{bail, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::config::ImageConfig;
 use crate::event::BronzeObjectReady;
+use crate::failure::PipelineError;
 use crate::fits::{RawFfi, RawTargetPixel};
 
 /// Processing metadata embedded in output artifact definitions.
@@ -49,7 +50,6 @@ pub struct ProcessedTargetPixel {
     pub flux: Vec<Vec<Vec<f32>>>, // [cadence][row][col]
     pub rows: usize,
     pub cols: usize,
-    pub tic_id: Option<u64>,
     pub processing: ImageProcessingMetadata,
 }
 
@@ -73,10 +73,11 @@ pub fn preprocess_target_pixel(
 ) -> Result<ProcessedTargetPixel> {
     let input_cadences = raw.time.len();
     if input_cadences == 0 || raw.rows == 0 || raw.cols == 0 {
-        bail!(
+        return Err(PipelineError::rejected(format!(
             "Raw Target Pixel File contains zero cadences or empty grid for object {}",
             event.object_key
-        );
+        ))
+        .into());
     }
 
     // 1. Quality & Non-finite Time Filtering
@@ -103,10 +104,11 @@ pub fn preprocess_target_pixel(
 
     let output_cadences = retained_indices.len();
     if output_cadences == 0 {
-        bail!(
+        return Err(PipelineError::rejected(format!(
             "Zero valid cadences remaining after quality filtering for TPF object {}",
             event.object_key
-        );
+        ))
+        .into());
     }
 
     let filtered_time: Vec<f64> = retained_indices.iter().map(|&i| raw.time[i]).collect();
@@ -176,7 +178,7 @@ pub fn preprocess_target_pixel(
 
                 let reference = match config.tpf_normalization.as_str() {
                     "global-median" => global_median,
-                    "temporal-median" => pixel_medians[r][c],
+                    "temporal-median" | "chunk-temporal-median" => pixel_medians[r][c],
                     "none" => 1.0,
                     _ => unreachable!("normalization mode validated during config loading"),
                 };
@@ -222,9 +224,12 @@ pub fn preprocess_target_pixel(
         flux: norm_flux,
         rows: raw.rows,
         cols: raw.cols,
-        tic_id: raw.tic_id.or(event.tic_id),
         processing: ImageProcessingMetadata {
-            processor_version: "tpf-preprocess-v1".to_string(),
+            processor_version: if config.tpf_normalization == "chunk-temporal-median" {
+                "tpf-preprocess-v2-chunked".to_string()
+            } else {
+                "tpf-preprocess-v1".to_string()
+            },
             normalization_mode: config.tpf_normalization.clone(),
             input_cadences,
             output_cadences,
@@ -256,21 +261,57 @@ pub fn preprocess_ffi(
     cutout_rects: Option<&[(usize, usize, usize, usize)]>,
 ) -> Result<ProcessedFfi> {
     if raw.width == 0 || raw.height == 0 || raw.pixels.is_empty() {
-        bail!(
+        return Err(PipelineError::rejected(format!(
             "Raw FFI contains empty pixel grid for object {}",
             event.object_key
-        );
+        ))
+        .into());
+    }
+    if raw.pixels.len() != raw.width.saturating_mul(raw.height) {
+        return Err(PipelineError::rejected(format!(
+            "Raw FFI pixel shape mismatch for object {}: expected {} pixels, found {}",
+            event.object_key,
+            raw.width * raw.height,
+            raw.pixels.len()
+        ))
+        .into());
+    }
+
+    let mut pixels = raw.pixels;
+    if config.ffi_normalization == "median" {
+        let mut reference: Vec<f32> = pixels.iter().copied().filter(|p| p.is_finite()).collect();
+        reference.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        if reference.is_empty() {
+            return Err(PipelineError::rejected(format!(
+                "Raw FFI contains no finite pixels for object {}",
+                event.object_key
+            ))
+            .into());
+        }
+        let midpoint = reference.len() / 2;
+        let median = if reference.len().is_multiple_of(2) {
+            (reference[midpoint - 1] + reference[midpoint]) / 2.0
+        } else {
+            reference[midpoint]
+        };
+        if !median.is_finite() || median <= 0.0 {
+            return Err(PipelineError::rejected(format!(
+                "Invalid FFI normalization median ({median}) for object {}",
+                event.object_key
+            ))
+            .into());
+        }
+        for pixel in &mut pixels {
+            if pixel.is_finite() {
+                *pixel = (*pixel / median) - 1.0;
+            }
+        }
     }
 
     // 1. Calculate Image Statistics over finite pixels
-    let mut finite_pixels: Vec<f32> = raw
-        .pixels
-        .iter()
-        .copied()
-        .filter(|p| p.is_finite())
-        .collect();
+    let mut finite_pixels: Vec<f32> = pixels.iter().copied().filter(|p| p.is_finite()).collect();
 
-    let total_pixels = raw.pixels.len();
+    let total_pixels = pixels.len();
     let finite_pixel_count = finite_pixels.len();
     let finite_pixel_fraction = if total_pixels > 0 {
         finite_pixel_count as f32 / total_pixels as f32
@@ -332,17 +373,18 @@ pub fn preprocess_ffi(
     if let Some(rects) = cutout_rects {
         for &(x, y, w, h) in rects {
             if x + w > raw.width || y + h > raw.height {
-                bail!(
+                return Err(PipelineError::rejected(format!(
                     "Cutout rect out of bounds for object {}: rect=({x},{y},{w},{h}) vs FFI=({}x{})",
                     event.object_key,
                     raw.width,
                     raw.height
-                );
+                ))
+                .into());
             }
             let mut cutout_pixels = Vec::with_capacity(w * h);
             for row in y..y + h {
                 let row_offset = row * raw.width + x;
-                cutout_pixels.extend_from_slice(&raw.pixels[row_offset..row_offset + w]);
+                cutout_pixels.extend_from_slice(&pixels[row_offset..row_offset + w]);
             }
             cutouts.push(ImageCutout {
                 x,

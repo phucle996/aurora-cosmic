@@ -9,13 +9,13 @@ import (
 	"net/url"
 	"strings"
 
-	"go-ingester/internal/model"
+	contract "go-ingester/internal/pipeline/storage"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
-// MinIOClient implements model.Client for MinIO storage.
+// MinIOClient implements the ingestion storage port for MinIO.
 type MinIOClient struct {
 	client *minio.Client
 }
@@ -83,8 +83,16 @@ func (c *MinIOClient) PutObject(ctx context.Context, bucket, objectKey string, r
 	return nil
 }
 
+func (c *MinIOClient) PutJSON(ctx context.Context, bucket, objectKey string, data []byte) error {
+	_, err := c.client.PutObject(ctx, bucket, objectKey, bytes.NewReader(data), int64(len(data)), minio.PutObjectOptions{ContentType: "application/json"})
+	if err != nil {
+		return fmt.Errorf("put JSON %s/%s: %w", bucket, objectKey, err)
+	}
+	return nil
+}
+
 // StatObject checks if an object exists and returns metadata info.
-func (c *MinIOClient) StatObject(ctx context.Context, bucket, objectKey string) (*model.ObjectInfo, bool, error) {
+func (c *MinIOClient) StatObject(ctx context.Context, bucket, objectKey string) (*contract.ObjectInfo, bool, error) {
 	info, err := c.client.StatObject(ctx, bucket, objectKey, minio.StatObjectOptions{})
 	if err != nil {
 		errResponse := minio.ToErrorResponse(err)
@@ -99,13 +107,23 @@ func (c *MinIOClient) StatObject(ctx context.Context, bucket, objectKey string) 
 		userMeta[k] = v
 	}
 
-	return &model.ObjectInfo{
+	return &contract.ObjectInfo{
 		Key:          info.Key,
 		Size:         info.Size,
 		ETag:         info.ETag,
 		LastModified: info.LastModified,
 		UserMetadata: userMeta,
 	}, true, nil
+}
+
+// StatObjectExists adapts object metadata to lifecycle capacity checks without
+// exposing the concrete MinIO client to the workflow layer.
+func (c *MinIOClient) StatObjectExists(ctx context.Context, bucket, objectKey string) (int64, bool, error) {
+	info, exists, err := c.StatObject(ctx, bucket, objectKey)
+	if err != nil || !exists {
+		return 0, exists, err
+	}
+	return info.Size, true, nil
 }
 
 // GetObject retrieves object stream from MinIO.
@@ -118,7 +136,7 @@ func (c *MinIOClient) GetObject(ctx context.Context, bucket, objectKey string) (
 		return nil, err
 	}
 	if !exists {
-		return nil, model.ErrObjectNotFound
+		return nil, contract.ErrObjectNotFound
 	}
 
 	obj, err := c.client.GetObject(ctx, bucket, objectKey, minio.GetObjectOptions{})
@@ -129,8 +147,8 @@ func (c *MinIOClient) GetObject(ctx context.Context, bucket, objectKey string) (
 }
 
 // ListObjectsWithPrefix lists all objects under a prefix.
-func (c *MinIOClient) ListObjectsWithPrefix(ctx context.Context, bucket, prefix string) ([]model.ObjectInfo, error) {
-	var result []model.ObjectInfo
+func (c *MinIOClient) ListObjectsWithPrefix(ctx context.Context, bucket, prefix string) ([]contract.ObjectInfo, error) {
+	var result []contract.ObjectInfo
 	for obj := range c.client.ListObjects(ctx, bucket, minio.ListObjectsOptions{
 		Prefix:    prefix,
 		Recursive: true,
@@ -138,7 +156,7 @@ func (c *MinIOClient) ListObjectsWithPrefix(ctx context.Context, bucket, prefix 
 		if obj.Err != nil {
 			return nil, fmt.Errorf("list objects %s/%s: %w", bucket, prefix, obj.Err)
 		}
-		result = append(result, model.ObjectInfo{
+		result = append(result, contract.ObjectInfo{
 			Key:          obj.Key,
 			Size:         obj.Size,
 			ETag:         obj.ETag,
@@ -185,6 +203,32 @@ func (c *MinIOClient) DeleteObject(ctx context.Context, bucket, objectKey string
 	err := c.client.RemoveObject(ctx, bucket, objectKey, minio.RemoveObjectOptions{})
 	if err != nil {
 		return fmt.Errorf("delete object %s/%s: %w", bucket, objectKey, err)
+	}
+	return nil
+}
+
+// CopyObject copies an object entirely within MinIO and replaces its metadata.
+// It is used by operational repairs so large FITS files never need to be
+// downloaded to the host just to correct a lakehouse tier path.
+func (c *MinIOClient) CopyObject(ctx context.Context, bucket, sourceKey, destinationKey string, userMetadata map[string]string) error {
+	if sourceKey == "" || destinationKey == "" {
+		return fmt.Errorf("copy object: source and destination keys are required")
+	}
+	if sourceKey == destinationKey {
+		return nil
+	}
+	_, err := c.client.CopyObject(ctx,
+		minio.CopyDestOptions{
+			Bucket:          bucket,
+			Object:          destinationKey,
+			ContentType:     "application/fits",
+			UserMetadata:    userMetadata,
+			ReplaceMetadata: true,
+		},
+		minio.CopySrcOptions{Bucket: bucket, Object: sourceKey},
+	)
+	if err != nil {
+		return fmt.Errorf("copy object %s -> %s: %w", sourceKey, destinationKey, err)
 	}
 	return nil
 }

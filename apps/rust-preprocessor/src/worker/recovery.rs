@@ -13,8 +13,13 @@ pub async fn evaluate_recovery(
     minio: &MinioClient,
     event: &BronzeObjectReady,
     processor_version: &str,
+    processing_fingerprint: &str,
 ) -> Result<(RecoveryAction, Option<PreprocessingCheckpoint>)> {
-    let checkpoint_id = derive_checkpoint_id(&event.source_product_id, processor_version);
+    let checkpoint_id = derive_checkpoint_id(
+        &event.source_product_id,
+        processor_version,
+        processing_fingerprint,
+    );
     let checkpoint_key = build_checkpoint_object_key(&checkpoint_id);
 
     let checkpoint =

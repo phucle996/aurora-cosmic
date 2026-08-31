@@ -34,12 +34,18 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
 	"time"
 )
+
+// ErrStoragePressure marks a temporary full Bronze window. Callers should
+// wait for downstream Silver/lineage commits and retry rather than treating it
+// as a failed source product.
+var ErrStoragePressure = errors.New("bronze storage pressure")
 
 // ────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -191,22 +197,7 @@ type EvictionResult struct {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// StorageClient interface (only the subset needed by lifecycle)
-// ────────────────────────────────────────────────────────────────────────────
-
-// StorageClient defines the MinIO operations required by the lifecycle manager.
-type StorageClient interface {
-	ListBronzeUsage(ctx context.Context, bucket string) (int64, int, error)
-	ListLineageKeys(ctx context.Context, bucket, prefix string) ([]string, error)
-	GetJSONObject(ctx context.Context, bucket, objectKey string, dst any) (bool, error)
-	PutJSONObject(ctx context.Context, bucket, objectKey string, src any) error
-	StatObject(ctx context.Context, bucket, objectKey string) (interface{ GetSize() int64 }, bool, error)
-	DeleteObject(ctx context.Context, bucket, objectKey string) error
-}
-
-// ────────────────────────────────────────────────────────────────────────────
 // Manager
-// ────────────────────────────────────────────────────────────────────────────
 
 // Policy holds the storage watermark configuration.
 type Policy struct {
@@ -232,8 +223,9 @@ func (p Policy) Validate() error {
 	return nil
 }
 
-// minioObjectStatAdapter adapts *storage.MinIOClient for lifecycle stat.
-// We use a raw interface to avoid import cycles; the concrete type is injected via Manager.
+// rawStorageClient is the lifecycle-specific storage port. The concrete MinIO
+// adapter satisfies it in infra/storage; keeping this contract local prevents
+// the policy engine from depending on the full object-storage surface.
 type rawStorageClient interface {
 	ListBronzeUsage(ctx context.Context, bucket string) (int64, int, error)
 	ListLineageKeys(ctx context.Context, bucket, prefix string) ([]string, error)
@@ -266,9 +258,6 @@ func NewManager(storage rawStorageClient, bucket string, policy Policy, log *slo
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// RunCleanup — main entry point
-// ────────────────────────────────────────────────────────────────────────────
-
 // RunCleanup evaluates Bronze storage pressure and evicts eligible objects until
 // usage drops below the low watermark, or no safe candidates remain.
 //
@@ -398,12 +387,9 @@ func (m *Manager) RunCleanup(ctx context.Context, dryRun bool) (*EvictionResult,
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// CheckProjectedCapacity — preflight before ingestion
-// ────────────────────────────────────────────────────────────────────────────
-
 // CheckProjectedCapacity verifies that adding a product of expectedBytes will
-// not exceed the MAX watermark. If projected usage >= HIGH, cleanup is attempted.
-// Returns an error if ingestion should be blocked.
+// not exceed the active-wave HIGH watermark. MAX remains the hard emergency
+// ceiling; ingestion pauses at HIGH until completed Bronze can be evicted.
 func (m *Manager) CheckProjectedCapacity(ctx context.Context, expectedBytes int64) error {
 	if expectedBytes > m.policy.MaxBytes {
 		return fmt.Errorf("product size %d exceeds AURORA_BRONZE_MAX_BYTES %d — rejected by V1 storage policy",
@@ -433,11 +419,12 @@ func (m *Manager) CheckProjectedCapacity(ctx context.Context, expectedBytes int6
 		return fmt.Errorf("preflight cleanup failed: %w", cleanupErr)
 	}
 
-	// Re-check after cleanup.
-	if result.UsageAfter+expectedBytes > m.policy.MaxBytes {
+	// Re-check after cleanup. A wave must not spill from HIGH toward MAX simply
+	// because no evictable Silver lineage exists yet.
+	if result.UsageAfter+expectedBytes > m.policy.HighWatermarkBytes {
 		return fmt.Errorf(
-			"BRONZE_STORAGE_PRESSURE: projected usage %d exceeds MAX %d — even after cleanup (%d freed). Ingestion blocked",
-			result.UsageAfter+expectedBytes, m.policy.MaxBytes, result.BytesDeleted,
+			"%w: projected usage %d exceeds active-wave limit %d — waiting for Silver lineage cleanup (%d freed)", ErrStoragePressure,
+			result.UsageAfter+expectedBytes, m.policy.HighWatermarkBytes, result.BytesDeleted,
 		)
 	}
 
@@ -445,9 +432,6 @@ func (m *Manager) CheckProjectedCapacity(ctx context.Context, expectedBytes int6
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// discoverCandidates — read lineage records and filter EVICTABLE
-// ────────────────────────────────────────────────────────────────────────────
-
 func (m *Manager) discoverCandidates(ctx context.Context) ([]Candidate, error) {
 	keys, err := m.storage.ListLineageKeys(ctx, m.bucket, lineagePrefix)
 	if err != nil {
@@ -511,9 +495,6 @@ func (m *Manager) discoverCandidates(ctx context.Context) ([]Candidate, error) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// revalidate — pre-delete safety check
-// ────────────────────────────────────────────────────────────────────────────
-
 // revalidate returns (blocked=true, reason) if the candidate is not safe to delete.
 func (m *Manager) revalidate(ctx context.Context, c *Candidate) (blocked bool, reason string) {
 	// 1. Source URI must be present in lineage.
@@ -555,9 +536,6 @@ func (m *Manager) revalidate(ctx context.Context, c *Candidate) (blocked bool, r
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// evict — safe deletion with lifecycle checkpoint transitions
-// ────────────────────────────────────────────────────────────────────────────
-
 func (m *Manager) evict(ctx context.Context, c *Candidate) error {
 	lifecycleKey := lifecycleCheckpointKey(c.LineageID)
 
@@ -649,9 +627,6 @@ func (m *Manager) evict(ctx context.Context, c *Candidate) error {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ────────────────────────────────────────────────────────────────────────────
-
 // lifecycleCheckpointKey builds the MinIO key for a lifecycle record.
 func lifecycleCheckpointKey(lineageID string) string {
 	return lifecyclePrefix + lineageID + ".json"
@@ -673,7 +648,6 @@ func IsRawDeleted(ctx context.Context, storage rawStorageClient, bucket, lineage
 }
 
 // LifecycleCheckpointKey returns the MinIO object key for a lifecycle record.
-// Exported for use by cmd_cleanup and tests.
 func LifecycleCheckpointKey(lineageID string) string {
 	return lifecycleCheckpointKey(lineageID)
 }

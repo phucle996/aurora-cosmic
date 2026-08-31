@@ -42,7 +42,7 @@ type inferenceJobManifestDTO struct {
 	SchemaVersion             int    `json:"schema_version"`               // Phiên bản schema hợp đồng (schema_version = 1)
 	JobID                     string `json:"job_id"`                       // Định danh duy nhất của job (VD: inference-job-v1-...)
 	JobFingerprint            string `json:"job_fingerprint"`              // Mã băm SHA-256 xác thực tính toàn vẹn cấu hình job
-	Task                      string `json:"task"`                         // Loại tác vụ: candidate_vetting hoặc astronomical_anomaly_detection
+	Task                      string `json:"task"`                         // Candidate-vetting task contract
 	GoldSnapshotID            string `json:"gold_snapshot_id"`             // ID của snapshot Gold làm đầu vào
 	GoldManifestKey           string `json:"gold_manifest_key"`            // Đường dẫn S3 tới manifest của Gold snapshot
 	GoldArtifactKey           string `json:"gold_artifact_key"`            // Đường dẫn S3 tới file Parquet dữ liệu Gold
@@ -60,12 +60,24 @@ type inferenceJobManifestDTO struct {
 	CreatedAt                 string `json:"created_at"`                   // Thời gian tạo job (ISO 8601)
 }
 
+// inferenceJobStatusDTO is mutable worker telemetry. The immutable job
+// manifest remains the source of what was requested; this record is the
+// source of what the Rust runtime actually did with that request.
+type inferenceJobStatusDTO struct {
+	SchemaVersion  int    `json:"schema_version"`
+	JobID          string `json:"job_id"`
+	JobFingerprint string `json:"job_fingerprint"`
+	Task           string `json:"task"`
+	Status         string `json:"status"`
+	OutputKey      string `json:"output_key"`
+}
+
 // ============================================================================
 // HÀM LIỆT KÊ CÁC TÁC VỤ SUY LUẬN (List Jobs)
 // ============================================================================
 // ListJobs quét toàn bộ các file JSON manifest trong `manifests/inference-jobs/`,
-// lọc theo task / model (nếu có), và kiểm tra xem file kết quả `predictions/.../part-00000.jsonl`
-// đã tồn tại trong MinIO chưa để gán trạng thái (completed hoặc planned).
+// lọc theo task / model (nếu có), sau đó đọc durable runtime status do Rust
+// worker ghi. Các job cũ chưa có status record vẫn dùng output object fallback.
 func (s *InferenceService) ListJobs(ctx context.Context, task, model string) ([]entity.InferenceJob, error) {
 	// 1. Quét danh sách các đối tượng trong thư mục manifests trên MinIO
 	objects, err := s.objects.ListObjects(ctx, "manifests/inference-jobs/")
@@ -92,11 +104,11 @@ func (s *InferenceService) ListJobs(ctx context.Context, task, model string) ([]
 			continue
 		}
 
-		// 2. Chuẩn hóa tên task (candidate_vetting hoặc anomaly_detection)
-		normTask := taxonomy.TaskAnomalyDetection
-		if strings.EqualFold(strings.TrimSpace(manifest.Task), "candidate") || strings.EqualFold(strings.TrimSpace(manifest.Task), taxonomy.TaskCandidateVetting) {
-			normTask = taxonomy.TaskCandidateVetting
+		// Historic anomaly manifests are no longer executable product jobs.
+		if !strings.EqualFold(strings.TrimSpace(manifest.Task), "candidate") && !strings.EqualFold(strings.TrimSpace(manifest.Task), taxonomy.TaskCandidateVetting) {
+			continue
 		}
+		normTask := taxonomy.TaskCandidateVetting
 
 		// Lọc theo task nếu người dùng có truyền tham số
 		if task != "" && normTask != task {
@@ -108,10 +120,25 @@ func (s *InferenceService) ListJobs(ctx context.Context, task, model string) ([]
 			continue
 		}
 
-		// 3. Kiểm tra file output trong MinIO để suy luận trạng thái hoàn thành
+		// 3. Runtime status is authoritative for new jobs. Falling back to output
+		// existence keeps historic jobs visible after the status contract rollout.
 		outputKey := fmt.Sprintf("predictions/%s/%s/%s/part-00000.jsonl", manifest.Task, manifest.GoldSnapshotID, manifest.JobID)
 		status := taxonomy.JobStatusPlanned
-		if outputs, listErr := s.objects.ListObjects(ctx, outputKey); listErr == nil && len(outputs) > 0 {
+		statusKey := fmt.Sprintf("inference/status/%s.json", manifest.JobID)
+		if statusData, statusErr := s.objects.GetObject(ctx, statusKey); statusErr == nil {
+			var runtimeStatus inferenceJobStatusDTO
+			if json.Unmarshal(statusData, &runtimeStatus) == nil &&
+				runtimeStatus.SchemaVersion == 1 &&
+				runtimeStatus.JobID == manifest.JobID &&
+				runtimeStatus.JobFingerprint == manifest.JobFingerprint &&
+				runtimeStatus.Task == manifest.Task &&
+				isInferenceRuntimeStatus(runtimeStatus.Status) {
+				status = runtimeStatus.Status
+				if runtimeStatus.OutputKey != "" {
+					outputKey = runtimeStatus.OutputKey
+				}
+			}
+		} else if outputs, listErr := s.objects.ListObjects(ctx, outputKey); listErr == nil && len(outputs) > 0 {
 			status = taxonomy.JobStatusCompleted
 		}
 
@@ -135,6 +162,15 @@ func (s *InferenceService) ListJobs(ctx context.Context, task, model string) ([]
 	// Sắp xếp các job theo thời gian tạo mới nhất lên đầu
 	sort.Slice(jobs, func(i, j int) bool { return jobs[i].CreatedAt > jobs[j].CreatedAt })
 	return jobs, nil
+}
+
+func isInferenceRuntimeStatus(status string) bool {
+	switch status {
+	case taxonomy.JobStatusRunning, taxonomy.JobStatusRetrying, taxonomy.JobStatusFailed, taxonomy.JobStatusCompleted:
+		return true
+	default:
+		return false
+	}
 }
 
 // ============================================================================
@@ -175,11 +211,11 @@ func (s *InferenceService) RetryJob(ctx context.Context, jobID string) (entity.I
 		return entity.InferenceJobManifest{}, nil, fmt.Errorf("job %s not found", jobID)
 	}
 
-	// 2. Xác định loại event NATS tương ứng với task
-	eventType := "aurora.v1.inference.anomaly.requested"
-	if manifest.Task == taxonomy.TaskCandidateVetting || manifest.Task == "candidate" {
-		eventType = "aurora.v1.inference.candidate.requested"
+	// 2. Only candidate-vetting jobs remain executable.
+	if manifest.Task != taxonomy.TaskCandidateVetting && manifest.Task != "candidate" {
+		return entity.InferenceJobManifest{}, nil, fmt.Errorf("unsupported retired inference task %q", manifest.Task)
 	}
+	eventType := "aurora.v1.inference.candidate.requested"
 
 	// Tính mã băm SHA-256 của file manifest để đảm bảo tính toàn vẹn
 	sum := sha256.Sum256(raw)

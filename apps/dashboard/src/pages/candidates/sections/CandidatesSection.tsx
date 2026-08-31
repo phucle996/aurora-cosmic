@@ -73,7 +73,6 @@ type CandidateEvidence = {
   bls_transit_time: number;
   bls_depth: number;
   bls_power: number;
-  tpf_evidence_available: boolean;
   pixel_mad_median: number;
   variability_peak_fraction: number;
   transit_evidence_available: boolean;
@@ -87,8 +86,6 @@ type CandidateEvidence = {
   logg: number;
   matched_toi_id: string;
   toi_match_status: string;
-  matched_tce_id: string;
-  tce_match_status: string;
 };
 
 type CandidateDetail = { candidate: CandidateRecord; evidence: CandidateEvidence };
@@ -112,7 +109,17 @@ function formatScore(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
 }
 
-export default function CandidatesSection(): JSX.Element {
+export default function CandidatesSection({
+  detailPath = '/candidates',
+  eyebrow = 'Human review queue',
+  title = 'ML Transit Candidates',
+  description = 'Xếp hạng ứng viên bằng ML score và mở toàn bộ evidence để chuyên gia xác minh thủ công.',
+}: {
+  detailPath?: string;
+  eyebrow?: string;
+  title?: string;
+  description?: string;
+}): JSX.Element {
   const [jobs, setJobs] = useState<InferenceJob[]>([]);
   const [candidates, setCandidates] = useState<CandidateRecord[]>([]);
   const [selectedID, setSelectedID] = useState('');
@@ -213,10 +220,10 @@ export default function CandidatesSection(): JSX.Element {
         <div>
           <div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
             <Sparkles className="size-4 text-primary" />
-            Human review queue
+            {eyebrow}
           </div>
-          <h2 className="font-heading text-2xl font-semibold tracking-tight md:text-3xl">ML Transit Candidates</h2>
-          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">Xếp hạng ứng viên bằng ML score và mở toàn bộ evidence để chuyên gia xác minh thủ công.</p>
+          <h2 className="font-heading text-2xl font-semibold tracking-tight md:text-3xl">{title}</h2>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">{description}</p>
         </div>
         <Button variant="outline" onClick={() => void loadData(true)} disabled={loading || refreshing}>
           <RefreshCw className={refreshing ? 'animate-spin' : ''} />
@@ -248,7 +255,7 @@ export default function CandidatesSection(): JSX.Element {
         <Card className="min-w-0 overflow-hidden">
           <CardHeader><CardTitle>Selected candidate</CardTitle><CardDescription>Model score, lineage và scientific context trước khi review.</CardDescription></CardHeader>
           <CardContent>
-            {detailLoading ? <LoadingState /> : !selected || !detail ? <EmptyState label="Chọn một candidate để xem chi tiết." /> : <CandidateDetail detail={detail} />}
+            {detailLoading ? <LoadingState /> : !selected || !detail ? <EmptyState label="Chọn một candidate để xem chi tiết." /> : <CandidateDetail detail={detail} detailPath={detailPath} />}
           </CardContent>
         </Card>
       </div>
@@ -256,16 +263,16 @@ export default function CandidatesSection(): JSX.Element {
       <Card className="min-w-0 overflow-hidden">
         <CardHeader className="gap-3 md:flex-row md:items-center md:justify-between"><div><CardTitle>Light curve evidence</CardTitle><CardDescription>{selected ? `TIC ${selected.tic_id} · Sector ${selected.sector} · raw flux from ClickHouse` : 'Chọn candidate để tải light curve.'}</CardDescription></div><Button variant="outline" size="sm" onClick={() => setFolded((value) => !value)} disabled={!detail?.evidence.bls_available || !lightcurve}>{folded ? 'Show raw time' : 'Phase fold'} </Button></CardHeader>
         <CardContent>
-          {!selected || !lightcurve || chartData.length === 0 ? <EmptyState label="Chưa có light curve để hiển thị." /> : <div className="h-[360px] w-full"><ResponsiveContainer width="100%" height="100%"><LineChart data={chartData} margin={{ top: 12, right: 16, left: 0, bottom: 8 }}><CartesianGrid vertical={false} strokeDasharray="3 3" /><XAxis dataKey="x" tickLine={false} axisLine={false} tickFormatter={(value: number) => folded ? value.toFixed(2) : value.toFixed(1)} label={{ value: folded ? 'phase' : 'time', position: 'insideBottom', offset: -2 }} /><YAxis tickLine={false} axisLine={false} width={58} tickFormatter={(value: number) => value.toFixed(3)} /><Tooltip labelFormatter={(value) => folded ? `phase ${Number(value).toFixed(4)}` : `time ${Number(value).toFixed(4)}`} formatter={(value: number) => [value.toFixed(6), 'flux']} /><Line type="monotone" dataKey="flux" stroke="var(--primary)" strokeWidth={1.5} dot={false} isAnimationActive={false} /></LineChart></ResponsiveContainer></div>}
+          {!selected || !lightcurve || chartData.length === 0 ? <EmptyState label="Chưa có light curve để hiển thị." /> : <div className="h-[360px] w-full"><ResponsiveContainer width="100%" height="100%"><LineChart data={chartData} margin={{ top: 12, right: 16, left: 0, bottom: 8 }}><CartesianGrid vertical={false} strokeDasharray="3 3" /><XAxis dataKey="x" tickLine={false} axisLine={false} tickFormatter={(value: number) => folded ? value.toFixed(2) : value.toFixed(1)} label={{ value: folded ? 'phase' : 'time', position: 'insideBottom', offset: -2 }} /><YAxis tickLine={false} axisLine={false} width={58} tickFormatter={(value: number) => value.toFixed(3)} /><Tooltip labelFormatter={(value) => folded ? `phase ${Number(value).toFixed(4)}` : `time ${Number(value).toFixed(4)}`} formatter={(value) => [typeof value === 'number' ? value.toFixed(6) : '—', 'flux']} /><Line type="monotone" dataKey="flux" stroke="var(--primary)" strokeWidth={1.5} dot={false} isAnimationActive={false} /></LineChart></ResponsiveContainer></div>}
         </CardContent>
       </Card>
     </div>
   );
 }
 
-function CandidateDetail({ detail }: { detail: CandidateDetail }): JSX.Element {
+function CandidateDetail({ detail, detailPath }: { detail: CandidateDetail; detailPath: string }): JSX.Element {
   const { candidate, evidence } = detail;
-  return <div className="space-y-4"><div className="rounded-lg border border-border bg-muted/30 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-mono font-semibold text-primary">TIC {candidate.tic_id}</p><p className="mt-1 text-xs text-muted-foreground">{candidate.model_version}</p></div><Badge variant={candidate.above_threshold ? 'default' : 'outline'}>{candidate.above_threshold ? 'priority review' : 'below threshold'}</Badge></div><Separator className="my-3" /><dl className="grid grid-cols-2 gap-3 text-xs"><InfoItem label="Vetting score" value={formatScore(candidate.candidate_score)} /><InfoItem label="Threshold" value={formatScore(candidate.decision_threshold)} /><InfoItem label="Sector" value={`${candidate.sector}`} /><InfoItem label="Detected" value={formatDate(candidate.predicted_at)} /><InfoItem label="Runtime" value={candidate.runtime_package_id} /><InfoItem label="Validation" value={candidate.runtime_validation_id || '—'} /></dl></div><div className="grid grid-cols-2 gap-2"><EvidenceChip icon={BarChart3} label="BLS" value={evidence.bls_available ? `${formatNumber(evidence.bls_period, 2)} d` : 'not available'} /><EvidenceChip icon={Telescope} label="Catalog" value={evidence.matched_toi_id || evidence.matched_tce_id || evidence.toi_match_status || 'unmatched'} /><EvidenceChip icon={Database} label="Samples" value={evidence.n_points.toLocaleString()} /><EvidenceChip icon={Gauge} label="Transit evidence" value={evidence.transit_evidence_available ? 'available' : 'not available'} /></div><Button asChild className="w-full"><a href={`/candidates/${encodeURIComponent(candidate.prediction_id)}?snapshot_id=${encodeURIComponent(candidate.gold_snapshot_id)}`}>Open physics & habitability detail</a></Button><div className="flex items-center gap-2 text-xs text-muted-foreground"><Database className="size-4" />Feature version {evidence.feature_version || '—'} · lineage verified by snapshot</div></div>;
+  return <div className="space-y-4"><div className="rounded-lg border border-border bg-muted/30 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-mono font-semibold text-primary">TIC {candidate.tic_id}</p><p className="mt-1 text-xs text-muted-foreground">{candidate.model_version}</p></div><Badge variant={candidate.above_threshold ? 'default' : 'outline'}>{candidate.above_threshold ? 'priority review' : 'below threshold'}</Badge></div><Separator className="my-3" /><dl className="grid grid-cols-2 gap-3 text-xs"><InfoItem label="Vetting score" value={formatScore(candidate.candidate_score)} /><InfoItem label="Threshold" value={formatScore(candidate.decision_threshold)} /><InfoItem label="Sector" value={`${candidate.sector}`} /><InfoItem label="Detected" value={formatDate(candidate.predicted_at)} /><InfoItem label="Runtime" value={candidate.runtime_package_id} /><InfoItem label="Validation" value={candidate.runtime_validation_id || '—'} /></dl></div><div className="grid grid-cols-2 gap-2"><EvidenceChip icon={BarChart3} label="BLS" value={evidence.bls_available ? `${formatNumber(evidence.bls_period, 2)} d` : 'not available'} /><EvidenceChip icon={Telescope} label="TOI catalog" value={evidence.matched_toi_id || evidence.toi_match_status || 'unmatched'} /><EvidenceChip icon={Database} label="Samples" value={evidence.n_points.toLocaleString()} /><EvidenceChip icon={Gauge} label="Transit evidence" value={evidence.transit_evidence_available ? 'available' : 'not available'} /></div><Button asChild className="w-full"><a href={`${detailPath}/${encodeURIComponent(candidate.prediction_id)}?snapshot_id=${encodeURIComponent(candidate.gold_snapshot_id)}`}>Open physics & habitability detail</a></Button><div className="flex items-center gap-2 text-xs text-muted-foreground"><Database className="size-4" />Feature version {evidence.feature_version || '—'} · lineage verified by snapshot</div></div>;
 }
 
 function EvidenceChip({ icon: Icon, label, value }: { icon: typeof Database; label: string; value: string }): JSX.Element {

@@ -11,14 +11,16 @@ import (
 )
 
 type Module struct {
-	AnalyticsHandler     *handler.AnalyticsHandler
-	ModelsHandler        *handler.ModelsHandler
-	SystemHandler        *handler.SystemHandler
-	MonitoringHandler    *handler.MonitoringHandler
-	PreprocessingHandler *handler.PreprocessingHandler
-	IngestHandler        *handler.IngestHandler
-	EventsHandler        *handler.EventsHandler
-	NATSStream           *stream.NATSStream
+	AnalyticsHandler      *handler.AnalyticsHandler
+	ModelsHandler         *handler.ModelsHandler
+	SystemHandler         *handler.SystemHandler
+	MonitoringHandler     *handler.MonitoringHandler
+	PreprocessingHandler  *handler.PreprocessingHandler
+	GoldControlHandler    *handler.GoldControlHandler
+	FactoryHistoryHandler *handler.FactoryHistoryHandler
+	IngestHandler         *handler.IngestHandler
+	EventsHandler         *handler.EventsHandler
+	NATSStream            *stream.NATSStream
 }
 
 func NewModule(infra Infrastructure) (*Module, error) {
@@ -56,7 +58,7 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	if analyticsService == nil {
 		return nil, fmt.Errorf("service AnalyticsService is nil")
 	}
-	modelsService := service.NewModelsService(objectRepo, infra.NATS)
+	modelsService := service.NewModelsService(objectRepo, infra.NATS, analyticsRepo)
 	if modelsService == nil {
 		return nil, fmt.Errorf("service ModelsService is nil")
 	}
@@ -64,7 +66,7 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	if inferenceService == nil {
 		return nil, fmt.Errorf("service InferenceService is nil")
 	}
-	readinessService := service.NewReadinessService(infra.MinIO, analyticsRepo)
+	readinessService := service.NewReadinessService(infra.MinIO, analyticsRepo, infra.NATS)
 	if readinessService == nil {
 		return nil, fmt.Errorf("service ReadinessService is nil")
 	}
@@ -76,6 +78,12 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	if preprocessingService == nil {
 		return nil, fmt.Errorf("service PreprocessingService is nil")
 	}
+	goldControlService := service.NewGoldControlService(objectRepo, eventBroker)
+	if goldControlService == nil {
+		return nil, fmt.Errorf("service GoldControlService is nil")
+	}
+	factoryHistoryRepository := repository.NewFactoryHistoryClickHouse(infra.ClickHouse)
+	factoryHistoryService := service.NewFactoryHistoryService(factoryHistoryRepository)
 	catalogRepo := repository.NewCatalogClickHouse(infra.ClickHouse)
 	ingestService := service.NewIngestServiceWithCatalogAndEvents(objectRepo, catalogRepo, infra.Prometheus, infra.MinIO.Bucket, infra.Ingester, eventBroker)
 	if ingestService == nil {
@@ -92,13 +100,15 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	})
 
 	return &Module{
-		AnalyticsHandler:     handler.NewAnalyticsHandler(analyticsService),
-		ModelsHandler:        handler.NewModelsHandler(modelsService, inferenceService),
-		SystemHandler:        handler.NewSystemHandler(readinessService),
-		MonitoringHandler:    handler.NewMonitoringHandler(monitoringService),
-		PreprocessingHandler: handler.NewPreprocessingHandler(preprocessingService),
-		IngestHandler:        handler.NewIngestHandler(ingestService),
-		EventsHandler:        handler.NewEventsHandler(eventBroker),
-		NATSStream:           natsStream,
+		AnalyticsHandler:      handler.NewAnalyticsHandler(analyticsService),
+		ModelsHandler:         handler.NewModelsHandler(modelsService, inferenceService),
+		SystemHandler:         handler.NewSystemHandler(readinessService),
+		MonitoringHandler:     handler.NewMonitoringHandler(monitoringService),
+		PreprocessingHandler:  handler.NewPreprocessingHandler(preprocessingService),
+		GoldControlHandler:    handler.NewGoldControlHandler(goldControlService),
+		FactoryHistoryHandler: handler.NewFactoryHistoryHandler(factoryHistoryService),
+		IngestHandler:         handler.NewIngestHandler(ingestService),
+		EventsHandler:         handler.NewEventsHandler(eventBroker),
+		NATSStream:            natsStream,
 	}, nil
 }

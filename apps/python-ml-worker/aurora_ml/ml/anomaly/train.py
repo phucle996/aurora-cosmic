@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import random
+from contextlib import nullcontext
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -29,7 +30,7 @@ from aurora_ml.ml.anomaly.preprocessor import (
     AnomalyPreprocessor,
 )
 from aurora_ml.ml.datasets.splits import CandidateGroupSplit, derive_group_key
-from aurora_ml.ml.device import require_cuda
+from aurora_ml.ml.device import resolve_training_device
 from aurora_ml.pipeline.gold import GoldSnapshotManifest
 
 
@@ -120,8 +121,8 @@ def train_anomaly_model(
         "learning_rate": learning_rate,
         "max_epochs": epochs,
         "weight_decay": weight_decay,
-        "device": "cuda",
-        "amp_dtype": "float16",
+        "device": device_str,
+        "amp_dtype": "float16" if device_str in ("cuda", "gpu") else "disabled",
     }
 
     view_fp_payload = json.dumps(
@@ -134,12 +135,15 @@ def train_anomaly_model(
     np.random.seed(training_seed)
     torch.manual_seed(training_seed)
 
-    # Device selection is deliberately strict: there is no CPU training path.
     try:
-        device, cuda_info = require_cuda(device_str, max_vram_mb)
+        device, runtime_info = resolve_training_device(device_str, max_vram_mb)
     except Exception as exc:
         raise AnomalyTrainingError(str(exc)) from exc
-    hyperparams["cuda_runtime"] = cuda_info.to_dict()
+    is_cuda = device.type == "cuda"
+    hyperparams["compute_target"] = "gpu" if is_cuda else "cpu"
+    hyperparams["device"] = device.type
+    hyperparams["amp_dtype"] = "float16" if is_cuda else "disabled"
+    hyperparams["runtime"] = runtime_info.to_dict()
 
     spec = AnomalyTrainingRunSpec(
         gold_snapshot_id=gold_manifest.snapshot_id,
@@ -179,10 +183,10 @@ def train_anomaly_model(
         batch_size=batch_size,
         shuffle=True,
         generator=g,
-        pin_memory=True,
+        pin_memory=is_cuda,
     )
     val_loader = DataLoader(
-        val_dataset, batch_size=batch_size, shuffle=False, pin_memory=True
+        val_dataset, batch_size=batch_size, shuffle=False, pin_memory=is_cuda
     )
 
     # 5. Model & Optimizer Initialization
@@ -200,7 +204,12 @@ def train_anomaly_model(
         "checkpoints", "ml-training", "anomaly", f"{spec.training_run_id}.json"
     )
     os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
-    scaler = torch.amp.GradScaler("cuda", enabled=True)
+    scaler = torch.amp.GradScaler("cuda", enabled=is_cuda)
+    autocast_context = (
+        (lambda: torch.autocast(device_type="cuda", dtype=torch.float16))
+        if is_cuda
+        else nullcontext
+    )
 
     # 6. Training Loop with Early Stopping
     best_val_loss = float("inf")
@@ -213,7 +222,7 @@ def train_anomaly_model(
         for batch_x, _ in train_loader:
             batch_x = batch_x.to(device, non_blocking=True)
             optimizer.zero_grad(set_to_none=True)
-            with torch.autocast(device_type="cuda", dtype=torch.float16):
+            with autocast_context():
                 reconstructed = model(batch_x)
                 loss = loss_fn(reconstructed, batch_x)
             scaler.scale(loss).backward()
@@ -227,7 +236,7 @@ def train_anomaly_model(
         with torch.no_grad():
             for batch_x, _ in val_loader:
                 batch_x = batch_x.to(device, non_blocking=True)
-                with torch.autocast(device_type="cuda", dtype=torch.float16):
+                with autocast_context():
                     reconstructed = model(batch_x)
                     loss = loss_fn(reconstructed, batch_x)
                 val_loss_sum += float(loss.item()) * len(batch_x)
@@ -267,7 +276,7 @@ def train_anomaly_model(
     with torch.no_grad():
         for batch_x, _ in val_loader:
             batch_x = batch_x.to(device, non_blocking=True)
-            with torch.autocast(device_type="cuda", dtype=torch.float16):
+            with autocast_context():
                 reconstructed = model(batch_x)
             scores_t = compute_reconstruction_mse(batch_x, reconstructed)
             val_scores_list.append(scores_t.cpu().numpy())
@@ -298,7 +307,7 @@ def train_anomaly_model(
 
     # Save model.pt
     model_pt_path = os.path.join(output_dir, "model.pt")
-    # Training is GPU-only, but artifacts must remain portable to CPU export/runtime.
+    # Artifacts remain portable across the selected training target and CPU export/runtime.
     cpu_state_dict = {k: v.detach().cpu() for k, v in model.state_dict().items()}
     torch.save(cpu_state_dict, model_pt_path)
     with open(model_pt_path, "rb") as f:

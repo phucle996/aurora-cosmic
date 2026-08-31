@@ -1,9 +1,4 @@
-"""CUDA runtime policy shared by every training path.
-
-Training is deliberately CUDA-only.  CPU remains valid for data decoding,
-metadata work, and ONNX export, but it must never be selected silently for a
-model training run.
-"""
+"""Explicit CPU/GPU runtime selection shared by every training path."""
 
 from dataclasses import asdict, dataclass
 from typing import Any, Dict
@@ -11,12 +6,12 @@ from typing import Any, Dict
 import torch
 
 
-class CudaRequiredError(RuntimeError):
-    """Raised when a training run cannot satisfy the CUDA-only policy."""
+class ComputeTargetError(RuntimeError):
+    """Raised when a requested training compute target is unavailable."""
 
 
 @dataclass(frozen=True)
-class CudaRuntimeInfo:
+class TrainingRuntimeInfo:
     device: str
     device_name: str
     capability: str
@@ -28,22 +23,30 @@ class CudaRuntimeInfo:
         return asdict(self)
 
 
-def require_cuda(
+def resolve_training_device(
     device_str: str = "cuda", max_vram_mb: int = 0
-) -> tuple[torch.device, CudaRuntimeInfo]:
-    """Resolve and validate the only supported training device.
-
-    ``auto`` and ``cpu`` are rejected instead of being interpreted as a
-    fallback.  ``max_vram_mb`` is an optional per-process allocator cap; zero
-    means use the full device.
-    """
+) -> tuple[torch.device, TrainingRuntimeInfo]:
+    """Resolve an explicitly requested ``cpu`` or ``gpu`` training branch."""
     normalized = (device_str or "").strip().lower()
-    if normalized != "cuda":
-        raise CudaRequiredError(
-            f"GPU_ONLY_POLICY: training requires AURORA_ML_DEVICE=cuda; got '{device_str}'"
+    if normalized in ("gpu", "cuda"):
+        normalized = "cuda"
+    elif normalized == "cpu":
+        if max_vram_mb:
+            raise ComputeTargetError("CPU_TARGET_REJECTS_VRAM_LIMIT")
+        return torch.device("cpu"), TrainingRuntimeInfo(
+            device="cpu",
+            device_name="Host CPU",
+            capability="n/a",
+            total_vram_mb=0,
+            torch_version=torch.__version__,
+            cuda_version="not-used",
+        )
+    else:
+        raise ComputeTargetError(
+            f"INVALID_COMPUTE_TARGET: expected cpu or gpu, got '{device_str}'"
         )
     if not torch.cuda.is_available():
-        raise CudaRequiredError(
+        raise ComputeTargetError(
             "CUDA_UNAVAILABLE: no CUDA device is visible to the ML worker"
         )
 
@@ -51,9 +54,9 @@ def require_cuda(
     props = torch.cuda.get_device_properties(device)
     total_vram_mb = int(props.total_memory // (1024 * 1024))
     if max_vram_mb < 0:
-        raise CudaRequiredError("INVALID_VRAM_LIMIT: max_vram_mb must be >= 0")
+        raise ComputeTargetError("INVALID_VRAM_LIMIT: max_vram_mb must be >= 0")
     if max_vram_mb and max_vram_mb > total_vram_mb:
-        raise CudaRequiredError(
+        raise ComputeTargetError(
             f"VRAM_LIMIT_EXCEEDS_DEVICE: configured {max_vram_mb}MB, device has {total_vram_mb}MB"
         )
     if max_vram_mb:
@@ -69,7 +72,7 @@ def require_cuda(
     torch.set_float32_matmul_precision("high")
     torch.cuda.manual_seed_all(torch.initial_seed())
 
-    info = CudaRuntimeInfo(
+    info = TrainingRuntimeInfo(
         device=str(device),
         device_name=torch.cuda.get_device_name(device),
         capability=f"{props.major}.{props.minor}",
@@ -78,3 +81,17 @@ def require_cuda(
         cuda_version=torch.version.cuda or "unknown",
     )
     return device, info
+
+
+# Kept for older CLI integrations; worker jobs use resolve_training_device.
+CudaRequiredError = ComputeTargetError
+
+
+def require_cuda(
+    device_str: str = "cuda", max_vram_mb: int = 0
+) -> tuple[torch.device, TrainingRuntimeInfo]:
+    if (device_str or "").strip().lower() not in ("cuda", "gpu"):
+        raise ComputeTargetError(
+            f"GPU_ONLY_POLICY: training requires gpu; got '{device_str}'"
+        )
+    return resolve_training_device(device_str, max_vram_mb)

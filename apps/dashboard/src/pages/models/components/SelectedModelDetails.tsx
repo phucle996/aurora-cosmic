@@ -1,4 +1,5 @@
 import type { JSX } from 'react';
+import { Link } from 'react-router-dom';
 import { Database, Gauge, LoaderCircle, Sparkles, Square } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -51,7 +52,7 @@ export function SelectedModelDetails({
                     size="sm"
                     variant="outline"
                     className="h-7 text-xs border-destructive/40 text-destructive hover:bg-destructive/10 gap-1.5 shrink-0"
-                    onClick={() => onDeployModel?.(selectedModel.model_id, selectedModel.task, false)}
+                    onClick={() => onDeployModel?.(selectedModel.runtime_package_id, selectedModel.task, false)}
                     disabled={isDeploying}
                   >
                     {isDeploying ? <LoaderCircle className="size-3 animate-spin" /> : <Square className="size-3" />}
@@ -71,7 +72,7 @@ export function SelectedModelDetails({
                   <Button
                     size="sm"
                     className="h-7 text-xs gap-1.5 bg-gradient-to-r from-emerald-600 to-primary text-primary-foreground font-semibold shadow-sm shrink-0"
-                    onClick={() => onDeployModel?.(selectedModel.model_id, selectedModel.task, true)}
+                    onClick={() => onDeployModel?.(selectedModel.runtime_package_id, selectedModel.task, true)}
                     disabled={isDeploying || selectedModel.status === 'invalid'}
                   >
                     {isDeploying ? <LoaderCircle className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
@@ -104,6 +105,12 @@ export function SelectedModelDetails({
                 <InfoItem label="Ngưỡng Threshold" value={selectedModel.decision_threshold.toFixed(4)} />
                 <InfoItem label="Ngày tạo" value={formatDate(selectedModel.created_at)} />
               </dl>
+              <Link
+                to={`/ai-factory/models/${encodeURIComponent(selectedModel.model_id)}`}
+                className="mt-3 inline-flex text-xs font-medium text-primary hover:underline"
+              >
+                Mở trang Model Detail &amp; evidence →
+              </Link>
             </div>
             <div className="min-w-0">
               <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Thứ tự đặc trưng (Feature Order)</p>

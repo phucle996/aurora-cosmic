@@ -1,16 +1,22 @@
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
+use std::{io::Write, path::Path};
 
 use anyhow::{Context, Result};
 use async_nats::jetstream::{self, AckKind};
 use chrono::Utc;
-use futures::{stream, StreamExt, TryStreamExt};
-use tempfile::TempDir;
-use tokio::sync::Semaphore;
+use futures::StreamExt;
+use tempfile::{NamedTempFile, TempDir};
+use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
 
 use crate::domain::explanation::{AnomalyExplanation, AnomalyExplanationFeature};
-use crate::domain::job::{InferenceJobManifest, InferenceJobRequestedEvent};
+use crate::domain::job::{
+    compute_job_fingerprint, InferenceJobManifest, InferenceJobRequestedEvent,
+    InferenceJobStatusRecord,
+};
 use crate::domain::prediction::{
     compute_anomaly_prediction_id, compute_candidate_prediction_id, compute_model_input_sha256,
     AnomalyPredictionRecord, CandidatePredictionRecord,
@@ -19,13 +25,15 @@ use crate::runtime::{
     compute_reconstruction_mse, stable_sigmoid, validate_runtime_package_parity, OnnxRuntime,
 };
 
-use crate::adapters::gold::{read_gold, GoldRow};
+use crate::adapters::gold::{decode_gold_batch, open_gold_reader_from_file, GoldRow};
 use crate::adapters::storage::ObjectStore;
 use crate::config::{Config, NatsConfig};
 use crate::observer::Metrics;
 
 const INFERENCE_STREAM_SUBJECT: &str = "aurora.v1.inference.>";
-const MAX_EXPLANATION_UPLOADS: usize = 16;
+const MAX_DELIVERIES: i64 = 5;
+const RETRY_DELAY: Duration = Duration::from_secs(5);
+static VALIDATED_RUNTIME_PACKAGES: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 pub async fn ensure_stream(
     js: &jetstream::Context,
@@ -59,7 +67,8 @@ pub async fn run_pool(
                 filter_subject: config.nats.subject.clone(),
                 ack_policy: jetstream::consumer::AckPolicy::Explicit,
                 ack_wait: Duration::from_secs(config.nats.ack_wait_secs),
-                max_deliver: 5,
+                max_deliver: MAX_DELIVERIES,
+                max_ack_pending: config.nats.workers.max(1) as i64,
                 ..Default::default()
             },
         )
@@ -72,46 +81,56 @@ pub async fn run_pool(
     tracing::info!(stream = %config.nats.stream, durable = %config.nats.durable, workers, "Inference worker pool ready");
 
     loop {
-        tokio::select! {
-            _ = cancel.cancelled() => break,
-            _ = tokio::time::sleep(Duration::from_millis(1)) => {
-                let messages = consumer.fetch().max_messages(workers).messages().await
-                    .context("fetch inference messages")?;
-                let batch: Vec<_> = messages.take(workers).collect().await;
-                if batch.is_empty() {
-                    tokio::time::sleep(Duration::from_millis(250)).await;
-                    continue;
-                }
-                metrics.set_queue_depth(batch.len());
-                for message in batch {
-                    let message = match message {
-                        Ok(message) => message,
-                        Err(error) => {
-                            tracing::warn!(%error, "failed to receive inference message");
-                            metrics.record_transport_error();
-                            continue;
-                        }
-                    };
-                    let task_store = store.clone();
-                    let task_config = config.clone();
-                    let task_semaphore = semaphore.clone();
-                    let task_metrics = metrics.clone();
-                    tasks.spawn(async move {
-                        let _permit = match task_semaphore.acquire_owned().await {
-                            Ok(permit) => permit,
-                            Err(_) => return,
-                        };
-                        if let Err(error) = process_message(message, task_store, &task_config, task_metrics).await {
-                            tracing::error!(%error, "inference job failed");
-                        }
-                    });
-                }
-                metrics.set_queue_depth(0);
-                while let Some(result) = tasks.try_join_next() {
-                    if let Err(error) = result { tracing::error!(%error, "inference task panicked"); }
-                }
+        while let Some(result) = tasks.try_join_next() {
+            if let Err(error) = result {
+                tracing::error!(%error, "inference task panicked");
             }
         }
+
+        // Acquire capacity before pulling. This makes a JetStream delivery and
+        // a real execution slot the same bounded resource.
+        let permit = tokio::select! {
+            _ = cancel.cancelled() => break,
+            permit = semaphore.clone().acquire_owned() => match permit {
+                Ok(permit) => permit,
+                Err(_) => break,
+            },
+        };
+        let mut messages = consumer
+            .fetch()
+            .max_messages(1)
+            .messages()
+            .await
+            .context("fetch inference message")?;
+        let next = tokio::select! {
+            _ = cancel.cancelled() => break,
+            next = messages.next() => next,
+        };
+        let Some(next) = next else { continue };
+        let message = match next {
+            Ok(message) => message,
+            Err(error) => {
+                tracing::warn!(%error, "failed to receive inference message");
+                metrics.record_transport_error();
+                continue;
+            }
+        };
+        let pending = message
+            .info()
+            .map(|info| info.pending as usize)
+            .unwrap_or_default();
+        metrics.set_queue_depth(pending);
+        let task_store = store.clone();
+        let task_config = config.clone();
+        let task_metrics = metrics.clone();
+        tasks.spawn(async move {
+            let _permit = permit;
+            if let Err(error) =
+                process_message(message, task_store, &task_config, task_metrics).await
+            {
+                tracing::error!(%error, "inference job failed");
+            }
+        });
     }
     while let Some(result) = tasks.join_next().await {
         if let Err(error) = result {
@@ -128,6 +147,7 @@ async fn process_message(
     metrics: Arc<Metrics>,
 ) -> Result<()> {
     let mut observation = metrics.begin("unknown", 0);
+    let delivery_attempt = message.info().map(|info| info.delivered).unwrap_or(1);
     let event: InferenceJobRequestedEvent = match serde_json::from_slice(&message.payload) {
         Ok(event) => event,
         Err(error) => {
@@ -140,10 +160,7 @@ async fn process_message(
         }
     };
     if event.schema_version != 1
-        || !matches!(
-            event.event_type.as_str(),
-            "aurora.v1.inference.candidate.requested" | "aurora.v1.inference.anomaly.requested"
-        )
+        || event.event_type != "aurora.v1.inference.candidate.requested"
         || event.expected_prediction_count <= 0
     {
         message
@@ -166,15 +183,131 @@ async fn process_message(
         serde_json::from_slice(&job_bytes).context("decode job manifest")?;
     validate_event_against_job(&event, &job)?;
 
-    let runtime_dir = runtime_package_dir(&job.runtime_manifest_key)?;
-    let runtime_tmp = download_runtime_package(&store, &config.minio.bucket, &runtime_dir).await?;
-    let validation = validate_runtime_package_parity(runtime_tmp.path())
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-    if validation.validation_status != "PASS"
-        || validation.runtime_manifest_sha256 != job.runtime_manifest_sha256
+    let status_key = status_key(&job.job_id);
+    let started_at = match store
+        .get(&config.minio.prediction_bucket, &status_key)
+        .await
     {
-        anyhow::bail!("runtime package parity validation does not match job manifest")
+        Ok(bytes) => {
+            let existing: InferenceJobStatusRecord =
+                serde_json::from_slice(&bytes).context("decode existing inference status")?;
+            validate_status(&existing, &job)?;
+            if existing.status == "completed" {
+                observation.set_rows(existing.processed_rows.unwrap_or_default() as usize);
+                message
+                    .double_ack()
+                    .await
+                    .map_err(|error| anyhow::anyhow!(error.to_string()))
+                    .context("ack previously completed inference job")?;
+                observation.set_success();
+                return Ok(());
+            }
+            existing.started_at
+        }
+        Err(_) => Utc::now().to_rfc3339(),
+    };
+    persist_status(
+        &store,
+        &config.minio.prediction_bucket,
+        &status_key,
+        status_record(&job, "running", delivery_attempt, &started_at, None, None),
+    )
+    .await?;
+
+    let heartbeat_cancel = CancellationToken::new();
+    let heartbeat = start_ack_heartbeat(
+        message.clone(),
+        config.nats.ack_wait_secs,
+        heartbeat_cancel.clone(),
+    );
+    let execution = execute_job(&store, config, &job, &started_at).await;
+    heartbeat_cancel.cancel();
+    let _ = heartbeat.await;
+
+    match execution {
+        Ok(output) => {
+            observation.set_rows(output.rows);
+            persist_status(
+                &store,
+                &config.minio.prediction_bucket,
+                &status_key,
+                status_record(
+                    &job,
+                    "completed",
+                    delivery_attempt,
+                    &started_at,
+                    Some(output),
+                    None,
+                ),
+            )
+            .await?;
+            message
+                .double_ack()
+                .await
+                .map_err(|error| anyhow::anyhow!(error.to_string()))
+                .context("ack inference job")?;
+            tracing::info!(job_id = %job.job_id, rows = job.expected_prediction_count, "inference job completed");
+            observation.set_success();
+            Ok(())
+        }
+        Err(error) => {
+            let terminal = delivery_attempt >= MAX_DELIVERIES;
+            let status = if terminal { "failed" } else { "retrying" };
+            let record = status_record(
+                &job,
+                status,
+                delivery_attempt,
+                &started_at,
+                None,
+                Some(error_summary(&error)),
+            );
+            persist_status(
+                &store,
+                &config.minio.prediction_bucket,
+                &status_key,
+                record.clone(),
+            )
+            .await?;
+            if terminal {
+                let dead_letter_key = format!("inference/dead-letters/{}.json", job.job_id);
+                persist_status(
+                    &store,
+                    &config.minio.prediction_bucket,
+                    &dead_letter_key,
+                    record,
+                )
+                .await?;
+                message
+                    .ack_with(AckKind::Term)
+                    .await
+                    .map_err(|ack_error| anyhow::anyhow!(ack_error.to_string()))?;
+            } else {
+                message
+                    .ack_with(AckKind::Nak(Some(RETRY_DELAY)))
+                    .await
+                    .map_err(|ack_error| anyhow::anyhow!(ack_error.to_string()))?;
+            }
+            Err(error)
+        }
     }
+}
+
+#[derive(Clone)]
+struct JobOutput {
+    key: String,
+    sha256: String,
+    rows: usize,
+}
+
+async fn execute_job(
+    store: &ObjectStore,
+    config: &Config,
+    job: &InferenceJobManifest,
+    predicted_at: &str,
+) -> Result<JobOutput> {
+    let runtime_dir = runtime_package_dir(&job.runtime_manifest_key)?;
+    let runtime_tmp = download_runtime_package(store, &config.minio.bucket, &runtime_dir).await?;
+    qualify_runtime_package(store, config, job, runtime_tmp.path()).await?;
     let mut runtime = OnnxRuntime::load_with_device(
         runtime_tmp.path(),
         config.ml.intra_threads,
@@ -184,97 +317,282 @@ async fn process_message(
     if runtime.manifest.runtime_package_id != job.runtime_package_id
         || runtime.manifest.task != job.task
         || runtime.manifest.source_model_id != job.model_id
+        || runtime.manifest.feature_order != job.feature_names
     {
         anyhow::bail!("runtime package does not match job manifest")
     }
 
-    let gold_bytes = store
-        .get_verified(
+    let gold_file = NamedTempFile::new().context("create temporary Gold file")?;
+    store
+        .download_verified_to_file(
             &config.minio.bucket,
             &job.gold_artifact_key,
             &job.gold_artifact_content_sha256,
             config.ml.max_gold_bytes,
+            gold_file.path(),
         )
         .await?;
-    let rows = read_gold(gold_bytes, &runtime.manifest.feature_order)?;
-    if rows.len() as i64 != job.expected_prediction_count
-        || rows.len() as i64 != job.gold_artifact_row_count
-    {
-        anyhow::bail!("Gold row count does not match job manifest")
-    }
-    observation.set_rows(rows.len());
+    let reader = open_gold_reader_from_file(gold_file.path())?;
 
-    let mut output = Vec::with_capacity(rows.len() * 512);
-    let mut explanations = Vec::new();
-    for row in rows {
-        let standardized = runtime
-            .standardize(&row.raw_features)
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let input_sha = compute_model_input_sha256(&standardized);
-        let model_output = runtime
-            .infer_standardized(&standardized)
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        if job.task == "astronomical_anomaly_detection" {
-            let (prediction_id, _) = compute_anomaly_prediction_id(
-                &job.runtime_package_id,
-                &job.gold_snapshot_id,
-                &row.source_product_id,
-            );
-            let explanation = build_anomaly_explanation(
-                &job,
+    let output_file = NamedTempFile::new().context("create temporary prediction file")?;
+    let output_path = output_file.path().to_path_buf();
+    let mut output = std::io::BufWriter::new(
+        output_file
+            .reopen()
+            .context("open temporary prediction file")?,
+    );
+    let mut processed_rows = 0_usize;
+    for batch in reader {
+        let batch_rows = decode_gold_batch(
+            batch.context("read Gold record batch")?,
+            &runtime.manifest.feature_order,
+        )?;
+        for row in batch_rows {
+            let standardized = runtime
+                .standardize(&row.raw_features)
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            let input_sha = compute_model_input_sha256(&standardized);
+            let model_output = runtime
+                .infer_standardized(&standardized)
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            if job.task == "astronomical_anomaly_detection" {
+                let (prediction_id, _) = compute_anomaly_prediction_id(
+                    &job.runtime_package_id,
+                    &job.gold_snapshot_id,
+                    &row.source_product_id,
+                );
+                let explanation = build_anomaly_explanation(
+                    job,
+                    &runtime,
+                    &row,
+                    &standardized,
+                    &input_sha,
+                    &model_output,
+                    prediction_id,
+                )?;
+                let explanation_key =
+                    format!("explanations/anomaly/{}.json", explanation.prediction_id);
+                store
+                    .put_json(
+                        &config.minio.prediction_bucket,
+                        &explanation_key,
+                        &serde_json::to_vec(&explanation)?,
+                    )
+                    .await?;
+            }
+            let record = build_prediction(
+                job,
                 &runtime,
                 &row,
                 &standardized,
                 &input_sha,
                 &model_output,
-                prediction_id,
+                predicted_at,
             )?;
-            let explanation_key =
-                format!("explanations/anomaly/{}.json", explanation.prediction_id);
-            let explanation_bytes = serde_json::to_vec(&explanation)?;
-            explanations.push((explanation_key, explanation_bytes));
+            serde_json::to_writer(&mut output, &record)?;
+            output.write_all(b"\n")?;
+            processed_rows += 1;
         }
-        let record = build_prediction(
-            &job,
-            &runtime,
-            &row,
-            &standardized,
-            &input_sha,
-            &model_output,
-        )?;
-        serde_json::to_writer(&mut output, &record)?;
-        output.push(b'\n');
     }
+    if processed_rows as i64 != job.expected_prediction_count
+        || processed_rows as i64 != job.gold_artifact_row_count
+    {
+        anyhow::bail!("Gold row count does not match job manifest")
+    }
+    output.flush()?;
+    drop(output);
 
     let key = format!(
         "predictions/{}/{}/{}/part-00000.jsonl",
         job.task, job.gold_snapshot_id, job.job_id
     );
-    let prediction_bucket = config.minio.prediction_bucket.clone();
-    stream::iter(explanations)
-        .map(|(explanation_key, explanation_bytes)| {
-            let store = Arc::clone(&store);
-            let prediction_bucket = prediction_bucket.clone();
-            async move {
-                store
-                    .put_json(&prediction_bucket, &explanation_key, &explanation_bytes)
-                    .await
-            }
-        })
-        .buffer_unordered(MAX_EXPLANATION_UPLOADS)
-        .try_collect::<Vec<_>>()
-        .await?;
+    let sha256 = crate::runtime::compute_sha256(Path::new(&output_path))
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     store
-        .put_json(&config.minio.prediction_bucket, &key, &output)
+        .put_file(
+            &config.minio.prediction_bucket,
+            &key,
+            &output_path,
+            "application/x-ndjson",
+        )
         .await?;
-    message
-        .ack()
-        .await
-        .map_err(|error| anyhow::anyhow!(error.to_string()))
-        .context("ack inference job")?;
-    tracing::info!(job_id = %job.job_id, rows = job.expected_prediction_count, output_key = %key, "inference job completed");
-    observation.set_success();
+    Ok(JobOutput {
+        key,
+        sha256,
+        rows: processed_rows,
+    })
+}
+
+async fn qualify_runtime_package(
+    store: &ObjectStore,
+    config: &Config,
+    job: &InferenceJobManifest,
+    package_dir: &Path,
+) -> Result<()> {
+    let manifest_sha = crate::runtime::compute_sha256(&package_dir.join("manifest.json"))
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    if manifest_sha != job.runtime_manifest_sha256 {
+        anyhow::bail!("downloaded runtime manifest SHA does not match inference job")
+    }
+    let validation_key = format!(
+        "models/runtime-validations/{}.json",
+        job.runtime_validation_id
+    );
+    if let Some(expected_key) = &job.runtime_validation_key {
+        if expected_key != &validation_key {
+            anyhow::bail!("runtime validation key does not match job manifest")
+        }
+    }
+    let cache_key = format!("{}:{}", job.runtime_package_id, job.runtime_manifest_sha256);
+    let cache = VALIDATED_RUNTIME_PACKAGES.get_or_init(|| Mutex::new(HashSet::new()));
+    if cache.lock().await.contains(&cache_key) {
+        return verify_persisted_runtime_validation(store, config, job, &validation_key).await;
+    }
+
+    let validation = validate_runtime_package_parity(package_dir)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    if validation.validation_status != "PASS"
+        || validation.runtime_manifest_sha256 != job.runtime_manifest_sha256
+        || validation.runtime_package_id != job.runtime_package_id
+        || validation.validation_record_id != job.runtime_validation_id
+    {
+        anyhow::bail!("runtime package parity validation does not match job manifest")
+    }
+    match store.get(&config.minio.bucket, &validation_key).await {
+        Ok(existing) => {
+            let prior =
+                serde_json::from_slice::<crate::domain::model::ModelRuntimeValidationRecord>(
+                    &existing,
+                )
+                .context("decode existing runtime validation record")?;
+            validate_runtime_validation_record(&prior, job)?;
+        }
+        Err(_) => {
+            store
+                .put_json(
+                    &config.minio.bucket,
+                    &validation_key,
+                    &serde_json::to_vec(&validation).context("encode runtime validation record")?,
+                )
+                .await
+                .context("persist Rust runtime parity validation")?;
+        }
+    }
+    cache.lock().await.insert(cache_key);
     Ok(())
+}
+
+async fn verify_persisted_runtime_validation(
+    store: &ObjectStore,
+    config: &Config,
+    job: &InferenceJobManifest,
+    validation_key: &str,
+) -> Result<()> {
+    let existing = store
+        .get(&config.minio.bucket, validation_key)
+        .await
+        .context("load cached runtime validation record")?;
+    let prior =
+        serde_json::from_slice::<crate::domain::model::ModelRuntimeValidationRecord>(&existing)
+            .context("decode cached runtime validation record")?;
+    validate_runtime_validation_record(&prior, job)
+}
+
+fn validate_runtime_validation_record(
+    validation: &crate::domain::model::ModelRuntimeValidationRecord,
+    job: &InferenceJobManifest,
+) -> Result<()> {
+    if validation.validation_status != "PASS"
+        || validation.validation_record_id != job.runtime_validation_id
+        || validation.runtime_package_id != job.runtime_package_id
+        || validation.runtime_manifest_sha256 != job.runtime_manifest_sha256
+        || validation.engine != "rust-inference-ort"
+    {
+        anyhow::bail!("runtime validation record conflicts with immutable inference job")
+    }
+    Ok(())
+}
+
+fn status_key(job_id: &str) -> String {
+    format!("inference/status/{job_id}.json")
+}
+
+fn status_record(
+    job: &InferenceJobManifest,
+    status: &str,
+    attempt: i64,
+    started_at: &str,
+    output: Option<JobOutput>,
+    error: Option<String>,
+) -> InferenceJobStatusRecord {
+    InferenceJobStatusRecord {
+        schema_version: 1,
+        job_id: job.job_id.clone(),
+        job_fingerprint: job.job_fingerprint.clone(),
+        task: job.task.clone(),
+        status: status.to_string(),
+        attempt,
+        started_at: started_at.to_string(),
+        updated_at: Utc::now().to_rfc3339(),
+        output_key: output.as_ref().map(|output| output.key.clone()),
+        output_sha256: output.as_ref().map(|output| output.sha256.clone()),
+        processed_rows: output.map(|output| output.rows as i64),
+        error,
+        producer: "rust-inference".to_string(),
+    }
+}
+
+fn validate_status(status: &InferenceJobStatusRecord, job: &InferenceJobManifest) -> Result<()> {
+    if status.schema_version != 1
+        || status.job_id != job.job_id
+        || status.job_fingerprint != job.job_fingerprint
+        || status.task != job.task
+    {
+        anyhow::bail!("inference status conflicts with immutable job manifest")
+    }
+    Ok(())
+}
+
+async fn persist_status(
+    store: &ObjectStore,
+    bucket: &str,
+    key: &str,
+    status: InferenceJobStatusRecord,
+) -> Result<()> {
+    store
+        .put_json(
+            bucket,
+            key,
+            &serde_json::to_vec(&status).context("encode inference status")?,
+        )
+        .await
+}
+
+fn start_ack_heartbeat(
+    message: jetstream::Message,
+    ack_wait_secs: u64,
+    cancel: CancellationToken,
+) -> tokio::task::JoinHandle<()> {
+    let period = Duration::from_secs((ack_wait_secs / 3).max(1));
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(period);
+        interval.tick().await;
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => break,
+                _ = interval.tick() => {
+                    if let Err(error) = message.ack_with(AckKind::Progress).await {
+                        tracing::warn!(%error, "failed to extend inference acknowledgement lease");
+                    }
+                }
+            }
+        }
+    })
+}
+
+fn error_summary(error: &anyhow::Error) -> String {
+    let text = format!("{error:#}");
+    text.chars().take(1024).collect()
 }
 
 fn build_anomaly_explanation(
@@ -371,9 +689,24 @@ fn validate_event_against_job(
         || event.runtime_package_id != job.runtime_package_id
         || event.gold_snapshot_id != job.gold_snapshot_id
         || event.gold_artifact_key != job.gold_artifact_key
+        || event.sector != job.sector
         || event.expected_prediction_count != job.expected_prediction_count
     {
         anyhow::bail!("inference event and job manifest disagree")
+    }
+    let (expected_id, expected_fingerprint) = compute_job_fingerprint(
+        &job.task,
+        &job.selection_policy_version,
+        &job.gold_snapshot_id,
+        &job.gold_manifest_sha256,
+        &job.gold_artifact_key,
+        &job.gold_artifact_content_sha256,
+        &job.runtime_package_id,
+        &job.runtime_manifest_sha256,
+        &job.runtime_validation_id,
+    );
+    if job.job_id != expected_id || job.job_fingerprint != expected_fingerprint {
+        anyhow::bail!("inference job fingerprint does not match immutable manifest")
     }
     Ok(())
 }
@@ -410,8 +743,8 @@ fn build_prediction(
     standardized: &[f32],
     input_sha: &str,
     output: &[f32],
+    predicted_at: &str,
 ) -> Result<serde_json::Value> {
-    let predicted_at = Utc::now().to_rfc3339();
     if job.task == "candidate_vetting" {
         let logit = output.first().context("candidate output is empty")?;
         let score = stable_sigmoid(*logit as f64);
@@ -443,7 +776,7 @@ fn build_prediction(
             score_definition_version: "candidate-sigmoid-score-v1".to_string(),
             decision_threshold: runtime.threshold(),
             above_threshold: score >= runtime.threshold(),
-            predicted_at,
+            predicted_at: predicted_at.to_string(),
             producer: "rust-inference".to_string(),
         };
         Ok(serde_json::to_value(record)?)
@@ -477,9 +810,70 @@ fn build_prediction(
             score_definition_version: "reconstruction-mse-v1".to_string(),
             decision_threshold: runtime.threshold(),
             above_threshold: mse >= runtime.threshold(),
-            predicted_at,
+            predicted_at: predicted_at.to_string(),
             producer: "rust-inference".to_string(),
         };
         Ok(serde_json::to_value(record)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn job() -> InferenceJobManifest {
+        InferenceJobManifest {
+            schema_version: 1,
+            job_id: "inference-job-v1-test".to_string(),
+            job_fingerprint: "f".repeat(64),
+            task: "candidate_vetting".to_string(),
+            selection_policy_version: "candidate-inference-selection-v1".to_string(),
+            gold_snapshot_id: "gold-v1-test".to_string(),
+            gold_manifest_key: "gold/snapshots/gold-v1-test/manifest.json".to_string(),
+            gold_manifest_sha256: "a".repeat(64),
+            gold_dataset: "candidate".to_string(),
+            gold_schema_version: "gold-candidate-v1".to_string(),
+            gold_artifact_key: "gold/candidate/part-0.parquet".to_string(),
+            gold_artifact_content_sha256: "b".repeat(64),
+            gold_artifact_parquet_sha256: None,
+            gold_artifact_size_bytes: None,
+            gold_artifact_row_count: 1,
+            sector: 1,
+            runtime_package_id: "runtime-v1-test".to_string(),
+            runtime_manifest_key: "models/runtime/test/manifest.json".to_string(),
+            runtime_manifest_sha256: "c".repeat(64),
+            runtime_validation_id: "rval-v1-test".to_string(),
+            runtime_validation_key: None,
+            runtime_validation_sha256: None,
+            model_id: "model-v1-test".to_string(),
+            model_version: "1.0.0".to_string(),
+            evaluation_run_id: "evaluation-v1-test".to_string(),
+            dataset_view_version: "gold-v1".to_string(),
+            dataset_view_fingerprint: "d".repeat(64),
+            feature_names: vec!["feature".to_string()],
+            expected_prediction_count: 1,
+            created_at: "2026-08-31T00:00:00Z".to_string(),
+            producer: "test".to_string(),
+        }
+    }
+
+    #[test]
+    fn completed_status_must_belong_to_the_same_immutable_job() {
+        let job = job();
+        let mut status = status_record(
+            &job,
+            "completed",
+            1,
+            "2026-08-31T00:00:00Z",
+            Some(JobOutput {
+                key: "predictions/test.jsonl".to_string(),
+                sha256: "e".repeat(64),
+                rows: 1,
+            }),
+            None,
+        );
+        assert!(validate_status(&status, &job).is_ok());
+        status.job_fingerprint = "x".repeat(64);
+        assert!(validate_status(&status, &job).is_err());
     }
 }

@@ -8,8 +8,10 @@ use arrow_array::{
     StringArray,
 };
 use bytes::Bytes;
-use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use parquet::arrow::arrow_reader::{ParquetRecordBatchReader, ParquetRecordBatchReaderBuilder};
 use std::collections::HashMap;
+use std::fs::File;
+use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub struct GoldRow {
@@ -60,51 +62,69 @@ fn string_value(array: &dyn Array, index: usize) -> Result<Option<String>> {
     Ok(Some(values.value(index).to_string()))
 }
 
-pub fn read_gold(bytes: Vec<u8>, feature_order: &[String]) -> Result<Vec<GoldRow>> {
+pub fn open_gold_reader(bytes: Vec<u8>) -> Result<ParquetRecordBatchReader> {
     let builder = ParquetRecordBatchReaderBuilder::try_new(Bytes::from(bytes))
         .context("invalid Gold Parquet")?;
-    let reader = builder
+    builder
         .with_batch_size(1024)
         .build()
-        .context("build Gold reader")?;
+        .context("build Gold reader")
+}
+
+pub fn open_gold_reader_from_file(path: &Path) -> Result<ParquetRecordBatchReader> {
+    let file = File::open(path).with_context(|| format!("open Gold file {}", path.display()))?;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file).context("invalid Gold Parquet")?;
+    builder
+        .with_batch_size(1024)
+        .build()
+        .context("build Gold reader")
+}
+
+pub fn decode_gold_batch(batch: RecordBatch, feature_order: &[String]) -> Result<Vec<GoldRow>> {
+    let source_idx = column_index(&batch, "source_product_id")?;
+    let tic_idx = column_index(&batch, "tic_id")?;
+    let sector_idx = column_index(&batch, "sector")?;
+    let sample_idx = batch.schema().index_of("sample_id").ok();
+    let feature_indices = feature_order
+        .iter()
+        .map(|name| Ok((name.clone(), column_index(&batch, name)?)))
+        .collect::<Result<Vec<_>>>()?;
+    let mut rows = Vec::with_capacity(batch.num_rows());
+    for row in 0..batch.num_rows() {
+        let source = string_value(batch.column(source_idx).as_ref(), row)?
+            .context("source_product_id cannot be null")?;
+        let tic =
+            numeric_value(batch.column(tic_idx).as_ref(), row)?.context("tic_id cannot be null")?;
+        let sector = numeric_value(batch.column(sector_idx).as_ref(), row)?
+            .context("sector cannot be null")?;
+        let sample_id = sample_idx
+            .map(|idx| string_value(batch.column(idx).as_ref(), row))
+            .transpose()?
+            .flatten();
+        let mut raw_features = HashMap::with_capacity(feature_indices.len());
+        for (name, idx) in &feature_indices {
+            raw_features.insert(
+                name.clone(),
+                numeric_value(batch.column(*idx).as_ref(), row)?,
+            );
+        }
+        rows.push(GoldRow {
+            raw_features,
+            source_product_id: source,
+            sample_id,
+            tic_id: tic as i64,
+            sector: sector as i64,
+        });
+    }
+    Ok(rows)
+}
+
+pub fn read_gold(bytes: Vec<u8>, feature_order: &[String]) -> Result<Vec<GoldRow>> {
+    let reader = open_gold_reader(bytes)?;
     let mut rows = Vec::new();
     for batch in reader {
         let batch = batch.context("read Gold record batch")?;
-        let source_idx = column_index(&batch, "source_product_id")?;
-        let tic_idx = column_index(&batch, "tic_id")?;
-        let sector_idx = column_index(&batch, "sector")?;
-        let sample_idx = batch.schema().index_of("sample_id").ok();
-        let feature_indices = feature_order
-            .iter()
-            .map(|name| Ok((name.clone(), column_index(&batch, name)?)))
-            .collect::<Result<Vec<_>>>()?;
-
-        for row in 0..batch.num_rows() {
-            let source = string_value(batch.column(source_idx).as_ref(), row)?
-                .context("source_product_id cannot be null")?;
-            let tic = numeric_value(batch.column(tic_idx).as_ref(), row)?
-                .context("tic_id cannot be null")?;
-            let sector = numeric_value(batch.column(sector_idx).as_ref(), row)?
-                .context("sector cannot be null")?;
-            let sample_id = sample_idx
-                .map(|idx| string_value(batch.column(idx).as_ref(), row))
-                .transpose()?
-                .flatten();
-            let mut raw_features = HashMap::with_capacity(feature_indices.len());
-            for (name, idx) in &feature_indices {
-                raw_features.insert(
-                    name.clone(),
-                    numeric_value(batch.column(*idx).as_ref(), row)?,
-                );
-            }
-            rows.push(GoldRow {
-                raw_features,
-                source_product_id: source,
-                sample_id,
-                tic_id: tic as i64,
-                sector: sector as i64,
-            });
-        }
+        rows.extend(decode_gold_batch(batch, feature_order)?);
     }
     if rows.is_empty() {
         anyhow::bail!("Gold artifact contains zero rows")

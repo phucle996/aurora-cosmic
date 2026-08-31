@@ -161,10 +161,7 @@ fn validate_manifest(manifest: &ModelRuntimeManifest) -> Result<(), RuntimeError
             manifest.schema_version
         )));
     }
-    if !matches!(
-        manifest.task.as_str(),
-        "candidate_vetting" | "astronomical_anomaly_detection"
-    ) {
+    if manifest.task != "candidate_vetting" {
         return Err(RuntimeError::InvalidPackage(format!(
             "unsupported task '{}'",
             manifest.task
@@ -203,9 +200,7 @@ fn validate_manifest(manifest: &ModelRuntimeManifest) -> Result<(), RuntimeError
         ));
     }
     if !manifest.decision_threshold.is_finite()
-        || (manifest.task == "candidate_vetting"
-            && !(0.0..=1.0).contains(&manifest.decision_threshold))
-        || (manifest.task == "astronomical_anomaly_detection" && manifest.decision_threshold < 0.0)
+        || !(0.0..=1.0).contains(&manifest.decision_threshold)
     {
         return Err(RuntimeError::InvalidPackage(
             "invalid decision threshold".to_string(),

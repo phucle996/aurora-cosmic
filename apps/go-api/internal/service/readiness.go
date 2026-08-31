@@ -12,16 +12,21 @@ import (
 type ReadinessService struct {
 	minio     repo.ObjectRepository
 	analytics repo.AnalyticsRepository
+	nats      dependencyPinger
 }
 
-func NewReadinessService(minio repo.ObjectRepository, analytics repo.AnalyticsRepository) domainService.Readiness {
-	return &ReadinessService{minio: minio, analytics: analytics}
+type dependencyPinger interface {
+	Ping(context.Context) error
+}
+
+func NewReadinessService(minio repo.ObjectRepository, analytics repo.AnalyticsRepository, nats dependencyPinger) domainService.Readiness {
+	return &ReadinessService{minio: minio, analytics: analytics, nats: nats}
 }
 
 func (s *ReadinessService) Check(parent context.Context) (map[string]string, bool) {
 	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
 	defer cancel()
-	status := map[string]string{"storage_minio": "DOWN", "query_engine": "DOWN", "ml_inference": "NOT_CHECKED"}
+	status := map[string]string{"storage_minio": "DOWN", "query_engine": "DOWN", "message_bus": "DOWN"}
 	ready := true
 	if s.minio != nil {
 		if err := s.minio.Ping(ctx); err == nil {
@@ -38,6 +43,16 @@ func (s *ReadinessService) Check(parent context.Context) (map[string]string, boo
 			status["query_engine"] = "UP"
 		} else {
 			slog.Default().Warn("ClickHouse readiness check failed", slog.Any("error", err))
+			ready = false
+		}
+	} else {
+		ready = false
+	}
+	if s.nats != nil {
+		if err := s.nats.Ping(ctx); err == nil {
+			status["message_bus"] = "UP"
+		} else {
+			slog.Default().Warn("NATS readiness check failed", slog.Any("error", err))
 			ready = false
 		}
 	} else {

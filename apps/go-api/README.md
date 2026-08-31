@@ -75,6 +75,11 @@ connections and low-level transport operations.
 * `POST /api/v1/preprocessing/jobs/:job_id/stop` cancels the active worker and
   records a durable `CANCELED` run checkpoint. The stop state is kept in API
   memory while the worker drains, so refreshes do not re-enable a stale start.
+* `GET /api/v1/gold/control` returns the durable Gold Builder desired mode and
+  worker-authored runtime state. `POST /api/v1/gold/control/start` accepts
+  `mode=stream|batch` and an idle window of 60–900 seconds; `POST
+  /api/v1/gold/control/stop` requests a safe pause. The API writes control to
+  MinIO, so operator intent survives API and worker restarts.
 * Collection endpoints accept `limit` (1–1000) and `offset` (0–10000000).
 * `tic_id` is required for lightcurve queries; the API never silently chooses a
   synthetic/default target.
@@ -91,6 +96,7 @@ GET /api/v1/lightcurves?tic_id=882271&sector=42&limit=1000&offset=0
 GET /api/v1/models?task=anomaly
 GET /api/v1/inference/jobs?model_id=model-anom-v1-dde689ef5383
 GET /api/v1/preprocessing/graph
+GET /api/v1/gold/control
 GET /api/v1/ingest/status
 GET /api/v1/storage?prefix=bronze/&page=1&limit=50
 GET /api/v1/events?workflow=preprocessing

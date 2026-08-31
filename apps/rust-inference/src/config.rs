@@ -85,10 +85,8 @@ impl Config {
             },
             minio: MinioConfig {
                 endpoint: require_env("MINIO_ENDPOINT")?,
-                access_key: env::var("MINIO_ACCESS_KEY")
-                    .unwrap_or_else(|_| "minioadmin".to_string()),
-                secret_key: env::var("MINIO_SECRET_KEY")
-                    .unwrap_or_else(|_| "minioadmin".to_string()),
+                access_key: require_env("MINIO_ACCESS_KEY")?,
+                secret_key: require_env("MINIO_SECRET_KEY")?,
                 bucket: require_env("MINIO_BUCKET")?,
                 prediction_bucket: env::var("AURORA_PREDICTION_BUCKET")
                     .unwrap_or_else(|_| require_env_fallback("MINIO_BUCKET", "aurora")),
@@ -100,7 +98,7 @@ impl Config {
                 durable: env::var("AURORA_INFERENCE_DURABLE")
                     .unwrap_or_else(|_| "aurora-rust-inference".to_string()),
                 subject: env::var("AURORA_INFERENCE_SUBJECT")
-                    .unwrap_or_else(|_| "aurora.v1.inference.*.requested".to_string()),
+                    .unwrap_or_else(|_| "aurora.v1.inference.candidate.requested".to_string()),
                 workers,
                 ack_wait_secs,
             },

@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -13,16 +14,17 @@ import (
 
 	"go-ingester/infra/mast"
 	"go-ingester/internal/model"
-	"go-ingester/internal/pipeline/ingest"
+	"go-ingester/internal/pipeline/event"
+	"go-ingester/internal/pipeline/plan"
 )
 
 type mockPublisher struct {
 	mu        sync.Mutex
-	published []*model.BronzeObjectReady
+	published []*event.BronzeReady
 	failNext  bool
 }
 
-func (m *mockPublisher) PublishBronzeReady(ctx context.Context, evt *model.BronzeObjectReady) error {
+func (m *mockPublisher) PublishBronzeReady(ctx context.Context, evt *event.BronzeReady) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.failNext {
@@ -37,22 +39,17 @@ func (m *mockPublisher) Close() error {
 }
 
 func TestSubjectMapping(t *testing.T) {
-	tpfSub, err := model.SubjectForKind(model.KindTargetPixel)
-	if err != nil || tpfSub != model.SubjectBronzeTargetPixel {
-		t.Errorf("expected %s, got %s (err: %v)", model.SubjectBronzeTargetPixel, tpfSub, err)
+	tpfSub, err := event.SubjectFor(model.KindTargetPixel)
+	if err != nil || tpfSub != event.SubjectTargetPixel {
+		t.Errorf("expected %s, got %s (err: %v)", event.SubjectTargetPixel, tpfSub, err)
 	}
 
-	lcSub, err := model.SubjectForKind(model.KindLightCurve)
-	if err != nil || lcSub != model.SubjectBronzeLightCurve {
-		t.Errorf("expected %s, got %s (err: %v)", model.SubjectBronzeLightCurve, lcSub, err)
+	lcSub, err := event.SubjectFor(model.KindLightCurve)
+	if err != nil || lcSub != event.SubjectLightCurve {
+		t.Errorf("expected %s, got %s (err: %v)", event.SubjectLightCurve, lcSub, err)
 	}
 
-	ffiSub, err := model.SubjectForKind(model.KindFFI)
-	if err != nil || ffiSub != model.SubjectBronzeFFI {
-		t.Errorf("expected %s, got %s (err: %v)", model.SubjectBronzeFFI, ffiSub, err)
-	}
-
-	_, err = model.SubjectForKind(model.KindUnknown)
+	_, err = event.SubjectFor(model.KindUnknown)
 	if err == nil {
 		t.Errorf("expected error for KindUnknown, got nil")
 	}
@@ -69,7 +66,7 @@ func TestBuildBronzeEvent(t *testing.T) {
 		TICID:           123456789,
 	}
 
-	evt, err := model.BuildBronzeEvent("evt-1", "aurora", prod, "bronze/tess/target-pixel/sector=0042/tic=123456789/tess_tp.fits", "hash123")
+	evt, err := event.NewBronzeReady("evt-1", "aurora", prod, "bronze/tess/target-pixel/sector=0042/tic=123456789/tess_tp.fits", "hash123")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -77,8 +74,8 @@ func TestBuildBronzeEvent(t *testing.T) {
 	if evt.EventID != "evt-1" {
 		t.Errorf("expected EventID evt-1, got %s", evt.EventID)
 	}
-	if evt.EventType != model.EventTypeBronzeObjectReady {
-		t.Errorf("expected EventType %s, got %s", model.EventTypeBronzeObjectReady, evt.EventType)
+	if evt.EventType != event.TypeBronzeObjectReady {
+		t.Errorf("expected EventType %s, got %s", event.TypeBronzeObjectReady, evt.EventType)
 	}
 	if evt.Bucket != "aurora" {
 		t.Errorf("expected Bucket aurora, got %s", evt.Bucket)
@@ -88,6 +85,17 @@ func TestBuildBronzeEvent(t *testing.T) {
 	}
 	if evt.SampleID != "sample:tic=123456789:sector=0042" {
 		t.Errorf("expected SampleID sample:tic=123456789:sector=0042, got %s", evt.SampleID)
+	}
+	payload, err := event.MarshalBronzeReady(evt)
+	if err != nil {
+		t.Fatalf("marshal Bronze event: %v", err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(payload, &document); err != nil {
+		t.Fatalf("decode Bronze event JSON: %v", err)
+	}
+	if document["source_product_id"] != "p123" || document["object_key"] == nil {
+		t.Fatalf("event codec changed the NATS wire contract: %s", payload)
 	}
 }
 
@@ -107,17 +115,16 @@ func TestPipelinePublishOrdering(t *testing.T) {
 	mockStorage := newMockStorageClient()
 	mockPub := &mockPublisher{}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	pipe := ingest.NewPipeline(mastClient, mockStorage, mockPub, nil, "aurora", 1, logger)
+	pipe := newTestPipeline(mastClient, mockStorage, mockPub, nil, "aurora", 1, logger)
 
 	man := &model.Manifest{
 		SchemaVersion: 1,
 		Source:        "test",
 		Samples: []model.Sample{
 			{
-				SampleID:   model.SampleID(100, 1),
-				TICID:      100,
-				Sector:     1,
-				PairStatus: model.PairStatusTPFOnly,
+				SampleID: plan.SampleID(100, 1),
+				TICID:    100,
+				Sector:   1,
 				TargetPixel: &model.ManifestProduct{
 					SourceProductID: "p-order",
 					Kind:            model.KindTargetPixel,
@@ -133,7 +140,7 @@ func TestPipelinePublishOrdering(t *testing.T) {
 		},
 	}
 
-	summary, results, err := pipe.IngestManifest(context.Background(), man, false)
+	summary, results, err := pipe.IngestManifest(context.Background(), man)
 	if err != nil {
 		t.Fatalf("unexpected pipeline error: %v", err)
 	}
@@ -178,17 +185,16 @@ func TestPipelinePublishFailurePreservesStorage(t *testing.T) {
 	mockStorage := newMockStorageClient()
 	mockPub := &mockPublisher{failNext: true}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	pipe := ingest.NewPipeline(mastClient, mockStorage, mockPub, nil, "aurora", 1, logger)
+	pipe := newTestPipeline(mastClient, mockStorage, mockPub, nil, "aurora", 1, logger)
 
 	man := &model.Manifest{
 		SchemaVersion: 1,
 		Source:        "test",
 		Samples: []model.Sample{
 			{
-				SampleID:   model.SampleID(200, 2),
-				TICID:      200,
-				Sector:     2,
-				PairStatus: model.PairStatusTPFOnly,
+				SampleID: plan.SampleID(200, 2),
+				TICID:    200,
+				Sector:   2,
 				TargetPixel: &model.ManifestProduct{
 					SourceProductID: "p-fail-pub",
 					Kind:            model.KindTargetPixel,
@@ -202,7 +208,7 @@ func TestPipelinePublishFailurePreservesStorage(t *testing.T) {
 		},
 	}
 
-	summary, results, err := pipe.IngestManifest(context.Background(), man, false)
+	summary, results, err := pipe.IngestManifest(context.Background(), man)
 	if err != nil {
 		t.Fatalf("unexpected pipeline execution error: %v", err)
 	}

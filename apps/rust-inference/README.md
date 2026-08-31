@@ -16,7 +16,8 @@ NATS inference job
       ├─ fetch Gold Parquet and verify content SHA + row count
       ├─ read feature_order, standardize with preprocessing.json
       ├─ execute one reusable ONNX Runtime session (bounded workers)
-      └─ write predictions/<task>/<snapshot>/<job>/part-00000.jsonl, then ACK
+      ├─ write immutable prediction JSONL and a durable execution status record
+      └─ confirm ACK only after the completed status is persisted
 ```
 
 The runtime package is immutable and contains `model.onnx`,
@@ -26,9 +27,22 @@ outputs are expected values only and are never used as model outputs.
 
 ## Resource controls
 
-`AURORA_INFERENCE_WORKERS` bounds concurrent jobs and
-`AURORA_INFERENCE_INTRA_THREADS` bounds ONNX intra-op threads. Gold objects are
-rejected above `AURORA_INFERENCE_MAX_GOLD_BYTES` before Parquet decoding.
+`AURORA_INFERENCE_WORKERS` bounds both concurrent jobs and JetStream
+`max_ack_pending`; a message is pulled only after a real execution slot becomes
+available. `AURORA_INFERENCE_INTRA_THREADS` bounds ONNX intra-op threads. Gold
+objects are rejected from their S3 metadata before download, streamed to a
+temporary file with SHA-256 verification, then decoded in 1,024-row Parquet
+batches. Prediction JSONL is spooled to disk before upload rather than held in
+RAM. A runtime package is parity-qualified once per worker process for each
+immutable manifest SHA; later jobs still verify the package manifest SHA and
+persisted Rust qualification record, but do not create a second parity session.
+
+Long jobs emit JetStream progress ACKs. Failed deliveries are recorded as
+`retrying` with their actual attempt number, NAKed with a bounded delay, and
+written to `inference/dead-letters/` after the final delivery. The mutable
+execution record at `inference/status/<job-id>.json` is what the API uses for
+`planned`, `running`, `retrying`, `failed`, and `completed` state; it is not
+part of the immutable inference-job manifest.
 
 The worker exposes `AURORA_INFERENCE_METRICS_ADDR` (default
 `0.0.0.0:8084`) with `/metrics` for Prometheus and `/healthz` for container

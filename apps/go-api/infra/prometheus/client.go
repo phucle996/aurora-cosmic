@@ -52,6 +52,7 @@ func (p *Client) QueryRange(ctx context.Context, expression string, start, end t
 		Status string `json:"status"`
 		Data   struct {
 			Result []struct {
+				Metric map[string]string   `json:"metric"`
 				Values [][]json.RawMessage `json:"values"`
 			} `json:"result"`
 		} `json:"data"`
@@ -67,6 +68,10 @@ func (p *Client) QueryRange(ctx context.Context, expression string, start, end t
 	if len(payload.Data.Result) == 0 {
 		return []entity.MonitoringPoint{}, nil
 	}
+	if len(payload.Data.Result) != 1 {
+		return nil, fmt.Errorf("Prometheus query returned %d series; monitoring queries must aggregate labels explicitly", len(payload.Data.Result))
+	}
+	labels := payload.Data.Result[0].Metric
 	points := make([]entity.MonitoringPoint, 0, len(payload.Data.Result[0].Values))
 	for _, pair := range payload.Data.Result[0].Values {
 		if len(pair) != 2 {
@@ -79,7 +84,7 @@ func (p *Client) QueryRange(ctx context.Context, expression string, start, end t
 		}
 		value, err := strconv.ParseFloat(rawValue, 64)
 		if err == nil {
-			points = append(points, entity.MonitoringPoint{Timestamp: timestamp, Value: value})
+			points = append(points, entity.MonitoringPoint{Timestamp: timestamp, Value: value, Labels: labels})
 		}
 	}
 	return points, nil

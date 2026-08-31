@@ -2,81 +2,37 @@
 
 `aurora-ingester` is responsible for querying NASA MAST, discovering TESS FITS products, creating deterministic ingestion manifests, streaming raw FITS directly into MinIO Bronze, publishing lightweight ingestion events via NATS JetStream, and persisting restart-safe checkpoints.
 
-The Compose service starts idle. It only creates an ingestion run after the
+The long-running service starts idle. It only creates an ingestion run after the
 dashboard calls `POST /api/v1/ingest/jobs`; startup/restart never discovers or
 downloads data automatically. The dashboard does not send a product-count
 limit: discovery continues until the configured Bronze run budget is reached.
-The CLI `ingest` command remains an explicit operator-only path for local
-manifest runs.
+The binary has one responsibility: run the control-plane service. Planning,
+starting, draining, and historical inspection are all initiated through the
+API and dashboard; there is no parallel CLI execution path.
 
 ## Package Layout
 
-* `cmd/aurora-ingester/` — Entrypoint, subcommand routing (`plan`, `ingest`, `cleanup`)
-* `internal/app/` — Application runner and lifecycle
+* `cmd/` — Single service entrypoint (`main.go`)
+* `internal/app/` — Process wiring and graceful service lifecycle
+* `internal/control/` — HTTP transport, control contract, and single-flight job lifecycle
 * `internal/config/` — Environment-based configuration
 * `internal/observer/` — Bounded Prometheus metrics and `/healthz` endpoint
 * `pkg/logger/` — Structured JSON logger (stdlib slog)
-* `internal/mast/` — MAST API client, product discovery, classification, streaming download
-* `internal/manifest/` — Product selection, TPF/LC pairing, manifest write/read
-* `internal/ingest/` — Streaming ingestion pipeline (SHA256, worker pool, verification)
-* `internal/storage/` — MinIO storage client, deterministic Bronze Object Key builder
-* `internal/events/` — NATS JetStream event publisher (Phase 2.4)
-* `internal/checkpoint/` — Persistent ingestion progress store and recovery manager (Phase 2.5)
+* `infra/mast/` — MAST API client, product discovery, classification, streaming download
+* `internal/pipeline/plan/` — Research-ready product selection and manifest read/write
+* `internal/pipeline/ingest/` — Manifest resolution, capacity safety, checkpoints, and bounded FITS streaming
+* `infra/storage/` — MinIO adapter and deterministic Bronze object storage
+* `infra/events/` — NATS JetStream publisher
+* `internal/pipeline/checkpoint/` — Persistent ingestion progress and recovery
 
-## 1. Planning / Manifest
-
-Query NASA MAST and create a versioned JSON ingestion manifest without downloading binaries:
-
-```bash
-go run ./cmd/aurora-ingester plan \
-    --sector 42 \
-    --limit 100 \
-    --output manifest.json
-```
-
-The default manifest policy accepts LC-only samples because MAST can return a
-light-curve observation without its matching TPF row in the same bounded page.
-Set `AURORA_REQUIRE_TPF_LC_PAIR=true` when a deployment explicitly requires
-strict TPF + LC pairing; that policy can legitimately produce an empty plan.
-
-## 2. Streaming Ingestion & Resume
-
-Stream selected TESS FITS products directly from MAST into MinIO Bronze with automatic checkpointing:
-
-```bash
-go run ./cmd/aurora-ingester ingest \
-    --manifest manifest.json \
-    --concurrency 8
-```
-
-Restart / Resume existing run:
-
-```bash
-go run ./cmd/aurora-ingester ingest \
-    --manifest manifest.json \
-    --resume
-```
-
-Force fresh run:
-
-```bash
-go run ./cmd/aurora-ingester ingest \
-    --manifest manifest.json \
-    --fresh
-```
-
-Dry-run mode (prints planned MinIO object paths and NATS subjects with zero write side effects):
-
-```bash
-go run ./cmd/aurora-ingester ingest \
-    --manifest manifest.json \
-    --dry-run
-```
-
-## 3. Metrics
+## Control Plane & Metrics
 
 Ingestion progress and storage contents are available in the dashboard at
 `/ingest`; the service no longer maintains a terminal progress command.
+
+Each run is planned by `POST /api/v1/ingest/jobs` and then executed by the
+long-running service. A plan contains only complete TPF + light-curve pairs,
+which are the full observational contract required by Candidate Gold.
 
 The service exposes a small, low-cardinality observer surface on
 `AURORA_METRICS_ADDR` (default `:8081`):
@@ -86,7 +42,7 @@ The service exposes a small, low-cardinality observer surface on
   workers, queue depth, processed bytes, and last successful product timestamp
 
 The observer never emits product IDs, object keys, or source URLs as labels.
-Prometheus scrapes the Compose service at `go-ingester:8081`.
+Prometheus scrapes the systemd service at its configured metrics address.
 
 ## Bronze Object Layout
 
@@ -94,8 +50,12 @@ FITS files are stored deterministically in MinIO Bronze bucket (`MINIO_BUCKET=au
 
 * **Target Pixel**: `bronze/tess/target-pixel/sector=0042/tic=123456789/<filename>_tp.fits`
 * **Light Curve**: `bronze/tess/lightcurve/sector=0042/tic=123456789/<filename>_lc.fits`
-* **FFI**: `bronze/tess/ffi/sector=0042/camera=1/ccd=3/<filename>_ffic.fits`
 * **Checkpoints**: `checkpoints/ingestion/runs/<run-id>.json` & `checkpoints/ingestion/current.json`
+
+Bronze is managed as rolling target-product waves: ingestion fills to the
+50 GiB active-wave watermark, waits for committed Silver lineage to become
+evictable, cleans back to 10 GiB, and resumes. The hard safety ceiling remains
+100 GiB.
 
 ## Running tests
 

@@ -15,13 +15,7 @@ func TestPairedBothPresent(t *testing.T) {
 		{ObsID: "obs1_lc", TICID: 100, Sector: 1, Kind: model.KindLightCurve, Filename: "tess1_lc.fits", SizeBytes: 200},
 	}
 
-	opts := model.SelectOptions{
-		IncludeTPF:  true,
-		IncludeLC:   true,
-		RequirePair: true,
-	}
-
-	m, err := plan.Build(products, opts)
+	m, err := plan.Build(products, plan.SelectOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -31,9 +25,6 @@ func TestPairedBothPresent(t *testing.T) {
 	}
 
 	s := m.Samples[0]
-	if s.PairStatus != model.PairStatusPaired {
-		t.Errorf("expected status PAIRED, got %s", s.PairStatus)
-	}
 	if s.TargetPixel == nil || s.LightCurve == nil {
 		t.Errorf("expected both TPF and LC to be present")
 	}
@@ -43,95 +34,20 @@ func TestPairedBothPresent(t *testing.T) {
 	}
 }
 
-func TestTPFOnly(t *testing.T) {
-	products := []model.Product{
-		{ObsID: "obs1_tp", TICID: 100, Sector: 1, Kind: model.KindTargetPixel, Filename: "tess1_tp.fits", SizeBytes: 500},
-	}
-
-	opts := model.SelectOptions{
-		IncludeTPF:  true,
-		IncludeLC:   true,
-		RequirePair: false,
-	}
-
-	m, err := plan.Build(products, opts)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(m.Samples) != 1 {
-		t.Fatalf("expected 1 sample, got %d", len(m.Samples))
-	}
-
-	s := m.Samples[0]
-	if s.PairStatus != model.PairStatusTPFOnly {
-		t.Errorf("expected status TPF_ONLY, got %s", s.PairStatus)
-	}
-}
-
-func TestLCOnly(t *testing.T) {
-	products := []model.Product{
-		{ObsID: "obs1_lc", TICID: 100, Sector: 1, Kind: model.KindLightCurve, Filename: "tess1_lc.fits", SizeBytes: 200},
-	}
-
-	opts := model.SelectOptions{
-		IncludeTPF:  true,
-		IncludeLC:   true,
-		RequirePair: false,
-	}
-
-	m, err := plan.Build(products, opts)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(m.Samples) != 1 {
-		t.Fatalf("expected 1 sample, got %d", len(m.Samples))
-	}
-
-	s := m.Samples[0]
-	if s.PairStatus != model.PairStatusLCOnly {
-		t.Errorf("expected status LC_ONLY, got %s", s.PairStatus)
-	}
-}
-
-func TestRequirePairExcludesIncomplete(t *testing.T) {
-	products := []model.Product{
-		{ObsID: "obs1_tp", TICID: 100, Sector: 1, Kind: model.KindTargetPixel, Filename: "tess1_tp.fits", SizeBytes: 500},
-		{ObsID: "obs2_lc", TICID: 200, Sector: 1, Kind: model.KindLightCurve, Filename: "tess2_lc.fits", SizeBytes: 200},
-	}
-
-	opts := model.SelectOptions{
-		IncludeTPF:  true,
-		IncludeLC:   true,
-		RequirePair: true,
-	}
-
-	_, err := plan.Build(products, opts)
-	if err == nil {
-		t.Errorf("expected error when no paired samples exist and RequirePair=true, got nil")
-	}
-}
-
-func TestDifferentSectorsNotPaired(t *testing.T) {
-	products := []model.Product{
-		{ObsID: "obs1_tp", TICID: 100, Sector: 1, Kind: model.KindTargetPixel, Filename: "tess1_tp.fits", SizeBytes: 500},
-		{ObsID: "obs1_lc", TICID: 100, Sector: 2, Kind: model.KindLightCurve, Filename: "tess1_lc.fits", SizeBytes: 200},
-	}
-
-	opts := model.SelectOptions{
-		IncludeTPF:  true,
-		IncludeLC:   true,
-		RequirePair: false,
-	}
-
-	m, err := plan.Build(products, opts)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(m.Samples) != 2 {
-		t.Fatalf("expected 2 separate samples for different sectors, got %d", len(m.Samples))
+func TestManifestRejectsIncompleteResearchEvidence(t *testing.T) {
+	for name, products := range map[string][]model.Product{
+		"missing-lightcurve": {
+			{ObsID: "tp", TICID: 100, Sector: 1, Kind: model.KindTargetPixel},
+		},
+		"missing-target-pixel": {
+			{ObsID: "lc", TICID: 100, Sector: 1, Kind: model.KindLightCurve},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := plan.Build(products, plan.SelectOptions{}); err == nil {
+				t.Fatal("expected incomplete research evidence to be rejected")
+			}
+		})
 	}
 }
 
@@ -143,11 +59,8 @@ func TestByteBudgetAtomicPair(t *testing.T) {
 		{ObsID: "obs2_lc", TICID: 200, Sector: 1, Kind: model.KindLightCurve, Filename: "tess2_lc.fits", SizeBytes: 500},
 	}
 
-	opts := model.SelectOptions{
-		IncludeTPF:    true,
-		IncludeLC:     true,
-		RequirePair:   true,
-		MaxTotalBytes: 1200, // Budget allows 1 pair (1000 bytes), but NOT 2 pairs (2000 bytes)
+	opts := plan.SelectOptions{
+		MaxTotalBytes: 1200, // One complete pair fits; two pairs exceed the budget.
 	}
 
 	m, err := plan.Build(products, opts)
@@ -163,20 +76,29 @@ func TestByteBudgetAtomicPair(t *testing.T) {
 	}
 }
 
+func TestTOITargetsAreSelectedBeforeLexicalBacklog(t *testing.T) {
+	products := []model.Product{
+		{ObsID: "a_tp", TICID: 100, Sector: 1, Kind: model.KindTargetPixel},
+		{ObsID: "a_lc", TICID: 100, Sector: 1, Kind: model.KindLightCurve},
+		{ObsID: "z_tp", TICID: 900, Sector: 1, Kind: model.KindTargetPixel},
+		{ObsID: "z_lc", TICID: 900, Sector: 1, Kind: model.KindLightCurve},
+	}
+	manifest, err := plan.Build(products, plan.SelectOptions{MaxSamples: 1, PreferredTICIDs: map[int64]struct{}{900: {}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Samples[0].TICID != 900 {
+		t.Fatalf("selected TIC %d, want catalog-prioritized TIC 900", manifest.Samples[0].TICID)
+	}
+}
+
 func TestStatisticsCorrect(t *testing.T) {
 	products := []model.Product{
 		{ObsID: "obs1_tp", TICID: 100, Sector: 1, Kind: model.KindTargetPixel, Filename: "tess1_tp.fits", SizeBytes: 500},
 		{ObsID: "obs1_lc", TICID: 100, Sector: 1, Kind: model.KindLightCurve, Filename: "tess1_lc.fits", SizeBytes: 200},
-		{ObsID: "ffi1", Sector: 1, Kind: model.KindFFI, Filename: "ffi1.fits", SizeBytes: 1000},
 	}
 
-	opts := model.SelectOptions{
-		IncludeTPF: true,
-		IncludeLC:  true,
-		IncludeFFI: true,
-	}
-
-	m, err := plan.Build(products, opts)
+	m, err := plan.Build(products, plan.SelectOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -185,11 +107,8 @@ func TestStatisticsCorrect(t *testing.T) {
 	if s.PairedCount != 1 {
 		t.Errorf("expected 1 paired count, got %d", s.PairedCount)
 	}
-	if s.FFICount != 1 {
-		t.Errorf("expected 1 FFI count, got %d", s.FFICount)
-	}
-	if s.TotalBytes != 1700 {
-		t.Errorf("expected total bytes 1700, got %d", s.TotalBytes)
+	if s.TotalBytes != 700 {
+		t.Errorf("expected total bytes 700, got %d", s.TotalBytes)
 	}
 
 	tmpDir := t.TempDir()
@@ -204,8 +123,8 @@ func TestStatisticsCorrect(t *testing.T) {
 		t.Fatalf("manifest read failed: %v", err)
 	}
 
-	if loaded.SchemaVersion != model.SchemaVersion {
-		t.Errorf("expected SchemaVersion %d, got %d", model.SchemaVersion, loaded.SchemaVersion)
+	if loaded.SchemaVersion != plan.SchemaVersion {
+		t.Errorf("expected SchemaVersion %d, got %d", plan.SchemaVersion, loaded.SchemaVersion)
 	}
 	if len(loaded.Samples) != 1 {
 		t.Errorf("expected 1 sample loaded, got %d", len(loaded.Samples))
@@ -220,14 +139,13 @@ func TestManifestProductsFlattensDeterministically(t *testing.T) {
 			TargetPixel: &model.ManifestProduct{SourceProductID: "tp"},
 			LightCurve:  &model.ManifestProduct{SourceProductID: "lc"},
 		}},
-		FFIs: []model.ManifestProduct{{SourceProductID: "ffi"}},
 	}
 
-	products := m.Products()
-	if len(products) != 3 {
-		t.Fatalf("expected 3 products, got %d", len(products))
+	products := plan.Products(m)
+	if len(products) != 2 {
+		t.Fatalf("expected 2 products, got %d", len(products))
 	}
-	for i, want := range []string{"tp", "lc", "ffi"} {
+	for i, want := range []string{"tp", "lc"} {
 		if products[i].SourceProductID != want {
 			t.Errorf("product[%d] = %q, want %q", i, products[i].SourceProductID, want)
 		}
@@ -236,5 +154,22 @@ func TestManifestProductsFlattensDeterministically(t *testing.T) {
 	products[0].SourceProductID = "mutated-copy"
 	if m.Samples[0].TargetPixel.SourceProductID != "tp" {
 		t.Fatal("Products should return value copies, not mutate the manifest")
+	}
+}
+
+func TestManifestProductsKeepsEachTargetPairAdjacent(t *testing.T) {
+	m := &model.Manifest{
+		Samples: []model.Sample{
+			{TargetPixel: &model.ManifestProduct{SourceProductID: "tp-1"}, LightCurve: &model.ManifestProduct{SourceProductID: "lc-1"}},
+			{TargetPixel: &model.ManifestProduct{SourceProductID: "tp-2"}, LightCurve: &model.ManifestProduct{SourceProductID: "lc-2"}},
+			{TargetPixel: &model.ManifestProduct{SourceProductID: "tp-3"}, LightCurve: &model.ManifestProduct{SourceProductID: "lc-3"}},
+		},
+	}
+
+	products := plan.Products(m)
+	for index, want := range []string{"tp-1", "lc-1", "tp-2", "lc-2", "tp-3", "lc-3"} {
+		if products[index].SourceProductID != want {
+			t.Errorf("product[%d] = %q, want %q", index, products[index].SourceProductID, want)
+		}
 	}
 }

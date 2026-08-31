@@ -15,6 +15,17 @@ type AnalyticsRepository interface {
 	ListAnomalies(context.Context, int, string, bool, entity.PageRequest) (entity.Page[entity.Anomaly], error)
 	GetAnomaly(context.Context, string, string) (*entity.Anomaly, error)
 	ListTargets(context.Context, entity.TargetQuery) (entity.Page[entity.Target], error)
-	GetTarget(context.Context, int64, int) (*entity.TargetDetail, error)
+	GetTarget(context.Context, int64, int, string) (*entity.TargetDetail, error)
 	GetLightcurve(context.Context, int64, int, entity.PageRequest) (*entity.Lightcurve, error)
+}
+
+// TrainingReadinessRepository is deliberately narrow so the model control
+// plane only depends on the aggregate label evidence it needs to authorize a
+// supervised run.
+type TrainingReadinessRepository interface {
+	TrainingReadiness(context.Context, []string) (*entity.TrainingReadiness, error)
+}
+
+type TrainingLabelOverrideRepository interface {
+	OverrideTrainingLabel(context.Context, entity.TrainingLabelOverride) error
 }

@@ -1,12 +1,6 @@
 package model
 
-import (
-	"crypto/sha256"
-	"encoding/hex"
-	"hash"
-	"io"
-	"time"
-)
+import "time"
 
 // IngestStatus represents the ingestion and event publishing outcome for a single product.
 type IngestStatus string
@@ -40,35 +34,4 @@ type Summary struct {
 	StoredBytes            int64
 	Elapsed                time.Duration
 	ThroughputBps          float64
-}
-
-// HashedReader wraps an io.Reader, computing SHA256 and tracking byte count on the fly.
-type HashedReader struct {
-	r         io.Reader
-	h         hash.Hash
-	bytesRead int64
-}
-
-func NewHashedReader(r io.Reader) *HashedReader {
-	return &HashedReader{
-		r: r,
-		h: sha256.New(),
-	}
-}
-
-func (hr *HashedReader) Read(p []byte) (int, error) {
-	n, err := hr.r.Read(p)
-	if n > 0 {
-		hr.h.Write(p[:n])
-		hr.bytesRead += int64(n)
-	}
-	return n, err
-}
-
-func (hr *HashedReader) BytesRead() int64 {
-	return hr.bytesRead
-}
-
-func (hr *HashedReader) SumHex() string {
-	return hex.EncodeToString(hr.h.Sum(nil))
 }

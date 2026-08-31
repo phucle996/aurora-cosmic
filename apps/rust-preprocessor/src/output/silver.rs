@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -18,7 +19,7 @@ use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 
 use crate::event::BronzeObjectReady;
-use crate::pipeline::image::{ProcessedFfi, ProcessedTargetPixel};
+use crate::pipeline::image::{ImageProcessingMetadata, ProcessedFfi, ProcessedTargetPixel};
 use crate::pipeline::lightcurve::ProcessedLightCurve;
 
 /// Metadata and local file handle of a serialized Silver Parquet artifact.
@@ -36,18 +37,157 @@ pub struct SilverArtifact {
     _handle: NamedTempFile,
 }
 
+/// Incremental Parquet writer for a TPF. Every written chunk becomes an Arrow
+/// record batch / Parquet row group, so the complete pixel cube is never held
+/// in memory.
+pub struct TargetPixelStreamWriter {
+    schema: Arc<Schema>,
+    writer: ArrowWriter<File>,
+    temp_file: NamedTempFile,
+    rows: Option<usize>,
+    cols: Option<usize>,
+    output_cadences: usize,
+}
+
+impl TargetPixelStreamWriter {
+    pub fn new(tmp_dir: &Path) -> Result<Self> {
+        let schema = target_pixel_schema();
+        let temp_file = NamedTempFile::new_in(tmp_dir)
+            .context("Failed to create temporary TPF Parquet file")?;
+        let file = File::create(temp_file.path())
+            .context("Failed to open temporary TPF Parquet file for writing")?;
+        let props = WriterProperties::builder()
+            .set_compression(Compression::ZSTD(Default::default()))
+            .build();
+        let writer = ArrowWriter::try_new(file, schema.clone(), Some(props))
+            .context("Failed to create streaming TPF Parquet writer")?;
+
+        Ok(Self {
+            schema,
+            writer,
+            temp_file,
+            rows: None,
+            cols: None,
+            output_cadences: 0,
+        })
+    }
+
+    pub fn write_chunk(&mut self, tpf: &ProcessedTargetPixel) -> Result<()> {
+        if tpf.time.is_empty() {
+            return Ok(());
+        }
+        if let (Some(rows), Some(cols)) = (self.rows, self.cols) {
+            if rows != tpf.rows || cols != tpf.cols {
+                anyhow::bail!(
+                    "TPF chunk grid changed while streaming: expected {}x{}, got {}x{}",
+                    rows,
+                    cols,
+                    tpf.rows,
+                    tpf.cols
+                );
+            }
+        } else {
+            self.rows = Some(tpf.rows);
+            self.cols = Some(tpf.cols);
+        }
+
+        let batch = target_pixel_batch(self.schema.clone(), tpf)?;
+        self.writer
+            .write(&batch)
+            .context("Failed to append TPF chunk to Parquet writer")?;
+        self.output_cadences += tpf.time.len();
+        Ok(())
+    }
+
+    pub fn finish(
+        self,
+        event: &BronzeObjectReady,
+        tic_id: Option<u64>,
+        processing: ImageProcessingMetadata,
+        chunk_count: usize,
+        chunk_cadences: usize,
+        processing_fingerprint: &str,
+    ) -> Result<SilverArtifact> {
+        if self.output_cadences == 0 {
+            anyhow::bail!("Cannot finalize an empty streamed TPF artifact");
+        }
+
+        self.writer
+            .close()
+            .context("Failed to finalize streaming TPF Parquet writer")?;
+
+        let local_path = self.temp_file.path().to_path_buf();
+        let (size_bytes, sha256) = file_size_and_sha256(&local_path)?;
+        let schema_version = "silver-target-pixel-v1".to_string();
+        let processor_version = processing.processor_version.clone();
+        let object_key = build_tpf_key(
+            event.sector,
+            tic_id,
+            &event.source_product_id,
+            &processor_version,
+            processing_fingerprint,
+        );
+
+        let mut metadata =
+            target_pixel_metadata(event, &schema_version, &processor_version, &sha256, tic_id);
+        metadata.insert(
+            "normalization-mode".to_string(),
+            processing.normalization_mode,
+        );
+        metadata.insert(
+            "input-cadences".to_string(),
+            processing.input_cadences.to_string(),
+        );
+        metadata.insert(
+            "output-cadences".to_string(),
+            processing.output_cadences.to_string(),
+        );
+        metadata.insert(
+            "quality-removed".to_string(),
+            processing.quality_removed.to_string(),
+        );
+        metadata.insert(
+            "invalid-time-removed".to_string(),
+            processing.invalid_time_removed.to_string(),
+        );
+        metadata.insert(
+            "finite-pixel-fraction".to_string(),
+            processing.finite_pixel_fraction.to_string(),
+        );
+        metadata.insert("tpf-chunk-count".to_string(), chunk_count.to_string());
+        metadata.insert("tpf-chunk-cadences".to_string(), chunk_cadences.to_string());
+        metadata.insert(
+            "processing-fingerprint".to_string(),
+            processing_fingerprint.to_string(),
+        );
+
+        Ok(SilverArtifact {
+            bucket: event.bucket.clone(),
+            object_key,
+            schema_version,
+            processor_version,
+            local_path,
+            size_bytes,
+            sha256,
+            metadata,
+            _handle: self.temp_file,
+        })
+    }
+}
+
 /// Build deterministic Silver MinIO object key for Light Curve.
 pub fn build_lc_key(
     sector: u32,
     tic_id: Option<u64>,
     source_product_id: &str,
     processor_version: &str,
+    processing_fingerprint: &str,
 ) -> String {
     let tic_str = tic_id
         .map(|t| t.to_string())
         .unwrap_or_else(|| "none".to_string());
     format!(
-        "silver/tess/lightcurve/processor={processor_version}/sector={sector:04}/tic={tic_str}/{source_product_id}.parquet"
+        "silver/tess/lightcurve/processor={processor_version}/config={processing_fingerprint}/sector={sector:04}/tic={tic_str}/{source_product_id}.parquet"
     )
 }
 
@@ -57,12 +197,13 @@ pub fn build_tpf_key(
     tic_id: Option<u64>,
     source_product_id: &str,
     processor_version: &str,
+    processing_fingerprint: &str,
 ) -> String {
     let tic_str = tic_id
         .map(|t| t.to_string())
         .unwrap_or_else(|| "none".to_string());
     format!(
-        "silver/tess/target-pixel/processor={processor_version}/sector={sector:04}/tic={tic_str}/{source_product_id}.parquet"
+        "silver/tess/target-pixel/processor={processor_version}/config={processing_fingerprint}/sector={sector:04}/tic={tic_str}/{source_product_id}.parquet"
     )
 }
 
@@ -73,6 +214,7 @@ pub fn build_ffi_key(
     ccd: Option<u8>,
     source_product_id: &str,
     processor_version: &str,
+    processing_fingerprint: &str,
 ) -> String {
     let cam_str = camera
         .map(|c| c.to_string())
@@ -81,7 +223,7 @@ pub fn build_ffi_key(
         .map(|c| c.to_string())
         .unwrap_or_else(|| "none".to_string());
     format!(
-        "silver/tess/ffi/processor={processor_version}/sector={sector:04}/camera={cam_str}/ccd={ccd_str}/{source_product_id}.parquet"
+        "silver/tess/ffi/processor={processor_version}/config={processing_fingerprint}/sector={sector:04}/camera={cam_str}/ccd={ccd_str}/{source_product_id}.parquet"
     )
 }
 
@@ -90,6 +232,7 @@ pub fn serialize_lightcurve(
     lc: &ProcessedLightCurve,
     event: &BronzeObjectReady,
     tmp_dir: &Path,
+    processing_fingerprint: &str,
 ) -> Result<SilverArtifact> {
     let schema_version = "silver-lightcurve-v1".to_string();
     let processor_version = lc.processing.processor_version.clone();
@@ -98,6 +241,7 @@ pub fn serialize_lightcurve(
         lc.tic_id,
         &event.source_product_id,
         &processor_version,
+        processing_fingerprint,
     );
 
     let schema = Arc::new(Schema::new(vec![
@@ -140,6 +284,34 @@ pub fn serialize_lightcurve(
         metadata.insert("tic-id".to_string(), tic.to_string());
     }
     metadata.insert("sector".to_string(), event.sector.to_string());
+    metadata.insert(
+        "processing-fingerprint".to_string(),
+        processing_fingerprint.to_string(),
+    );
+    metadata.insert(
+        "input-points".to_string(),
+        lc.processing.input_points.to_string(),
+    );
+    metadata.insert(
+        "output-points".to_string(),
+        lc.processing.output_points.to_string(),
+    );
+    metadata.insert(
+        "quality-removed".to_string(),
+        lc.processing.quality_removed.to_string(),
+    );
+    metadata.insert(
+        "invalid-removed".to_string(),
+        lc.processing.invalid_removed.to_string(),
+    );
+    metadata.insert(
+        "outlier-removed".to_string(),
+        lc.processing.outlier_removed.to_string(),
+    );
+    metadata.insert(
+        "flux-median".to_string(),
+        lc.processing.flux_median.to_string(),
+    );
 
     Ok(SilverArtifact {
         bucket: event.bucket.clone(),
@@ -154,22 +326,8 @@ pub fn serialize_lightcurve(
     })
 }
 
-/// Serialize a ProcessedTargetPixel to a Parquet file with Arrow schema `silver-target-pixel-v1` and ZSTD compression.
-pub fn serialize_target_pixel(
-    tpf: &ProcessedTargetPixel,
-    event: &BronzeObjectReady,
-    tmp_dir: &Path,
-) -> Result<SilverArtifact> {
-    let schema_version = "silver-target-pixel-v1".to_string();
-    let processor_version = tpf.processing.processor_version.clone();
-    let object_key = build_tpf_key(
-        event.sector,
-        tpf.tic_id,
-        &event.source_product_id,
-        &processor_version,
-    );
-
-    let schema = Arc::new(Schema::new(vec![
+fn target_pixel_schema() -> Arc<Schema> {
+    Arc::new(Schema::new(vec![
         Field::new("time", DataType::Float64, false),
         Field::new("quality", DataType::Int32, false),
         Field::new(
@@ -179,14 +337,13 @@ pub fn serialize_target_pixel(
         ),
         Field::new("rows", DataType::Int32, false),
         Field::new("cols", DataType::Int32, false),
-    ]));
+    ]))
+}
 
+fn target_pixel_batch(schema: Arc<Schema>, tpf: &ProcessedTargetPixel) -> Result<RecordBatch> {
     let time_array = Arc::new(Float64Array::from(tpf.time.clone())) as ArrayRef;
     let quality_array = Arc::new(Int32Array::from(tpf.quality.clone())) as ArrayRef;
-
-    // Flatten 3D flux [cadence][row][col] to Arrow List<Float32> (row-major)
-    let values_builder = Float32Builder::new();
-    let mut flux_builder = ListBuilder::new(values_builder);
+    let mut flux_builder = ListBuilder::new(Float32Builder::new());
 
     for cadence in &tpf.flux {
         for row in cadence {
@@ -197,14 +354,11 @@ pub fn serialize_target_pixel(
         flux_builder.append(true);
     }
     let flux_list_array = Arc::new(flux_builder.finish()) as ArrayRef;
+    let rows_array = Arc::new(Int32Array::from(vec![tpf.rows as i32; tpf.time.len()])) as ArrayRef;
+    let cols_array = Arc::new(Int32Array::from(vec![tpf.cols as i32; tpf.time.len()])) as ArrayRef;
 
-    let rows_vec = vec![tpf.rows as i32; tpf.time.len()];
-    let cols_vec = vec![tpf.cols as i32; tpf.time.len()];
-    let rows_array = Arc::new(Int32Array::from(rows_vec)) as ArrayRef;
-    let cols_array = Arc::new(Int32Array::from(cols_vec)) as ArrayRef;
-
-    let batch = RecordBatch::try_new(
-        schema.clone(),
+    RecordBatch::try_new(
+        schema,
         vec![
             time_array,
             quality_array,
@@ -213,33 +367,35 @@ pub fn serialize_target_pixel(
             cols_array,
         ],
     )
-    .context("Failed to create TPF Arrow RecordBatch")?;
+    .context("Failed to create TPF Arrow RecordBatch")
+}
 
-    let (local_path, size_bytes, sha256, handle) = write_parquet_batch(schema, batch, tmp_dir)?;
-
+fn target_pixel_metadata(
+    event: &BronzeObjectReady,
+    schema_version: &str,
+    processor_version: &str,
+    sha256: &str,
+    tic_id: Option<u64>,
+) -> HashMap<String, String> {
     let mut metadata = HashMap::new();
-    metadata.insert("schema-version".to_string(), schema_version.clone());
-    metadata.insert("processor-version".to_string(), processor_version.clone());
+    metadata.insert("schema-version".to_string(), schema_version.to_string());
+    metadata.insert(
+        "processor-version".to_string(),
+        processor_version.to_string(),
+    );
     metadata.insert(
         "source-product-id".to_string(),
         event.source_product_id.clone(),
     );
     metadata.insert("bronze-object-key".to_string(), event.object_key.clone());
     metadata.insert("bronze-sha256".to_string(), event.sha256.clone());
-    metadata.insert("silver-sha256".to_string(), sha256.clone());
+    metadata.insert("silver-sha256".to_string(), sha256.to_string());
     metadata.insert("product-kind".to_string(), "TARGET_PIXEL".to_string());
-
-    Ok(SilverArtifact {
-        bucket: event.bucket.clone(),
-        object_key,
-        schema_version,
-        processor_version,
-        local_path,
-        size_bytes,
-        sha256,
-        metadata,
-        _handle: handle,
-    })
+    metadata.insert("sector".to_string(), event.sector.to_string());
+    if let Some(tic) = tic_id {
+        metadata.insert("tic-id".to_string(), tic.to_string());
+    }
+    metadata
 }
 
 /// Serialize a ProcessedFfi to a Parquet file with Arrow schema `silver-ffi-v1` and ZSTD compression.
@@ -247,6 +403,7 @@ pub fn serialize_ffi(
     ffi: &ProcessedFfi,
     event: &BronzeObjectReady,
     tmp_dir: &Path,
+    processing_fingerprint: &str,
 ) -> Result<SilverArtifact> {
     let schema_version = "silver-ffi-v1".to_string();
     let processor_version = ffi.processing.processor_version.clone();
@@ -256,6 +413,7 @@ pub fn serialize_ffi(
         event.ccd,
         &event.source_product_id,
         &processor_version,
+        processing_fingerprint,
     );
 
     let schema = Arc::new(Schema::new(vec![
@@ -298,6 +456,10 @@ pub fn serialize_ffi(
     );
     metadata.insert("bronze-object-key".to_string(), event.object_key.clone());
     metadata.insert("bronze-sha256".to_string(), event.sha256.clone());
+    metadata.insert(
+        "processing-fingerprint".to_string(),
+        processing_fingerprint.to_string(),
+    );
     metadata.insert("silver-sha256".to_string(), sha256.clone());
     metadata.insert("product-kind".to_string(), "FFI".to_string());
 
@@ -340,10 +502,29 @@ fn write_parquet_batch(
         .close()
         .context("Failed to finalize Parquet file writer")?;
 
-    // Read back file to get size and calculate SHA-256
-    let bytes = std::fs::read(&path).context("Failed to read back Parquet file for hashing")?;
-    let size_bytes = bytes.len() as u64;
-    let sha256 = hex::encode(Sha256::digest(&bytes));
+    let (size_bytes, sha256) = file_size_and_sha256(&path)?;
 
     Ok((path, size_bytes, sha256, temp_file))
+}
+
+/// Hash output incrementally so a multi-GB Parquet artifact is never copied
+/// into RAM merely to calculate its integrity metadata.
+fn file_size_and_sha256(path: &Path) -> Result<(u64, String)> {
+    let mut file = File::open(path).context("Failed to open Parquet file for hashing")?;
+    let mut hasher = Sha256::new();
+    let mut size_bytes = 0u64;
+    let mut buffer = [0u8; 1024 * 1024];
+
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .context("Failed to read Parquet file for hashing")?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+        size_bytes += read as u64;
+    }
+
+    Ok((size_bytes, hex::encode(hasher.finalize())))
 }

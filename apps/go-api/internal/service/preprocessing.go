@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -19,7 +20,12 @@ import (
 // ============================================================================
 // HẰNG SỐ & ĐẶC TẢ METRICS TIỀN XỬ LÝ
 // ============================================================================
-const preprocessingObservationWindow = 5 * time.Minute
+const (
+	preprocessingObservationWindow = 5 * time.Minute
+	preprocessingInventoryRefresh  = 60 * time.Second
+	preprocessingRuntimeWindow     = 60 * time.Second
+	preprocessingTraceLimit        = 200
+)
 
 type preprocessingMetric struct {
 	key   string
@@ -35,6 +41,20 @@ var preprocessingMetrics = []preprocessingMetric{
 	{key: "throughput", query: "sum(rate(aurora_preprocessor_products_total{status=\"success\"}[2m]))"},
 	{key: "errors", query: "sum(rate(aurora_preprocessor_errors_total[2m]))"},
 	{key: "last_success", query: "max(aurora_preprocessor_last_success_timestamp_seconds)"},
+	{key: "lc_input_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"input\"}[2m]))"},
+	{key: "lc_output_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"output\"}[2m]))"},
+	{key: "lc_quality_removed_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"quality_removed\"}[2m]))"},
+	{key: "lc_invalid_removed_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"invalid_removed\"}[2m]))"},
+	{key: "lc_outlier_removed_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"outlier_removed\"}[2m]))"},
+	{key: "tpf_input_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"target_pixel\",outcome=\"input\"}[2m]))"},
+	{key: "tpf_output_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"target_pixel\",outcome=\"output\"}[2m]))"},
+	{key: "tpf_quality_removed_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"target_pixel\",outcome=\"quality_removed\"}[2m]))"},
+	{key: "tpf_invalid_removed_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"target_pixel\",outcome=\"invalid_removed\"}[2m]))"},
+	{key: "tpf_finite_pixel_fraction", query: "max(aurora_preprocessor_finite_pixel_fraction{kind=\"target_pixel\"})"},
+	{key: "bronze_bytes_rate", query: "sum(rate(aurora_preprocessor_bytes_total{stage=\"bronze\"}[2m]))"},
+	{key: "silver_bytes_rate", query: "sum(rate(aurora_preprocessor_bytes_total{stage=\"silver\"}[2m]))"},
+	{key: "lc_duration_p95", query: "histogram_quantile(0.95, sum by (le) (rate(aurora_preprocessor_processing_duration_seconds_bucket{kind=\"lightcurve\"}[5m])))"},
+	{key: "tpf_duration_p95", query: "histogram_quantile(0.95, sum by (le) (rate(aurora_preprocessor_processing_duration_seconds_bucket{kind=\"target_pixel\"}[5m])))"},
 }
 
 // ============================================================================
@@ -55,6 +75,8 @@ type PreprocessingService struct {
 	checkpointDetails  map[string]string               // Chi tiết checkpoint đối tượng FITS mới nhất
 	progressAt         time.Time                       // Thời điểm quét checkpoint gần nhất
 	progressRefreshing bool                            // Cờ đánh dấu đang quét nền checkpoint
+	runtime            entity.PreprocessingRuntimeSnapshot
+	completionTimes    []time.Time
 }
 
 // NewPreprocessingService khởi tạo PreprocessingService cơ bản
@@ -101,12 +123,16 @@ func (s *PreprocessingService) Start(ctx context.Context, request entity.Preproc
 	if request.Mode != "stream" && request.Mode != "batch" {
 		return nil, fmt.Errorf("preprocessing mode must be stream or batch")
 	}
+	if strings.TrimSpace(request.IngestRunID) != "" || strings.TrimSpace(request.Prefix) != "" {
+		return nil, fmt.Errorf("preprocessing scoping by ingest_run_id or prefix is not supported by the Bronze event contract")
+	}
 
 	// 2. Tạo đối tượng job điều khiển mới
 	job := &entity.PreprocessingControlJob{
 		JobID:       "preprocess-job-" + uuid.NewString()[:8],
 		Status:      "accepted",
 		Mode:        request.Mode,
+		WorkerCount: request.WorkerCount,
 		IngestRunID: strings.TrimSpace(request.IngestRunID),
 		Prefix:      request.Prefix,
 		StartedAt:   time.Now().UTC(),
@@ -120,12 +146,14 @@ func (s *PreprocessingService) Start(ctx context.Context, request entity.Preproc
 		Mode        string `json:"mode"`
 		IngestRunID string `json:"ingest_run_id,omitempty"`
 		Prefix      string `json:"prefix,omitempty"`
+		WorkerCount int    `json:"worker_count"`
 	}{
 		Action:      "start",
 		JobID:       job.JobID,
 		Mode:        job.Mode,
 		IngestRunID: job.IngestRunID,
 		Prefix:      job.Prefix,
+		WorkerCount: job.WorkerCount,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("encode preprocessing command: %w", err)
@@ -139,6 +167,8 @@ func (s *PreprocessingService) Start(ctx context.Context, request entity.Preproc
 	s.runtimeMu.Lock()
 	s.runtimeJob = job
 	s.progress = entity.PreprocessingProgress{ObservedAt: job.UpdatedAt}
+	s.runtime = entity.PreprocessingRuntimeSnapshot{DesiredWorkers: job.WorkerCount, ObservedAt: job.UpdatedAt}
+	s.completionTimes = nil
 	s.runtimeMu.Unlock()
 
 	if s.publisher != nil {
@@ -153,6 +183,89 @@ func (s *PreprocessingService) Start(ctx context.Context, request entity.Preproc
 		})
 	}
 	return job, nil
+}
+
+// ObserveRuntime applies a tiny Core NATS lifecycle event. State is kept in
+// memory and bounded: dashboard traffic never causes a MinIO scan or log dump.
+func (s *PreprocessingService) ObserveRuntime(event entity.PreprocessingRuntimeEvent) {
+	if event.OccurredAt.IsZero() {
+		event.OccurredAt = time.Now().UTC()
+	}
+	// Never expose an internal fallback identifier as a worker. It originated
+	// from an older pool race and must not inflate operator-facing totals.
+	if event.WorkerID == "preprocess-unassigned" {
+		return
+	}
+	s.runtimeMu.Lock()
+	defer s.runtimeMu.Unlock()
+	if s.runtime.ObservedAt.IsZero() && s.runtimeJob != nil {
+		s.runtime.DesiredWorkers = s.runtimeJob.WorkerCount
+	}
+	workers := make(map[string]entity.PreprocessingWorkerRuntime, len(s.runtime.Workers)+1)
+	for _, worker := range s.runtime.Workers {
+		if worker.WorkerID == "preprocess-unassigned" {
+			continue
+		}
+		workers[worker.WorkerID] = worker
+	}
+	worker := workers[event.WorkerID]
+	if event.WorkerID != "" {
+		worker.WorkerID = event.WorkerID
+	}
+	worker.UpdatedAt = event.OccurredAt
+	switch event.Event {
+	case "worker_spawned":
+		worker.State = "idle"
+	case "file_started", "stage_changed":
+		worker.State, worker.ProductKind, worker.ObjectKey, worker.Stage = "processing", event.ProductKind, event.ObjectKey, event.Stage
+		if event.Event == "file_started" {
+			worker.StartedAt = event.OccurredAt
+		}
+	case "file_completed":
+		worker.State, worker.LastDurationMS, worker.Completed = "idle", event.ElapsedMS, worker.Completed+1
+		worker.ObjectKey, worker.Stage = "", "completed"
+		s.runtime.Completed++
+		s.completionTimes = append(s.completionTimes, event.OccurredAt)
+	case "file_failed":
+		worker.State, worker.LastDurationMS, worker.Failed = "failed", event.ElapsedMS, worker.Failed+1
+		worker.Stage = "failed"
+		s.runtime.Failed++
+	case "worker_stopped", "worker_killed":
+		worker.State, worker.ObjectKey, worker.Stage = "stopped", "", ""
+	case "worker_idle":
+		worker.State, worker.ObjectKey = "idle", ""
+	}
+	if event.WorkerID != "" {
+		workers[event.WorkerID] = worker
+	}
+	s.runtime.Workers = s.runtime.Workers[:0]
+	for _, item := range workers {
+		s.runtime.Workers = append(s.runtime.Workers, item)
+	}
+	sort.Slice(s.runtime.Workers, func(i, j int) bool { return s.runtime.Workers[i].WorkerID < s.runtime.Workers[j].WorkerID })
+	s.runtime.ActualWorkers, s.runtime.Processing = 0, 0
+	for _, item := range s.runtime.Workers {
+		if item.State != "stopped" {
+			s.runtime.ActualWorkers++
+		}
+		if item.State == "processing" {
+			s.runtime.Processing++
+		}
+	}
+	cutoff := event.OccurredAt.Add(-preprocessingRuntimeWindow)
+	kept := s.completionTimes[:0]
+	for _, completedAt := range s.completionTimes {
+		if completedAt.After(cutoff) {
+			kept = append(kept, completedAt)
+		}
+	}
+	s.completionTimes = kept
+	s.runtime.Throughput = float64(len(kept)) / preprocessingRuntimeWindow.Seconds()
+	s.runtime.Trace = append(s.runtime.Trace, event)
+	if len(s.runtime.Trace) > preprocessingTraceLimit {
+		s.runtime.Trace = s.runtime.Trace[len(s.runtime.Trace)-preprocessingTraceLimit:]
+	}
+	s.runtime.ObservedAt = event.OccurredAt
 }
 
 // ============================================================================
@@ -234,6 +347,7 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 		runtimeJob = &copy
 	}
 	runtimeProgress := s.progress
+	runtime := s.runtime
 	checkpointDetails := make(map[string]string, len(s.checkpointDetails))
 	for key, value := range s.checkpointDetails {
 		checkpointDetails[key] = value
@@ -256,6 +370,7 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 						Mode        string    `json:"mode"`
 						IngestRunID string    `json:"ingest_run_id"`
 						Prefix      string    `json:"prefix"`
+						WorkerCount int       `json:"worker_count"`
 						StartedAt   time.Time `json:"started_at"`
 						UpdatedAt   time.Time `json:"updated_at"`
 					}
@@ -270,6 +385,7 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 								Mode:        strings.ToLower(checkpoint.Mode),
 								IngestRunID: checkpoint.IngestRunID,
 								Prefix:      checkpoint.Prefix,
+								WorkerCount: checkpoint.WorkerCount,
 								StartedAt:   checkpoint.StartedAt,
 								UpdatedAt:   checkpoint.UpdatedAt,
 							}
@@ -279,14 +395,19 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 			}
 		}
 
-		// Kích hoạt quét nền cập nhật tiến độ checkpoint nếu dữ liệu cũ hơn 10 giây
+		// Inventory includes every processable Bronze FITS and is intentionally
+		// refreshed at a bounded cadence: a large MinIO backlog must not trigger a
+		// full object listing on every dashboard poll.
 		s.runtimeMu.Lock()
-		stale := progressAt.IsZero() || end.Sub(progressAt) >= 10*time.Second
+		stale := progressAt.IsZero() || end.Sub(progressAt) >= preprocessingInventoryRefresh
 		if stale && !s.progressRefreshing {
 			s.progressRefreshing = true
 			go s.refreshCheckpointProgress(context.Background())
 		}
 		s.runtimeMu.Unlock()
+	}
+	if runtime.DesiredWorkers == 0 && runtimeJob != nil {
+		runtime.DesiredWorkers = runtimeJob.WorkerCount
 	}
 
 	// 2. Truy vấn song song metrics từ Prometheus
@@ -309,15 +430,20 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 					queryErrors++
 					return
 				}
-				observations[metric.key] = points
+				finitePoints := make([]entity.MonitoringPoint, 0, len(points))
+				for _, point := range points {
+					if math.IsNaN(point.Value) || math.IsInf(point.Value, 0) {
+						continue
+					}
+					finitePoints = append(finitePoints, point)
+				}
+				if len(finitePoints) > 0 {
+					observations[metric.key] = finitePoints
+				}
 			}()
 		}
 	}
 	wg.Wait()
-
-	if (s.prometheus == nil || queryErrors == len(preprocessingMetrics)) && runtimeJob == nil {
-		return nil, fmt.Errorf("Prometheus preprocessing observation is unavailable")
-	}
 
 	// 3. Trích xuất giá trị quan sát gần nhất
 	values := make(map[string]float64, len(observations))
@@ -329,10 +455,18 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 		observed = true
 		values[key] = lastPoint(points).Value
 	}
+	if !runtime.ObservedAt.IsZero() {
+		values["throughput"] = runtime.Throughput
+		values["inflight"] = float64(runtime.Processing)
+		observed = true
+	}
 
 	runtimeProgress.BacklogPending = int(values["backlog_pending"])
 	runtimeProgress.BacklogAckPending = int(values["backlog_ack_pending"])
-	runtimeProgress.ItemsToProcess = runtimeProgress.BacklogPending + runtimeProgress.BacklogAckPending
+	runtimeProgress.ItemsToProcess = runtimeProgress.BronzePending
+	if runtimeProgress.ItemsToProcess == 0 {
+		runtimeProgress.ItemsToProcess = runtimeProgress.BacklogPending + runtimeProgress.BacklogAckPending
+	}
 	if runtimeProgress.ItemsToProcess == 0 && runtimeProgress.CheckpointPending > 0 {
 		runtimeProgress.ItemsToProcess = runtimeProgress.CheckpointPending
 	}
@@ -362,7 +496,7 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 	}
 
 	// 5. Dựng 8 bước Pipeline DAG Hops và các cạnh kết nối (Edges)
-	hops := preprocessingHops(status, values, end, checkpointDetails, runtimeProgress)
+	hops := preprocessingHops(values, observations, end, checkpointDetails, runtimeProgress)
 	edges := make([]entity.PreprocessingEdge, 0, len(hops)-1)
 	for i := 0; i < len(hops)-1; i++ {
 		edges = append(edges, entity.PreprocessingEdge{
@@ -401,22 +535,27 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 		ObservedAt:       end,
 		Run:              runtimeJob,
 		Progress:         runtimeProgress,
+		Runtime:          runtime,
 		Hops:             hops,
 		Edges:            edges,
 	}, nil
 }
 
-// refreshCheckpointProgress quét danh sách checkpoint từng file FITS trong MinIO với semaphore giới hạn 32 luồng
+// refreshCheckpointProgress refreshes durable checkpoint progress and the
+// physically stored lakehouse footprint.  The latter is deliberately based on
+// ObjectInfo.Size from MinIO; transformations such as decoded FITS arrays are
+// transient worker memory and must never be represented as a storage tier.
 func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 	objects, err := s.objects.ListObjects(ctx, "checkpoints/preprocessing/objects/")
-	if err != nil {
-		s.runtimeMu.Lock()
-		s.progressRefreshing = false
-		s.runtimeMu.Unlock()
-		return
+	checkpointInventoryRead := err == nil
+	if !checkpointInventoryRead {
+		objects = nil
 	}
 
 	completed := 0
+	completedBronzeKeys := make(map[string]struct{})
+	failed := 0
+	failedBronzeKeys := make(map[string]struct{})
 	var countMu sync.Mutex
 	var countWG sync.WaitGroup
 	var latestAt time.Time
@@ -470,6 +609,14 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 				countMu.Lock()
 				if strings.EqualFold(checkpoint.State, "COMPLETED") {
 					completed++
+					if checkpoint.BronzeObjectKey != "" {
+						completedBronzeKeys[checkpoint.BronzeObjectKey] = struct{}{}
+					}
+				} else if strings.EqualFold(checkpoint.State, "FAILED") {
+					failed++
+					if checkpoint.BronzeObjectKey != "" {
+						failedBronzeKeys[checkpoint.BronzeObjectKey] = struct{}{}
+					}
 				}
 				if latestDetails == nil || updatedAt.After(latestAt) {
 					latestAt = updatedAt
@@ -502,11 +649,78 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 	}
 	countWG.Wait()
 
+	bronzeTotal := 0
+	bronzeBytes := int64(0)
+	bronzeCompleted := 0
+	bronzeFailed := 0
+	bronzeInventoryRead := false
+	if bronzeObjects, bronzeErr := s.objects.ListObjects(ctx, "bronze/"); bronzeErr == nil {
+		bronzeInventoryRead = true
+		for _, object := range bronzeObjects {
+			if !isProcessableBronzeFITS(object.Key) {
+				continue
+			}
+			bronzeTotal++
+			bronzeBytes += object.Size
+			if _, ok := completedBronzeKeys[object.Key]; ok {
+				bronzeCompleted++
+			}
+			if _, ok := failedBronzeKeys[object.Key]; ok {
+				bronzeFailed++
+			}
+		}
+	}
+
+	silverTotal := 0
+	silverBytes := int64(0)
+	silverInventoryRead := false
+	if silverObjects, silverErr := s.objects.ListObjects(ctx, "silver/"); silverErr == nil {
+		silverInventoryRead = true
+		for _, object := range silverObjects {
+			if !strings.HasSuffix(strings.ToLower(object.Key), ".parquet") {
+				continue
+			}
+			silverTotal++
+			silverBytes += object.Size
+		}
+	}
+
+	goldTotal := 0
+	goldBytes := int64(0)
+	goldInventoryRead := false
+	if goldObjects, goldErr := s.objects.ListObjects(ctx, "gold/"); goldErr == nil {
+		goldInventoryRead = true
+		for _, object := range goldObjects {
+			goldTotal++
+			goldBytes += object.Size
+		}
+	}
+
 	s.runtimeMu.Lock()
-	s.progress.CheckpointTotal = len(objects)
-	s.progress.CheckpointCompleted = completed
-	s.progress.CheckpointPending = len(objects) - completed
-	s.checkpointDetails = latestDetails
+	if bronzeInventoryRead {
+		s.progress.BronzeTotal = bronzeTotal
+		s.progress.BronzeBytes = bronzeBytes
+		s.progress.BronzeCompleted = bronzeCompleted
+		s.progress.BronzeFailed = bronzeFailed
+		s.progress.BronzePending = bronzeTotal - bronzeCompleted - bronzeFailed
+		s.progress.BronzeObserved = true
+	}
+	if silverInventoryRead {
+		s.progress.SilverTotal = silverTotal
+		s.progress.SilverBytes = silverBytes
+	}
+	if goldInventoryRead {
+		s.progress.GoldTotal = goldTotal
+		s.progress.GoldBytes = goldBytes
+	}
+	s.progress.FootprintObserved = bronzeInventoryRead && silverInventoryRead && goldInventoryRead
+	if checkpointInventoryRead {
+		s.progress.CheckpointTotal = len(objects)
+		s.progress.CheckpointCompleted = completed
+		s.progress.CheckpointFailed = failed
+		s.progress.CheckpointPending = len(objects) - completed - failed
+		s.checkpointDetails = latestDetails
+	}
 	s.progressAt = time.Now().UTC()
 	s.progressRefreshing = false
 	s.runtimeMu.Unlock()
@@ -544,21 +758,11 @@ func preprocessingStatus(values map[string]float64, observed bool, now time.Time
 // ============================================================================
 // ĐỊNH NGHĨA 8 BƯỚC HOPS TRONG PIPELINE DAG VỚI METRICS THỜI GIAN THỰC TỪ BACKEND
 // ============================================================================
-func preprocessingHops(status string, values map[string]float64, observedAt time.Time, details map[string]string, progress entity.PreprocessingProgress) []entity.PreprocessingHop {
+func preprocessingHops(values map[string]float64, observations map[string][]entity.MonitoringPoint, observedAt time.Time, details map[string]string, progress entity.PreprocessingProgress) []entity.PreprocessingHop {
 	baseMetrics := make(map[string]float64, len(values))
 	for key, value := range values {
 		baseMetrics[key] = value
 	}
-
-	completed := progress.CheckpointCompleted
-	if completed <= 0 && progress.CheckpointTotal > 0 {
-		completed = progress.CheckpointTotal
-	}
-	if completed <= 0 {
-		completed = 3125 // Giá trị cơ sở tính toán theo thực tế Sector 42
-	}
-	totalFiles := float64(completed)
-	totalPoints := totalFiles * 17649.0
 
 	hops := []entity.PreprocessingHop{
 		{
@@ -569,12 +773,14 @@ func preprocessingHops(status string, values map[string]float64, observedAt time
 			Input:       "NASA FITS",
 			Output:      "Verified Bronze object",
 			Metrics: map[string]float64{
-				"total_files":     totalFiles,
-				"total_points":    totalPoints,
-				"cadence_seconds": 120.0,
-				"time_span_days":  27.4,
-				"throughput":      values["throughput"],
+				"total_files":        float64(progress.BronzeTotal),
+				"pending_files":      float64(progress.BronzePending),
+				"failed_files":       float64(progress.BronzeFailed),
+				"bronze_bytes":       float64(progress.BronzeBytes),
+				"inventory_observed": boolToMetric(progress.BronzeObserved),
+				"throughput":         values["throughput"],
 			},
+			Telemetry: metricSeries(observations, "throughput"),
 		},
 		{
 			ID:          "decode",
@@ -583,28 +789,26 @@ func preprocessingHops(status string, values map[string]float64, observedAt time
 			Contract:    "product-kind validation",
 			Input:       "Bronze FITS",
 			Output:      "Validated samples",
-			Metrics: map[string]float64{
-				"total_points":      totalPoints,
-				"valid_points":      totalPoints * 0.984,
-				"straylight_points": totalPoints * 0.008,
-				"desat_points":      totalPoints * 0.005,
-				"cosmic_points":     totalPoints * 0.003,
-				"quality_valid_pct": 98.4,
-			},
+			Metrics: metricValues(values,
+				"lc_input_rate", "tpf_input_rate", "lc_quality_removed_rate", "tpf_quality_removed_rate",
+				"lc_invalid_removed_rate", "tpf_invalid_removed_rate", "errors"),
+			Telemetry: metricSeries(observations,
+				"lc_input_rate", "tpf_input_rate", "lc_quality_removed_rate", "tpf_quality_removed_rate",
+				"lc_invalid_removed_rate", "tpf_invalid_removed_rate"),
 		},
 		{
 			ID:          "transform",
 			Label:       "Scientific transform",
 			Description: "Clean, normalize and derive masks",
-			Contract:    "lc-preprocess-v1 / tpf-preprocess-v1 / ffi-preprocess-v1",
+			Contract:    "lc-preprocess-v1 / tpf-preprocess-v2-chunked",
 			Input:       "Validated samples",
 			Output:      "Silver rows",
-			Metrics: map[string]float64{
-				"residuals_mean":      0.0,
-				"residuals_std":       0.002,
-				"mad_threshold_sigma": 5.0,
-				"outliers_pruned":     totalFiles * 12.0,
-			},
+			Metrics: metricValues(values,
+				"lc_output_rate", "tpf_output_rate", "lc_outlier_removed_rate",
+				"tpf_finite_pixel_fraction", "lc_duration_p95", "tpf_duration_p95", "throughput"),
+			Telemetry: metricSeries(observations,
+				"lc_output_rate", "tpf_output_rate", "lc_outlier_removed_rate",
+				"tpf_finite_pixel_fraction", "lc_duration_p95", "tpf_duration_p95"),
 		},
 		{
 			ID:          "silver",
@@ -614,10 +818,14 @@ func preprocessingHops(status string, values map[string]float64, observedAt time
 			Input:       "Silver rows",
 			Output:      "Verified Parquet",
 			Metrics: map[string]float64{
-				"bls_min_period":      0.5,
-				"bls_max_period":      15.0,
-				"candidates_detected": totalFiles,
+				"silver_objects":     float64(progress.SilverTotal),
+				"silver_bytes":       float64(progress.SilverBytes),
+				"inventory_observed": boolToMetric(progress.FootprintObserved),
+				"throughput":         values["throughput"],
+				"bronze_bytes_rate":  values["bronze_bytes_rate"],
+				"silver_bytes_rate":  values["silver_bytes_rate"],
 			},
+			Telemetry: metricSeries(observations, "throughput", "bronze_bytes_rate", "silver_bytes_rate"),
 		},
 		{
 			ID:          "checkpoint",
@@ -630,23 +838,24 @@ func preprocessingHops(status string, values map[string]float64, observedAt time
 				"checkpoint_total":     float64(progress.CheckpointTotal),
 				"checkpoint_completed": float64(progress.CheckpointCompleted),
 				"checkpoint_pending":   float64(progress.CheckpointPending),
+				"checkpoint_failed":    float64(progress.CheckpointFailed),
 				"throughput":           values["throughput"],
-				"latency_ms":           8.5,
 			},
+			Telemetry: metricSeries(observations, "throughput"),
 		},
 		{
 			ID:          "lineage",
-			Label:       "Lineage commit",
-			Description: "Commit source → Bronze → Silver identity",
+			Label:       "Lineage & stored footprint",
+			Description: "Commit source → Bronze → Silver identity and measure persisted MinIO tiers",
 			Contract:    "lineage/v1/<lineage-id>.json",
 			Input:       "Checkpoint + checksums",
 			Output:      "Committed lineage",
 			Metrics: map[string]float64{
-				"bronze_mb":             (totalFiles * 1863360.0) / (1024.0 * 1024.0),
-				"decoded_mb":            (totalFiles * 850000.0) / (1024.0 * 1024.0),
-				"silver_mb":             (totalFiles * 220000.0) / (1024.0 * 1024.0),
-				"compression_ratio_pct": 88.2,
-				"bytes_saved_mb":        ((totalFiles * 1863360.0) - (totalFiles * 220000.0)) / (1024.0 * 1024.0),
+				"bronze_bytes":       float64(progress.BronzeBytes),
+				"bronze_objects":     float64(progress.BronzeTotal),
+				"silver_bytes":       float64(progress.SilverBytes),
+				"silver_objects":     float64(progress.SilverTotal),
+				"inventory_observed": boolToMetric(progress.FootprintObserved),
 			},
 		},
 		{
@@ -668,8 +877,9 @@ func preprocessingHops(status string, values map[string]float64, observedAt time
 			Metrics:     baseMetrics,
 		},
 	}
+	statuses := preprocessingHopStatuses(values, progress)
 	for i := range hops {
-		hops[i].Status = status
+		hops[i].Status = statuses[hops[i].ID]
 		hops[i].ObservedAt = observedAt
 		hops[i].Details = hopDetails(hops[i].ID, details)
 		if hops[i].Metrics == nil {
@@ -677,6 +887,73 @@ func preprocessingHops(status string, values map[string]float64, observedAt time
 		}
 	}
 	return hops
+}
+
+func metricValues(values map[string]float64, keys ...string) map[string]float64 {
+	result := make(map[string]float64, len(keys))
+	for _, key := range keys {
+		if value, ok := values[key]; ok {
+			result[key] = value
+		}
+	}
+	return result
+}
+
+func metricSeries(observations map[string][]entity.MonitoringPoint, keys ...string) map[string][]entity.MonitoringPoint {
+	result := make(map[string][]entity.MonitoringPoint, len(keys))
+	for _, key := range keys {
+		if points := observations[key]; len(points) > 0 {
+			result[key] = points
+		}
+	}
+	return result
+}
+
+func preprocessingHopStatuses(values map[string]float64, progress entity.PreprocessingProgress) map[string]string {
+	statuses := map[string]string{
+		"bronze": "not_observed", "decode": "not_observed", "transform": "not_observed", "silver": "not_observed",
+		"checkpoint": "not_observed", "lineage": "not_observed", "event": "not_observed", "ack": "not_observed",
+	}
+	if progress.BronzeObserved && progress.BronzeTotal > 0 {
+		statuses["bronze"] = observedComponentStatus(values, true)
+	}
+	decodeObserved := progress.CheckpointCompleted > 0 || values["lc_input_rate"] > 0 || values["tpf_input_rate"] > 0
+	transformObserved := progress.CheckpointCompleted > 0 || values["lc_output_rate"] > 0 || values["tpf_output_rate"] > 0
+	statuses["decode"] = observedComponentStatus(values, decodeObserved)
+	statuses["transform"] = observedComponentStatus(values, transformObserved)
+	if progress.FootprintObserved && progress.SilverTotal > 0 {
+		statuses["silver"] = observedComponentStatus(values, true)
+	}
+	if progress.CheckpointTotal > 0 && progress.CheckpointPending == 0 {
+		statuses["checkpoint"] = "completed"
+	} else if progress.CheckpointPending > 0 && values["inflight"] > 0 {
+		statuses["checkpoint"] = "running"
+	}
+	terminalObserved := progress.CheckpointCompleted > 0 && values["last_success"] > 0
+	for _, component := range []string{"lineage", "event", "ack"} {
+		statuses[component] = observedComponentStatus(values, terminalObserved)
+	}
+	return statuses
+}
+
+func observedComponentStatus(values map[string]float64, observed bool) string {
+	if !observed {
+		return "not_observed"
+	}
+	if values["errors"] > 0 {
+		return "retry"
+	}
+	if values["inflight"] > 0 || values["queue"] > 0 || values["throughput"] > 0 {
+		return "running"
+	}
+	return "completed"
+}
+
+func boolToMetric(value bool) float64 {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 // hopDetails lọc các trường chi tiết checkpoint phù hợp cho từng bước hop trong DAG

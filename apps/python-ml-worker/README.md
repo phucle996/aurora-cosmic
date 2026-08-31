@@ -1,25 +1,26 @@
 # Python ML Worker Service
 
-`aurora_ml` owns:
-- **Stage 5** — Scientific Feature Engineering, Gold Snapshot materialization, Catalog enrichment, and ClickHouse analytical index
-- **Stage 6** — ML Dataset boundary, deterministic group split, Candidate Vetting & Anomaly Detection model training, ONNX export, and Model Registry
+`aurora_ml` owns the Stage 6 ML boundary: deterministic datasets and splits,
+training, evaluation, runtime package export and model registry artifacts.
+Gold construction belongs to the dedicated Gold Builder service.
 
-Training is GPU-only. The worker fails fast when CUDA is not visible; CPU is
-allowed for data preparation and ONNX export, never as a training fallback.
-The Compose service must be started with NVIDIA Container Toolkit and exposes
-the selected GPU through `gpus: all`.
+Each dashboard request explicitly selects CPU or GPU. A GPU request fails when
+the configured worker cannot provide CUDA; it never silently falls back to CPU.
 
 ## Package Layout
 
 ```
 aurora_ml/
-├── main.py                         # CLI entrypoint and GPU-only training commands
+├── service.py                      # systemd/Docker entrypoint; durable JetStream consumer
 ├── config.py                       # Infrastructure config (MinIO, ClickHouse, env)
+├── domain/                         # Immutable request contracts and invariants
+├── application/                    # Training orchestration with scientific provenance checks
+├── infrastructure/                 # MinIO durable state and artifact adapters
 ├── observer/                       # Bounded Prometheus metrics and /healthz server
 │   └── metrics.py                  # Seven worker-level metric families, no ID labels
 ├── data.py                         # Generic Gold data loading & lineage discovery
 │
-├── pipeline/                       # Stage 5 — Data Pipeline Layer
+├── pipeline/                       # Shared Gold contracts and feature schemas
 │   ├── gold.py                     # Gold snapshot identity model, Silver input refs, manifest planner
 │   ├── features.py                 # LC Scientific Feature Engineering (lc-features-v1), BLS transit search
 │   ├── evidence.py                 # TPF Vetting Evidence (tpf-vetting-v1), FFI Context Evidence (ffi-evidence-v1)
@@ -50,33 +51,15 @@ tests/
 └── test_stage5_e2e.py              # Stage 5 end-to-end integration test
 ```
 
-## CLI Commands
+## Operation
 
-```bash
-# Stage 5 — Gold Pipeline
-python -m aurora_ml.main gold-plan   --type CANDIDATE --gold-schema gold-candidate-v1
-python -m aurora_ml.main gold-build  --plan plan.json [--set-current] [--dry-run]
-python -m aurora_ml.main analytics-load --snapshot-id gold-v1-<id> [--rebuild]
-
-# Stage 6 — ML Platform
-python -m aurora_ml.main ml-view   --snapshot-id gold-v1-<id>
-python -m aurora_ml.main ml-split  --snapshot-id gold-v1-<id> [--seed 42]
-
-# GPU-only training from committed manifests and materialized rows
-python -m aurora_ml.main candidate-train \
-  --gold-snapshot-id gold-v1-<id> --split-id split-v1-<id> \
-  --gold-manifest gold-manifest.json --split-manifest split-manifest.json \
-  --rows-json candidate-rows.json --epochs 50 --max-vram-mb 3500
-
-python -m aurora_ml.main train-anomaly \
-  --gold-snapshot-id gold-v1-<id> --split-id split-v1-<id> \
-  --gold-manifest gold-manifest.json --split-manifest split-manifest.json \
-  --rows-json anomaly-rows.json --epochs 150 --max-vram-mb 3500
-```
-
-The training loop uses CUDA AMP, pinned host memory, non-blocking host-to-device
-copies, TF32 tensor-core math, per-epoch recovery checkpoints, and CPU-portable
-model artifacts. `AURORA_ML_MAX_VRAM_MB=0` means no allocator cap.
+There is no operator CLI. Run `python -m aurora_ml.service` through systemd or
+Docker; the dashboard publishes an explicit training request to
+`aurora.v1.ml.training.requested` in JetStream. The worker accepts only a
+committed Gold snapshot and real labels/features. It writes a durable job
+journal, immutable training/evaluation/model/runtime artifacts to MinIO, and
+then dispatches an inference job. Rust validates ONNX parity before scoring and
+persists that validation evidence; model promotion still requires human review.
 
 ## Observer
 

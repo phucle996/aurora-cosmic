@@ -36,7 +36,6 @@ type CandidateEvidence struct {
 	BLSTransitTime             float64
 	BLSDepth                   float64
 	BLSPower                   float64
-	TPFEvidenceAvailable       bool
 	PixelMADMedian             float64
 	VariabilityPeakFraction    float64
 	TransitEvidenceAvailable   bool
@@ -50,8 +49,6 @@ type CandidateEvidence struct {
 	LogG                       float64
 	MatchedTOIID               string
 	TOIMatchStatus             string
-	MatchedTCEID               string
-	TCEMatchStatus             string
 }
 
 type PlanetPhysics struct {

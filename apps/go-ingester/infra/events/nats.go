@@ -2,16 +2,16 @@ package events
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
 	"go-ingester/internal/model"
+	"go-ingester/internal/pipeline/event"
 
 	"github.com/nats-io/nats.go"
 )
 
-// NATSPublisher implements model.Publisher using NATS JetStream.
+// NATSPublisher implements event.Publisher using NATS JetStream.
 type NATSPublisher struct {
 	nc *nats.Conn
 	js nats.JetStreamContext
@@ -19,7 +19,7 @@ type NATSPublisher struct {
 
 // NewNATSPublisher connects to NATS and ensures the Bronze and Silver event
 // streams exist before the first product is published. Keeping both streams
-// bootstrapped here makes a fresh Compose deployment safe regardless of which
+// bootstrapped here makes a fresh systemd deployment safe regardless of which
 // worker starts first.
 func NewNATSPublisher(url string, timeout time.Duration) (*NATSPublisher, error) {
 	if url == "" {
@@ -39,14 +39,14 @@ func NewNATSPublisher(url string, timeout time.Duration) (*NATSPublisher, error)
 
 	streams := []nats.StreamConfig{
 		{
-			Name:       model.StreamBronze,
+			Name:       event.StreamBronze,
 			Subjects:   []string{"aurora.v1.bronze.>"},
 			Storage:    nats.FileStorage,
 			Retention:  nats.LimitsPolicy,
 			Duplicates: 24 * time.Hour,
 		},
 		{
-			Name:       model.StreamSilver,
+			Name:       event.StreamSilver,
 			Subjects:   []string{"aurora.v1.silver.>"},
 			Storage:    nats.FileStorage,
 			Retention:  nats.LimitsPolicy,
@@ -69,19 +69,19 @@ func NewNATSPublisher(url string, timeout time.Duration) (*NATSPublisher, error)
 	}, nil
 }
 
-// PublishBronzeReady publishes a BronzeObjectReady event synchronously.
-func (p *NATSPublisher) PublishBronzeReady(ctx context.Context, evt *model.BronzeObjectReady) error {
+// PublishBronzeReady publishes a Bronze readiness event synchronously.
+func (p *NATSPublisher) PublishBronzeReady(ctx context.Context, evt *event.BronzeReady) error {
 	if evt == nil {
 		return fmt.Errorf("nats: cannot publish nil event")
 	}
 
 	kind := model.ProductKind(evt.ProductKind)
-	subject, err := model.SubjectForKind(kind)
+	subject, err := event.SubjectFor(kind)
 	if err != nil {
 		return fmt.Errorf("nats subject resolution: %w", err)
 	}
 
-	payload, err := json.Marshal(evt)
+	payload, err := event.MarshalBronzeReady(evt)
 	if err != nil {
 		return fmt.Errorf("nats marshal event %s: %w", evt.EventID, err)
 	}

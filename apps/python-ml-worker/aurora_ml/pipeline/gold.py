@@ -23,15 +23,19 @@ class SilverInputRef:
     silver_schema_version: str
     processor_version: str
     sample_id: Optional[str] = None
+    processing_fingerprint: str = ""
+    silver_revision_id: str = ""
 
     def canonical_dict(self) -> Dict[str, Any]:
         """Return canonical dictionary for deterministic fingerprint calculation."""
         return {
             "lineage_id": self.lineage_id,
+            "processing_fingerprint": self.processing_fingerprint,
             "processor_version": self.processor_version,
             "product_kind": self.product_kind,
             "sample_id": self.sample_id,
             "silver_object_key": self.silver_object_key,
+            "silver_revision_id": self.silver_revision_id,
             "silver_schema_version": self.silver_schema_version,
             "silver_sha256": self.silver_sha256,
             "source_product_id": self.source_product_id,
@@ -52,6 +56,8 @@ class SilverInputRef:
             silver_schema_version=d["silver_schema_version"],
             processor_version=d["processor_version"],
             sample_id=d.get("sample_id"),
+            processing_fingerprint=d.get("processing_fingerprint", ""),
+            silver_revision_id=d.get("silver_revision_id", ""),
         )
 
 
@@ -224,6 +230,7 @@ class GoldSnapshotPlanner:
         catalog_snapshots: Optional[Dict[str, str]] = None,
         label_snapshots: Optional[Dict[str, str]] = None,
         allow_empty: bool = False,
+        producer: str = "python-ml-worker",
     ) -> GoldSnapshotPlan:
         """Create a deterministic GoldSnapshotPlan from Silver inputs."""
         snapshot_type = snapshot_type.upper()
@@ -283,7 +290,7 @@ class GoldSnapshotPlanner:
             inputs=sorted_inputs,
             catalog_snapshots=catalog_snapshots or {},
             label_snapshots=label_snapshots or {},
-            producer="python-ml-worker",
+            producer=producer,
         )
         manifest.validate()
 

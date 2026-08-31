@@ -90,6 +90,35 @@ pub struct InferenceJobManifest {
     pub producer: String,
 }
 
+/// Mutable execution state for one immutable inference job. It is deliberately
+/// kept separate from the job manifest: the manifest defines the work, while
+/// this record makes delivery attempts and terminal outcomes observable.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct InferenceJobStatusRecord {
+    pub schema_version: i64,
+    pub job_id: String,
+    pub job_fingerprint: String,
+    pub task: String,
+    pub status: String,
+    pub attempt: i64,
+    pub started_at: String,
+    pub updated_at: String,
+    #[serde(default)]
+    pub output_key: Option<String>,
+    #[serde(default)]
+    pub output_sha256: Option<String>,
+    #[serde(default)]
+    pub processed_rows: Option<i64>,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default = "default_rust_inference_producer")]
+    pub producer: String,
+}
+
+fn default_rust_inference_producer() -> String {
+    "rust-inference".to_string()
+}
+
 /// Compute deterministic SHA-256 job fingerprint.
 // The event contract contributes all nine fields to the identity; grouping them
 // would make call sites less explicit at the boundary where manifests are built.

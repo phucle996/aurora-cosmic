@@ -38,8 +38,19 @@ func (r *Router) registerRoutes() {
 		api.GET("/system", r.module.SystemHandler.System)
 		api.GET("/monitoring", r.module.MonitoringHandler.Query)
 		api.GET("/preprocessing/graph", r.module.PreprocessingHandler.Query)
+		if r.module.FactoryHistoryHandler != nil {
+			api.GET("/data-factory/runs", r.module.FactoryHistoryHandler.List)
+			api.GET("/data-factory/runs/:run_id", r.module.FactoryHistoryHandler.Detail)
+		}
 		api.POST("/preprocessing/jobs", r.module.PreprocessingHandler.Start)
 		api.POST("/preprocessing/jobs/:job_id/stop", r.module.PreprocessingHandler.Stop)
+		api.GET("/gold/control", r.module.GoldControlHandler.Query)
+		api.POST("/gold/control/start", r.module.GoldControlHandler.Start)
+		api.POST("/gold/control/stop", r.module.GoldControlHandler.Stop)
+		api.POST("/gold/lineage/resolve", r.module.GoldControlHandler.ResolveLineage)
+		api.GET("/gold/snapshots", r.module.GoldControlHandler.ListSnapshots)
+		api.GET("/gold/snapshots/:snapshot_id", r.module.GoldControlHandler.Snapshot)
+		api.GET("/gold/snapshots/:snapshot_id/artifacts/:dataset/:sector", r.module.GoldControlHandler.Artifact)
 		if r.module.EventsHandler != nil {
 			api.GET("/events", r.module.EventsHandler.Stream)
 		}
@@ -51,10 +62,10 @@ func (r *Router) registerRoutes() {
 		api.GET("/targets/:tic_id", r.module.AnalyticsHandler.GetTarget)
 		api.GET("/candidates", r.module.AnalyticsHandler.ListCandidates)
 		api.GET("/candidates/:prediction_id", r.module.AnalyticsHandler.GetCandidate)
-		api.GET("/anomalies", r.module.AnalyticsHandler.ListAnomalies)
-		api.GET("/anomalies/:prediction_id", r.module.AnalyticsHandler.GetAnomalyDetail)
 		api.GET("/lightcurves", r.module.AnalyticsHandler.GetLightcurve)
 		api.GET("/models", r.module.ModelsHandler.ListModels)
+		api.GET("/models/training-readiness", r.module.ModelsHandler.TrainingReadiness)
+		api.POST("/models/training-cohort/labels", r.module.ModelsHandler.OverrideTrainingLabel)
 		api.POST("/models/train", r.module.ModelsHandler.StartTraining)
 		api.POST("/models/deploy", r.module.ModelsHandler.DeployModel)
 		api.GET("/inference/jobs", r.module.ModelsHandler.ListInferenceJobs)

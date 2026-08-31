@@ -179,10 +179,10 @@ func (h *AnalyticsHandler) GetCandidate(c *gin.Context) {
 			"n_points": detail.Evidence.NPoints, "time_span": detail.Evidence.TimeSpan, "median_cadence": detail.Evidence.MedianCadence, "max_gap": detail.Evidence.MaxGap,
 			"flux_mean": detail.Evidence.FluxMean, "flux_std": detail.Evidence.FluxStd, "flux_amplitude": detail.Evidence.FluxAmplitude, "flux_rms": detail.Evidence.FluxRMS, "median_flux_err": detail.Evidence.MedianFluxErr,
 			"bls_available": detail.Evidence.BLSAvailable, "bls_period": detail.Evidence.BLSPeriod, "bls_duration": detail.Evidence.BLSDuration, "bls_transit_time": detail.Evidence.BLSTransitTime, "bls_depth": detail.Evidence.BLSDepth, "bls_power": detail.Evidence.BLSPower,
-			"tpf_evidence_available": detail.Evidence.TPFEvidenceAvailable, "pixel_mad_median": detail.Evidence.PixelMADMedian, "variability_peak_fraction": detail.Evidence.VariabilityPeakFraction,
+			"pixel_mad_median": detail.Evidence.PixelMADMedian, "variability_peak_fraction": detail.Evidence.VariabilityPeakFraction,
 			"transit_evidence_available": detail.Evidence.TransitEvidenceAvailable, "transit_deficit_sum": detail.Evidence.TransitDeficitSum, "transit_deficit_center_offset": detail.Evidence.TransitDeficitCenterOffset,
 			"tic_available": detail.Evidence.TICAvailable, "tmag": detail.Evidence.TMag, "teff": detail.Evidence.Teff, "stellar_radius": detail.Evidence.StellarRadius, "stellar_mass": detail.Evidence.StellarMass, "logg": detail.Evidence.LogG,
-			"matched_toi_id": detail.Evidence.MatchedTOIID, "toi_match_status": detail.Evidence.TOIMatchStatus, "matched_tce_id": detail.Evidence.MatchedTCEID, "tce_match_status": detail.Evidence.TCEMatchStatus,
+			"matched_toi_id": detail.Evidence.MatchedTOIID, "toi_match_status": detail.Evidence.TOIMatchStatus,
 		},
 		"planet_physics": gin.H{
 			"planet_candidate_id":       detail.Physics.PlanetCandidateID,
@@ -386,7 +386,11 @@ func (h *AnalyticsHandler) ListTargets(c *gin.Context) {
 		page.Offset = offset
 	}
 
-	query := entity.TargetQuery{Page: page}
+	query := entity.TargetQuery{Page: page, SnapshotID: strings.TrimSpace(c.Query("snapshot_id"))}
+	if query.SnapshotID != "" && (strings.Contains(query.SnapshotID, "/") || !strings.HasPrefix(query.SnapshotID, "gold-v1-")) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "snapshot_id must be a valid Gold snapshot id"})
+		return
+	}
 	if raw := c.Query("tic_id"); raw != "" {
 		ticID, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || ticID < 1 {
@@ -490,7 +494,9 @@ func (h *AnalyticsHandler) ListTargets(c *gin.Context) {
 			"has_lightcurve": item.HasLightcurve, "lightcurve_points": item.LightcurvePoints, "lightcurve_time_span": item.LightcurveTimeSpan,
 			"has_candidate": item.HasCandidate, "candidate_prediction_id": item.CandidatePredictionID, "candidate_score": item.CandidateScore, "candidate_above_threshold": item.CandidateAboveThreshold,
 			"has_anomaly": item.HasAnomaly, "anomaly_prediction_id": item.AnomalyPredictionID, "anomaly_score": item.AnomalyScore,
-			"pipeline_status": item.PipelineStatus,
+			"pipeline_status":       item.PipelineStatus,
+			"gold_snapshot_id":      item.GoldSnapshotID,
+			"tic_context_available": item.TICContextAvailable, "toi_match_status": item.TOIMatchStatus,
 		}
 	}
 
@@ -523,7 +529,12 @@ func (h *AnalyticsHandler) GetTarget(c *gin.Context) {
 			return
 		}
 	}
-	target, err := h.analytics.GetTarget(c.Request.Context(), ticID, sector)
+	snapshotID := strings.TrimSpace(c.Query("snapshot_id"))
+	if snapshotID != "" && (strings.Contains(snapshotID, "/") || !strings.HasPrefix(snapshotID, "gold-v1-")) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "snapshot_id must be a valid Gold snapshot id"})
+		return
+	}
+	target, err := h.analytics.GetTarget(c.Request.Context(), ticID, sector, snapshotID)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			c.JSON(http.StatusNotFound, gin.H{"error": taxonomy.ErrNotFound.Error()})
@@ -541,7 +552,9 @@ func (h *AnalyticsHandler) GetTarget(c *gin.Context) {
 			"has_lightcurve": item.HasLightcurve, "lightcurve_points": item.LightcurvePoints, "lightcurve_time_span": item.LightcurveTimeSpan,
 			"has_candidate": item.HasCandidate, "candidate_prediction_id": item.CandidatePredictionID, "candidate_score": item.CandidateScore, "candidate_above_threshold": item.CandidateAboveThreshold,
 			"has_anomaly": item.HasAnomaly, "anomaly_prediction_id": item.AnomalyPredictionID, "anomaly_score": item.AnomalyScore,
-			"pipeline_status": item.PipelineStatus,
+			"pipeline_status":       item.PipelineStatus,
+			"gold_snapshot_id":      item.GoldSnapshotID,
+			"tic_context_available": item.TICContextAvailable, "toi_match_status": item.TOIMatchStatus,
 		},
 	}
 	if target.Physics != nil {
@@ -593,15 +606,13 @@ func (h *AnalyticsHandler) GetTarget(c *gin.Context) {
 	}
 	if target.Evidence != nil {
 		resp["evidence"] = gin.H{
-			"bls_available":  target.Evidence.BLSAvailable,
-			"bls_period":     target.Evidence.BLSPeriod,
-			"bls_duration":   target.Evidence.BLSDuration,
-			"bls_depth":      target.Evidence.BLSDepth,
-			"bls_power":      target.Evidence.BLSPower,
-			"teff":           target.Evidence.Teff,
-			"stellar_radius": target.Evidence.StellarRadius,
-			"stellar_mass":   target.Evidence.StellarMass,
-			"tmag":           target.Evidence.TMag,
+			"lineage_id": target.Evidence.LineageID, "feature_version": target.Evidence.FeatureVersion,
+			"n_points": target.Evidence.NPoints, "time_span": target.Evidence.TimeSpan, "median_cadence": target.Evidence.MedianCadence, "max_gap": target.Evidence.MaxGap,
+			"bls_available": target.Evidence.BLSAvailable, "bls_period": target.Evidence.BLSPeriod, "bls_duration": target.Evidence.BLSDuration, "bls_transit_time": target.Evidence.BLSTransitTime,
+			"bls_depth": target.Evidence.BLSDepth, "bls_power": target.Evidence.BLSPower,
+			"transit_evidence_available": target.Evidence.TransitEvidenceAvailable,
+			"tic_available":              target.Evidence.TICAvailable, "teff": target.Evidence.Teff, "stellar_radius": target.Evidence.StellarRadius, "stellar_mass": target.Evidence.StellarMass, "tmag": target.Evidence.TMag,
+			"matched_toi_id": target.Evidence.MatchedTOIID, "toi_match_status": target.Evidence.TOIMatchStatus,
 		}
 	}
 	c.JSON(http.StatusOK, resp)

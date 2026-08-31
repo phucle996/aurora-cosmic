@@ -80,6 +80,21 @@ ENGINE = MergeTree()
 PARTITION BY sector
 ORDER BY (tic_id, time);
 
+-- Rebuildable exact plot samples sourced from checksum-verified Silver LC
+-- Parquet. Gold keeps feature tables; this is only the visualization index.
+CREATE TABLE IF NOT EXISTS aurora.lightcurve_samples_v1 (
+    source_product_id String,
+    silver_sha256 String,
+    tic_id Int64,
+    sector Int32,
+    time Float64,
+    flux Float64,
+    projected_at DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(projected_at)
+PARTITION BY sector
+ORDER BY (sector, tic_id, source_product_id, silver_sha256, time);
+
 -- Snapshot Registry Table
 CREATE TABLE IF NOT EXISTS aurora.gold_snapshots_v1 (
     snapshot_id String,
@@ -96,6 +111,70 @@ CREATE TABLE IF NOT EXISTS aurora.gold_snapshots_v1 (
 ENGINE = MergeTree()
 PRIMARY KEY (snapshot_id)
 ORDER BY (snapshot_id);
+
+-- Durable Data Factory operational history. Gold Builder writes observed
+-- lifecycle and batch facts; the dashboard never derives historical runs.
+CREATE TABLE IF NOT EXISTS aurora.pipeline_runs_v1 (
+    pipeline LowCardinality(String),
+    run_id String,
+    mode LowCardinality(String),
+    status LowCardinality(String),
+    started_at DateTime64(3, 'UTC'),
+    finished_at Nullable(DateTime64(3, 'UTC')),
+    max_batch_records UInt32,
+    idle_flush_seconds UInt32,
+    pending_inputs UInt64,
+    active_builds UInt32,
+    completed_batches UInt32,
+    input_records UInt64,
+    output_rows UInt64,
+    indexed_rows UInt64,
+    last_snapshot_id String,
+    last_error String,
+    updated_at DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(updated_at)
+PARTITION BY toYYYYMM(started_at)
+ORDER BY (pipeline, run_id);
+
+CREATE TABLE IF NOT EXISTS aurora.pipeline_batches_v1 (
+    pipeline LowCardinality(String),
+    run_id String,
+    batch_id String,
+    mode LowCardinality(String),
+    status LowCardinality(String),
+    started_at DateTime64(3, 'UTC'),
+    completed_at Nullable(DateTime64(3, 'UTC')),
+    input_records UInt64,
+    candidate_rows UInt64,
+    artifact_count UInt32,
+    indexed_rows UInt64,
+    snapshot_id String,
+    snapshot_fingerprint String,
+    manifest_key String,
+    manifest_sha256 String,
+    error String,
+    updated_at DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(updated_at)
+PARTITION BY toYYYYMM(started_at)
+ORDER BY (pipeline, run_id, batch_id);
+
+CREATE TABLE IF NOT EXISTS aurora.pipeline_component_events_v1 (
+    pipeline LowCardinality(String),
+    run_id String,
+    component_id LowCardinality(String),
+    status LowCardinality(String),
+    occurred_at DateTime64(3, 'UTC'),
+    input_records UInt64,
+    output_rows UInt64,
+    indexed_rows UInt64,
+    snapshot_id String,
+    error String
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMM(occurred_at)
+ORDER BY (pipeline, run_id, occurred_at, component_id);
 
 -- Candidate Gold Features Projection Table
 CREATE TABLE IF NOT EXISTS aurora.candidate_features_v1 (
@@ -132,7 +211,6 @@ CREATE TABLE IF NOT EXISTS aurora.candidate_features_v1 (
     bls_power Nullable(Float64),
 
     -- TPF Evidence
-    tpf_evidence_available UInt8,
     pixel_mad_median Nullable(Float64),
     variability_peak_fraction Nullable(Float64),
     transit_evidence_available UInt8,
@@ -143,25 +221,49 @@ CREATE TABLE IF NOT EXISTS aurora.candidate_features_v1 (
 
     -- TIC Context
     tic_available UInt8,
+    ra_deg Nullable(Float64),
+    dec_deg Nullable(Float64),
     tmag Nullable(Float64),
     teff Nullable(Float64),
     stellar_radius Nullable(Float64),
     stellar_mass Nullable(Float64),
     logg Nullable(Float64),
 
-    -- Supervision & Audit
+    -- TOI evidence. Curated labels/TCE evidence are stored in a separate
+    -- training cohort rather than copied as constants into Candidate Gold.
     matched_toi_id Nullable(String),
     toi_match_status LowCardinality(String),
-    toi_period_error Nullable(Float64),
-    matched_tce_id Nullable(String),
-    tce_match_status LowCardinality(String),
-    training_label LowCardinality(String),
-    label_policy_version LowCardinality(String)
+    toi_period_error Nullable(Float64)
 )
 ENGINE = MergeTree()
 PARTITION BY snapshot_id
 PRIMARY KEY (snapshot_id, sector, source_product_id)
 ORDER BY (snapshot_id, sector, source_product_id);
+
+-- Candidate rows are already complete at Gold commit time. This view remains
+-- as a stable query contract for the API, without a mutable enrichment overlay.
+CREATE OR REPLACE VIEW aurora.candidate_features_current_v1 AS
+SELECT * FROM aurora.candidate_features_v1;
+
+-- Reviewable labels are a separate control-plane cohort. They never mutate
+-- Candidate Gold discovery evidence and may be overridden by a reviewer.
+CREATE TABLE IF NOT EXISTS aurora.candidate_training_cohort_v1 (
+    snapshot_id String,
+    source_product_id String,
+    tic_id Int64,
+    sector Int32,
+    training_label LowCardinality(String),
+    confidence Float64,
+    label_source LowCardinality(String),
+    review_status LowCardinality(String),
+    train_eligible UInt8,
+    policy_version String,
+    evidence_json String,
+    updated_at DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(updated_at)
+PARTITION BY snapshot_id
+ORDER BY (snapshot_id, source_product_id);
 
 -- Anomaly Light Curve Projection Table
 CREATE TABLE IF NOT EXISTS aurora.anomaly_lightcurve_v1 (
@@ -356,4 +458,3 @@ CREATE TABLE IF NOT EXISTS aurora.lakehouse_objects (
 ENGINE = ReplacingMergeTree(last_modified)
 PRIMARY KEY (tier, sector, tic_id, object_key)
 ORDER BY (tier, sector, tic_id, object_key);
-

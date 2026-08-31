@@ -1,11 +1,13 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/service"
+	"go-api/internal/taxonomy"
 	"go-api/internal/transport/http/dto"
 
 	"github.com/gin-gonic/gin"
@@ -52,6 +54,41 @@ func (h *ModelsHandler) ListModels(c *gin.Context) {
 		"count":  len(items),
 		"source": "minio-runtime-registry",
 	})
+}
+
+func (h *ModelsHandler) TrainingReadiness(c *gin.Context) {
+	snapshotIDs := c.QueryArray("snapshot_id")
+	if len(snapshotIDs) == 0 {
+		snapshotIDs = strings.Split(c.Query("snapshot_ids"), ",")
+	}
+	readiness, err := h.models.TrainingReadiness(c.Request.Context(), snapshotIDs)
+	if err != nil {
+		if errors.Is(err, taxonomy.ErrInvalidRequest) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		} else {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, readiness)
+}
+
+func (h *ModelsHandler) OverrideTrainingLabel(c *gin.Context) {
+	var request struct {
+		SnapshotID      string `json:"snapshot_id"`
+		SourceProductID string `json:"source_product_id"`
+		TrainingLabel   string `json:"training_label"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid label review payload"})
+		return
+	}
+	err := h.models.OverrideTrainingLabel(c.Request.Context(), entity.TrainingLabelOverride{SnapshotID: request.SnapshotID, SourceProductID: request.SourceProductID, TrainingLabel: request.TrainingLabel})
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "reviewed"})
 }
 
 func (h *ModelsHandler) ListInferenceJobs(c *gin.Context) {
@@ -120,11 +157,16 @@ func (h *ModelsHandler) StartTraining(c *gin.Context) {
 		BatchSize:       req.BatchSize,
 		Seed:            req.Seed,
 		AutoPromote:     req.AutoPromote,
+		ComputeTarget:   req.ComputeTarget,
 	}
 
 	result, err := h.models.StartTrainingJob(c.Request.Context(), spec)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		if errors.Is(err, taxonomy.ErrInvalidRequest) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		} else {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		}
 		return
 	}
 
@@ -136,6 +178,7 @@ func (h *ModelsHandler) StartTraining(c *gin.Context) {
 		Status:          result.Status,
 		CreatedAt:       result.CreatedAt,
 		Message:         result.Message,
+		ComputeTarget:   result.ComputeTarget,
 	})
 }
 
@@ -151,7 +194,11 @@ func (h *ModelsHandler) DeployModel(c *gin.Context) {
 		return
 	}
 	if err := h.models.SetModelDeployment(c.Request.Context(), strings.TrimSpace(req.ModelID), strings.TrimSpace(req.Task), req.Active); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		if errors.Is(err, taxonomy.ErrInvalidRequest) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		} else {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		}
 		return
 	}
 	statusMsg := "Model " + req.ModelID + " is now deployed as Champion for live inference."

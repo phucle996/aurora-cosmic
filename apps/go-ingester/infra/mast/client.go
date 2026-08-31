@@ -50,6 +50,16 @@ func (c *Client) SetDownloadURL(downloadURL string) {
 	c.downloadURL = downloadURL
 }
 
+func (c *Client) productURL(dataURI string) (string, error) {
+	if strings.TrimSpace(dataURI) == "" {
+		return "", fmt.Errorf("MAST product URI is empty")
+	}
+	if strings.HasPrefix(strings.ToLower(dataURI), "http://") || strings.HasPrefix(strings.ToLower(dataURI), "https://") {
+		return dataURI, nil
+	}
+	return c.downloadURL + "?" + url.Values{"uri": []string{dataURI}}.Encode(), nil
+}
+
 // Query performs a POST request to the MAST API endpoint.
 func (c *Client) Query(ctx context.Context, reqBody url.Values) ([]byte, error) {
 	// MAST's SOAP-backed endpoint reads form parameters from the POST body;
@@ -123,17 +133,9 @@ func mastQueryExecuting(body []byte) bool {
 
 // OpenProduct streams product content by URI with retry logic (429 / 5xx).
 func (c *Client) OpenProduct(ctx context.Context, dataURI string) (io.ReadCloser, int64, error) {
-	targetURL := dataURI
-	if dataURI == "" {
-		return nil, 0, fmt.Errorf("mast open product: dataURI is empty")
-	}
-
-	isDirectURL := strings.HasPrefix(strings.ToLower(dataURI), "http://") || strings.HasPrefix(strings.ToLower(dataURI), "https://")
-	if !isDirectURL {
-		// The MAST download service accepts a GET with the data URI as a
-		// query parameter and responds with a redirect to the public object.
-		// A POST is rejected with HTTP 405 by the production endpoint.
-		targetURL = c.downloadURL + "?" + url.Values{"uri": []string{dataURI}}.Encode()
+	targetURL, targetErr := c.productURL(dataURI)
+	if targetErr != nil {
+		return nil, 0, fmt.Errorf("mast open product: %w", targetErr)
 	}
 
 	maxRetries := 3
@@ -189,7 +191,7 @@ func (c *Client) OpenProduct(ctx context.Context, dataURI string) (io.ReadCloser
 }
 
 // ClassifyProduct inspects product metadata and determines its ProductKind.
-func ClassifyProduct(obs model.Observation) model.ProductKind {
+func ClassifyProduct(obs Observation) model.ProductKind {
 	subGroup := obs.ProductSubGroup
 	if subGroup == "" {
 		subGroup = obs.Description
@@ -200,8 +202,6 @@ func ClassifyProduct(obs model.Observation) model.ProductKind {
 		return model.KindTargetPixel
 	case "LIGHTCURVE", "LC":
 		return model.KindLightCurve
-	case "FFI", "FFIC":
-		return model.KindFFI
 	default:
 		return model.KindUnknown
 	}

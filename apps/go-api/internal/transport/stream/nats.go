@@ -108,6 +108,7 @@ func (s *NATSStream) Start(ctx context.Context) error {
 		"aurora.v1.inference.>",
 		"aurora.v1.ml.>",
 		"aurora.v1.preprocessing.control",
+		"aurora.v1.preprocessing.runtime",
 	}
 
 	for _, subject := range defaultSubjects {
@@ -118,6 +119,17 @@ func (s *NATSStream) Start(ctx context.Context) error {
 		}
 		s.subscriptions = append(s.subscriptions, sub)
 		s.log.Info("Subscribed to NATS subject", "subject", subject)
+	}
+	flushCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := nc.FlushWithContext(flushCtx); err != nil {
+		for _, sub := range s.subscriptions {
+			_ = sub.Unsubscribe()
+		}
+		s.subscriptions = nil
+		nc.Close()
+		s.conn = nil
+		return fmt.Errorf("stream: flush subscriptions: %w", err)
 	}
 
 	// Register custom handlers subscriptions
@@ -178,11 +190,8 @@ func (s *NATSStream) dispatchMessage(ctx context.Context, msg *nats.Msg) {
 		}
 	}
 
-	if s.broker != nil {
-		_ = s.broker.Publish(ctx, event)
-	}
-
-	// 2. Delegate to corresponding service logic
+	// 1. Apply runtime state before notifying SSE subscribers so a dashboard
+	// refresh always observes the event that triggered it.
 	switch {
 	case strings.HasPrefix(subject, "aurora.v1.bronze."):
 		s.handleBronzeEvent(ctx, msg, event)
@@ -196,6 +205,10 @@ func (s *NATSStream) dispatchMessage(ctx context.Context, msg *nats.Msg) {
 		s.handleMLEvent(ctx, msg, event)
 	case strings.HasPrefix(subject, "aurora.v1.preprocessing."):
 		s.handlePreprocessingEvent(ctx, msg, event)
+	}
+
+	if s.broker != nil {
+		_ = s.broker.Publish(ctx, event)
 	}
 }
 
@@ -220,6 +233,15 @@ func (s *NATSStream) handleMLEvent(_ context.Context, msg *nats.Msg, event entit
 }
 
 func (s *NATSStream) handlePreprocessingEvent(_ context.Context, msg *nats.Msg, _ entity.WorkflowEvent) {
+	if msg.Subject == "aurora.v1.preprocessing.runtime" && s.preprocessing != nil {
+		var runtime entity.PreprocessingRuntimeEvent
+		if err := json.Unmarshal(msg.Data, &runtime); err != nil {
+			s.log.Warn("Invalid preprocessing runtime event", "error", err)
+			return
+		}
+		s.preprocessing.ObserveRuntime(runtime)
+		return
+	}
 	s.log.Debug("Preprocessing control event received", "subject", msg.Subject)
 }
 

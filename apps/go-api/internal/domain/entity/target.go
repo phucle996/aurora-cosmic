@@ -1,6 +1,7 @@
 package entity
 
 type Target struct {
+	GoldSnapshotID          string
 	TICID                   int64
 	TessMag                 float64
 	RA                      float64
@@ -22,9 +23,14 @@ type Target struct {
 	AnomalyPredictionID     string
 	AnomalyScore            float64
 	PipelineStatus          string
+	TICContextAvailable     bool
+	TOIMatchStatus          string
 }
 
 type TargetQuery struct {
+	// SnapshotID pins all Gold-derived fields and predictions to one immutable,
+	// READY snapshot. Empty selects the latest READY snapshot server-side.
+	SnapshotID     string
 	TICID          int64
 	Sector         int
 	TessMagMin     *float64

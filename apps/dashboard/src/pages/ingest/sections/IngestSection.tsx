@@ -36,6 +36,8 @@ type IngestProduct = {
   updated_at: string;
 };
 
+type IngestKindSummary = { planned: number; completed: number; downloading: number; failed: number };
+
 type IngestStatus = {
   observed: boolean;
   source: string;
@@ -59,6 +61,21 @@ type IngestStatus = {
   observed_at: string;
   products?: IngestProduct[];
   products_truncated?: boolean;
+  product_kinds?: Record<string, IngestKindSummary>;
+  catalog_progress?: { state: string; stage: string; tic_rows: number; toi_rows: number; completed: number; total: number; tic_snapshot_id?: string; toi_snapshot_id?: string; error?: string };
+  manifest_progress?: {
+    state: string;
+    stage: string;
+    completed: number;
+    total: number;
+    discovered_products: number;
+    paired_samples: number;
+    selected_samples: number;
+    priority_samples: number;
+    catalog_snapshots?: Record<string, string>;
+    error?: string;
+    updated_at?: string;
+  };
 };
 
 type IngestControlJob = {
@@ -146,7 +163,7 @@ export default function IngestSection(): JSX.Element {
     void load();
     const timer = window.setInterval(() => {
       void load();
-    }, 5000);
+    }, 2000);
 
     const eventSource = new EventSource(`${apiBase}/v1/events?workflow=ingest`);
     eventSource.addEventListener('workflow', (event) => {
@@ -220,6 +237,11 @@ export default function IngestSection(): JSX.Element {
     return Math.min(100, Math.round((status.completed_products / status.total_products) * 100));
   }, [status?.completed_products, status?.total_products]);
 
+  const productKinds = useMemo(() => [
+    ['LIGHT_CURVE', 'Light curves'],
+    ['TARGET_PIXEL', 'TPF'],
+  ].map(([key, label]) => ({ key, label, summary: status?.product_kinds?.[key] })), [status?.product_kinds]);
+
   const filteredProducts = useMemo(() => {
     const products = status?.products ?? [];
     return products.filter((p) => {
@@ -278,6 +300,64 @@ export default function IngestSection(): JSX.Element {
         <div className="flex items-center gap-2 border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
           <AlertCircle className="size-4 shrink-0" />
           <span>{error}</span>
+        </div>
+      )}
+
+      {(status?.catalog_progress || status?.manifest_progress) && (
+        <div className="grid gap-4 xl:grid-cols-2">
+          {status?.catalog_progress && (
+            <Card className="border-cyan-500/25">
+              <CardHeader className="pb-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-base">1 · Catalog Sync · TIC + TOI</CardTitle>
+                    <CardDescription>TOI toàn cục và TIC đúng phạm vi target được chọn.</CardDescription>
+                  </div>
+                  <Badge variant="outline" className="font-mono">{status.catalog_progress.state}</Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span className="font-mono">{status.catalog_progress.stage}</span>
+                  <span>{status.catalog_progress.completed}/{status.catalog_progress.total}</span>
+                </div>
+                <Progress value={status.catalog_progress.total > 0 ? status.catalog_progress.completed / status.catalog_progress.total * 100 : 0} className="h-2" />
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div>TOI rows: <span className="font-mono">{status.catalog_progress.toi_rows.toLocaleString()}</span></div>
+                  <div>TIC rows: <span className="font-mono">{status.catalog_progress.tic_rows.toLocaleString()}</span></div>
+                </div>
+                {status.catalog_progress.error && <p className="text-xs text-destructive">{status.catalog_progress.error}</p>}
+              </CardContent>
+            </Card>
+          )}
+
+          {status?.manifest_progress && (
+            <Card className="border-emerald-500/25">
+              <CardHeader className="pb-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-base">2 · Research Manifest Planning</CardTitle>
+                    <CardDescription>Dò MAST, ghép TPF + LC, ưu tiên TOI và khóa snapshot catalog.</CardDescription>
+                  </div>
+                  <Badge variant="outline" className="font-mono">{status.manifest_progress.state}</Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span className="font-mono">{status.manifest_progress.stage}</span>
+                  <span>{status.manifest_progress.completed}/{status.manifest_progress.total}</span>
+                </div>
+                <Progress value={status.manifest_progress.total > 0 ? status.manifest_progress.completed / status.manifest_progress.total * 100 : 0} className="h-2" />
+                <div className="grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
+                  <div>MAST products<br /><span className="font-mono text-foreground">{status.manifest_progress.discovered_products.toLocaleString()}</span></div>
+                  <div>TPF + LC pairs<br /><span className="font-mono text-foreground">{status.manifest_progress.paired_samples.toLocaleString()}</span></div>
+                  <div>Selected targets<br /><span className="font-mono text-foreground">{status.manifest_progress.selected_samples.toLocaleString()}</span></div>
+                  <div>TOI priority<br /><span className="font-mono text-foreground">{status.manifest_progress.priority_samples.toLocaleString()}</span></div>
+                </div>
+                {status.manifest_progress.error && <p className="text-xs text-destructive">{status.manifest_progress.error}</p>}
+              </CardContent>
+            </Card>
+          )}
         </div>
       )}
 
@@ -422,6 +502,10 @@ export default function IngestSection(): JSX.Element {
               />
             </div>
 
+            <div className="grid gap-3 sm:grid-cols-3">
+              {productKinds.map(({ key, label, summary }) => <div key={key} className="rounded-md border border-border/60 bg-muted/15 px-3 py-2.5 text-xs"><div className="flex items-center justify-between gap-2"><span className="font-medium text-foreground">{label}</span><span className="font-mono text-muted-foreground">{summary?.completed ?? 0}/{summary?.planned ?? 0}</span></div><p className="mt-1 text-muted-foreground">{summary?.downloading ?? 0} đang tải · {summary?.failed ?? 0} lỗi</p></div>)}
+            </div>
+
             {status?.manifest_path && (
               <div className="flex items-center justify-between rounded-md bg-muted/20 px-3 py-2 text-xs">
                 <span className="text-muted-foreground">Manifest Checkpoint:</span>
@@ -438,7 +522,7 @@ export default function IngestSection(): JSX.Element {
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <CardTitle className="text-base font-semibold">Danh sách tệp FITS trong đợt Ingest</CardTitle>
-              <CardDescription>Chi tiết trạng thái tải của từng sản phẩm quang học (Lightcurves, TPF, FFI).</CardDescription>
+              <CardDescription>Chi tiết trạng thái tải của từng cặp sản phẩm mục tiêu (Light Curve + TPF).</CardDescription>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <div className="relative">

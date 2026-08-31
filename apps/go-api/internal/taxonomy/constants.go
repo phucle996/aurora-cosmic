@@ -2,13 +2,15 @@ package taxonomy
 
 const (
 	TaskCandidateVetting = "candidate_vetting"
-	TaskAnomalyDetection = "astronomical_anomaly_detection"
 
 	ModelStatusValidated = "validated"
 	ModelStatusChampion  = "champion"
 	ModelStatusInvalid   = "invalid"
 
 	JobStatusPlanned   = "planned"
+	JobStatusRunning   = "running"
+	JobStatusRetrying  = "retrying"
+	JobStatusFailed    = "failed"
 	JobStatusCompleted = "completed"
 	JobStatusQueued    = "queued"
 )

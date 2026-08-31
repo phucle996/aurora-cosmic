@@ -45,7 +45,9 @@ def test_candidate_arrow_schema_validation():
     assert "source_product_id" in field_names
     assert "tic_id" in field_names
     assert "bls_period" in field_names
-    assert "training_label" in field_names
+    assert "training_label" not in field_names
+    assert "tce_match_status" not in field_names
+    assert "tpf_evidence_available" not in field_names
 
     # Verify column types
     assert schema.field("source_product_id").type == pa.string()

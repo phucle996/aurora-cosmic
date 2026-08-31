@@ -1,4 +1,4 @@
-use crate::failure::{classify_pipeline_error, ErrorKind, FailureClass};
+use crate::failure::{classify_pipeline_error, ErrorKind, FailureClass, PipelineError};
 
 fn make_err(msg: &str) -> anyhow::Error {
     anyhow::anyhow!("{}", msg)
@@ -75,6 +75,16 @@ fn test_classify_unknown_error_is_retryable() {
     let f = classify_pipeline_error(&err);
     assert_eq!(f.class, FailureClass::Retryable);
     assert_eq!(f.kind, ErrorKind::InternalTemporary);
+}
+
+#[test]
+fn test_classify_typed_scientific_rejection_without_message_matching() {
+    let err = anyhow::Error::new(PipelineError::rejected(
+        "Points after quality filtering (2) below required minimum (100)",
+    ));
+    let failure = classify_pipeline_error(&err);
+    assert_eq!(failure.class, FailureClass::Rejected);
+    assert_eq!(failure.kind, ErrorKind::PreprocessingRejected);
 }
 
 #[test]

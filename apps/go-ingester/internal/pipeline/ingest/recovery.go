@@ -6,6 +6,8 @@ import (
 	"log/slog"
 
 	"go-ingester/internal/model"
+	"go-ingester/internal/pipeline/event"
+	"go-ingester/internal/pipeline/storage"
 
 	"github.com/google/uuid"
 )
@@ -27,7 +29,7 @@ func (p *Pipeline) recoverCheckpointProduct(ctx context.Context, prod model.Mani
 	if pc.State == model.StateStored || pc.State == model.StateDownloading {
 		key := pc.ObjectKey
 		if key == "" {
-			key, _ = model.BuildObjectKey(prod)
+			key, _ = storage.ObjectKeyFor(prod)
 		}
 		info, exists, statErr := p.minioClient.StatObject(ctx, p.bucket, key)
 		if statErr == nil && exists && existingObjectMatchesExpected(info.Size, prod.SizeBytes) {
@@ -35,9 +37,9 @@ func (p *Pipeline) recoverCheckpointProduct(ctx context.Context, prod model.Mani
 				slog.String("object_key", key),
 				slog.Int64("size", info.Size),
 			)
-			sha := pc.SHA256
-			if sha == "" {
-				sha = info.UserMetadata["sha256"]
+			sha, hashErr := p.resolveStoredSHA(ctx, key, pc.SHA256)
+			if hashErr != nil {
+				return model.ProductResult{SourceProductID: prod.SourceProductID, ObjectKey: key, SizeBytes: info.Size, Status: model.StatusFailed, Error: hashErr}, true
 			}
 
 			res := p.publishOnly(ctx, prod, key, info.Size, sha)
@@ -81,7 +83,7 @@ func (p *Pipeline) publishOnly(ctx context.Context, prod model.ManifestProduct, 
 	// stored so downstream integrity checks can validate the object correctly.
 	eventProd := prod
 	eventProd.SizeBytes = size
-	evt, err := model.BuildBronzeEvent(eventID, p.bucket, eventProd, objectKey, sha256Hex)
+	evt, err := event.NewBronzeReady(eventID, p.bucket, eventProd, objectKey, sha256Hex)
 	if err != nil {
 		return model.ProductResult{
 			SourceProductID: prod.SourceProductID,

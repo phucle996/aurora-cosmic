@@ -32,7 +32,21 @@ type App struct {
 	Server   *http.Server
 	Observer *observer.Server
 	Stream   *stream.NATSStream
+	NATS     *nats.Dispatcher
 	Addr     string
+}
+
+// Start brings up transport consumers before the HTTP listener is exposed.
+// Runtime SSE depends on this Core NATS consumer; starting only the REST
+// server would leave the dashboard with an open but silent event stream.
+func (a *App) Start(ctx context.Context) error {
+	if a == nil || a.Stream == nil {
+		return fmt.Errorf("NATS stream consumer is unavailable")
+	}
+	if err := a.Stream.Start(ctx); err != nil {
+		return fmt.Errorf("start NATS stream consumer: %w", err)
+	}
+	return nil
 }
 
 func New(cfg *config.Config, log *slog.Logger) (*App, error) {
@@ -74,6 +88,7 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 		Server:   srv,
 		Observer: observerServer,
 		Stream:   module.NATSStream,
+		NATS:     infra.NATS,
 		Addr:     addr,
 	}, nil
 }
@@ -86,6 +101,11 @@ func (a *App) Shutdown(ctx context.Context) error {
 	var shutdownErrs []error
 	if a.Stream != nil {
 		if err := a.Stream.Close(); err != nil {
+			shutdownErrs = append(shutdownErrs, err)
+		}
+	}
+	if a.NATS != nil {
+		if err := a.NATS.Close(); err != nil {
 			shutdownErrs = append(shutdownErrs, err)
 		}
 	}

@@ -58,6 +58,16 @@ func averageDuration(metric string) string {
 	return fmt.Sprintf("sum(rate(%s_sum[2m])) / clamp_min(sum(rate(%s_count[2m])), 1)", metric, metric)
 }
 
+func systemdMetrics(unit string) []metricSpec {
+	selector := fmt.Sprintf(`{unit=%q}`, unit)
+	return []metricSpec{
+		{Key: "availability", Name: "Systemd active", Unit: "up", Kind: "gauge", Query: "max(aurora_systemd_unit_active" + selector + ")"},
+		{Key: "restarts", Name: "Systemd restarts", Unit: "restarts", Kind: "gauge", Query: "max(aurora_systemd_unit_restarts_total" + selector + ")"},
+		{Key: "memory", Name: "Systemd memory", Unit: "bytes", Kind: "gauge", Query: "max(aurora_systemd_unit_memory_bytes" + selector + ")"},
+		{Key: "cpu", Name: "Systemd CPU time", Unit: "seconds", Kind: "gauge", Query: "max(aurora_systemd_unit_cpu_seconds_total" + selector + ")"},
+	}
+}
+
 // ============================================================================
 // DANH SÁCH CÁC COMPONENT ĐƯỢC GIÁM SÁT
 // ============================================================================
@@ -69,8 +79,8 @@ var components = []componentSpec{
 			{Key: "throughput", Name: "Products / second", Unit: "products/s", Kind: "rate", Query: rate("aurora_ingester_products_total")},
 			{Key: "duration", Name: "Processing duration", Unit: "seconds", Kind: "duration", Query: averageDuration("aurora_ingester_product_duration_seconds")},
 			{Key: "errors", Name: "Errors / second", Unit: "errors/s", Kind: "rate", Query: rate("aurora_ingester_errors_total")},
-			{Key: "inflight", Name: "In-flight products", Unit: "products", Kind: "gauge", Query: "aurora_ingester_inflight_products"},
-			{Key: "queue", Name: "Queue depth", Unit: "products", Kind: "gauge", Query: "aurora_ingester_queue_depth"},
+			{Key: "inflight", Name: "In-flight products", Unit: "products", Kind: "gauge", Query: "sum(aurora_ingester_inflight_products)"},
+			{Key: "queue", Name: "Queue depth", Unit: "products", Kind: "gauge", Query: "sum(aurora_ingester_queue_depth)"},
 			{Key: "bytes", Name: "Bytes / second", Unit: "bytes/s", Kind: "rate", Query: rate("aurora_ingester_bytes_processed_total")},
 		},
 	},
@@ -81,8 +91,8 @@ var components = []componentSpec{
 			{Key: "throughput", Name: "Products / second", Unit: "products/s", Kind: "rate", Query: rate("aurora_preprocessor_products_total")},
 			{Key: "duration", Name: "Processing duration", Unit: "seconds", Kind: "duration", Query: averageDuration("aurora_preprocessor_processing_duration_seconds")},
 			{Key: "errors", Name: "Errors / second", Unit: "errors/s", Kind: "rate", Query: rate("aurora_preprocessor_errors_total")},
-			{Key: "inflight", Name: "In-flight workers", Unit: "workers", Kind: "gauge", Query: "aurora_preprocessor_inflight_workers"},
-			{Key: "queue", Name: "Queue depth", Unit: "products", Kind: "gauge", Query: "aurora_preprocessor_queue_depth"},
+			{Key: "inflight", Name: "In-flight workers", Unit: "workers", Kind: "gauge", Query: "sum(aurora_preprocessor_inflight_workers)"},
+			{Key: "queue", Name: "Queue depth", Unit: "products", Kind: "gauge", Query: "sum(aurora_preprocessor_queue_depth)"},
 			{Key: "bytes", Name: "Bytes / second", Unit: "bytes/s", Kind: "rate", Query: rate("aurora_preprocessor_bytes_total")},
 		},
 	},
@@ -93,9 +103,20 @@ var components = []componentSpec{
 			{Key: "throughput", Name: "Jobs / second", Unit: "jobs/s", Kind: "rate", Query: rate("aurora_ml_jobs_total")},
 			{Key: "duration", Name: "Job duration", Unit: "seconds", Kind: "duration", Query: averageDuration("aurora_ml_job_duration_seconds")},
 			{Key: "errors", Name: "Errors / second", Unit: "errors/s", Kind: "rate", Query: rate("aurora_ml_errors_total")},
-			{Key: "inflight", Name: "In-flight jobs", Unit: "jobs", Kind: "gauge", Query: "aurora_ml_inflight_jobs"},
-			{Key: "queue", Name: "Queue depth", Unit: "jobs", Kind: "gauge", Query: "aurora_ml_queue_depth"},
+			{Key: "inflight", Name: "In-flight jobs", Unit: "jobs", Kind: "gauge", Query: "sum(aurora_ml_inflight_jobs)"},
+			{Key: "queue", Name: "Queue depth", Unit: "jobs", Kind: "gauge", Query: "sum(aurora_ml_queue_depth)"},
 			{Key: "rows", Name: "Rows / second", Unit: "rows/s", Kind: "rate", Query: rate("aurora_ml_rows_processed_total")},
+			{Key: "memory", Name: "Worker memory", Unit: "bytes", Kind: "gauge", Query: "max(aurora_systemd_unit_memory_bytes{unit=\"aurora-python-ml-worker.service\"})"},
+			{Key: "cpu_time", Name: "Worker CPU time", Unit: "seconds", Kind: "gauge", Query: "max(aurora_systemd_unit_cpu_seconds_total{unit=\"aurora-python-ml-worker.service\"})"},
+			{Key: "cpu_cores", Name: "Worker CPU cores in use", Unit: "cores", Kind: "gauge", Query: "rate(aurora_systemd_unit_cpu_seconds_total{unit=\"aurora-python-ml-worker.service\"}[1m])"},
+			{Key: "cpu_cores_total", Name: "Host CPU logical cores", Unit: "cores", Kind: "gauge", Query: "max(aurora_host_cpu_logical_cores)"},
+			{Key: "cpu_info", Name: "Host CPU info", Unit: "info", Kind: "gauge", Query: "aurora_host_cpu_info"},
+			{Key: "memory_total", Name: "Host memory total", Unit: "bytes", Kind: "gauge", Query: "max(aurora_host_memory_total_bytes)"},
+			{Key: "disk_read", Name: "Worker disk read", Unit: "bytes/s", Kind: "rate", Query: "rate(aurora_systemd_unit_io_read_bytes_total{unit=\"aurora-python-ml-worker.service\"}[1m])"},
+			{Key: "disk_write", Name: "Worker disk write", Unit: "bytes/s", Kind: "rate", Query: "rate(aurora_systemd_unit_io_write_bytes_total{unit=\"aurora-python-ml-worker.service\"}[1m])"},
+			{Key: "gpu_utilization", Name: "GPU utilization", Unit: "percent", Kind: "gauge", Query: "max(aurora_ml_gpu_utilization_percent)"},
+			{Key: "gpu_memory_used", Name: "GPU memory used", Unit: "bytes", Kind: "gauge", Query: "max(aurora_ml_gpu_memory_used_bytes)"},
+			{Key: "gpu_memory_total", Name: "GPU memory total", Unit: "bytes", Kind: "gauge", Query: "max(aurora_ml_gpu_memory_total_bytes)"},
 		},
 	},
 	// 4. Rust GPU Inference (Suy luận mô hình ONNX)
@@ -105,8 +126,8 @@ var components = []componentSpec{
 			{Key: "throughput", Name: "Jobs / second", Unit: "jobs/s", Kind: "rate", Query: rate("aurora_inference_jobs_total")},
 			{Key: "duration", Name: "Inference duration", Unit: "seconds", Kind: "duration", Query: averageDuration("aurora_inference_processing_duration_seconds")},
 			{Key: "errors", Name: "Errors / second", Unit: "errors/s", Kind: "rate", Query: rate("aurora_inference_errors_total")},
-			{Key: "inflight", Name: "In-flight jobs", Unit: "jobs", Kind: "gauge", Query: "aurora_inference_inflight_jobs"},
-			{Key: "queue", Name: "Queue depth", Unit: "jobs", Kind: "gauge", Query: "aurora_inference_queue_depth"},
+			{Key: "inflight", Name: "In-flight jobs", Unit: "jobs", Kind: "gauge", Query: "sum(aurora_inference_inflight_jobs)"},
+			{Key: "queue", Name: "Queue depth", Unit: "jobs", Kind: "gauge", Query: "sum(aurora_inference_queue_depth)"},
 			{Key: "rows", Name: "Rows / second", Unit: "rows/s", Kind: "rate", Query: rate("aurora_inference_rows_processed_total")},
 		},
 	},
@@ -117,10 +138,22 @@ var components = []componentSpec{
 			{Key: "throughput", Name: "Requests / second", Unit: "requests/s", Kind: "rate", Query: rate("aurora_api_http_requests_total")},
 			{Key: "duration", Name: "Request duration", Unit: "seconds", Kind: "duration", Query: averageDuration("aurora_api_http_request_duration_seconds")},
 			{Key: "errors", Name: "Errors / second", Unit: "errors/s", Kind: "rate", Query: rate("aurora_api_http_errors_total")},
-			{Key: "inflight", Name: "In-flight requests", Unit: "requests", Kind: "gauge", Query: "aurora_api_http_inflight_requests"},
+			{Key: "inflight", Name: "In-flight requests", Unit: "requests", Kind: "gauge", Query: "sum(aurora_api_http_inflight_requests)"},
 		},
 	},
-	// 6. MinIO Storage
+	// 6. Gold Builder has no own HTTP metrics endpoint yet, so its health and
+	// resource telemetry are reported directly by the systemd user exporter.
+	{
+		ID: "gold-builder", Name: "Gold Builder", Group: "Pipeline", Container: "aurora-gold-builder", Job: "aurora-systemd",
+		Metrics: systemdMetrics("aurora-gold-builder.service"),
+	},
+	// 7. Dashboard is a native Vite service in development and is likewise
+	// monitored by its systemd unit rather than an application endpoint.
+	{
+		ID: "dashboard", Name: "Dashboard", Group: "Platform", Container: "aurora-dashboard", Job: "aurora-systemd",
+		Metrics: systemdMetrics("aurora-dashboard.service"),
+	},
+	// 8. MinIO Storage
 	{
 		ID: "minio", Name: "MinIO Storage", Group: "Platform", Container: "aurora-minio", Job: "aurora-minio",
 		Metrics: []metricSpec{
@@ -133,7 +166,7 @@ var components = []componentSpec{
 			{Key: "offline_drives", Name: "Offline drives", Unit: "drives", Kind: "gauge", Query: "minio_cluster_drive_offline_total"},
 		},
 	},
-	// 7. NATS JetStream
+	// 9. NATS JetStream
 	{
 		ID: "nats", Name: "NATS JetStream", Group: "Platform", Container: "aurora-nats", Job: "aurora-nats",
 		Metrics: []metricSpec{
@@ -146,7 +179,7 @@ var components = []componentSpec{
 			{Key: "pending_bytes", Name: "Pending bytes", Unit: "bytes", Kind: "gauge", Query: "max(gnatsd_connz_pending_bytes)"},
 		},
 	},
-	// 8. ClickHouse Analytics Database
+	// 10. ClickHouse Analytics Database
 	{
 		ID: "clickhouse", Name: "ClickHouse", Group: "Platform", Container: "aurora-clickhouse", Job: "aurora-clickhouse",
 		Metrics: []metricSpec{

@@ -21,6 +21,7 @@ export type Hop = {
   output: string;
   observed_at?: string;
   metrics?: Record<string, number>;
+  telemetry?: Record<string, Array<{ timestamp: number; value: number; labels?: Record<string, string> }>>;
   details?: Record<string, string>;
 };
 
@@ -31,23 +32,120 @@ export type PreprocessingGraph = {
   observation_scope: string;
   observed_at: string;
   run?: PreprocessingJob | null;
+  runtime: {
+    desired_workers: number;
+    actual_workers: number;
+    processing: number;
+    throughput: number;
+    completed: number;
+    failed: number;
+    observed_at?: string;
+    workers: Array<{
+      worker_id: string;
+      state: string;
+      product_kind?: string;
+      object_key?: string;
+      stage?: string;
+      started_at?: string;
+      updated_at?: string;
+      last_duration_ms?: number;
+      completed: number;
+      failed: number;
+    }>;
+    trace: Array<{
+      event: string;
+      worker_id: string;
+      worker_state: string;
+      product_kind?: string;
+      object_key?: string;
+      stage?: string;
+      elapsed_ms?: number;
+      error?: string;
+      occurred_at: string;
+    }>;
+  };
   progress: {
+    bronze_total: number;
+	bronze_bytes: number;
+    bronze_completed: number;
+    bronze_pending: number;
+	bronze_failed: number;
+    bronze_observed: boolean;
+	silver_total: number;
+	silver_bytes: number;
+	gold_total: number;
+	gold_bytes: number;
+	footprint_observed: boolean;
     checkpoint_total: number;
     checkpoint_completed: number;
     checkpoint_pending: number;
+	checkpoint_failed: number;
     backlog_pending: number;
     backlog_ack_pending: number;
     items_to_process: number;
     observed_at?: string;
   };
-  hops: Array<Pick<Hop, 'id' | 'status' | 'observed_at' | 'metrics'>>;
+  hops: Array<Pick<Hop, 'id' | 'status' | 'observed_at' | 'metrics' | 'telemetry'>>;
   edges: Array<{ id: string; source: string; target: string; status: HopStatus }>;
 };
+
+const EMPTY_PROGRESS: PreprocessingGraph['progress'] = {
+  bronze_total: 0,
+  bronze_bytes: 0,
+  bronze_completed: 0,
+  bronze_pending: 0,
+  bronze_failed: 0,
+  bronze_observed: false,
+  silver_total: 0,
+  silver_bytes: 0,
+  gold_total: 0,
+  gold_bytes: 0,
+  footprint_observed: false,
+  checkpoint_total: 0,
+  checkpoint_completed: 0,
+  checkpoint_pending: 0,
+  checkpoint_failed: 0,
+  backlog_pending: 0,
+  backlog_ack_pending: 0,
+  items_to_process: 0,
+};
+
+const EMPTY_RUNTIME: PreprocessingGraph['runtime'] = {
+  desired_workers: 0,
+  actual_workers: 0,
+  processing: 0,
+  throughput: 0,
+  completed: 0,
+  failed: 0,
+  workers: [],
+  trace: [],
+};
+
+/** Accepts the valid no-telemetry response emitted during a clean bootstrap. */
+export function normalizePreprocessingGraph(value: Partial<PreprocessingGraph> | null | undefined): PreprocessingGraph {
+  const runtime = value?.runtime;
+  return {
+    status: value?.status ?? 'not_observed',
+    observation_scope: value?.observation_scope ?? 'not_observed',
+    observed_at: value?.observed_at ?? '',
+    run: value?.run ?? null,
+    runtime: {
+      ...EMPTY_RUNTIME,
+      ...(runtime ?? {}),
+      workers: Array.isArray(runtime?.workers) ? runtime.workers : [],
+      trace: Array.isArray(runtime?.trace) ? runtime.trace : [],
+    },
+    progress: { ...EMPTY_PROGRESS, ...(value?.progress ?? {}) },
+    hops: Array.isArray(value?.hops) ? value.hops : [],
+    edges: Array.isArray(value?.edges) ? value.edges : [],
+  };
+}
 
 export type PreprocessingJob = {
   job_id: string;
   status: string;
   mode: string;
+  worker_count: number;
   ingest_run_id?: string;
   prefix?: string;
   started_at: string;
@@ -96,81 +194,3 @@ export type TargetProfile = {
   rawNoise: number;
   stellarDriftAmp: number;
 };
-
-export const defaultHops: Hop[] = [
-  {
-    id: 'bronze',
-    stepNumber: 1,
-    label: 'Bronze FITS Ingestion',
-    shortTitle: '1. FITS Header & Flux',
-    description: 'Đọc tệp FITS nhị phân nguyên bản từ NASA MAST, kiểm tra tính toàn vẹn HDU.',
-    astronomyGoal: 'Trích xuất cột thời gian BJD (Barycentric Julian Date), SAP_FLUX và PDCSAP_FLUX.',
-    contract: 'bronze/tess/<product>/sector=<sector>/tic=<tic>/',
-    status: 'not_observed',
-    input: 'NASA MAST FITS (Binary Table)',
-    output: 'Raw Time Series & Metadata',
-  },
-  {
-    id: 'decode',
-    stepNumber: 2,
-    label: 'Quality Masking & NaN Filter',
-    shortTitle: '2. Lọc Cờ Chất Lượng',
-    description: 'Loại bỏ các điểm đo bị lỗi định hướng vệ tinh, momentum dump, hoặc tia vũ trụ trực tiếp.',
-    astronomyGoal: 'Áp dụng bitmask QUALITY == 0 và loại bỏ NaN/Inf để đảm bảo chuỗi dữ liệu liên tục.',
-    formula: 'Flag \\& 0b1011111111111111 == 0',
-    contract: 'quality-flag-bitmask-v1',
-    status: 'not_observed',
-    input: 'Raw Time Series (17,649 pts)',
-    output: 'Valid Photometry Points',
-  },
-  {
-    id: 'transform',
-    stepNumber: 3,
-    label: 'Spline Detrending & 5σ Outlier Rejection',
-    shortTitle: '3. Khử Xu Hướng & Nhiễu 5σ',
-    description: 'Khử biến thiên chu kỳ dài của sao mẹ và loại bỏ nhiễu cực đại bằng Spline / Median Filter.',
-    astronomyGoal: 'Chuẩn hóa thông lượng quanh mức 1.0 (Relative Flux) và loại bỏ hiện tượng trôi nhiệt camera.',
-    formula: 'F_{norm}(t) = \\frac{F(t)}{S_{trend}(t)}, \\quad |F_{norm} - 1.0| < 5\\sigma',
-    contract: 'lc-preprocess-v1 / tpf-preprocess-v1',
-    status: 'not_observed',
-    input: 'Valid Photometry Points',
-    output: 'Detrended Normalized Flux',
-  },
-  {
-    id: 'silver',
-    stepNumber: 4,
-    label: 'BLS Search & Silver Parquet Export',
-    shortTitle: '4. Gập Pha & Silver Parquet',
-    description: 'Thuật toán Box Least Squares (BLS) dò tìm tín hiệu transit định kỳ và gập pha từ 0 đến 1.',
-    astronomyGoal: 'Trích xuất độ sâu trũng sáng (Transit Depth), chu kỳ quỹ đạo P và xuất file Parquet nén Snappy.',
-    formula: '\\phi(t) = \\left( \\frac{t - T_0}{P} \\right) \\bmod 1.0',
-    contract: 'silver/tess/<product>/processor=v1.2.0/',
-    status: 'not_observed',
-    input: 'Detrended Normalized Flux',
-    output: 'Silver Parquet & Phase Dips',
-  },
-  {
-    id: 'checkpoint',
-    stepNumber: 5,
-    label: 'Crash-Safe Checkpoint Store',
-    shortTitle: '5. Lưu Vết Checkpoint',
-    description: 'Ghi nhận trạng thái hoàn tất vào MinIO để đảm bảo tính an toàn chống sập (Idempotent).',
-    astronomyGoal: 'Bảo đảm pipeline có thể resume bất kỳ lúc nào mà không xử lý trùng lặp đối tượng.',
-    contract: 'checkpoints/preprocessing/objects/<id>.json',
-    status: 'not_observed',
-    input: 'Silver Verification',
-    output: 'Durable MinIO Checkpoint',
-  },
-  {
-    id: 'lineage',
-    stepNumber: 6,
-    label: 'Lineage & Provenance Commit',
-    shortTitle: '6. Khóa Phả Hệ Lineage',
-    description: 'Tạo liên kết bất biến giữa Bronze Hash (SHA-256) → Thuật toán Rust v1.2.0 → Silver Hash.',
-    astronomyGoal: 'Truy vết 100% nguồn gốc khoa học cho mọi ứng viên hành tinh downstream ML.',
-    contract: 'lineage/v1/<lineage-id>.json',
-    status: 'not_observed',
-    input: 'Bronze + Silver Hashes',
-    output: 'Committed Lineage Proof',
-  },
-];

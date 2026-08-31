@@ -1,15 +1,20 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { JSX } from 'react';
-import { BrainCircuit, CheckCircle2, CircleAlert, RefreshCw } from 'lucide-react';
+import { useParams } from 'react-router-dom';
+import { BrainCircuit, CheckCircle2, CircleAlert, RefreshCw, Workflow } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { apiBase, apiFetch } from '@/lib/api';
 
 import { InferenceJobsTable } from './components/InferenceJobsTable';
 import { LiveTrainingBanner } from './components/LiveTrainingBanner';
 import { MetricCards } from './components/MetricCards';
+import { ModelEvaluationBoard } from './components/ModelEvaluationBoard';
+import { ModelEvolutionEvidence } from './components/ModelEvolutionEvidence';
 import { ModelRegistryTable } from './components/ModelRegistryTable';
 import { SelectedModelDetails } from './components/SelectedModelDetails';
-import { TrainingModal } from './components/TrainingModal';
+import { TrainingLabControl } from './components/TrainingLabControl';
+import { TrainingRuntimePanel } from './components/TrainingRuntimePanel';
 import type {
   ActiveTrainingState,
   GoldSnapshotItem,
@@ -18,12 +23,25 @@ import type {
   ModelDeployResponse,
   ModelRecord,
   ModelResponse,
-  StorageResponse,
+  GoldSnapshotInventoryResponse,
   TaskType,
   TrainingResponse,
 } from './types';
 
-export default function ModelsPage(): JSX.Element {
+export type AIModelView = 'training' | 'evaluation' | 'evidence' | 'registry' | 'inference' | 'detail' | 'overview';
+
+const viewCopy: Record<AIModelView, { eyebrow: string; title: string; description: string }> = {
+  training: { eyebrow: 'AI Factory · Training Lab', title: 'Training Lab', description: 'Chọn Train New hoặc Evolve, pin CPU/GPU target và theo dõi tài nguyên runtime trong lúc huấn luyện.' },
+  evaluation: { eyebrow: 'AI Factory · Model Evaluation', title: 'Model Evaluation', description: 'Kiểm tra evaluation run, parity PyTorch–ONNX và trạng thái quality gate trước promotion.' },
+  evidence: { eyebrow: 'AI Factory · Evolution Evidence', title: 'Evolution Evidence', description: 'Truy vết Gold input → training/evaluation → runtime package → inference của từng thế hệ model.' },
+  registry: { eyebrow: 'AI Factory · Model Registry', title: 'Model Registry', description: 'Quản lý version, candidate/validated/champion và deployment có thể rollback.' },
+  inference: { eyebrow: 'AI Factory · Inference Engine', title: 'Inference Engine', description: 'Theo dõi và retry batch scoring trên Rust GPU runtime; mỗi job được pin vào model và Gold artifact cụ thể.' },
+  detail: { eyebrow: 'AI Factory · Model Detail', title: 'Model Detail', description: 'Metadata, evaluation evidence, artifact hashes và history inference của một model.' },
+  overview: { eyebrow: 'AI Factory', title: 'AI Factory', description: 'Control plane thống nhất cho training, evidence, registry và inference.' },
+};
+
+export default function ModelsPage({ view = 'overview' }: { view?: AIModelView }): JSX.Element {
+  const { modelId } = useParams<{ modelId: string }>();
   const [models, setModels] = useState<ModelRecord[]>([]);
   const [jobs, setJobs] = useState<InferenceJob[]>([]);
   const [selectedRuntimeId, setSelectedRuntimeId] = useState<string>();
@@ -36,7 +54,6 @@ export default function ModelsPage(): JSX.Element {
   const [deploying, setDeploying] = useState(false);
 
   // Training Dialog state & Snapshots
-  const [trainDialogOpen, setTrainDialogOpen] = useState(false);
   const [availableSnapshots, setAvailableSnapshots] = useState<GoldSnapshotItem[]>([]);
   const [snapshotsLoading, setSnapshotsLoading] = useState(false);
   const [trainingSubmitting, setTrainingSubmitting] = useState(false);
@@ -58,6 +75,9 @@ export default function ModelsPage(): JSX.Element {
       setModels(modelResponse.models ?? []);
       setJobs(jobResponse.jobs ?? []);
       setSelectedRuntimeId((current) =>
+        modelId && modelResponse.models.some((model) => model.model_id === modelId)
+          ? modelResponse.models.find((model) => model.model_id === modelId)?.runtime_package_id
+          :
         current && modelResponse.models.some((model) => model.runtime_package_id === current)
           ? current
           : modelResponse.models[0]?.runtime_package_id,
@@ -68,33 +88,17 @@ export default function ModelsPage(): JSX.Element {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [modelId]);
 
   useEffect(() => {
     void loadData();
   }, [loadData]);
 
-  // Load Gold Snapshots from Lakehouse
+  // The API reads only manifest metadata; the browser never scans every Gold object.
   const loadAvailableSnapshots = useCallback(async () => {
     setSnapshotsLoading(true);
     try {
-      const pageSize = 200;
-      const objects: StorageResponse['objects'] = [];
-      let page = 1;
-      let hasMore = true;
-
-      while (hasMore) {
-        const storage = await apiFetch<StorageResponse>(`/v1/storage?prefix=gold/snapshots/&page=${page}&limit=${pageSize}`);
-        const pageObjects = storage.objects ?? [];
-        objects.push(...pageObjects);
-
-        hasMore = storage.truncated ?? (
-          typeof storage.total === 'number'
-            ? objects.length < storage.total
-            : pageObjects.length === pageSize
-        );
-        page += 1;
-      }
+      const inventory = await apiFetch<GoldSnapshotInventoryResponse>('/v1/gold/snapshots?limit=200');
 
       const trainedSnapshotSet = new Map<string, string>();
       for (const m of models) {
@@ -103,45 +107,17 @@ export default function ModelsPage(): JSX.Element {
         }
       }
 
-      const snapshotMap = new Map<string, {
-        manifest?: StorageResponse['objects'][number];
-        dataSizeBytes: number;
-        lastModified: string;
-      }>();
-      for (const obj of objects) {
-        const match = obj.key.match(/^gold\/snapshots\/([^/]+)\/(.+)$/);
-        if (match && match[1]) {
-          const snapId = match[1];
-          const relativeKey = match[2];
-          const snapshot = snapshotMap.get(snapId) ?? {
-            dataSizeBytes: 0,
-            lastModified: obj.last_modified ?? '',
-          };
-
-          if (relativeKey === 'manifest.json') {
-            snapshot.manifest = obj;
-          } else {
-            snapshot.dataSizeBytes += obj.size_bytes ?? 0;
-          }
-          if (obj.last_modified && obj.last_modified > snapshot.lastModified) {
-            snapshot.lastModified = obj.last_modified;
-          }
-          snapshotMap.set(snapId, snapshot);
-        }
-      }
-
-      const list = Array.from(snapshotMap, ([snapshotId, snapshot]) => {
-        if (!snapshot.manifest) return undefined;
-
+      const list = inventory.snapshots.filter((snapshot) => snapshot.status === 'COMMITTED').map((snapshot): GoldSnapshotItem => {
+        const trainedModelID = trainedSnapshotSet.get(snapshot.snapshot_id);
         return {
-          snapshot_id: snapshotId,
-          key: snapshot.manifest.key,
-          size_bytes: snapshot.dataSizeBytes,
-          last_modified: snapshot.lastModified || snapshot.manifest.last_modified || new Date().toISOString(),
-          is_trained: trainedSnapshotSet.has(snapshotId),
-          trained_model_id: trainedSnapshotSet.get(snapshotId),
-        } satisfies GoldSnapshotItem;
-      }).filter((snapshot): snapshot is GoldSnapshotItem => snapshot !== undefined).sort((a, b) => {
+          snapshot_id: snapshot.snapshot_id,
+          key: snapshot.manifest_key,
+          size_bytes: snapshot.size_bytes,
+          last_modified: snapshot.last_modified || snapshot.created_at,
+          is_trained: trainedModelID !== undefined,
+          ...(trainedModelID ? { trained_model_id: trainedModelID } : {}),
+        };
+      }).sort((a, b) => {
         if (a.is_trained !== b.is_trained) {
           return a.is_trained ? 1 : -1;
         }
@@ -155,6 +131,10 @@ export default function ModelsPage(): JSX.Element {
       setSnapshotsLoading(false);
     }
   }, [models]);
+
+  useEffect(() => {
+    if (view === 'training') void loadAvailableSnapshots();
+  }, [view, loadAvailableSnapshots]);
 
   // Live Training Polling & Elapsed Timer
   useEffect(() => {
@@ -194,7 +174,7 @@ export default function ModelsPage(): JSX.Element {
             .then((res) => setModels(res.models ?? []))
             .catch(() => undefined);
           setActiveTraining(null);
-          setNotice(`🎉 Huấn luyện thành công! Mô hình Deep Learning mới đã được tạo từ ${activeTraining.snapshotCount} Gold Snapshots, vượt qua kiểm thử Python-ONNX Parity và thăng hạng thành 👑 Champion!`);
+          setNotice(`Huấn luyện đã hoàn tất. Runtime package đang chờ Rust xác minh parity; promotion chỉ diễn ra khi người vận hành duyệt trong Model Registry.`);
           void loadAvailableSnapshots();
         }
       } catch {
@@ -209,85 +189,52 @@ export default function ModelsPage(): JSX.Element {
     };
   }, [activeTraining, loadAvailableSnapshots]);
 
-  const handleOpenDialog = (open: boolean) => {
-    setTrainDialogOpen(open);
-    if (open) {
-      void loadAvailableSnapshots();
-    }
-  };
-
   const handleStartTraining = async (params: {
-    task: 'candidate_vetting' | 'astronomical_anomaly_detection';
+    task: 'candidate_vetting';
     baseModelId: string;
     mode: 'fine_tune' | 'scratch';
-    snapshotId: string;
+    snapshotIds: string[];
     epochs: number;
     learningRate: number;
     batchSize: number;
     seed: number;
-    autoPromote: boolean;
-    unrunSnapshots: GoldSnapshotItem[];
+    computeTarget: 'cpu' | 'gpu';
   }) => {
     setTrainingSubmitting(true);
     setError(undefined);
     setNotice(undefined);
     try {
-      let snapshotCount = 1;
-      let targetJobId = '';
-
-      if (params.snapshotId === '__all_unrun__') {
-        if (params.unrunSnapshots.length === 0) {
-          throw new Error('Không có Gold Snapshot nào chưa chạy để huấn luyện.');
-        }
-
-        const snapshotIds = params.unrunSnapshots.map((s) => s.snapshot_id);
-        snapshotCount = snapshotIds.length;
-        const res = await apiFetch<TrainingResponse>('/v1/models/train', {
-          method: 'POST',
-          body: JSON.stringify({
-            task: params.task,
-            gold_snapshot_id: snapshotIds[0],
-            gold_snapshot_ids: snapshotIds,
-            base_model_id: params.baseModelId,
-            training_mode: params.mode,
-            epochs: params.epochs,
-            learning_rate: params.learningRate,
-            batch_size: params.batchSize,
-            seed: params.seed,
-            auto_promote: params.autoPromote,
-          }),
-        });
-        targetJobId = res.job_id;
-        setNotice(`🚀 Đã phát lệnh thành công tới GPU Worker! Đang gộp toàn bộ ${snapshotIds.length} Gold Snapshots để huấn luyện tạo ra 1 MÔ HÌNH HỌC SÂU DUY NHẤT...`);
-      } else {
-        const res = await apiFetch<TrainingResponse>('/v1/models/train', {
-          method: 'POST',
-          body: JSON.stringify({
-            task: params.task,
-            gold_snapshot_id: params.snapshotId.trim(),
-            base_model_id: params.baseModelId,
-            training_mode: params.mode,
-            epochs: params.epochs,
-            learning_rate: params.learningRate,
-            batch_size: params.batchSize,
-            seed: params.seed,
-            auto_promote: params.autoPromote,
-          }),
-        });
-        targetJobId = res.job_id;
-        setNotice(`🚀 Training Job ${res.job_id} đã được gửi tới GPU Worker thành công với Gold Snapshot [${params.snapshotId}]...`);
+      const snapshotIds = [...new Set(params.snapshotIds.map((value) => value.trim()).filter(Boolean))];
+      if (snapshotIds.length === 0) {
+        throw new Error('Chọn ít nhất một committed Gold Snapshot trước khi huấn luyện.');
       }
 
+      const res = await apiFetch<TrainingResponse>('/v1/models/train', {
+        method: 'POST',
+        body: JSON.stringify({
+          task: params.task,
+          gold_snapshot_ids: snapshotIds,
+          base_model_id: params.baseModelId,
+          training_mode: params.mode,
+          epochs: params.epochs,
+          learning_rate: params.learningRate,
+          batch_size: params.batchSize,
+          seed: params.seed,
+          compute_target: params.computeTarget,
+        }),
+      });
+      setNotice(`🚀 Training Job ${res.job_id} đã được gửi tới nhánh ${params.computeTarget.toUpperCase()} với ${snapshotIds.length} Gold snapshot. Promotion cần được duyệt thủ công trong Model Registry.`);
+
       setActiveTraining({
-        jobId: targetJobId,
+        jobId: res.job_id,
         task: params.task,
-        snapshotCount,
+        snapshotCount: snapshotIds.length,
         baseModel: params.baseModelId,
         epochs: params.epochs,
+        computeTarget: params.computeTarget,
         startedAt: Date.now(),
       });
       setTrainingElapsed(0);
-      setTrainDialogOpen(false);
     } catch (trainError) {
       setError(trainError instanceof Error ? trainError.message : 'Không thể khởi chạy training job');
     } finally {
@@ -339,6 +286,10 @@ export default function ModelsPage(): JSX.Element {
   const validatedCount = models.filter((model) => model.status === 'validated' || model.status === 'champion').length;
   const championCount = models.filter((model) => model.status === 'champion').length;
   const plannedCount = jobs.filter((job) => job.status === 'planned').length;
+  const copy = viewCopy[view];
+  const untrainedSnapshots = availableSnapshots.filter((snapshot) => !snapshot.is_trained).length;
+  const showRegistry = view === 'registry' || view === 'overview';
+  const showDetail = view === 'detail';
 
   return (
     <div className="space-y-6">
@@ -347,25 +298,14 @@ export default function ModelsPage(): JSX.Element {
         <div>
           <div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
             <BrainCircuit className="size-4 text-primary" />
-            PyTorch & ONNX ML Ops Platform
+            {copy.eyebrow}
           </div>
-          <h2 className="font-heading text-2xl font-semibold tracking-tight md:text-3xl">Models & Inference Engine</h2>
+          <h2 className="font-heading text-2xl font-semibold tracking-tight md:text-3xl">{copy.title}</h2>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Chủ động huấn luyện mô hình PyTorch trên GPU NVIDIA, linh hoạt lựa chọn và chuyển đổi mô hình phục vụ suy luận trực tiếp.
+            {copy.description}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <TrainingModal
-            open={trainDialogOpen}
-            onOpenChange={handleOpenDialog}
-            models={models}
-            availableSnapshots={availableSnapshots}
-            snapshotsLoading={snapshotsLoading}
-            onRefreshSnapshots={() => void loadAvailableSnapshots()}
-            onSubmitTraining={handleStartTraining}
-            submitting={trainingSubmitting}
-          />
-
           <Button variant="outline" size="sm" onClick={() => void loadData(true)} disabled={loading || refreshing}>
             <RefreshCw className={`size-3.5 ${refreshing ? 'animate-spin' : ''}`} />
             Refresh Registry
@@ -400,15 +340,45 @@ export default function ModelsPage(): JSX.Element {
         />
       )}
 
-      {/* Metric Cards */}
-      <MetricCards
-        totalModels={models.length}
-        validatedCount={validatedCount}
-        championCount={championCount}
-        plannedCount={plannedCount}
-      />
+      {(view === 'registry' || view === 'evaluation' || view === 'overview') && (
+        <MetricCards
+          totalModels={models.length}
+          validatedCount={validatedCount}
+          championCount={championCount}
+          plannedCount={plannedCount}
+        />
+      )}
 
-      {/* Main Grid: Registry Table & Details */}
+      {view === 'training' && <>
+        <TrainingRuntimePanel />
+        <Card className="border-primary/25 bg-primary/[0.03]">
+          <CardHeader><CardTitle className="flex items-center gap-2 text-base"><Workflow className="size-4 text-primary" /> Gold-to-model control plane</CardTitle><CardDescription>Chọn rõ “new” hay “evolve”; toàn bộ option nằm trên trang và được pin vào training lineage.</CardDescription></CardHeader>
+          <CardContent className="grid gap-3 text-sm sm:grid-cols-3">
+            <TrainingStat label="Gold snapshots available" value={availableSnapshots.length || '—'} detail={snapshotsLoading ? 'Loading MinIO…' : `${untrainedSnapshots} chưa dùng để train`} />
+            <TrainingStat label="Registered base models" value={models.length} detail={`${championCount} đang Champion`} />
+            <TrainingStat label="Active training" value={activeTraining ? '1' : '0'} detail={activeTraining ? `${activeTraining.computeTarget?.toUpperCase()} · ${activeTraining.jobId}` : 'Không có job đang chạy'} />
+          </CardContent>
+        </Card>
+        <TrainingLabControl models={models} availableSnapshots={availableSnapshots} snapshotsLoading={snapshotsLoading} onRefreshSnapshots={() => void loadAvailableSnapshots()} onSubmitTraining={handleStartTraining} submitting={trainingSubmitting} />
+      </>}
+
+      {view === 'evaluation' && <>
+        <ModelEvaluationBoard models={models} onSelect={setSelectedRuntimeId} />
+        <SelectedModelDetails selectedModel={selectedModel} onDeployModel={handleDeployModel} isDeploying={deploying} />
+      </>}
+
+      {view === 'evidence' && <>
+        <ModelContextPicker
+          title="Evidence subject"
+          description="Chọn một thế hệ model để lần theo provenance khoa học và serving evidence."
+          models={models}
+          selectedRuntimeId={selectedRuntimeId}
+          onSelectRuntimeId={setSelectedRuntimeId}
+        />
+        <ModelEvolutionEvidence model={selectedModel} jobs={jobs} />
+      </>}
+
+      {showRegistry && <>
       <div className="grid min-w-0 gap-6 2xl:grid-cols-[minmax(0,1.25fr)_minmax(0,0.75fr)]">
         <ModelRegistryTable
           models={models}
@@ -427,14 +397,58 @@ export default function ModelsPage(): JSX.Element {
           isDeploying={deploying}
         />
       </div>
+      </>}
 
-      {/* Inference Jobs Table */}
-      <InferenceJobsTable
-        selectedModel={selectedModel}
-        jobs={jobs}
-        onQueueJob={queueJob}
-        queueingJobId={queueingJob}
-      />
+      {showDetail && <>
+        <div className="grid gap-6 xl:grid-cols-2"><SelectedModelDetails selectedModel={selectedModel} onDeployModel={handleDeployModel} isDeploying={deploying} /><ModelEvolutionEvidence model={selectedModel} jobs={jobs} /></div>
+      </>}
+
+      {view === 'inference' && <>
+        <ModelContextPicker
+          title="Runtime package"
+          description="Chọn runtime package để xem Gold artifact đang chờ, đã chạy hoặc có thể retry trên Rust inference worker."
+          models={models}
+          selectedRuntimeId={selectedRuntimeId}
+          onSelectRuntimeId={setSelectedRuntimeId}
+        />
+        <InferenceJobsTable
+          selectedModel={selectedModel}
+          jobs={jobs}
+          onQueueJob={queueJob}
+          queueingJobId={queueingJob}
+        />
+      </>}
     </div>
+  );
+}
+
+function TrainingStat({ label, value, detail }: { label: string; value: string | number; detail: string }): JSX.Element {
+  return <div className="rounded-md border border-border/70 bg-background/40 p-3"><p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p><p className="mt-1 font-mono text-xl font-semibold text-foreground">{value}</p><p className="mt-1 truncate text-xs text-muted-foreground" title={detail}>{detail}</p></div>;
+}
+
+function ModelContextPicker({ title, description, models, selectedRuntimeId, onSelectRuntimeId }: {
+  title: string;
+  description: string;
+  models: ModelRecord[];
+  selectedRuntimeId?: string;
+  onSelectRuntimeId: (runtimePackageId: string) => void;
+}): JSX.Element {
+  return (
+    <Card className="min-w-0">
+      <CardHeader className="gap-3 md:flex-row md:items-center md:justify-between">
+        <div><CardTitle className="text-base">{title}</CardTitle><CardDescription>{description}</CardDescription></div>
+        <select
+          aria-label={title}
+          className="w-full max-w-xl rounded-md border border-input bg-background px-3 py-2 font-mono text-xs md:w-[32rem]"
+          value={selectedRuntimeId ?? ''}
+          onChange={(event) => onSelectRuntimeId(event.target.value)}
+          disabled={models.length === 0}
+        >
+          {models.length === 0 ? <option value="">No runtime package</option> : models.map((model) => (
+            <option key={model.runtime_package_id} value={model.runtime_package_id}>{model.model_id} · {model.runtime_package_id}</option>
+          ))}
+        </select>
+      </CardHeader>
+    </Card>
   );
 }

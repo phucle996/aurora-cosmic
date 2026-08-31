@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -28,11 +29,45 @@ import (
 type ModelsService struct {
 	objects    repo.ObjectRepository    // Repository tương tác với MinIO S3
 	dispatcher repo.InferenceDispatcher // Dispatcher phát event sang NATS JetStream
+	analytics  repo.TrainingReadinessRepository
 }
 
 // NewModelsService khởi tạo thể hiện của ModelsService
-func NewModelsService(objects repo.ObjectRepository, dispatcher repo.InferenceDispatcher) domainService.Models {
-	return &ModelsService{objects: objects, dispatcher: dispatcher}
+func NewModelsService(objects repo.ObjectRepository, dispatcher repo.InferenceDispatcher, analytics repo.TrainingReadinessRepository) domainService.Models {
+	return &ModelsService{objects: objects, dispatcher: dispatcher, analytics: analytics}
+}
+
+func (s *ModelsService) TrainingReadiness(ctx context.Context, snapshotIDs []string) (*entity.TrainingReadiness, error) {
+	normalized, err := normalizeGoldSnapshotIDs("", snapshotIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, snapshotID := range normalized {
+		if err := s.requireCommittedGoldSnapshot(ctx, snapshotID); err != nil {
+			return nil, err
+		}
+	}
+	if s.analytics == nil {
+		return nil, fmt.Errorf("training readiness analytics is unavailable")
+	}
+	return s.analytics.TrainingReadiness(ctx, normalized)
+}
+
+func (s *ModelsService) OverrideTrainingLabel(ctx context.Context, value entity.TrainingLabelOverride) error {
+	value.SnapshotID = strings.TrimSpace(value.SnapshotID)
+	value.SourceProductID = strings.TrimSpace(value.SourceProductID)
+	value.TrainingLabel = strings.ToUpper(strings.TrimSpace(value.TrainingLabel))
+	if value.SourceProductID == "" || (value.TrainingLabel != "POSITIVE" && value.TrainingLabel != "NEGATIVE" && value.TrainingLabel != "UNRESOLVED") {
+		return invalidModelRequest("source_product_id and a POSITIVE, NEGATIVE or UNRESOLVED label are required")
+	}
+	if err := s.requireCommittedGoldSnapshot(ctx, value.SnapshotID); err != nil {
+		return err
+	}
+	overrides, ok := s.analytics.(repo.TrainingLabelOverrideRepository)
+	if !ok {
+		return fmt.Errorf("training label review repository is unavailable")
+	}
+	return overrides.OverrideTrainingLabel(ctx, value)
 }
 
 // ============================================================================
@@ -90,9 +125,9 @@ func (s *ModelsService) ListModels(ctx context.Context, task string) ([]entity.M
 		}
 
 		// 2. Chuẩn hóa task và lọc theo yêu cầu
-		normTask := taxonomy.TaskAnomalyDetection
-		if strings.EqualFold(strings.TrimSpace(manifest.Task), "candidate") || strings.EqualFold(strings.TrimSpace(manifest.Task), taxonomy.TaskCandidateVetting) {
-			normTask = taxonomy.TaskCandidateVetting
+		normTask, taskDir, ok := normalizeModelTask(manifest.Task)
+		if !ok {
+			continue
 		}
 		if task != "" && normTask != task {
 			continue
@@ -131,18 +166,14 @@ func (s *ModelsService) ListModels(ctx context.Context, task string) ([]entity.M
 		}
 
 		// 5. Kiểm tra xem model này có đang là Champion hay không (đọc từ models/<task>/champion.json)
-		taskDir := "anomaly"
-		if normTask == taxonomy.TaskCandidateVetting {
-			taskDir = "candidate"
-		}
-		for _, candidateDir := range []string{manifest.Task, taskDir} {
-			if champData, err := s.objects.GetObject(ctx, fmt.Sprintf("models/%s/champion.json", candidateDir)); err == nil {
+		if status != taxonomy.ModelStatusInvalid {
+			champData, err := s.objects.GetObject(ctx, fmt.Sprintf("models/%s/champion.json", taskDir))
+			if err == nil {
 				var pointer struct {
-					ModelID string `json:"model_id"`
+					RuntimePackageID string `json:"runtime_package_id"`
 				}
-				if json.Unmarshal(champData, &pointer) == nil && (pointer.ModelID == manifest.SourceModelID || pointer.ModelID == manifest.RuntimePackageID) {
+				if json.Unmarshal(champData, &pointer) == nil && pointer.RuntimePackageID == manifest.RuntimePackageID {
 					status = taxonomy.ModelStatusChampion
-					break
 				}
 			}
 		}
@@ -156,7 +187,7 @@ func (s *ModelsService) ListModels(ctx context.Context, task string) ([]entity.M
 		models = append(models, entity.Model{
 			ModelID:              manifest.SourceModelID,
 			RuntimePackageID:     manifest.RuntimePackageID,
-			Task:                 manifest.Task,
+			Task:                 normTask,
 			ModelVersion:         manifest.ModelVersion,
 			Status:               status,
 			RuntimeManifestKey:   object.Key,
@@ -190,8 +221,13 @@ func (s *ModelsService) ListModels(ctx context.Context, task string) ([]entity.M
 // và phát sự kiện `aurora.v1.ml.training.requested` qua NATS tới GPU ML Worker.
 func (s *ModelsService) StartTrainingJob(ctx context.Context, req entity.TrainingJobSpec) (*entity.TrainingJobResult, error) {
 	if req.Task == "" {
-		req.Task = "candidate_vetting"
+		req.Task = taxonomy.TaskCandidateVetting
 	}
+	normalizedTask, _, ok := normalizeModelTask(req.Task)
+	if !ok {
+		return nil, invalidModelRequest("unsupported training task %q", req.Task)
+	}
+	req.Task = normalizedTask
 	if req.Epochs <= 0 {
 		req.Epochs = 50
 	}
@@ -210,14 +246,32 @@ func (s *ModelsService) StartTrainingJob(ctx context.Context, req entity.Trainin
 	if req.TrainingMode == "" {
 		req.TrainingMode = "fine_tune"
 	}
+	if req.TrainingMode != "fine_tune" && req.TrainingMode != "scratch" {
+		return nil, invalidModelRequest("invalid training_mode %q: expected fine_tune or scratch", req.TrainingMode)
+	}
 	if req.BaseModelID == "" {
 		req.BaseModelID = "champion"
 	}
-
-	if len(req.GoldSnapshotIDs) > 0 && req.GoldSnapshotID == "" {
-		req.GoldSnapshotID = req.GoldSnapshotIDs[0]
+	if req.ComputeTarget == "" {
+		req.ComputeTarget = "gpu"
+	}
+	if req.ComputeTarget != "cpu" && req.ComputeTarget != "gpu" {
+		return nil, invalidModelRequest("invalid compute_target %q: expected cpu or gpu", req.ComputeTarget)
 	}
 
+	normalizedSnapshotIDs, err := normalizeGoldSnapshotIDs(req.GoldSnapshotID, req.GoldSnapshotIDs)
+	if err != nil {
+		return nil, err
+	}
+	req.GoldSnapshotIDs = normalizedSnapshotIDs
+	req.GoldSnapshotID = req.GoldSnapshotIDs[0]
+	readiness, err := s.TrainingReadiness(ctx, req.GoldSnapshotIDs)
+	if err != nil {
+		return nil, err
+	}
+	if !readiness.Ready {
+		return nil, invalidModelRequest("Gold snapshot is not a supervised training cohort: %s", readiness.Blocker)
+	}
 	payload, err := json.Marshal(map[string]any{
 		"training_job_id":   jobID,
 		"task":              req.Task,
@@ -229,17 +283,21 @@ func (s *ModelsService) StartTrainingJob(ctx context.Context, req entity.Trainin
 		"learning_rate":     req.LearningRate,
 		"batch_size":        req.BatchSize,
 		"seed":              req.Seed,
-		"auto_promote":      req.AutoPromote,
-		"created_at":        createdAt,
+		// Promotion changes scientific production state and must be an
+		// explicit human action through the registry control plane.
+		"auto_promote":   false,
+		"compute_target": req.ComputeTarget,
+		"created_at":     createdAt,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal training request: %w", err)
 	}
 
-	if s.dispatcher != nil {
-		if err := s.dispatcher.Dispatch(ctx, "training_start", payload); err != nil {
-			return nil, fmt.Errorf("dispatch training event: %w", err)
-		}
+	if s.dispatcher == nil {
+		return nil, fmt.Errorf("training dispatcher is unavailable")
+	}
+	if err := s.dispatcher.Dispatch(ctx, "training_start", payload); err != nil {
+		return nil, fmt.Errorf("dispatch training event: %w", err)
 	}
 
 	return &entity.TrainingJobResult{
@@ -249,7 +307,8 @@ func (s *ModelsService) StartTrainingJob(ctx context.Context, req entity.Trainin
 		GoldSnapshotIDs: req.GoldSnapshotIDs,
 		Status:          "queued",
 		CreatedAt:       createdAt,
-		Message:         fmt.Sprintf("Training job %s successfully dispatched to PyTorch GPU worker.", jobID),
+		Message:         fmt.Sprintf("Training job %s dispatched to the %s training branch; promotion requires manual review.", jobID, req.ComputeTarget),
+		ComputeTarget:   req.ComputeTarget,
 	}, nil
 }
 
@@ -260,41 +319,121 @@ func (s *ModelsService) StartTrainingJob(ctx context.Context, req entity.Trainin
 // để chọn model làm Champion phục vụ suy luận trực tiếp, hoặc hủy kích hoạt.
 func (s *ModelsService) SetModelDeployment(ctx context.Context, modelID string, task string, active bool) error {
 	if task == "" {
-		task = "candidate_vetting"
+		task = taxonomy.TaskCandidateVetting
 	}
-	taskDirs := []string{task}
-	switch task {
-	case "candidate_vetting":
-		taskDirs = append(taskDirs, "candidate")
-	case "astronomical_anomaly_detection":
-		taskDirs = append(taskDirs, "anomaly")
+	normalizedTask, taskDir, ok := normalizeModelTask(task)
+	if !ok {
+		return invalidModelRequest("unsupported model task %q", task)
 	}
 
 	if !active {
-		// Hủy kích hoạt / Bỏ chọn: xóa con trỏ champion.json
-		for _, dir := range taskDirs {
-			key := fmt.Sprintf("models/%s/champion.json", dir)
-			_ = s.objects.DeleteObject(ctx, key)
+		return s.objects.DeleteObject(ctx, fmt.Sprintf("models/%s/champion.json", taskDir))
+	}
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return invalidModelRequest("runtime_package_id is required")
+	}
+	models, err := s.ListModels(ctx, normalizedTask)
+	if err != nil {
+		return fmt.Errorf("load runtime registry: %w", err)
+	}
+	var selected *entity.Model
+	for index := range models {
+		model := &models[index]
+		if model.RuntimePackageID == modelID {
+			selected = model
+			break
 		}
-		return nil
+	}
+	if selected == nil {
+		return invalidModelRequest("runtime package %q was not found for task %s", modelID, normalizedTask)
+	}
+	if selected.Status == taxonomy.ModelStatusInvalid || selected.IntegrityStatus != "PASS" || selected.ParityStatus != "PASS" {
+		return invalidModelRequest("runtime package %q has not passed integrity and parity validation", modelID)
 	}
 
 	// Triển khai model: ghi nguyên tử con trỏ champion.json
 	now := time.Now().UTC().Format(time.RFC3339)
 	pointerData, err := json.MarshalIndent(map[string]any{
-		"model_id":    modelID,
-		"task":        task,
-		"promoted_at": now,
+		"runtime_package_id": selected.RuntimePackageID,
+		"model_id":           selected.ModelID,
+		"task":               normalizedTask,
+		"promoted_at":        now,
 	}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal champion pointer: %w", err)
 	}
 
-	for _, dir := range taskDirs {
-		key := fmt.Sprintf("models/%s/champion.json", dir)
-		if err := s.objects.PutObject(ctx, key, pointerData, "application/json"); err != nil {
-			return fmt.Errorf("write champion pointer %s: %w", key, err)
-		}
+	key := fmt.Sprintf("models/%s/champion.json", taskDir)
+	if err := s.objects.PutObject(ctx, key, pointerData, "application/json"); err != nil {
+		return fmt.Errorf("write champion pointer %s: %w", key, err)
 	}
 	return nil
+}
+
+func normalizeModelTask(task string) (canonical string, directory string, ok bool) {
+	switch strings.ToLower(strings.TrimSpace(task)) {
+	case "candidate", taxonomy.TaskCandidateVetting:
+		return taxonomy.TaskCandidateVetting, "candidate", true
+	default:
+		return "", "", false
+	}
+}
+
+func normalizeGoldSnapshotIDs(primary string, values []string) ([]string, error) {
+	const maximumSnapshotsPerRun = 200
+	primary = strings.TrimSpace(primary)
+	unique := make(map[string]struct{}, len(values)+1)
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			unique[value] = struct{}{}
+		}
+	}
+	if primary != "" {
+		if len(unique) > 0 {
+			if _, exists := unique[primary]; !exists {
+				return nil, invalidModelRequest("gold_snapshot_id conflicts with gold_snapshot_ids")
+			}
+		}
+		unique[primary] = struct{}{}
+	}
+	if len(unique) == 0 {
+		return nil, invalidModelRequest("at least one committed Gold snapshot is required")
+	}
+	if len(unique) > maximumSnapshotsPerRun {
+		return nil, invalidModelRequest("at most %d Gold snapshots may be selected per training run", maximumSnapshotsPerRun)
+	}
+	normalized := make([]string, 0, len(unique))
+	for value := range unique {
+		normalized = append(normalized, value)
+	}
+	sort.Strings(normalized)
+	return normalized, nil
+}
+
+func (s *ModelsService) requireCommittedGoldSnapshot(ctx context.Context, snapshotID string) error {
+	snapshotID = strings.TrimSpace(snapshotID)
+	if !strings.HasPrefix(snapshotID, "gold-v1-") || strings.Contains(snapshotID, "/") {
+		return invalidModelRequest("a valid gold_snapshot_id is required")
+	}
+	data, err := s.objects.GetObject(ctx, "gold/snapshots/"+snapshotID+"/manifest.json")
+	if err != nil {
+		if errors.Is(err, repo.ErrObjectNotFound) {
+			return invalidModelRequest("Gold snapshot %s was not found", snapshotID)
+		}
+		return fmt.Errorf("read Gold snapshot %s: %w", snapshotID, err)
+	}
+	var snapshot entity.GoldSnapshotDetail
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return invalidModelRequest("decode Gold snapshot %s: %v", snapshotID, err)
+	}
+	if snapshot.SnapshotID != snapshotID || snapshot.Status != "COMMITTED" {
+		return invalidModelRequest("Gold snapshot %s is not committed", snapshotID)
+	}
+	return nil
+}
+
+func invalidModelRequest(format string, arguments ...any) error {
+	return fmt.Errorf("%w: %s", taxonomy.ErrInvalidRequest, fmt.Sprintf(format, arguments...))
 }

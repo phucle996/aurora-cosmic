@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -14,7 +15,11 @@ import (
 	"go-ingester/internal/model"
 )
 
-func TestDiscoverTESSHonorsBoundedLimitAndPaging(t *testing.T) {
+func fitsCard(key string, value int) string {
+	return fmt.Sprintf("%-80s", fmt.Sprintf("%-8s= %20d", key, value))
+}
+
+func TestDiscoverTESSOnlyReturnsTargetProductsWhenSampleLimitIsBounded(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			t.Errorf("parse MAST form: %v", err)
@@ -25,16 +30,19 @@ func TestDiscoverTESSHonorsBoundedLimitAndPaging(t *testing.T) {
 			t.Errorf("invalid MAST request: %v", err)
 			return
 		}
-		if request["pagesize"] != float64(2) || request["page"] != float64(1) {
-			t.Errorf("expected pagesize=2/page=1, got pagesize=%v page=%v", request["pagesize"], request["page"])
+		switch request["service"] {
+		case "Mast.Caom.Filtered":
+			if request["pagesize"] != float64(2) || request["page"] != float64(1) {
+				t.Errorf("expected filtered pagesize=2/page=1, got pagesize=%v page=%v", request["pagesize"], request["page"])
+			}
+			if containsProductType(request, "image") {
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": []mast.Observation{{CatalogID: 42, ObsID: "tess-s0001-1-3", DataProductType: "image"}}})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []mast.Observation{{ObsID: "obs-1", TargetName: "TIC 1", DataProductType: "timeseries", DataURL: "mast:one.fits"}, {ObsID: "obs-2", TargetName: "TIC 2", DataProductType: "timeseries", DataURL: "mast:two.fits"}}})
+		default:
+			t.Errorf("unexpected MAST service %q", request["service"])
 		}
-
-		data := []model.Observation{
-			{ObsID: "obs-1", TargetName: "TIC 1", DataProductType: "timeseries", DataURL: "mast:one.fits"},
-			{ObsID: "obs-2", TargetName: "TIC 2", DataProductType: "timeseries", DataURL: "mast:two.fits"},
-			{ObsID: "obs-3", TargetName: "TIC 3", DataProductType: "timeseries", DataURL: "mast:three.fits"},
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
 	}))
 	defer ts.Close()
 
@@ -44,10 +52,124 @@ func TestDiscoverTESSHonorsBoundedLimitAndPaging(t *testing.T) {
 		t.Fatalf("unexpected discovery error: %v", err)
 	}
 	if len(products) != 2 {
-		t.Fatalf("expected 2 bounded products, got %d", len(products))
+		t.Fatalf("expected only two target products, got %d", len(products))
 	}
 	if products[0].Kind != model.KindLightCurve || products[0].Filename != "one.fits" {
 		t.Fatalf("expected CAOM timeseries to become a light-curve product, got kind=%s filename=%q", products[0].Kind, products[0].Filename)
+	}
+}
+
+func TestDiscoverTESSDoesNotQueryImageOrFFIParents(t *testing.T) {
+	var productParentIDs []string
+	var serverURL string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/target_tp.fits" {
+			if r.Header.Get("Range") != "bytes=0-65535" {
+				t.Errorf("detector probe missing range header")
+			}
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write([]byte(fitsCard("SIMPLE", 1) + fitsCard("CAMERA", 3) + fitsCard("CCD", 2) + fmt.Sprintf("%-80s", "END")))
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("parse MAST form: %v", err)
+			return
+		}
+		var request map[string]any
+		if err := json.Unmarshal([]byte(r.FormValue("request")), &request); err != nil {
+			t.Errorf("invalid MAST request: %v", err)
+			return
+		}
+		switch request["service"] {
+		case "Mast.Caom.Filtered":
+			if containsProductType(request, "image") || containsFilterParam(request, "obs_id") {
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": []mast.Observation{
+					{CatalogID: 32, ObsID: "tess-s0001-3-2", DataProductType: "image", Region: "POLYGON 0 0 2 0 2 2 0 2"},
+					{CatalogID: 11, ObsID: "tess-s0001-1-1", DataProductType: "image", Region: "POLYGON 10 10 12 10 12 12 10 12"},
+				}})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []mast.Observation{
+				{CatalogID: 42, ObsID: "target", TargetName: "TIC 42", SequenceNumber: 1, DataProductType: "timeseries", DataURL: serverURL + "/target_lc.fits", RA: 1, Dec: 1},
+			}})
+		case "Mast.Caom.Products":
+			params, _ := request["params"].(map[string]any)
+			parentID := fmt.Sprint(params["obsid"])
+			if parentID == "42" {
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": []mast.Observation{
+					{ObsID: "target", ProductFilename: "target_tp.fits", DataURL: serverURL + "/target_tp.fits"},
+					{ObsID: "target", ProductFilename: "target_lc.fits", DataURL: serverURL + "/target_lc.fits"},
+				}})
+				return
+			}
+			productParentIDs = append(productParentIDs, parentID)
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []mast.Observation{{
+				ObsID: "shared-parent", ProductFilename: "tess-s0001-3-2-s_ffic.fits", DataURL: "mast:TESS/product/tess-s0001-3-2-s_ffic.fits", DataProductType: "image",
+			}}})
+		default:
+			t.Errorf("unexpected MAST service %q", request["service"])
+		}
+	}))
+	defer ts.Close()
+	serverURL = ts.URL
+
+	products, err := mast.DiscoverTESS(context.Background(), mast.NewClient(ts.URL, 5*time.Second), mast.DiscoverOptions{Sector: 1, Limit: 1, PageSize: 100}, slog.Default())
+	if err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	if len(productParentIDs) != 0 {
+		t.Fatalf("queried unexpected image/FFI parents=%v", productParentIDs)
+	}
+	if len(products) != 2 || products[0].Kind != model.KindTargetPixel || products[1].Kind != model.KindLightCurve {
+		t.Fatalf("products=%#v, want one TPF + LC pair", products)
+	}
+}
+
+func containsProductType(request map[string]any, expected string) bool {
+	params, _ := request["params"].(map[string]any)
+	filters, _ := params["filters"].([]any)
+	for _, item := range filters {
+		filter, _ := item.(map[string]any)
+		if filter["paramName"] != "dataproduct_type" {
+			continue
+		}
+		values, _ := filter["values"].([]any)
+		for _, value := range values {
+			if value == expected {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func containsFilterParam(request map[string]any, expected string) bool {
+	params, _ := request["params"].(map[string]any)
+	filters, _ := params["filters"].([]any)
+	for _, item := range filters {
+		filter, _ := item.(map[string]any)
+		if filter["paramName"] == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func TestDiscoverTESSSuffixWinsOverAmbiguousTimeseriesMetadata(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": []mast.Observation{{
+			ObsID: "tess-s0001", TargetName: "TIC 44577667", DataProductType: "timeseries",
+			ProductFilename: "tess2018206045859-s0001-0000000044577667-0120-s_tp.fits",
+		}}})
+	}))
+	defer ts.Close()
+
+	products, err := mast.DiscoverTESS(context.Background(), mast.NewClient(ts.URL, 5*time.Second), mast.DiscoverOptions{Sector: 1, Limit: 1}, slog.Default())
+	if err != nil {
+		t.Fatalf("unexpected discovery error: %v", err)
+	}
+	if len(products) != 1 || products[0].Kind != model.KindTargetPixel {
+		t.Fatalf("_tp.fits must be TARGET_PIXEL even when MAST says timeseries, got %#v", products)
 	}
 }
 
@@ -87,13 +209,13 @@ func TestClassifyProduct(t *testing.T) {
 		{"TP", "", model.KindTargetPixel},
 		{"LIGHTCURVE", "", model.KindLightCurve},
 		{"LC", "", model.KindLightCurve},
-		{"FFI", "", model.KindFFI},
-		{"FFIC", "", model.KindFFI},
+		{"FFI", "", model.KindUnknown},
+		{"FFIC", "", model.KindUnknown},
 		{"UNKNOWN_KIND", "something else", model.KindUnknown},
 	}
 
 	for _, tt := range tests {
-		obs := model.Observation{
+		obs := mast.Observation{
 			ProductSubGroup: tt.subGroup,
 			Description:     tt.desc,
 		}

@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use aws_credential_types::Credentials;
 use aws_sdk_s3::config::{BehaviorVersion, Region};
+use aws_sdk_s3::primitives::{ByteStream, Length};
+use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 use tokio::io::AsyncWriteExt;
@@ -44,6 +46,11 @@ impl StoredObjectStat {
 pub struct MinioClient {
     client: aws_sdk_s3::Client,
 }
+
+/// Multipart parts must be >= 5 MiB on S3. 64 MiB keeps request overhead low
+/// while retaining bounded local memory because each part is streamed from disk.
+const MULTIPART_THRESHOLD_BYTES: u64 = 64 * 1024 * 1024;
+const MULTIPART_PART_BYTES: u64 = 64 * 1024 * 1024;
 
 impl MinioClient {
     /// Build a storage client from MinIO configuration.
@@ -208,24 +215,27 @@ impl MinioClient {
         expected_size: u64,
         metadata: HashMap<String, String>,
     ) -> Result<()> {
-        let body = aws_sdk_s3::primitives::ByteStream::from_path(file_path)
-            .await
-            .with_context(|| {
+        if expected_size >= MULTIPART_THRESHOLD_BYTES {
+            self.put_file_multipart(bucket, key, file_path, expected_size, metadata)
+                .await?;
+        } else {
+            let body = ByteStream::from_path(file_path).await.with_context(|| {
                 format!(
                     "Failed to read local file for upload: {}",
                     file_path.display()
                 )
             })?;
 
-        let mut builder = self.client.put_object().bucket(bucket).key(key).body(body);
-        for (k, v) in metadata {
-            builder = builder.metadata(k, v);
-        }
+            let mut builder = self.client.put_object().bucket(bucket).key(key).body(body);
+            for (k, v) in metadata {
+                builder = builder.metadata(k, v);
+            }
 
-        builder
-            .send()
-            .await
-            .with_context(|| format!("MinIO PutObject failed for {bucket}/{key}"))?;
+            builder
+                .send()
+                .await
+                .with_context(|| format!("MinIO PutObject failed for {bucket}/{key}"))?;
+        }
 
         // Stat verification
         self.stat_and_verify_size(bucket, key, expected_size)
@@ -240,6 +250,134 @@ impl MinioClient {
             "Silver artifact uploaded and verified in MinIO"
         );
 
+        Ok(())
+    }
+
+    /// Upload one large Silver artifact as retryable disk-backed S3 parts.
+    async fn put_file_multipart(
+        &self,
+        bucket: &str,
+        key: &str,
+        file_path: &Path,
+        expected_size: u64,
+        metadata: HashMap<String, String>,
+    ) -> Result<()> {
+        let mut create = self
+            .client
+            .create_multipart_upload()
+            .bucket(bucket)
+            .key(key);
+        for (name, value) in metadata {
+            create = create.metadata(name, value);
+        }
+        let created = create
+            .send()
+            .await
+            .with_context(|| format!("MinIO CreateMultipartUpload failed for {bucket}/{key}"))?;
+        let upload_id = created
+            .upload_id()
+            .context("MinIO did not return an upload ID for multipart upload")?
+            .to_string();
+
+        let upload_parts = async {
+            let mut completed_parts = Vec::new();
+            let mut offset = 0u64;
+            let mut part_number = 1i32;
+
+            while offset < expected_size {
+                let length = (expected_size - offset).min(MULTIPART_PART_BYTES);
+                let body = ByteStream::read_from()
+                    .path(file_path)
+                    .offset(offset)
+                    .length(Length::Exact(length))
+                    .build()
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Failed to read multipart upload part {part_number} from {}",
+                            file_path.display()
+                        )
+                    })?;
+                let uploaded = self
+                    .client
+                    .upload_part()
+                    .bucket(bucket)
+                    .key(key)
+                    .upload_id(&upload_id)
+                    .part_number(part_number)
+                    .body(body)
+                    .send()
+                    .await
+                    .with_context(|| {
+                        format!("MinIO UploadPart {part_number} failed for {bucket}/{key}")
+                    })?;
+                let e_tag = uploaded
+                    .e_tag()
+                    .context("MinIO did not return an ETag for multipart upload part")?;
+                completed_parts.push(
+                    CompletedPart::builder()
+                        .part_number(part_number)
+                        .e_tag(e_tag)
+                        .build(),
+                );
+                offset += length;
+                part_number += 1;
+            }
+
+            Result::<Vec<CompletedPart>>::Ok(completed_parts)
+        }
+        .await;
+
+        let completed_parts = match upload_parts {
+            Ok(parts) => parts,
+            Err(error) => {
+                let _ = self
+                    .client
+                    .abort_multipart_upload()
+                    .bucket(bucket)
+                    .key(key)
+                    .upload_id(&upload_id)
+                    .send()
+                    .await;
+                return Err(error);
+            }
+        };
+
+        let completion = CompletedMultipartUpload::builder()
+            .set_parts(Some(completed_parts))
+            .build();
+        if let Err(error) = self
+            .client
+            .complete_multipart_upload()
+            .bucket(bucket)
+            .key(key)
+            .upload_id(&upload_id)
+            .multipart_upload(completion)
+            .send()
+            .await
+        {
+            let _ = self
+                .client
+                .abort_multipart_upload()
+                .bucket(bucket)
+                .key(key)
+                .upload_id(&upload_id)
+                .send()
+                .await;
+            return Err(error).with_context(|| {
+                format!("MinIO CompleteMultipartUpload failed for {bucket}/{key}")
+            });
+        }
+
+        tracing::info!(
+            bucket = bucket,
+            object_key = key,
+            size_bytes = expected_size,
+            part_size_bytes = MULTIPART_PART_BYTES,
+            operation = "silver_multipart_put",
+            status = "uploaded",
+            "Large Silver artifact uploaded through multipart MinIO upload"
+        );
         Ok(())
     }
 

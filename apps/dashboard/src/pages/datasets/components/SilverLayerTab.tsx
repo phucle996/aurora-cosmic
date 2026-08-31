@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { StorageListing } from '../types';
 import { ObjectBrowserTable } from './ObjectBrowserTable';
 import { SchemaCatalogCard } from './SchemaCatalogCard';
-import { silverFfiSchema, silverLightCurveSchema, silverTargetPixelSchema } from '../types';
+import { silverLightCurveSchema, silverTargetPixelSchema } from '../types';
 
 interface SilverLayerTabProps {
   silverData: StorageListing | null;
@@ -69,7 +69,6 @@ export function SilverLayerTab({
 
       <SchemaCatalogCard catalog={silverLightCurveSchema} />
       <SchemaCatalogCard catalog={silverTargetPixelSchema} />
-      <SchemaCatalogCard catalog={silverFfiSchema} />
     </div>
   );
 }

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 /// Classification of failure type — determines retry vs terminal broker action.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,6 +51,38 @@ pub struct ProcessingFailure {
     pub message: String,
 }
 
+/// Typed boundary error emitted by decode and scientific pipeline code.
+///
+/// Broker policy must never depend on matching an operator-facing error
+/// message.  The `anyhow` outer layer may add context, while this value keeps
+/// the policy class and stable code available to the worker.
+#[derive(Debug, Clone)]
+pub struct PipelineError {
+    pub failure: ProcessingFailure,
+}
+
+impl PipelineError {
+    pub fn rejected(message: impl Into<String>) -> Self {
+        Self {
+            failure: ProcessingFailure::rejected(ErrorKind::PreprocessingRejected, message),
+        }
+    }
+
+    pub fn decode(message: impl Into<String>) -> Self {
+        Self {
+            failure: ProcessingFailure::terminal(ErrorKind::FitsDecodeFailed, message),
+        }
+    }
+}
+
+impl fmt::Display for PipelineError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.failure.message)
+    }
+}
+
+impl std::error::Error for PipelineError {}
+
 impl ProcessingFailure {
     pub fn retryable(kind: ErrorKind, message: impl Into<String>) -> Self {
         Self {
@@ -88,6 +121,10 @@ impl ProcessingFailure {
 ///
 /// This is the primary policy point — do not spread classification logic across modules.
 pub fn classify_pipeline_error(err: &anyhow::Error) -> ProcessingFailure {
+    if let Some(typed) = err.downcast_ref::<PipelineError>() {
+        return typed.failure.clone();
+    }
+
     let msg = err.to_string();
 
     // Bronze integrity / checksum

@@ -10,6 +10,8 @@ def set_dummy_env():
     os.environ["AURORA_LOG_LEVEL"] = "info"
     os.environ["MINIO_ENDPOINT"] = "http://minio:9000"
     os.environ["MINIO_BUCKET"] = "aurora"
+    os.environ["MINIO_ACCESS_KEY"] = "minioadmin"
+    os.environ["MINIO_SECRET_KEY"] = "minioadmin"
     os.environ["NATS_URL"] = "nats://nats:4222"
     os.environ["AURORA_ML_DEVICE"] = "cuda"
     os.environ["AURORA_ML_BATCH_SIZE"] = "32"
@@ -30,8 +32,10 @@ def test_missing_env():
         Config()
 
 
-def test_cpu_fallback_is_rejected():
+def test_compute_worker_accepts_auto_or_cpu_policy():
     set_dummy_env()
     os.environ["AURORA_ML_DEVICE"] = "auto"
-    with pytest.raises(ValueError, match="GPU-only training"):
-        Config()
+    assert Config().device == "auto"
+
+    os.environ["AURORA_ML_DEVICE"] = "cpu"
+    assert Config().device == "cpu"

@@ -19,12 +19,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 
 const pageNames: Record<string, string> = {
   '/': 'Overview',
-  '/targets': 'Targets',
-  '/exoplanets': '3D exoplanet explorer',
-  '/preprocessing': 'Preprocessing & lineage',
   '/ingest': 'Ingest & storage',
-  '/candidates': 'Candidates',
-  '/anomalies': 'Anomalies',
   '/monitoring': 'Monitoring',
   '/models': 'Models & inference',
 };
@@ -35,6 +30,32 @@ export default function Header(): JSX.Element {
     ? 'Target detail'
     : location.pathname.startsWith('/candidates/')
       ? 'Candidate detail'
+      : location.pathname.startsWith('/gold/snapshots/')
+        ? 'Gold file explorer'
+      : location.pathname === '/data-factory/preprocessing'
+        ? 'Data Factory · Preprocessing'
+      : location.pathname === '/data-factory/enrichment'
+        ? 'Data Factory · Data Enrichment'
+      : location.pathname === '/data-factory/pipeline'
+        ? 'Data Factory · Pipeline DAG'
+      : location.pathname === '/data-factory/lineage'
+        ? 'Data Factory · Lineage Explorer'
+      : location.pathname === '/research-factory'
+        ? 'Scientific Research Factory'
+      : location.pathname === '/research-factory/discovery'
+        ? 'Scientific Research Factory · TESS Discovery'
+      : location.pathname === '/research-factory/workbench'
+        ? 'Scientific Research Factory · Workbench'
+      : location.pathname === '/research-factory/transit-candidates'
+        ? 'Scientific Research Factory · Transit Candidates'
+      : location.pathname.startsWith('/research-factory/transit-candidates/')
+        ? 'Scientific Research Factory · Candidate Physics'
+      : location.pathname === '/research-factory/systems'
+        ? 'Scientific Research Factory · 3D Systems'
+      : location.pathname === '/research-factory/vetting'
+        ? 'Scientific Research Factory · Vetting'
+      : location.pathname === '/research-factory/evidence'
+        ? 'Scientific Research Factory · Evidence & Runs'
       : pageNames[location.pathname] ?? 'Dashboard';
 
   return (

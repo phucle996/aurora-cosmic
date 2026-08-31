@@ -1,8 +1,9 @@
-use anyhow::{bail, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::config::LightCurveConfig;
 use crate::event::BronzeObjectReady;
+use crate::failure::PipelineError;
 use crate::fits::RawLightCurve;
 
 /// Light Curve flux series source used for preprocessing.
@@ -55,10 +56,11 @@ pub fn preprocess_lc(
 ) -> Result<ProcessedLightCurve> {
     let input_points = raw.time.len();
     if input_points == 0 {
-        bail!(
+        return Err(PipelineError::rejected(format!(
             "Raw Light Curve contains zero points for object {}",
             event.object_key
-        );
+        ))
+        .into());
     }
 
     // 1. Determine Flux Source (PDCSAP vs SAP Fallback)
@@ -68,16 +70,18 @@ pub fn preprocess_lc(
         if let Some(sap) = raw.sap_flux {
             (FluxSource::Sap, sap, raw.sap_flux_err)
         } else {
-            bail!(
+            return Err(PipelineError::rejected(format!(
                 "Both PDCSAP_FLUX and SAP_FLUX are missing for object {}",
                 event.object_key
-            );
+            ))
+            .into());
         }
     } else {
-        bail!(
+        return Err(PipelineError::rejected(format!(
             "PDCSAP_FLUX is missing and allow_sap_fallback=false for object {}",
             event.object_key
-        );
+        ))
+        .into());
     };
 
     // 2. Select Quality Filter Mode
@@ -122,11 +126,12 @@ pub fn preprocess_lc(
 
     let post_filter_points = filtered_time.len();
     if post_filter_points < cfg.min_points {
-        bail!(
+        return Err(PipelineError::rejected(format!(
             "Points after quality/invalid filtering ({post_filter_points}) below required minimum ({}) for object {}",
             cfg.min_points,
             event.object_key
-        );
+        ))
+        .into());
     }
 
     // 4. Time-ordering check & deduplication
@@ -165,20 +170,22 @@ pub fn preprocess_lc(
 
     let sorted_points = sorted_time.len();
     if sorted_points < cfg.min_points {
-        bail!(
+        return Err(PipelineError::rejected(format!(
             "Points after deduplication ({sorted_points}) below required minimum ({}) for object {}",
             cfg.min_points,
             event.object_key
-        );
+        ))
+        .into());
     }
 
     // 5. Calculate Median & Normalize
     let flux_median = calculate_median(&sorted_flux);
     if !flux_median.is_finite() || flux_median <= 0.0 {
-        bail!(
+        return Err(PipelineError::rejected(format!(
             "Invalid non-positive or non-finite flux median ({flux_median}) for object {}",
             event.object_key
-        );
+        ))
+        .into());
     }
 
     let mut norm_flux: Vec<f32> = sorted_flux

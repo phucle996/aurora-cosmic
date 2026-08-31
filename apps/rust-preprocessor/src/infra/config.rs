@@ -52,6 +52,10 @@ pub struct ConsumerConfig {
     pub shutdown_timeout_secs: u64,
     /// Temporary directory for FITS download staging.
     pub tmp_dir: PathBuf,
+    /// FITS at or above this size are admitted through the large-staging gate.
+    pub large_staging_threshold_bytes: u64,
+    /// Maximum concurrent large FITS files allowed to occupy staging storage.
+    pub large_staging_concurrency: usize,
     /// Maximum JetStream redelivery attempts before treating as terminal.
     pub max_deliveries: i64,
     /// Retry backoff sequence in seconds (used for JetStream BackOff config).
@@ -76,12 +80,13 @@ pub struct LightCurveConfig {
 pub struct ImageConfig {
     /// Quality mode for TPF: "strict" (quality == 0) or "none".
     pub tpf_quality_mode: String,
-    /// TPF normalization strategy: "temporal-median" (default) or "global-median".
+    /// TPF normalization strategy. `chunk-temporal-median` normalizes each
+    /// bounded cadence chunk independently and is suitable for multi-GB TPFs.
     pub tpf_normalization: String,
+    /// Maximum number of TPF cadences materialized in one read/Parquet row group.
+    pub tpf_chunk_cadences: usize,
     /// FFI normalization strategy: "median" (default) or "none".
     pub ffi_normalization: String,
-    /// FFI cutout side dimension (e.g. 32 for 32x32). Must be >= 1.
-    pub ffi_cutout_size: usize,
 }
 
 /// Full application configuration.
@@ -106,7 +111,25 @@ impl Config {
 
         let tmp_dir = env::var("AURORA_PREPROCESS_TMP_DIR")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("/tmp/aurora-preprocessor"));
+            .unwrap_or_else(|_| {
+                env::var_os("HOME")
+                    .map(PathBuf::from)
+                    .map(|home| home.join(".cache/aurora-preprocessor"))
+                    .unwrap_or_else(|| PathBuf::from(".aurora-preprocessor-cache"))
+            });
+        let large_staging_threshold_bytes = env::var("AURORA_LARGE_STAGING_THRESHOLD_BYTES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1024 * 1024 * 1024);
+        let large_staging_concurrency = env::var("AURORA_LARGE_STAGING_CONCURRENCY")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1);
+        if large_staging_concurrency < 1 || large_staging_concurrency > workers {
+            return Err(format!(
+                "AURORA_LARGE_STAGING_CONCURRENCY must be between 1 and {workers}"
+            ));
+        }
 
         let min_points: usize = env::var("AURORA_LC_MIN_POINTS")
             .ok()
@@ -145,15 +168,20 @@ impl Config {
         }
 
         let tpf_normalization = env::var("AURORA_TPF_NORMALIZATION")
-            .unwrap_or_else(|_| "temporal-median".to_string())
+            .unwrap_or_else(|_| "chunk-temporal-median".to_string())
             .to_lowercase();
-        if !matches!(
-            tpf_normalization.as_str(),
-            "temporal-median" | "global-median" | "none"
-        ) {
+        if !matches!(tpf_normalization.as_str(), "chunk-temporal-median" | "none") {
             return Err(format!(
-                "Invalid AURORA_TPF_NORMALIZATION '{tpf_normalization}' (allowed: 'temporal-median', 'global-median', 'none')"
+                "Invalid AURORA_TPF_NORMALIZATION '{tpf_normalization}' (allowed: 'chunk-temporal-median', 'none')"
             ));
+        }
+
+        let tpf_chunk_cadences: usize = env::var("AURORA_TPF_CHUNK_CADENCES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(256);
+        if tpf_chunk_cadences < 1 {
+            return Err("AURORA_TPF_CHUNK_CADENCES must be >= 1".to_string());
         }
 
         let ffi_normalization = env::var("AURORA_FFI_NORMALIZATION")
@@ -163,14 +191,6 @@ impl Config {
             return Err(format!(
                 "Invalid AURORA_FFI_NORMALIZATION '{ffi_normalization}' (allowed: 'median', 'none')"
             ));
-        }
-
-        let ffi_cutout_size: usize = env::var("AURORA_FFI_CUTOUT_SIZE")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(32);
-        if ffi_cutout_size < 1 {
-            return Err("AURORA_FFI_CUTOUT_SIZE must be >= 1".to_string());
         }
 
         Ok(Self {
@@ -212,6 +232,8 @@ impl Config {
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(30),
                 tmp_dir,
+                large_staging_threshold_bytes,
+                large_staging_concurrency,
                 max_deliveries: env::var("AURORA_PREPROCESS_MAX_DELIVERIES")
                     .ok()
                     .and_then(|v| v.parse().ok())
@@ -227,8 +249,8 @@ impl Config {
             image_pipeline: ImageConfig {
                 tpf_quality_mode,
                 tpf_normalization,
+                tpf_chunk_cadences,
                 ffi_normalization,
-                ffi_cutout_size,
             },
         })
     }
@@ -249,12 +271,14 @@ impl Config {
             ack_wait = %self.consumer.ack_wait,
             max_deliveries = self.consumer.max_deliveries,
             tmp_dir = %self.consumer.tmp_dir.display(),
+            large_staging_threshold_bytes = self.consumer.large_staging_threshold_bytes,
+            large_staging_concurrency = self.consumer.large_staging_concurrency,
             lc_min_points = self.lc_pipeline.min_points,
             lc_quality_mode = %self.lc_pipeline.quality_mode,
             tpf_quality_mode = %self.image_pipeline.tpf_quality_mode,
             tpf_normalization = %self.image_pipeline.tpf_normalization,
+            tpf_chunk_cadences = self.image_pipeline.tpf_chunk_cadences,
             ffi_normalization = %self.image_pipeline.ffi_normalization,
-            ffi_cutout_size = self.image_pipeline.ffi_cutout_size,
             "Configuration summary loaded"
         );
     }

@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"go-ingester/internal/model"
+	"go-ingester/internal/pipeline/plan"
+	"go-ingester/internal/pipeline/storage"
 )
 
 // Manager provides thread-safe access and persistence for an active ingestion Checkpoint.
@@ -14,6 +16,31 @@ type Manager struct {
 	cp     *model.Checkpoint
 	prevCp *model.Checkpoint // previous run's checkpoint, used for cross-run resume
 	store  *Store
+}
+
+func (m *Manager) EnsureProduct(product model.ManifestProduct) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.cp.Products[product.SourceProductID]; exists {
+		return
+	}
+	objectKey, _ := storage.ObjectKeyFor(product)
+	sampleID := ""
+	if product.TICID > 0 && product.Sector > 0 {
+		sampleID = plan.SampleID(product.TICID, product.Sector)
+	}
+	now := time.Now().UTC()
+	m.cp.Products[product.SourceProductID] = &model.ProductCheckpoint{SourceProductID: product.SourceProductID, SampleID: sampleID, ProductKind: product.Kind, SourceURI: product.DataURI, ObjectKey: objectKey, ExpectedSizeBytes: product.SizeBytes, State: model.StatePlanned, Sector: product.Sector, TICID: product.TICID, Camera: product.Camera, CCD: product.CCD, UpdatedAt: now}
+	m.cp.UpdatedAt = now
+}
+
+func (m *Manager) UpdateProductDetector(productID string, camera, ccd int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if product, ok := m.cp.Products[productID]; ok {
+		product.Camera, product.CCD, product.UpdatedAt = camera, ccd, time.Now().UTC()
+		m.cp.UpdatedAt = product.UpdatedAt
+	}
 }
 
 // NewManager creates or wraps a Checkpoint Manager.

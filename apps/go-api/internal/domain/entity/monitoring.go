@@ -3,8 +3,9 @@ package entity
 import "time"
 
 type MonitoringPoint struct {
-	Timestamp float64
-	Value     float64
+	Timestamp float64           `json:"timestamp"`
+	Value     float64           `json:"value"`
+	Labels    map[string]string `json:"labels,omitempty"`
 }
 
 type MonitoringMetric struct {

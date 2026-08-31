@@ -159,48 +159,19 @@ func (s *IngestService) Cancel(ctx context.Context, jobID string) (*entity.Inges
 		s.runtimeMu.RUnlock()
 	}
 
-	var job *entity.IngestControlJob
-	if s.controller != nil {
-		job, _ = s.controller.Cancel(ctx, jobID)
+	if s.controller == nil {
+		return nil, fmt.Errorf("ingester control is unavailable")
+	}
+	job, err := s.controller.Cancel(ctx, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("cancel ingestion job %s: %w", jobID, err)
 	}
 	if job == nil {
-		job = &entity.IngestControlJob{
-			JobID:     jobID,
-			Status:    "canceled",
-			StartedAt: time.Now().UTC(),
-			UpdatedAt: time.Now().UTC(),
-		}
+		return nil, fmt.Errorf("ingester returned no cancellation state for job %s", jobID)
 	}
 
-	// Cập nhật ngay file Checkpoint trong MinIO sang trạng thái CANCELED
-	if s.objects != nil {
-		if data, err := s.objects.GetObject(ctx, "checkpoints/ingestion/current.json"); err == nil {
-			var pointer struct {
-				ActiveRunID string `json:"active_run_id"`
-			}
-			if json.Unmarshal(data, &pointer) == nil && pointer.ActiveRunID != "" {
-				runKey := "checkpoints/ingestion/runs/" + pointer.ActiveRunID + ".json"
-				if runData, err := s.objects.GetObject(ctx, runKey); err == nil {
-					var cp ingestionCheckpoint
-					if json.Unmarshal(runData, &cp) == nil {
-						cp.Status = "CANCELED"
-						cp.UpdatedAt = time.Now().UTC()
-						for k, p := range cp.Products {
-							if strings.EqualFold(p.State, "DOWNLOADING") {
-								p.State = "FAILED"
-								p.LastError = "ingestion canceled by user"
-								p.UpdatedAt = time.Now().UTC()
-								cp.Products[k] = p
-							}
-						}
-						if updatedData, err := json.Marshal(cp); err == nil {
-							_ = s.objects.PutObject(ctx, runKey, updatedData, "application/json")
-						}
-					}
-				}
-			}
-		}
-	}
+	// The ingester exclusively owns its durable checkpoint.  The API publishes
+	// the acknowledged control result, but never fabricates or overwrites state.
 
 	if s.publisher != nil {
 		payload, _ := json.Marshal(job)
@@ -237,6 +208,29 @@ func (s *IngestService) Cancel(ctx context.Context, jobID string) (*entity.Inges
 func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error) {
 	if s.objects == nil {
 		return nil, fmt.Errorf("MinIO ingestion checkpoint is unavailable")
+	}
+	var catalogProgress entity.IngestCatalogProgress
+	if payload, catalogErr := s.objects.GetObject(ctx, "control/ingest/catalog-status.json"); catalogErr == nil {
+		if json.Unmarshal(payload, &catalogProgress) != nil {
+			catalogProgress = entity.IngestCatalogProgress{}
+		}
+	}
+	var manifestProgress entity.IngestManifestProgress
+	if payload, manifestErr := s.objects.GetObject(ctx, "control/ingest/manifest-status.json"); manifestErr == nil {
+		if json.Unmarshal(payload, &manifestProgress) != nil {
+			manifestProgress = entity.IngestManifestProgress{}
+		}
+	}
+	attachPlanningProgress := func(status *entity.IngestStatus) {
+		if status == nil {
+			return
+		}
+		if catalogProgress.State != "" {
+			status.CatalogProgress = &catalogProgress
+		}
+		if manifestProgress.State != "" {
+			status.ManifestProgress = &manifestProgress
+		}
 	}
 
 	var controlJob *entity.IngestControlJob
@@ -276,10 +270,13 @@ func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error
 			cached := *s.runtime
 			cached.Products = append([]entity.IngestProduct(nil), s.runtime.Products...)
 			s.runtimeMu.RUnlock()
+			attachPlanningProgress(&cached)
 			return &cached, nil
 		}
 		s.runtimeMu.RUnlock()
-		return &entity.IngestStatus{Observed: false, Source: "minio-checkpoint", Status: "not_observed", ObservedAt: time.Now().UTC()}, nil
+		status := &entity.IngestStatus{Observed: false, Source: "minio-checkpoint", Status: "not_observed", ObservedAt: time.Now().UTC()}
+		attachPlanningProgress(status)
+		return status, nil
 	}
 
 	// 2. Đọc run_id đang hoạt động
@@ -312,8 +309,8 @@ func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error
 		UpdatedAt:    checkpoint.UpdatedAt,
 		ObservedAt:   time.Now().UTC(),
 		Products:     make([]entity.IngestProduct, 0, len(checkpoint.Products)),
+		ProductKinds: make(map[string]entity.IngestKindSummary),
 	}
-
 	if controlJob != nil {
 		status.ControlJobID = controlJob.JobID
 	}
@@ -336,20 +333,28 @@ func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error
 		}
 	}
 	s.runtimeMu.RUnlock()
+	attachPlanningProgress(status)
 
 	if !usingRuntimeState {
 		for id, product := range checkpoint.Products {
+			kind := string(product.ProductKind)
+			kindSummary := status.ProductKinds[kind]
+			kindSummary.Planned++
 			status.TotalProducts++
 			status.ExpectedBytes += product.ExpectedSizeBytes
 			status.CompletedBytes += product.SizeBytes
 			switch strings.ToUpper(product.State) {
 			case "STORED", "PUBLISHED":
 				status.CompletedProducts++
+				kindSummary.Completed++
 			case "DOWNLOADING":
 				status.Downloading++
+				kindSummary.Downloading++
 			case "FAILED":
 				status.FailedProducts++
+				kindSummary.Failed++
 			}
+			status.ProductKinds[kind] = kindSummary
 			status.Products = append(status.Products, entity.IngestProduct{
 				ID:        id,
 				Kind:      string(product.ProductKind),
@@ -427,8 +432,10 @@ func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error
 // HÀM DUYỆT BỘ NHỚ ĐỆM MEDALLION (Lakehouse Catalog & Storage Listing)
 // ============================================================================
 // Storage phân trang danh sách các file FITS thô, Parquet Silver và Snapshot Gold,
-// ưu tiên truy vấn siêu tốc (<1ms) từ ClickHouse Lakehouse Metadata Catalog,
-// và tự động fallback sang MinIO Object Storage nếu catalog chưa sẵn sàng.
+// Storage returns the current physical inventory in MinIO.  ClickHouse remains
+// useful for search-oriented metadata, but is an eventually-consistent index:
+// it can contain multiple historical rows for one object before merges finish.
+// Operator-facing tier counts and bytes must therefore never be sourced from it.
 func (s *IngestService) Storage(ctx context.Context, prefix string, page, limit int) (*entity.StorageListing, error) {
 	prefix = strings.TrimSpace(prefix)
 	if prefix == "" {
@@ -441,40 +448,8 @@ func (s *IngestService) Storage(ctx context.Context, prefix string, page, limit 
 		page = 1
 	}
 
-	tier := "bronze"
-	if strings.HasPrefix(prefix, "silver") {
-		tier = "silver"
-	} else if strings.HasPrefix(prefix, "gold") {
-		tier = "gold"
-	}
-
-	// 1. Truy vấn siêu tốc từ ClickHouse Lakehouse Metadata Catalog (<1ms)
-	if s.catalog != nil {
-		items, total, totalBytes, err := s.catalog.ListObjects(ctx, tier, prefix, page, limit)
-		if err == nil && total > 0 {
-			objects := make([]entity.StorageObject, len(items))
-			for i, o := range items {
-				objects[i] = entity.StorageObject{
-					Key:          o.ObjectKey,
-					SizeBytes:    o.SizeBytes,
-					ETag:         o.ETag,
-					LastModified: o.LastModified,
-				}
-			}
-			return &entity.StorageListing{
-				Bucket:     s.bucket,
-				Prefix:     prefix,
-				Page:       page,
-				PageSize:   limit,
-				Total:      int(total),
-				TotalBytes: totalBytes,
-				Truncated:  (page * limit) < int(total),
-				Objects:    objects,
-			}, nil
-		}
-	}
-
-	// 2. Fallback sang MinIO S3 Object Storage (khi Catalog đang khởi tạo)
+	// MinIO is the authoritative S3 inventory.  The short cache bounds a full
+	// listing cost while preserving the exact object count users operate on.
 	if s.objects == nil {
 		return nil, fmt.Errorf("MinIO storage is unavailable")
 	}
@@ -502,9 +477,12 @@ func (s *IngestService) Storage(ctx context.Context, prefix string, page, limit 
 		sort.Slice(objects, func(i, j int) bool { return objects[i].LastModified.After(objects[j].LastModified) })
 
 		for _, object := range objects {
+			if strings.HasPrefix(prefix, "bronze/") && !isProcessableBronzeFITS(object.Key) {
+				continue
+			}
 			totalBytes += object.Size
+			allObjects = append(allObjects, object)
 		}
-		allObjects = objects
 
 		s.runtimeMu.Lock()
 		s.storageCache[prefix] = &storageCacheEntry{
@@ -549,6 +527,12 @@ func (s *IngestService) Storage(ctx context.Context, prefix string, page, limit 
 	return listing, nil
 }
 
+func isProcessableBronzeFITS(key string) bool {
+	key = strings.ToLower(strings.TrimSpace(key))
+	return strings.HasSuffix(key, ".fits") || strings.HasSuffix(key, ".fit") ||
+		strings.HasSuffix(key, ".fits.gz") || strings.HasSuffix(key, ".fit.gz")
+}
+
 // syncMinIOToCatalog tự động quét và nạp siêu dữ liệu từ MinIO vào ClickHouse Catalog
 func (s *IngestService) syncMinIOToCatalog() {
 	if s.catalog == nil || s.objects == nil {
@@ -574,7 +558,8 @@ func (s *IngestService) syncMinIOToCatalog() {
 				tierName = "gold"
 			}
 
-			var sector int32 = 42
+			// Unknown paths must never be attributed to a real observing sector.
+			var sector int32
 			var ticID int64 = 0
 			if idx := strings.Index(o.Key, "tic="); idx != -1 {
 				end := strings.IndexAny(o.Key[idx+4:], "/._-")

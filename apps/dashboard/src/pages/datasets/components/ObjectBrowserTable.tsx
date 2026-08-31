@@ -1,5 +1,6 @@
 import type { JSX } from 'react';
 import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -11,6 +12,7 @@ interface ObjectBrowserTableProps {
   page: number;
   totalPages: number;
   onPageChange: (newPage: number) => void;
+  linkForObject?: (key: string) => string | undefined;
 }
 
 export function ObjectBrowserTable({
@@ -19,6 +21,7 @@ export function ObjectBrowserTable({
   page,
   totalPages,
   onPageChange,
+  linkForObject,
 }: ObjectBrowserTableProps): JSX.Element {
   const objects = data?.objects ?? [];
 
@@ -50,12 +53,16 @@ export function ObjectBrowserTable({
               </TableRow>
             ) : (
               objects.map((obj) => (
-                <TableRow key={obj.key}>
+                <TableRow key={obj.key} className={linkForObject?.(obj.key) ? 'cursor-pointer' : undefined}>
                   <TableCell
                     className="font-mono text-xs font-medium text-foreground truncate max-w-[400px]"
                     title={obj.key}
                   >
-                    {obj.key}
+                    {linkForObject?.(obj.key) ? (
+                      <Link to={linkForObject(obj.key)!} className="text-primary hover:underline">
+                        {obj.key}
+                      </Link>
+                    ) : obj.key}
                   </TableCell>
                   <TableCell className="font-mono text-xs">
                     {formatBytes(obj.size_bytes)}

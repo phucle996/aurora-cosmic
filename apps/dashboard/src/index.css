@@ -138,34 +138,34 @@ body {
 }
 
 .dark {
-  /* Dark palette: charcoal canvas, calm white type, sky-blue actions. */
-  --bg-main: #0b1118;
-  --bg-card: rgba(20, 30, 41, 0.9);
-  --border-color: rgba(226, 240, 248, 0.12);
-  --border-glow: rgba(56, 189, 248, 0.38);
-  --background: oklch(0.13 0.018 245);
-  --foreground: oklch(0.94 0.014 230);
-  --card: oklch(0.18 0.025 245);
-  --card-foreground: oklch(0.94 0.014 230);
-  --popover: oklch(0.18 0.025 245);
-  --popover-foreground: oklch(0.94 0.014 230);
-  --primary: oklch(0.72 0.14 225);
-  --primary-foreground: oklch(0.16 0.025 245);
-  --secondary: oklch(0.25 0.035 245);
-  --secondary-foreground: oklch(0.94 0.014 230);
-  --muted: oklch(0.22 0.025 245);
-  --muted-foreground: oklch(0.72 0.02 230);
-  --accent: oklch(0.27 0.05 230);
-  --accent-foreground: oklch(0.95 0.012 230);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(0.32 0.025 245);
-  --input: oklch(0.32 0.025 245);
-  --ring: oklch(0.72 0.14 225);
-  --chart-1: oklch(0.72 0.14 225);
-  --chart-2: oklch(0.62 0.1 195);
-  --chart-3: oklch(0.83 0.06 230);
-  --chart-4: oklch(0.5 0.09 260);
-  --chart-5: oklch(0.66 0.12 165);
+  /* Deep navy surfaces: distinct layers without the washed-out slate effect. */
+  --bg-main: #080f16;
+  --bg-card: rgba(15, 28, 39, 0.96);
+  --border-color: rgba(122, 183, 207, 0.2);
+  --border-glow: rgba(34, 211, 238, 0.52);
+  --background: #080f16;
+  --foreground: #eaf7fb;
+  --card: #101d28;
+  --card-foreground: #eaf7fb;
+  --popover: #0d1923;
+  --popover-foreground: #eefbff;
+  --primary: #35c9f5;
+  --primary-foreground: #06131b;
+  --secondary: #172a37;
+  --secondary-foreground: #eaf7fb;
+  --muted: #142532;
+  --muted-foreground: #a8c2ce;
+  --accent: #173747;
+  --accent-foreground: #f0fbff;
+  --destructive: #fb7185;
+  --border: #2a4655;
+  --input: #2a4655;
+  --ring: #35c9f5;
+  --chart-1: #35c9f5;
+  --chart-2: #38d3b4;
+  --chart-3: #b8e7f4;
+  --chart-4: #829cff;
+  --chart-5: #72d6a1;
   --sidebar: #080e15;
   --sidebar-foreground: #dcebf3;
   --text-primary: #eef7fb;

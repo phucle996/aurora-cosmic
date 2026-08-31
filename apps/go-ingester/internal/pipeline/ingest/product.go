@@ -2,16 +2,16 @@ package ingest
 
 import (
 	"context"
-	"errors"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"log/slog"
 
 	"go-ingester/internal/model"
+	"go-ingester/internal/pipeline/storage"
 )
 
 // ingestProduct processes a single ManifestProduct: key building -> MAST streaming -> MinIO PutObject -> verification -> NATS event publish.
-var errRunByteBudget = errors.New("ingest run byte budget reached")
 
 // existingObjectMatchesExpected treats a zero manifest size as unknown. MAST
 // does not provide byte sizes for every product, so an existing non-empty
@@ -23,56 +23,13 @@ func existingObjectMatchesExpected(actual, expected int64) bool {
 	return actual == expected
 }
 
-type budgetReader struct {
-	source io.Reader
-	budget *runByteBudget
-}
-
-func (r *budgetReader) Read(p []byte) (int, error) {
-	if r.budget == nil || r.budget.limit <= 0 {
-		return r.source.Read(p)
-	}
-	allowed := len(p)
-	for allowed > 0 {
-		if r.budget.reserve(int64(allowed)) {
-			break
-		}
-		allowed /= 2
-	}
-	if allowed == 0 {
-		return 0, errRunByteBudget
-	}
-	n, err := r.source.Read(p[:allowed])
-	if n < allowed {
-		r.budget.release(int64(allowed - n))
-	}
-	return n, err
-}
-
-func (p *Pipeline) ingestProduct(ctx context.Context, prod model.ManifestProduct, dryRun bool, budget *runByteBudget) model.ProductResult {
-	objectKey, err := model.BuildObjectKey(prod)
+func (p *Pipeline) ingestProduct(ctx context.Context, prod model.ManifestProduct) model.ProductResult {
+	objectKey, err := storage.ObjectKeyFor(prod)
 	if err != nil {
 		return model.ProductResult{
 			SourceProductID: prod.SourceProductID,
 			Status:          model.StatusFailed,
 			Error:           fmt.Errorf("build key: %w", err),
-		}
-	}
-
-	subject, _ := model.SubjectForKind(prod.Kind)
-
-	if dryRun {
-		p.log.Info("[DRY-RUN] plan object key and event",
-			slog.String("kind", string(prod.Kind)),
-			slog.String("uri", prod.DataURI),
-			slog.String("object_key", objectKey),
-			slog.String("event_subject", subject),
-		)
-		return model.ProductResult{
-			SourceProductID: prod.SourceProductID,
-			ObjectKey:       objectKey,
-			SizeBytes:       prod.SizeBytes,
-			Status:          model.StatusSkipped,
 		}
 	}
 
@@ -100,7 +57,10 @@ func (p *Pipeline) ingestProduct(ctx context.Context, prod model.ManifestProduct
 				slog.Int64("size", info.Size),
 			)
 		}
-		sha := info.UserMetadata["sha256"]
+		sha, hashErr := p.resolveStoredSHA(ctx, objectKey, info.UserMetadata["sha256"])
+		if hashErr != nil {
+			return model.ProductResult{SourceProductID: prod.SourceProductID, ObjectKey: objectKey, SizeBytes: info.Size, Status: model.StatusFailed, Error: hashErr}
+		}
 		res := p.publishOnly(ctx, prod, objectKey, info.Size, sha)
 		if res.Status == model.StatusStored {
 			res.Status = model.StatusSkipped
@@ -116,6 +76,24 @@ func (p *Pipeline) ingestProduct(ctx context.Context, prod model.ManifestProduct
 			Status:          model.StatusFailed,
 			Error:           fmt.Errorf("source reader is not configured"),
 		}
+	}
+	// A run can be much larger than Bronze's rolling window. Admission is
+	// therefore checked immediately before each new object, after existing
+	// objects have been handled by the resume path above. When Bronze reaches
+	// the high watermark this blocks until pre-processing commits eligible
+	// lineage and the lifecycle manager evicts the oldest safe raw objects.
+	capacityReleases := make([]func(), 0, 2)
+	defer func() {
+		for index := len(capacityReleases) - 1; index >= 0; index-- {
+			capacityReleases[index]()
+		}
+	}()
+	if p.capacityGate != nil && prod.SizeBytes > 0 {
+		release, err := p.capacityGate.Acquire(ctx, prod.SizeBytes)
+		if err != nil {
+			return model.ProductResult{SourceProductID: prod.SourceProductID, ObjectKey: objectKey, Status: model.StatusFailed, Error: fmt.Errorf("wait for Bronze capacity: %w", err)}
+		}
+		capacityReleases = append(capacityReleases, release)
 	}
 
 	stream, streamSize, err := p.sourceReader.OpenProduct(ctx, prod.DataURI)
@@ -133,19 +111,24 @@ func (p *Pipeline) ingestProduct(ctx context.Context, prod model.ManifestProduct
 	if uploadSize <= 0 {
 		uploadSize = prod.SizeBytes
 	}
-	reservedBytes := int64(0)
-	if uploadSize > 0 {
-		if !budget.reserve(uploadSize) {
-			return model.ProductResult{SourceProductID: prod.SourceProductID, ObjectKey: objectKey, Status: model.StatusSkipped, Error: errRunByteBudget}
+	if p.capacityGate != nil && uploadSize <= 0 {
+		return model.ProductResult{SourceProductID: prod.SourceProductID, ObjectKey: objectKey, Status: model.StatusFailed, Error: fmt.Errorf("cannot enforce Bronze capacity: source did not provide a content length")}
+	}
+	// Content-Length is authoritative for this transfer. Reserve any delta over
+	// the catalog estimate before MinIO receives a byte, otherwise concurrent
+	// workers could collectively push the rolling Bronze window over 100 GB.
+	additionalCapacity := uploadSize - prod.SizeBytes
+	if prod.SizeBytes <= 0 {
+		additionalCapacity = uploadSize
+	}
+	if p.capacityGate != nil && additionalCapacity > 0 {
+		release, err := p.capacityGate.Acquire(ctx, additionalCapacity)
+		if err != nil {
+			return model.ProductResult{SourceProductID: prod.SourceProductID, ObjectKey: objectKey, Status: model.StatusFailed, Error: fmt.Errorf("wait for Bronze capacity: %w", err)}
 		}
-		reservedBytes = uploadSize
+		capacityReleases = append(capacityReleases, release)
 	}
-
-	readStream := io.Reader(stream)
-	if uploadSize <= 0 {
-		readStream = &budgetReader{source: stream, budget: budget}
-	}
-	hr := model.NewHashedReader(readStream)
+	hr := newHashedReader(stream)
 
 	userMeta := map[string]string{
 		"source-product-id": prod.SourceProductID,
@@ -159,27 +142,22 @@ func (p *Pipeline) ingestProduct(ctx context.Context, prod model.ManifestProduct
 
 	// Stream into MinIO.
 	if err := p.minioClient.PutObject(ctx, p.bucket, objectKey, hr, uploadSize, userMeta); err != nil {
-		budget.release(reservedBytes)
-		status := model.StatusFailed
-		if errors.Is(err, errRunByteBudget) {
-			status = model.StatusSkipped
-		}
 		return model.ProductResult{
 			SourceProductID: prod.SourceProductID,
 			ObjectKey:       objectKey,
-			Status:          status,
+			Status:          model.StatusFailed,
 			Error:           fmt.Errorf("minio put: %w", err),
 		}
 	}
 
-	sha256Hex := hr.SumHex()
+	sha256Hex := hr.sumHex()
 
 	// Size advisory check: MAST catalog sizes are estimates. Log divergence but
 	// do not fail — the actual bytes written to MinIO are authoritative.
-	if prod.SizeBytes > 0 && hr.BytesRead() != prod.SizeBytes {
+	if prod.SizeBytes > 0 && hr.bytesRead() != prod.SizeBytes {
 		p.log.Warn("ingest: stream size diverges from MAST catalog estimate (non-fatal)",
 			slog.String("object_key", objectKey),
-			slog.Int64("bytes_read", hr.BytesRead()),
+			slog.Int64("bytes_read", hr.bytesRead()),
 			slog.Int64("mast_estimate", prod.SizeBytes),
 		)
 	}
@@ -190,7 +168,7 @@ func (p *Pipeline) ingestProduct(ctx context.Context, prod model.ManifestProduct
 		return model.ProductResult{
 			SourceProductID: prod.SourceProductID,
 			ObjectKey:       objectKey,
-			SizeBytes:       hr.BytesRead(),
+			SizeBytes:       hr.bytesRead(),
 			SHA256:          sha256Hex,
 			Status:          model.StatusFailed,
 			Error:           fmt.Errorf("post-upload verify failed for %s: %v", objectKey, statErr),
@@ -207,10 +185,29 @@ func (p *Pipeline) ingestProduct(ctx context.Context, prod model.ManifestProduct
 	p.log.Info("ingest: product stored and verified in MinIO",
 		slog.String("kind", string(prod.Kind)),
 		slog.String("object_key", objectKey),
-		slog.Int64("size_bytes", hr.BytesRead()),
+		slog.Int64("size_bytes", hr.bytesRead()),
 		slog.String("sha256", sha256Hex),
 	)
 
 	// Publish NATS JetStream event ONLY AFTER storage verification succeeds.
-	return p.publishOnly(ctx, prod, objectKey, hr.BytesRead(), sha256Hex)
+	return p.publishOnly(ctx, prod, objectKey, hr.bytesRead(), sha256Hex)
+}
+
+// resolveStoredSHA makes an object uploaded outside the current checkpoint
+// recoverable. New uploads already have a streaming checksum; an orphan
+// Bronze object is hashed once before its readiness event is emitted.
+func (p *Pipeline) resolveStoredSHA(ctx context.Context, objectKey, knownSHA string) (string, error) {
+	if knownSHA != "" {
+		return knownSHA, nil
+	}
+	reader, err := p.minioClient.GetObject(ctx, p.bucket, objectKey)
+	if err != nil {
+		return "", fmt.Errorf("read existing Bronze object for checksum: %w", err)
+	}
+	defer reader.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, reader); err != nil {
+		return "", fmt.Errorf("hash existing Bronze object: %w", err)
+	}
+	return fmt.Sprintf("%x", hash.Sum(nil)), nil
 }

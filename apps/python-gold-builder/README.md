@@ -1,29 +1,36 @@
 # AURORA Gold Builder
 
-`aurora-gold-builder` is the CPU-only Stage 5 service between the Rust
-preprocessor and the GPU ML worker. It consumes verified Silver events, reads
-Silver Parquet artifacts from MinIO, derives deterministic light-curve Gold
-features, and commits an immutable Gold snapshot.
+`aurora-gold-builder` is the CPU-only Silver-to-Gold service. It consumes
+checksum-verified Silver events, pairs each light curve with its exact target
+pixel file, synchronizes only the needed TIC/TOI rows, pins them as immutable
+snapshots, and commits an immutable Candidate Gold snapshot.
 
-The first release deliberately builds candidate snapshots from Silver
-light-curves. TPF/FFI evidence and catalog snapshots remain extension points;
-the manifest and event contracts already preserve the Silver lineage needed to
-add them without changing the Bronze-to-Silver service.
+The runtime contract is intentionally narrow:
 
-## Commands
+`Silver LIGHT_CURVE + Silver TARGET_PIXEL -> scoped TIC/TOI snapshots -> Candidate Gold`
 
-```bash
-# Build a snapshot from a JSON array of Silver events
-python -m aurora_gold_builder build --events-file events.json --set-current
+FFI and anomaly datasets are not part of this pipeline. TPF transit-deficit,
+centroid and pixel-variability evidence is folded directly into the canonical
+candidate row, so a second enrichment pass is unnecessary. Every manifest uses
+the `research-ready-target-pair-v4` completeness policy and lists only the
+`candidate` dataset. `gold/current/CANDIDATE.json` is the sole current pointer.
 
-# Run the durable Silver-event consumer
-python -m aurora_gold_builder worker
-```
+## Durable readiness
 
-The worker persists pending events under
-`checkpoints/gold-builder/pending/` before acknowledging NATS. A collector
-quickly checkpoints and ACKs Silver events while a bounded pool of Gold workers
-builds snapshots in parallel. It flushes after an idle window with no new Silver
-events, or when the configured maximum batch size is reached.
-Gold artifacts are written under `gold/snapshots/<snapshot-id>/` and the
-current pointer is `gold/current/CANDIDATE.json`.
+The worker reads ingestion checkpoints to identify the exact TPF source planned
+for each LC. Pending LC events are stored under
+`checkpoints/gold-builder/pending/`; reusable TPF contexts are stored under
+`checkpoints/gold-builder/modalities/`. A batch is eligible only when every LC
+has its TPF. The worker then retrieves TIC and TOI evidence for that exact batch,
+normalizes it, stores immutable MinIO snapshots, validates coverage, and passes
+those snapshot IDs to the materializer. A provider failure leaves the batch
+checkpointed with `WAITING_FOR_CATALOG_SYNC`; it never falls back to stale,
+global, or fabricated catalog data.
+
+## Operator control
+
+The dashboard controls stream, backlog, drain and pause through the durable
+`control/gold-builder.json` record. Stream mode begins only after the first
+Silver event and flushes on the configured record or idle-time limit. Runtime
+state is written to `control/gold-builder/status.json`; committed run and batch
+history is indexed in ClickHouse.

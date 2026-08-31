@@ -141,19 +141,23 @@ func (s *AnalyticsService) ListTargets(ctx context.Context, query entity.TargetQ
 
 // GetTarget truy vấn thông tin chi tiết một ngôi sao mục tiêu theo TIC ID và Sector,
 // đồng thời tự động liên kết dữ liệu vật lý thực tế của ứng viên ngoại hành tinh nếu có.
-func (s *AnalyticsService) GetTarget(ctx context.Context, ticID int64, sector int) (*entity.TargetDetail, error) {
-	detail, err := s.repository.GetTarget(ctx, ticID, sector)
+func (s *AnalyticsService) GetTarget(ctx context.Context, ticID int64, sector int, snapshotID string) (*entity.TargetDetail, error) {
+	detail, err := s.repository.GetTarget(ctx, ticID, sector, snapshotID)
 	if err != nil {
 		return nil, err
 	}
+	candidate := entity.Candidate{TICID: detail.Target.TICID, Sector: detail.Target.Sector, SnapshotID: detail.Target.GoldSnapshotID}
 	if detail.Target.HasCandidate && detail.Target.CandidatePredictionID != "" {
-		candDetail, candErr := s.repository.GetCandidate(ctx, detail.Target.CandidatePredictionID, "")
+		candDetail, candErr := s.repository.GetCandidate(ctx, detail.Target.CandidatePredictionID, detail.Target.GoldSnapshotID)
 		if candErr == nil && candDetail != nil {
-			phys, hab := physics.DeriveCandidate(candDetail.Candidate, candDetail.Evidence)
-			detail.Physics = &phys
-			detail.Habitability = &hab
+			candidate = candDetail.Candidate
 			detail.Evidence = &candDetail.Evidence
 		}
+	}
+	if detail.Evidence != nil {
+		phys, hab := physics.DeriveCandidate(candidate, *detail.Evidence)
+		detail.Physics = &phys
+		detail.Habitability = &hab
 	}
 	return detail, nil
 }

@@ -14,7 +14,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from aurora_ml.config import Config
-from aurora_ml.trainer import get_minio_client
+from aurora_ml.infrastructure.object_store import MinioObjectStore
 
 LOGGER = logging.getLogger("aurora-analytics-projector")
 
@@ -29,7 +29,7 @@ class AnalyticsProjector:
     def __init__(self, config: Config):
         self.config = config
         self.bucket = config.minio_bucket
-        self.objects = get_minio_client(config)
+        self.objects = MinioObjectStore(config).client
         self.clickhouse = clickhouse_connect.get_client(
             host=config.clickhouse_host,
             port=config.clickhouse_port,
@@ -266,8 +266,8 @@ class AnalyticsProjector:
         return len(candidate_rows) + len(anomaly_rows)
 
     def reconcile(self) -> tuple[int, int]:
+        """Legacy full reconciliation kept for the explicit CLI command only."""
         gold_rows = 0
-        prediction_rows = 0
         manifests = sorted(
             item.object_name
             for item in self.objects.list_objects(
@@ -281,6 +281,11 @@ class AnalyticsProjector:
                 gold_rows += self.project_snapshot(snapshot_id)
             except Exception:
                 LOGGER.exception("Failed to project Gold snapshot %s", snapshot_id)
+        return gold_rows, self.reconcile_predictions()
+
+    def reconcile_predictions(self) -> int:
+        """Project inference outputs only; Gold is owned by Gold Builder."""
+        prediction_rows = 0
         for item in self.objects.list_objects(
             self.bucket, prefix="predictions/", recursive=True
         ):
@@ -291,4 +296,4 @@ class AnalyticsProjector:
                     LOGGER.exception(
                         "Failed to project predictions %s", item.object_name
                     )
-        return gold_rows, prediction_rows
+        return prediction_rows

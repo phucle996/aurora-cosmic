@@ -11,6 +11,6 @@ type Analytics interface {
 	ListAnomalies(context.Context, int, string, bool, entity.PageRequest) (entity.Page[entity.Anomaly], error)
 	GetAnomalyDetail(context.Context, string, string) (*entity.AnomalyDetail, error)
 	ListTargets(context.Context, entity.TargetQuery) (entity.Page[entity.Target], error)
-	GetTarget(context.Context, int64, int) (*entity.TargetDetail, error)
+	GetTarget(context.Context, int64, int, string) (*entity.TargetDetail, error)
 	GetLightcurve(context.Context, int64, int, entity.PageRequest) (*entity.Lightcurve, error)
 }

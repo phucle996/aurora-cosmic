@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
 import {
-  Activity,
   ArrowLeft,
   CircleAlert,
   Compass,
@@ -9,7 +8,6 @@ import {
   Gauge,
   LoaderCircle,
   MapPin,
-  Orbit,
   Rotate3D,
   Sparkles,
   Star,
@@ -27,7 +25,7 @@ import { derivePlanetarySystemForTarget, OrbitViewer3D } from '@/components/Orbi
 import { SynchronizedLightCurve } from '@/components/SynchronizedLightCurve';
 import type { TransitSyncEvent } from '@/components/orbit-viewer/types';
 import { apiFetch } from '@/lib/api';
-import type { LightcurveResponse, TargetDetailResponse, TargetRecord } from '@/lib/analytics-types';
+import type { LightcurveResponse, TargetDetailResponse } from '@/lib/analytics-types';
 
 function number(value: number | null | undefined, digits = 2): string {
   return value == null || !Number.isFinite(value) ? '—' : value.toFixed(digits);
@@ -37,6 +35,7 @@ export default function TargetDetailPage(): JSX.Element {
   const { ticId = '' } = useParams();
   const [search] = useSearchParams();
   const sector = search.get('sector') ?? '';
+	const snapshotID = search.get('snapshot_id') ?? '';
   const [detail, setDetail] = useState<TargetDetailResponse>();
   const [curve, setCurve] = useState<LightcurveResponse>();
   const [error, setError] = useState<string>();
@@ -45,7 +44,10 @@ export default function TargetDetailPage(): JSX.Element {
   useEffect(() => {
     if (!ticId) return;
     let active = true;
-    const suffix = sector ? `?sector=${encodeURIComponent(sector)}` : '';
+		const parameters = new URLSearchParams();
+		if (sector) parameters.set('sector', sector);
+		if (snapshotID) parameters.set('snapshot_id', snapshotID);
+		const suffix = parameters.size > 0 ? `?${parameters.toString()}` : '';
     setError(undefined);
     void apiFetch<TargetDetailResponse>(`/v1/targets/${encodeURIComponent(ticId)}${suffix}`)
       .then(async (response) => {
@@ -68,25 +70,30 @@ export default function TargetDetailPage(): JSX.Element {
     return () => {
       active = false;
     };
-  }, [sector, ticId]);
+  }, [sector, snapshotID, ticId]);
 
   const target = detail?.target;
   const physics = detail?.planet_physics;
   const habitability = detail?.habitability;
   const evidence = detail?.evidence;
 
-  // Real Stellar parameters with fallback hierarchy
+  // Only derive stellar / orbital views from an actual TIC enrichment.  Do not
+  // fill missing catalog context with solar defaults: that would look measured.
+  const hasTicContext = target?.tic_context_available === true;
+  const hasStellarContext = hasTicContext && Boolean(
+    (target?.effective_t && target.effective_t > 0) || (evidence?.teff && evidence.teff > 0)
+  ) && Boolean((target?.radius && target.radius > 0) || (evidence?.stellar_radius && evidence.stellar_radius > 0));
   const starTeff = target?.effective_t && target.effective_t > 0
     ? target.effective_t
     : evidence?.teff && evidence.teff > 0
     ? evidence.teff
-    : 5778;
+    : 0;
 
   const starRadius = target?.radius && target.radius > 0
     ? target.radius
     : evidence?.stellar_radius && evidence.stellar_radius > 0
     ? evidence.stellar_radius
-    : 1.0;
+    : 0;
 
   // Real Planetary System derived parameters with Keplerian Physics
   const planetsList = useMemo(() => {
@@ -102,6 +109,21 @@ export default function TargetDetailPage(): JSX.Element {
       </div>
     );
   }
+
+  const toiMatch = target.matched_toi
+    ? `TOI ${target.matched_toi}`
+    : target.toi_match_status === 'CATALOG_UNAVAILABLE'
+    ? 'TOI catalog not applied to this Gold snapshot'
+    : target.toi_match_status === 'NO_TOI_FOR_TARGET'
+    ? 'No TOI catalog record for this TIC'
+    : target.toi_match_status === 'PERIOD_MISMATCH'
+    ? 'TOI exists, but its period does not match this BLS signal'
+    : target.toi_match_status === 'BLS_UNAVAILABLE'
+    ? 'No usable BLS ephemeris for TOI comparison'
+    : target.toi_match_status === 'TARGET_ID_UNAVAILABLE'
+    ? 'TIC identity is unavailable for TOI comparison'
+    : 'Awaiting catalog enrichment';
+  const labelStatus = 'Discovery evidence — curated labels are stored in a separate training cohort';
 
   return (
     <div className="space-y-6">
@@ -125,14 +147,14 @@ export default function TargetDetailPage(): JSX.Element {
         <div className="flex gap-2">
           {target.matched_toi ? (
             <Button asChild variant="outline">
-              <Link to={`/exoplanets?system=${encodeURIComponent(target.matched_toi)}`}>
+						<Link to={`/research-factory/systems?system=${encodeURIComponent(target.matched_toi)}${target.gold_snapshot_id ? `&snapshot_id=${encodeURIComponent(target.gold_snapshot_id)}` : ''}`}>
                 <Telescope />
                 NASA Eyes ({target.matched_toi})
               </Link>
             </Button>
           ) : (
             <Button asChild variant="outline">
-              <Link to="/exoplanets">
+						<Link to="/research-factory/systems">
                 <Telescope />
                 3D Simulator
               </Link>
@@ -140,7 +162,7 @@ export default function TargetDetailPage(): JSX.Element {
           )}
           {target.has_candidate && (
             <Button asChild>
-              <Link to={`/candidates?prediction_id=${encodeURIComponent(target.candidate_prediction_id)}`}>
+						<Link to={`/research-factory/transit-candidates/${encodeURIComponent(target.candidate_prediction_id)}?snapshot_id=${encodeURIComponent(target.gold_snapshot_id)}`}>
                 <Sparkles />
                 Candidate review
               </Link>
@@ -153,26 +175,26 @@ export default function TargetDetailPage(): JSX.Element {
         <Metric
           icon={ThermometerSun}
           label="Effective temperature"
-          value={`${number(target.effective_t, 0)} K`}
-          detail={target.effective_t > 0 ? 'TIC catalog' : 'Estimated proxy'}
+          value={hasTicContext && target.effective_t > 0 ? `${number(target.effective_t, 0)} K` : '—'}
+          detail={hasTicContext ? 'TIC catalog' : 'TIC catalog not enriched'}
         />
         <Metric
           icon={Star}
           label="Stellar radius"
-          value={`${number(target.radius)} R☉`}
-          detail={target.radius > 0 ? 'TIC catalog' : 'Estimated proxy'}
+          value={hasTicContext && target.radius > 0 ? `${number(target.radius)} R☉` : '—'}
+          detail={hasTicContext ? 'TIC catalog' : 'TIC catalog not enriched'}
         />
         <Metric
           icon={Gauge}
           label="Surface gravity"
-          value={number(target.surface_grav)}
-          detail="log g (cgs)"
+          value={hasTicContext && target.surface_grav > 0 ? number(target.surface_grav) : '—'}
+          detail={hasTicContext ? 'log g (cgs)' : 'TIC catalog not enriched'}
         />
         <Metric
           icon={MapPin}
           label="Coordinates"
-          value={`${number(target.ra, 3)}°, ${number(target.dec, 3)}°`}
-          detail="RA / Dec"
+          value={hasTicContext ? `${number(target.ra, 3)}°, ${number(target.dec, 3)}°` : '—'}
+          detail={hasTicContext ? 'RA / Dec (ICRS)' : 'TIC catalog not enriched'}
         />
       </div>
 
@@ -186,7 +208,9 @@ export default function TargetDetailPage(): JSX.Element {
                 3D Host Star & Habitable Zone Simulator
               </CardTitle>
               <CardDescription className="mt-0.5">
-                Mô phỏng 3D vật lý ngôi sao TIC {target.tic_id} ({number(starTeff, 0)} K · {number(starRadius, 2)} R☉) và Vùng sinh sống (Goldilocks Zone) dựa trên độ sáng thực tế.
+                {hasStellarContext
+                  ? `Mô phỏng 3D vật lý ngôi sao TIC ${target.tic_id} (${number(starTeff, 0)} K · ${number(starRadius, 2)} R☉) từ snapshot TIC đã xác minh.`
+                  : 'Chờ TIC catalog enrichment trước khi dựng mô phỏng vật lý sao chủ.'}
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
@@ -197,18 +221,26 @@ export default function TargetDetailPage(): JSX.Element {
           </div>
         </CardHeader>
         <CardContent className="p-0">
-          <OrbitViewer3D
-            star={{
-              name: `TIC ${target.tic_id}`,
-              teff: starTeff,
-              radius: starRadius,
-              mass: evidence?.stellar_mass || undefined,
-              mag: target.tess_mag || 10.5,
-            }}
-            planets={planetsList}
-            height="580px"
-            onTimeUpdate={setTransitSync}
-          />
+          {hasStellarContext ? (
+            <OrbitViewer3D
+              star={{
+                name: `TIC ${target.tic_id}`,
+                teff: starTeff,
+                radius: starRadius,
+                mass: evidence?.stellar_mass || undefined,
+                mag: target.tess_mag > 0 ? target.tess_mag : undefined,
+              }}
+              planets={planetsList}
+              height="580px"
+              onTimeUpdate={setTransitSync}
+            />
+          ) : (
+            <div className="flex min-h-[360px] flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted-foreground">
+              <CircleAlert className="size-6 text-amber-500" />
+              <p className="font-medium text-foreground">Stellar simulation is unavailable</p>
+              <p>This target has no verified TIC stellar context in the Gold snapshot yet.</p>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -252,25 +284,25 @@ export default function TargetDetailPage(): JSX.Element {
               {/* TAB 1: TESS OBSERVATION & COORDINATES */}
               <TabsContent value="observation" className="space-y-4 m-0">
                 <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3.5 text-sm">
-                  <Info label="TESS Magnitude" value={`${number(target.tess_mag)} Tmag`} />
+                  <Info label="TESS Magnitude" value={hasTicContext && target.tess_mag > 0 ? `${number(target.tess_mag)} Tmag` : '— (TIC not enriched)'} />
                   <Info label="TESS Sector" value={`Sector ${target.sector}`} />
                   <Info label="Pipeline Status" value={target.pipeline_status || 'INDEXED'} />
-                  <Info label="Right Ascension (RA)" value={`${number(target.ra, 4)}°`} />
-                  <Info label="Declination (Dec)" value={`${number(target.dec, 4)}°`} />
-                  <Info label="NASA TOI Match" value={target.matched_toi ? `TOI ${target.matched_toi}` : 'Unmatched'} />
+                  <Info label="Right Ascension (RA)" value={hasTicContext ? `${number(target.ra, 4)}°` : '— (TIC not enriched)'} />
+                  <Info label="Declination (Dec)" value={hasTicContext ? `${number(target.dec, 4)}°` : '— (TIC not enriched)'} />
+                  <Info label="NASA TOI Match" value={toiMatch} />
                   <Info label="Light Curve Points" value={target.has_lightcurve ? `${target.lightcurve_points.toLocaleString()} pts` : 'Not indexed'} />
                   <Info label="Observation Span" value={target.has_lightcurve ? `${number(target.lightcurve_time_span, 1)} days` : '—'} />
-                  <Info label="Catalog Disposition" value={target.disposition || 'CANDIDATE'} />
+                  <Info label="Catalog Disposition" value={labelStatus} />
                 </dl>
                 <div className="pt-2 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
-                  <span>Hệ tọa độ quang học ICRS / TESS Input Catalog v8.2</span>
+                  <span>{hasTicContext ? 'ICRS coordinates from pinned TIC snapshot' : 'TIC snapshot has not enriched this target'}</span>
                   <span className="font-mono text-foreground/80">Sector {target.sector} Coverage</span>
                 </div>
               </TabsContent>
 
               {/* TAB 2: HOST STAR ASTROPHYSICS */}
               <TabsContent value="star_physics" className="space-y-4 m-0">
-                <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3.5 text-sm">
+                {hasStellarContext ? <><dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3.5 text-sm">
                   <Info
                     label="Spectral Class"
                     value={
@@ -284,7 +316,7 @@ export default function TargetDetailPage(): JSX.Element {
                   <Info label="Stellar Radius" value={`${number(starRadius, 2)} R☉ (${(starRadius * 696340).toLocaleString()} km)`} />
                   <Info
                     label="Stellar Mass"
-                    value={`${(evidence?.stellar_mass || Math.pow(starRadius, 1.25)).toFixed(2)} M☉`}
+                    value={evidence?.stellar_mass ? `${evidence.stellar_mass.toFixed(2)} M☉` : '—'}
                   />
                   <Info label="Surface Gravity (log g)" value={`${number(target.surface_grav, 2)} cgs`} />
                   <Info
@@ -308,11 +340,14 @@ export default function TargetDetailPage(): JSX.Element {
                   <span>Mô hình quang thông bức xạ Stefan-Boltzmann & Kopparapu (2013)</span>
                   <span className="text-emerald-500 font-medium">Stable Main-Sequence</span>
                 </div>
+                </> : <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-800 dark:text-amber-200">
+                  Chưa có thông số TIC đã xác minh cho target này, nên không suy diễn loại sao, độ sáng hay vùng Goldilocks.
+                </div>}
               </TabsContent>
 
               {/* TAB 3: AI VETTING & ASTROPHYSICS DERIVATION */}
               <TabsContent value="ai_physics" className="space-y-3.5 m-0">
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3">
                   <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-muted-foreground flex items-center gap-1.5">
@@ -331,25 +366,6 @@ export default function TargetDetailPage(): JSX.Element {
                     </div>
                     <Progress value={target.has_candidate ? target.candidate_score * 100 : 0} className="h-1.5 mt-2" />
                   </div>
-
-                  <div className="rounded-lg border border-border bg-muted/20 p-3">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-muted-foreground flex items-center gap-1.5">
-                        <Activity className="size-3.5 text-amber-500" />
-                        Anomaly Score
-                      </span>
-                      <Badge variant={target.has_anomaly ? "destructive" : "outline"} className="text-[10px] h-5">
-                        {target.has_anomaly ? 'FLAGGED' : 'NORMAL'}
-                      </Badge>
-                    </div>
-                    <div className="mt-2 flex items-baseline justify-between">
-                      <span className="font-mono text-xl font-bold">
-                        {target.has_anomaly ? number(target.anomaly_score, 4) : '0.0012'}
-                      </span>
-                      <span className="text-xs text-muted-foreground">Autoencoder MSE</span>
-                    </div>
-                    <Progress value={target.has_anomaly ? Math.min(100, target.anomaly_score * 1000) : 12} className="h-1.5 mt-2" />
-                  </div>
                 </div>
 
                 <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-2.5 text-xs pt-1">
@@ -367,9 +383,10 @@ export default function TargetDetailPage(): JSX.Element {
         <SynchronizedLightCurve
           time={curve?.time ?? []}
           flux={curve?.flux ?? []}
-          blsPeriod={physics?.orbital_period_days || evidence?.bls_period || (planetsList[0]?.periodDays ?? 10.0)}
-          blsDepth={evidence?.bls_depth || (target.candidate_score > 0 ? 0.0018 : 0.0008)}
-          blsDurationHours={evidence?.bls_duration || 3.0}
+          blsPeriod={physics?.orbital_period_days || evidence?.bls_period || planetsList[0]?.periodDays}
+          blsDepth={evidence?.bls_depth}
+              blsDurationDays={evidence?.bls_duration}
+              blsTransitTime={evidence?.bls_transit_time}
           transitInfo={transitSync}
           planetName={planetsList[0]?.name || `TIC ${target.tic_id}`}
         />

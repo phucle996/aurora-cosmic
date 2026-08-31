@@ -78,33 +78,15 @@ class MinioInferenceJobPlanner:
         if len(runtime_fingerprint) < 12:
             raise InferenceJobError("runtime manifest fingerprint is invalid")
         validation_id = f"rval-v1-{runtime_fingerprint[:12]}"
-        validation = {
-            "schema_version": 1,
-            "validation_record_id": validation_id,
-            "runtime_package_id": runtime_package_id,
-            "runtime_manifest_sha256": runtime_sha,
-            "engine": "python-onnxruntime",
-            "parity_fixture_sha256": runtime["parity_fixture_sha256"],
-            "max_absolute_error": 0.0,
-            "max_relative_error": 0.0,
-            "atol_limit": 1e-5,
-            "rtol_limit": 1e-5,
-            "validation_status": "PASS",
-            "created_at": str(runtime["created_at"]),
-            "producer": "aurora-ml-worker",
-        }
-        self._put_immutable(
-            f"models/runtime-validations/{validation_id}.json",
-            json.dumps(validation, sort_keys=True, separators=(",", ":")).encode(),
-        )
+        # This is an evidence request, not a PASS assertion. Rust validates
+        # the package before scoring and commits the record under this ID.
 
+        if task != "candidate_vetting":
+            raise InferenceJobError(f"unsupported retired inference task: {task}")
         requests: list[dict[str, Any]] = []
-        task_dir = "candidate" if task == "candidate_vetting" else "anomaly"
-        selection_policy = (
-            "candidate-inference-selection-v1"
-            if task == "candidate_vetting"
-            else "anomaly-lightcurve-inference-selection-v1"
-        )
+        task_dir = "candidate"
+        expected_dataset = "candidate"
+        selection_policy = "candidate-inference-selection-v1"
         for snapshot_id in gold_snapshot_ids:
             gold_manifest_key = f"gold/snapshots/{snapshot_id}/manifest.json"
             gold_manifest_bytes = self._read(gold_manifest_key)
@@ -114,6 +96,8 @@ class MinioInferenceJobPlanner:
                 raise InferenceJobError(f"Gold snapshot {snapshot_id} is not committed")
 
             for artifact in gold_manifest.get("artifacts", []):
+                if artifact.get("dataset") != expected_dataset:
+                    continue
                 row_count = int(artifact.get("row_count", 0))
                 artifact_key = str(
                     artifact.get("object_key")
@@ -181,11 +165,7 @@ class MinioInferenceJobPlanner:
                     asdict(job), sort_keys=True, separators=(",", ":")
                 ).encode()
                 job_sha = self._put_immutable(job_key, job_bytes)
-                subject = (
-                    "aurora.v1.inference.candidate.requested"
-                    if task == "candidate_vetting"
-                    else "aurora.v1.inference.anomaly.requested"
-                )
+                subject = "aurora.v1.inference.candidate.requested"
                 requests.append(
                     {
                         "schema_version": 1,

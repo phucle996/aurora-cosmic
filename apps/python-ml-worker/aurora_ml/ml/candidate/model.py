@@ -69,7 +69,7 @@ class CandidateTabularMLP(nn.Module):
 
     def __init__(
         self,
-        input_dim: int = 32,
+        input_dim: int = len(CANDIDATE_MODEL_INPUT_FEATURES),
         hidden_dims: Tuple[int, ...] = (128, 256, 128, 64),
         dropout_rate: float = 0.15,
         model_version: str = "candidate-deep-resmlp-v1",
@@ -114,7 +114,11 @@ class CandidateTabularMLP(nn.Module):
         Returns:
             Tensor of shape (N, 1) raw logits, dtype float32
         """
-        if x.dim() != 2 or x.shape[1] != self.input_dim:
+        # Shape validation is valuable for eager training/inference, but Python
+        # tensor-to-bool conversion must not be captured into an ONNX graph.
+        if not torch.jit.is_tracing() and (
+            x.dim() != 2 or x.shape[1] != self.input_dim
+        ):
             raise ValueError(
                 f"INVALID_INPUT_SHAPE: Expected input shape (N, {self.input_dim}), got {tuple(x.shape)}"
             )

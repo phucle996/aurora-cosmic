@@ -1,0 +1,14 @@
+[Unit]
+Description=AURORA development infrastructure (Docker)
+After=docker.service
+Wants=docker.service
+PartOf=aurora-dev.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Desktop/aurora-cosmic
+ExecStart=/usr/bin/docker compose up -d minio minio-init nats nats-exporter clickhouse cadvisor prometheus
+RemainAfterExit=yes
+
+[Install]
+WantedBy=default.target
