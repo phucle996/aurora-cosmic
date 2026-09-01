@@ -8,10 +8,8 @@ import {
   GitBranch,
   LayoutDashboard,
   Microscope,
-  Orbit,
   Server,
   Sparkles,
-  SearchCheck,
   Target,
   Workflow,
   Waves,
@@ -52,11 +50,9 @@ const dataFactoryItems = [
 
 const researchFactoryItems = [
   { path: '/research-factory/discovery', label: 'TESS Target Discovery', detail: 'Find research targets', icon: Target },
-  { path: '/research-factory/workbench', label: 'Observation Workbench', detail: 'Inspect observations', icon: Microscope },
-  { path: '/research-factory/transit-candidates', label: 'Transit Candidates', detail: 'ML-ranked evidence', icon: Sparkles },
-  { path: '/research-factory/systems', label: '3D Systems & Habitability', detail: 'Evidence-backed physics', icon: Orbit },
-  { path: '/research-factory/vetting', label: 'Target Vetting', detail: 'Evidence review', icon: SearchCheck },
-  { path: '/research-factory/evidence', label: 'Evidence & Runs', detail: 'Gold + inference provenance', icon: GitBranch },
+  { path: '/research-factory/workbench', label: 'Observation Workbench', detail: 'LC, BLS, TPF + 3D physics', icon: Microscope },
+  { path: '/research-factory/candidates', label: 'Candidate Review', detail: 'Rank, vet and label evidence', icon: Sparkles },
+  { path: '/research-factory/history', label: 'Research History', detail: 'Gold → model → decision', icon: GitBranch },
 ];
 
 const aiFactoryItems = [

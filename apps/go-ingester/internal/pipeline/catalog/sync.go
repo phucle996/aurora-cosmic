@@ -86,6 +86,10 @@ func ReportFailure(ctx context.Context, store *storage.MinIOClient, bucket, stag
 	writeProgress(ctx, store, bucket, Progress{State: "FAILED", Stage: stage, Total: 2, Error: err.Error()})
 }
 
+func ReportCanceled(ctx context.Context, store *storage.MinIOClient, bucket, stage string) {
+	writeProgress(ctx, store, bucket, Progress{State: "CANCELED", Stage: stage, Total: 2})
+}
+
 func SyncTOI(ctx context.Context, store *storage.MinIOClient, bucket string) (map[int64]struct{}, string, int, error) {
 	progress := Progress{State: "RUNNING", Stage: "DOWNLOADING_TOI", Completed: 0, Total: 2}
 	writeProgress(ctx, store, bucket, progress)

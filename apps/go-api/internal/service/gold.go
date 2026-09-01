@@ -95,6 +95,10 @@ func (s *GoldControlService) Start(ctx context.Context, request entity.GoldContr
 	if maxBatchRecords < 1 || maxBatchRecords > maxGoldBatchSize {
 		return nil, fmt.Errorf("max_batch_records must be between 1 and %d", maxGoldBatchSize)
 	}
+	ticketID := strings.TrimSpace(request.TicketID)
+	if len(ticketID) > 128 {
+		return nil, fmt.Errorf("ticket_id must not exceed 128 characters")
+	}
 	control := entity.GoldControlState{
 		SchemaVersion:    1,
 		Mode:             mode,
@@ -107,7 +111,7 @@ func (s *GoldControlService) Start(ctx context.Context, request entity.GoldContr
 	if err := s.writeControl(ctx, control); err != nil {
 		return nil, err
 	}
-	return s.publishAndQuery(ctx, control, "armed")
+	return s.publishAndQuery(ctx, control, "armed", ticketID)
 }
 
 func (s *GoldControlService) Stop(ctx context.Context) (*entity.GoldControlOverview, error) {
@@ -132,7 +136,7 @@ func (s *GoldControlService) Stop(ctx context.Context) (*entity.GoldControlOverv
 	if err := s.writeControl(ctx, control); err != nil {
 		return nil, err
 	}
-	return s.publishAndQuery(ctx, control, "pause_requested")
+	return s.publishAndQuery(ctx, control, "pause_requested", "")
 }
 
 // ResolveLineage checks immutable, committed Gold manifests.  It deliberately
@@ -521,7 +525,7 @@ func (s *GoldControlService) writeControl(ctx context.Context, control entity.Go
 	return nil
 }
 
-func (s *GoldControlService) publishAndQuery(ctx context.Context, control entity.GoldControlState, status string) (*entity.GoldControlOverview, error) {
+func (s *GoldControlService) publishAndQuery(ctx context.Context, control entity.GoldControlState, status, ticketID string) (*entity.GoldControlOverview, error) {
 	if s.publisher != nil {
 		payload, _ := json.Marshal(control)
 		_ = s.publisher.Publish(ctx, entity.WorkflowEvent{
@@ -529,6 +533,7 @@ func (s *GoldControlService) publishAndQuery(ctx context.Context, control entity
 			Workflow:   "gold",
 			Status:     status,
 			JobID:      control.CommandID,
+			TicketID:   ticketID,
 			OccurredAt: control.UpdatedAt,
 			Payload:    payload,
 		})

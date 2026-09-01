@@ -46,6 +46,10 @@ func (fakeModels) ListModels(context.Context, string) ([]entity.Model, error) {
 	return []entity.Model{}, nil
 }
 
+func (fakeModels) ListTrainingReviews(context.Context, int) ([]entity.TrainingReview, error) {
+	return nil, nil
+}
+
 func (fakeModels) TrainingReadiness(context.Context, []string) (*entity.TrainingReadiness, error) {
 	return &entity.TrainingReadiness{Ready: true}, nil
 }
@@ -139,7 +143,7 @@ func (fakeIngest) Start(context.Context, entity.IngestStartRequest) (*entity.Ing
 }
 
 func (fakeIngest) Cancel(context.Context, string) (*entity.IngestControlJob, error) {
-	return &entity.IngestControlJob{JobID: "ingest-job-test", Status: "cancelling"}, nil
+	return &entity.IngestControlJob{JobID: "ingest-job-test", Status: "draining"}, nil
 }
 
 var _ service.Analytics = fakeAnalytics{}

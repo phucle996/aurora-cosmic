@@ -15,6 +15,10 @@ pub struct ImageProcessingMetadata {
     pub output_cadences: usize,
     pub quality_removed: usize,
     pub invalid_time_removed: usize,
+    #[serde(default)]
+    pub nonfinite_removed: usize,
+    #[serde(default)]
+    pub nonpositive_time_removed: usize,
     pub finite_pixel_fraction: f32,
 }
 
@@ -84,18 +88,26 @@ pub fn preprocess_target_pixel(
     let mut retained_indices = Vec::with_capacity(input_cadences);
     let mut quality_removed = 0usize;
     let mut invalid_time_removed = 0usize;
+    let mut nonfinite_removed = 0usize;
+    let mut nonpositive_time_removed = 0usize;
 
     for i in 0..input_cadences {
         let t = raw.time[i];
         let q = raw.quality.get(i).copied().unwrap_or(0);
 
-        if !t.is_finite() || t <= 0.0 {
-            invalid_time_removed += 1;
+        if config.tpf_quality_mode == "strict" && q != 0 {
+            quality_removed += 1;
             continue;
         }
 
-        if config.tpf_quality_mode == "strict" && q != 0 {
-            quality_removed += 1;
+        if !t.is_finite() {
+            invalid_time_removed += 1;
+            nonfinite_removed += 1;
+            continue;
+        }
+        if t <= 0.0 {
+            invalid_time_removed += 1;
+            nonpositive_time_removed += 1;
             continue;
         }
 
@@ -211,6 +223,8 @@ pub fn preprocess_target_pixel(
         output_cadences = output_cadences,
         quality_removed = quality_removed,
         invalid_time_removed = invalid_time_removed,
+        nonfinite_removed = nonfinite_removed,
+        nonpositive_time_removed = nonpositive_time_removed,
         rows = raw.rows,
         cols = raw.cols,
         operation = "tpf_preprocess",
@@ -235,6 +249,8 @@ pub fn preprocess_target_pixel(
             output_cadences,
             quality_removed,
             invalid_time_removed,
+            nonfinite_removed,
+            nonpositive_time_removed,
             finite_pixel_fraction,
         },
     })
@@ -419,6 +435,8 @@ pub fn preprocess_ffi(
             output_cadences: 1,
             quality_removed: 0,
             invalid_time_removed: 0,
+            nonfinite_removed: 0,
+            nonpositive_time_removed: 0,
             finite_pixel_fraction,
         },
     })

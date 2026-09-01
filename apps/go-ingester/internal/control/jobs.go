@@ -29,6 +29,13 @@ type Command struct {
 	Concurrency  int
 	Resume       bool
 	Fresh        bool
+	// Drain is closed by an operator stop after the data plane has started.
+	// Workers must stop claiming new products while allowing an already-claimed
+	// product to reach durable storage and checkpoint completion.
+	Drain <-chan struct{}
+	// ReportRunning is called by the runner immediately before data-plane
+	// ingestion begins. The control plane owns the resulting state transition.
+	ReportRunning func()
 }
 
 type Job struct {
@@ -57,8 +64,10 @@ type JobManager struct {
 
 type activeJob struct {
 	Job
-	cancel context.CancelFunc
-	done   chan struct{}
+	cancel    context.CancelFunc
+	drain     chan struct{}
+	drainOnce sync.Once
+	done      chan struct{}
 }
 
 func NewJobManager(parent context.Context, defaultConcurrency int, runner Runner) *JobManager {
@@ -92,11 +101,14 @@ func (m *JobManager) Start(request StartRequest) (*Job, error) {
 
 	now := time.Now().UTC()
 	jobCtx, cancel := context.WithCancel(m.parent)
+	drain := make(chan struct{})
 	command.JobID = "ingest-job-" + uuid.NewString()[:8]
+	command.Drain = drain
+	command.ReportRunning = func() { m.markRunning(command.JobID) }
 	m.active = &activeJob{
 		Job: Job{
 			ID:           command.JobID,
-			Status:       "running",
+			Status:       "planning",
 			ManifestPath: displayManifestPath(command),
 			Sector:       command.Sector,
 			Concurrency:  command.Concurrency,
@@ -104,6 +116,7 @@ func (m *JobManager) Start(request StartRequest) (*Job, error) {
 			UpdatedAt:    now,
 		},
 		cancel: cancel,
+		drain:  drain,
 		done:   make(chan struct{}),
 	}
 	job := m.snapshotLocked()
@@ -123,12 +136,26 @@ func (m *JobManager) Cancel(id string) (*Job, error) {
 	if m.active == nil || !matchesJob(id, m.active.ID) {
 		return nil, ErrJobNotFound
 	}
-	if m.active.Status == "running" {
+	if m.active.Status == "planning" {
 		m.active.Status = "cancelling"
 		m.active.UpdatedAt = time.Now().UTC()
 		m.active.cancel()
+	} else if m.active.Status == "running" {
+		m.active.Status = "draining"
+		m.active.UpdatedAt = time.Now().UTC()
+		m.active.drainOnce.Do(func() { close(m.active.drain) })
 	}
 	return m.snapshotLocked(), nil
+}
+
+func (m *JobManager) markRunning(jobID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.active == nil || m.active.ID != jobID || m.active.Status != "planning" {
+		return
+	}
+	m.active.Status = "running"
+	m.active.UpdatedAt = time.Now().UTC()
 }
 
 // Wait blocks until the active job has observed cancellation or completed.
@@ -165,6 +192,8 @@ func (m *JobManager) run(ctx context.Context, command Command) {
 	case err != nil:
 		m.active.Status = "failed"
 		m.active.Error = err.Error()
+	case m.active.Status == "draining":
+		m.active.Status = "stopped"
 	default:
 		m.active.Status = "completed"
 	}
@@ -211,7 +240,7 @@ func displayManifestPath(command Command) string {
 }
 
 func isActive(status string) bool {
-	return status == "running" || status == "cancelling"
+	return status == "planning" || status == "running" || status == "cancelling" || status == "draining"
 }
 
 func matchesJob(id, activeID string) bool {

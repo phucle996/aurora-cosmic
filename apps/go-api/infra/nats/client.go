@@ -81,6 +81,13 @@ func (d *Dispatcher) publishCore(ctx context.Context, subject string, payload []
 	return nil
 }
 
+// PublishCore sends an ephemeral observation/control message over Core NATS.
+// It is intentionally not persisted, so a disconnected dashboard cannot
+// replay an old subscription request after reconnecting.
+func (d *Dispatcher) PublishCore(ctx context.Context, subject string, payload []byte) error {
+	return d.publishCore(ctx, subject, payload)
+}
+
 func (d *Dispatcher) Ping(ctx context.Context) error {
 	if _, err := d.jetStream(ctx); err != nil {
 		return err

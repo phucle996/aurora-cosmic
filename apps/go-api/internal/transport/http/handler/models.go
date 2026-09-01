@@ -3,6 +3,7 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"go-api/internal/domain/entity"
@@ -89,6 +90,16 @@ func (h *ModelsHandler) OverrideTrainingLabel(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "reviewed"})
+}
+
+func (h *ModelsHandler) ListTrainingReviews(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "100"))
+	reviews, err := h.models.ListTrainingReviews(c.Request.Context(), limit)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": reviews, "count": len(reviews)})
 }
 
 func (h *ModelsHandler) ListInferenceJobs(c *gin.Context) {

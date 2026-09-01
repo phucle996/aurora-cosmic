@@ -514,12 +514,23 @@ def test_gold_operator_control_defaults_to_paused_and_persists_runtime_status():
         control=stream,
         pending_by_kind={"LIGHT_CURVE": 0, "TARGET_PIXEL": 0},
         active_builds=0,
+        workers=[
+            {
+                "worker_id": "GOLD-01",
+                "lifecycle": "ALIVE",
+                "action": "WAITING_FOR_BATCH",
+                "input_count": 0,
+                "updated_at": "2026-09-02T00:00:00+00:00",
+            }
+        ],
         readiness={"catalog_ready": True, "ready_lightcurves": 1},
     )
     status = store.get_json("aurora", "control/gold-builder/status.json")
     assert status["state"] == "ARMED"
     assert status["pending_total"] == 0
     assert status["readiness"]["catalog_ready"] is True
+    assert status["workers"][0]["worker_id"] == "GOLD-01"
+    assert status["workers"][0]["action"] == "WAITING_FOR_BATCH"
 
 
 def test_recovers_unextracted_silver_from_committed_lineage_into_pending_queue():
@@ -596,9 +607,7 @@ def test_lineage_recovery_observes_new_silver_incrementally_while_paused():
             "schema_version": "silver-lightcurve-v1",
         },
     }
-    store.put_json(
-        "aurora", "lineage/v1/tess/lightcurve/incremental.json", lineage
-    )
+    store.put_json("aurora", "lineage/v1/tess/lightcurve/incremental.json", lineage)
 
     recovered = builder.recover_pending_from_lineage("aurora")
     assert len(recovered) == 1
@@ -812,6 +821,12 @@ def test_build_snapshot_materializes_candidate_gold_from_lc_and_tpf():
     )
 
     assert result.dataset_row_counts == {"candidate": 1}
+    assert result.lightcurve_inputs == 1
+    assert result.target_pixel_inputs == 1
+    assert result.lightcurve_feature_rows == 1
+    assert result.target_pixel_evidence_rows == 1
+    assert 0 <= result.bls_evidence_rows <= 1
+    assert 0 <= result.catalog_enriched_rows <= 1
     manifest = store.get_json("aurora", result.manifest_key)
     assert manifest["datasets"] == ["candidate"]
     assert manifest["dataset_row_counts"] == result.dataset_row_counts

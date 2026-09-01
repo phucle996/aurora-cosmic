@@ -32,8 +32,24 @@ pub struct LightCurveProcessingMetadata {
     pub output_points: usize,
     pub quality_removed: usize,
     pub invalid_removed: usize,
+    #[serde(default)]
+    pub nonfinite_removed: usize,
+    #[serde(default)]
+    pub nonpositive_time_removed: usize,
     pub outlier_removed: usize,
+    #[serde(default)]
+    pub sigma_clip_3_4_removed: usize,
+    #[serde(default)]
+    pub sigma_clip_4_5_removed: usize,
+    #[serde(default)]
+    pub sigma_clip_ge_5_removed: usize,
     pub flux_median: f32,
+    #[serde(default)]
+    pub normalized_scatter_before_clip_ppm: f32,
+    #[serde(default)]
+    pub normalized_scatter_after_clip_ppm: f32,
+    #[serde(default)]
+    pub sigma_clip_level: Option<f64>,
 }
 
 /// Normalized, cleaned Light Curve ready for downstream Silver encoding.
@@ -99,6 +115,8 @@ pub fn preprocess_lc(
 
     let mut quality_removed = 0usize;
     let mut invalid_removed = 0usize;
+    let mut nonfinite_removed = 0usize;
+    let mut nonpositive_time_removed = 0usize;
 
     for (i, &f) in raw_flux.iter().enumerate().take(input_points) {
         let t = raw.time[i];
@@ -110,9 +128,16 @@ pub fn preprocess_lc(
             continue;
         }
 
-        // Finite / non-zero time & flux check
-        if !t.is_finite() || t <= 0.0 || !f.is_finite() {
+        // Keep non-finite values separate from a finite but invalid timestamp.
+        // Their scientific causes differ and must remain independently observable.
+        if !t.is_finite() || !f.is_finite() {
             invalid_removed += 1;
+            nonfinite_removed += 1;
+            continue;
+        }
+        if t <= 0.0 {
+            invalid_removed += 1;
+            nonpositive_time_removed += 1;
             continue;
         }
 
@@ -195,9 +220,13 @@ pub fn preprocess_lc(
 
     let mut norm_err: Option<Vec<f32>> =
         sorted_err.map(|errs| errs.iter().map(|&e| e / flux_median).collect());
+    let normalized_scatter_before_clip_ppm = calculate_std_dev(&norm_flux) * 1_000_000.0;
 
     // 6. Optional conservative sigma clipping
     let mut outlier_removed = 0usize;
+    let mut sigma_clip_3_4_removed = 0usize;
+    let mut sigma_clip_4_5_removed = 0usize;
+    let mut sigma_clip_ge_5_removed = 0usize;
     if let Some(sigma) = cfg.sigma_clip {
         if sigma > 0.0 && norm_flux.len() > 10 {
             let std_dev = calculate_std_dev(&norm_flux);
@@ -205,6 +234,18 @@ pub fn preprocess_lc(
             let mut clip_indices = Vec::new();
             for (i, &f) in norm_flux.iter().enumerate() {
                 if f.abs() > threshold {
+                    let sigma_distance = if std_dev > 0.0 {
+                        f.abs() / std_dev
+                    } else {
+                        0.0
+                    };
+                    if sigma_distance < 4.0 {
+                        sigma_clip_3_4_removed += 1;
+                    } else if sigma_distance < 5.0 {
+                        sigma_clip_4_5_removed += 1;
+                    } else {
+                        sigma_clip_ge_5_removed += 1;
+                    }
                     clip_indices.push(i);
                 }
             }
@@ -250,6 +291,7 @@ pub fn preprocess_lc(
     }
 
     let output_points = sorted_time.len();
+    let normalized_scatter_after_clip_ppm = calculate_std_dev(&norm_flux) * 1_000_000.0;
 
     tracing::info!(
         object_key = %event.object_key,
@@ -257,7 +299,12 @@ pub fn preprocess_lc(
         output_points = output_points,
         quality_removed = quality_removed,
         invalid_removed = invalid_removed,
+        nonfinite_removed = nonfinite_removed,
+        nonpositive_time_removed = nonpositive_time_removed,
         outlier_removed = outlier_removed,
+        normalized_scatter_before_clip_ppm = normalized_scatter_before_clip_ppm,
+        normalized_scatter_after_clip_ppm = normalized_scatter_after_clip_ppm,
+        sigma_clip_level = cfg.sigma_clip,
         flux_median = flux_median,
         flux_source = ?flux_source,
         operation = "lightcurve_preprocess",
@@ -279,8 +326,16 @@ pub fn preprocess_lc(
             output_points,
             quality_removed,
             invalid_removed,
+            nonfinite_removed,
+            nonpositive_time_removed,
             outlier_removed,
+            sigma_clip_3_4_removed,
+            sigma_clip_4_5_removed,
+            sigma_clip_ge_5_removed,
             flux_median,
+            normalized_scatter_before_clip_ppm,
+            normalized_scatter_after_clip_ppm,
+            sigma_clip_level: cfg.sigma_clip,
         },
     })
 }

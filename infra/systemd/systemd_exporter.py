@@ -37,7 +37,7 @@ def show_unit(unit: str) -> dict[str, str]:
             "--user",
             "show",
             unit,
-            "--property=LoadState,ActiveState,SubState,NRestarts,MemoryCurrent,CPUUsageNSec,MainPID",
+            "--property=LoadState,ActiveState,SubState,MemoryCurrent,CPUUsageNSec,MainPID",
         ],
         check=False,
         capture_output=True,
@@ -101,8 +101,6 @@ def render_metrics() -> str:
         "# TYPE aurora_systemd_unit_active gauge",
         "# HELP aurora_systemd_unit_info Current state labels for an AURORA systemd user service.",
         "# TYPE aurora_systemd_unit_info gauge",
-        "# HELP aurora_systemd_unit_restarts_total Restart count reported by systemd.",
-        "# TYPE aurora_systemd_unit_restarts_total counter",
         "# HELP aurora_systemd_unit_memory_bytes MemoryCurrent reported by systemd in bytes.",
         "# TYPE aurora_systemd_unit_memory_bytes gauge",
         "# HELP aurora_systemd_unit_cpu_seconds_total CPUUsageNSec reported by systemd in seconds.",
@@ -137,7 +135,6 @@ def render_metrics() -> str:
         )
         lines.append(f"aurora_systemd_unit_active{{{labels}}} {1 if values.get('ActiveState') == 'active' else 0}")
         lines.append(f"aurora_systemd_unit_info{{{info_labels}}} 1")
-        lines.append(f"aurora_systemd_unit_restarts_total{{{labels}}} {numeric(values.get('NRestarts'))}")
         lines.append(f"aurora_systemd_unit_memory_bytes{{{labels}}} {numeric(values.get('MemoryCurrent'))}")
         lines.append(f"aurora_systemd_unit_cpu_seconds_total{{{labels}}} {numeric(values.get('CPUUsageNSec')) / 1_000_000_000}")
         read_bytes, write_bytes = process_io(numeric(values.get("MainPID")))

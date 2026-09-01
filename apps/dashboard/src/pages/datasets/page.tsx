@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
-import { AlertCircle, Layers, RefreshCw } from 'lucide-react';
+import { AlertCircle, Database, RefreshCw } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { apiFetch } from '@/lib/api';
 
 import { BronzeLayerTab } from './components/BronzeLayerTab';
 import { GoldLayerTab } from './components/GoldLayerTab';
 import { LakehouseTierCards } from './components/LakehouseTierCards';
 import { SilverLayerTab } from './components/SilverLayerTab';
-import type { StorageListing } from './types';
+import type { StorageListing } from '@/features/datasets/types';
 
 const PAGE_SIZE = 25;
 
@@ -59,6 +59,14 @@ export default function DatasetsPage(): JSX.Element {
       if (bronzeRes.status === 'fulfilled' && bronzeRes.value) setBronzeData(bronzeRes.value);
       if (silverRes.status === 'fulfilled' && silverRes.value) setSilverData(silverRes.value);
       if (goldRes.status === 'fulfilled' && goldRes.value) setGoldData(goldRes.value);
+      const unavailableTiers = [
+        bronzeRes.status === 'rejected' ? 'Bronze' : null,
+        silverRes.status === 'rejected' ? 'Silver' : null,
+        goldRes.status === 'rejected' ? 'Gold' : null,
+      ].filter((tier): tier is string => tier !== null);
+      if (unavailableTiers.length > 0) {
+        setError(`Không thể quan sát inventory: ${unavailableTiers.join(', ')}`);
+      }
       setLoading(false);
     });
 
@@ -99,40 +107,40 @@ export default function DatasetsPage(): JSX.Element {
   }, [activeListing]);
 
   return (
-    <div className="space-y-6">
-      {/* Page Header */}
-      <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-end">
-        <div>
-          <div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
-            <Layers className="size-4 text-primary" aria-hidden="true" />
-            Medallion Data Lakehouse Architecture
+    <div className="space-y-5 pb-6">
+      <section className="relative overflow-hidden border border-border/70 bg-card px-4 py-5 shadow-sm sm:px-6">
+        <div className="pointer-events-none absolute inset-0 opacity-[0.18] [background-image:linear-gradient(to_right,var(--border)_1px,transparent_1px),linear-gradient(to_bottom,var(--border)_1px,transparent_1px)] [background-size:28px_28px]" />
+        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="min-w-0">
+            <div className="mb-3 flex items-center gap-2 font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-primary">
+              <Database className="size-4" aria-hidden="true" />
+              Lakehouse observatory / object catalog
+            </div>
+            <h2 className="font-heading text-2xl font-semibold tracking-tight md:text-3xl">Datasets &amp; Feature Store</h2>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              Kiểm kê Bronze FITS, Silver Parquet và Gold ML features trực tiếp từ MinIO object storage.
+            </p>
           </div>
-          <h2 className="font-heading text-2xl font-semibold tracking-tight md:text-3xl">
-            Datasets & Feature Store
-          </h2>
-          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Quản lý tập trung 3 phân lớp dữ liệu (Bronze Thô · Silver Tiền xử lý · Gold Đặc trưng ML) trên kho lưu trữ MinIO S3.
-          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void loadTier(currentPrefix, page)}
+            disabled={loading}
+            className="w-full shrink-0 rounded-none font-mono text-[10px] uppercase tracking-[0.1em] sm:w-auto"
+          >
+            <RefreshCw className={`size-3.5 ${loading ? 'animate-spin' : ''}`} />
+            Sync active prefix
+          </Button>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => void loadTier(currentPrefix, page)}
-          disabled={loading}
-        >
-          <RefreshCw className={`size-3.5 ${loading ? 'animate-spin' : ''}`} />
-          Refresh Storage
-        </Button>
-      </div>
+      </section>
 
       {error && (
-        <div className="flex items-center gap-2 border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
-          <AlertCircle className="size-4 shrink-0" />
-          <span>{error}</span>
+        <div className="flex items-start gap-3 border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+          <AlertCircle className="mt-0.5 size-4 shrink-0" />
+          <div><p className="font-medium">Storage observation interrupted</p><p className="mt-0.5 text-xs">{error}</p></div>
         </div>
       )}
 
-      {/* Lakehouse Overview Summary Cards */}
       <LakehouseTierCards
         activeTab={activeTab}
         onTabChange={(tab) => handleTabChange(tab)}
@@ -141,21 +149,7 @@ export default function DatasetsPage(): JSX.Element {
         goldData={goldData}
       />
 
-      {/* Main Tabs Explorer */}
-      <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
-        <TabsList className="grid w-full grid-cols-3 max-w-md">
-          <TabsTrigger value="gold" className="gap-2">
-            🥇 Gold Features
-          </TabsTrigger>
-          <TabsTrigger value="silver" className="gap-2">
-            🥈 Silver Cleaned
-          </TabsTrigger>
-          <TabsTrigger value="bronze" className="gap-2">
-            🥉 Bronze Raw FITS
-          </TabsTrigger>
-        </TabsList>
-
-        {/* GOLD LAYER TAB */}
+      <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">
         <TabsContent value="gold" className="space-y-6">
           <GoldLayerTab
             goldData={goldData}
@@ -167,19 +161,18 @@ export default function DatasetsPage(): JSX.Element {
           />
         </TabsContent>
 
-        {/* SILVER LAYER TAB */}
         <TabsContent value="silver" className="space-y-6">
           <SilverLayerTab
             silverData={silverData}
             loading={loading}
             page={page}
             totalPages={totalPages}
+            currentPrefix={currentPrefix}
             onPageChange={handlePageChange}
             onFilterPreset={handleSearchOrFilter}
           />
         </TabsContent>
 
-        {/* BRONZE LAYER TAB */}
         <TabsContent value="bronze" className="space-y-6">
           <BronzeLayerTab
             bronzeData={bronzeData}

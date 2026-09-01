@@ -70,6 +70,14 @@ fn test_classify_silver_write_failed_is_retryable() {
 }
 
 #[test]
+fn test_classify_parquet_writer_failure_separately_from_upload() {
+    let err = make_err("Failed to finalize Parquet file writer: disk full");
+    let failure = classify_pipeline_error(&err);
+    assert_eq!(failure.class, FailureClass::Retryable);
+    assert_eq!(failure.kind, ErrorKind::ParquetEncodeFailed);
+}
+
+#[test]
 fn test_classify_unknown_error_is_retryable() {
     let err = make_err("unexpected io error: connection reset by peer");
     let f = classify_pipeline_error(&err);

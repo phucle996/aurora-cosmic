@@ -184,6 +184,13 @@ func (h *AnalyticsHandler) GetCandidate(c *gin.Context) {
 			"tic_available": detail.Evidence.TICAvailable, "tmag": detail.Evidence.TMag, "teff": detail.Evidence.Teff, "stellar_radius": detail.Evidence.StellarRadius, "stellar_mass": detail.Evidence.StellarMass, "logg": detail.Evidence.LogG,
 			"matched_toi_id": detail.Evidence.MatchedTOIID, "toi_match_status": detail.Evidence.TOIMatchStatus,
 		},
+		"review": gin.H{
+			"training_label": detail.Review.TrainingLabel,
+			"label_source":   detail.Review.LabelSource,
+			"review_status":  detail.Review.ReviewStatus,
+			"train_eligible": detail.Review.TrainEligible,
+			"updated_at":     detail.Review.UpdatedAt,
+		},
 		"planet_physics": gin.H{
 			"planet_candidate_id":       detail.Physics.PlanetCandidateID,
 			"model_version":             detail.Physics.ModelVersion,

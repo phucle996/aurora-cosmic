@@ -103,6 +103,8 @@ fn process_target_pixel_in_chunks(
     let mut output_cadences = 0usize;
     let mut quality_removed = 0usize;
     let mut invalid_time_removed = 0usize;
+    let mut nonfinite_removed = 0usize;
+    let mut nonpositive_time_removed = 0usize;
     let mut finite_pixels = 0f64;
     let mut inspected_pixels = 0usize;
     let mut tic_id = event.tic_id;
@@ -113,13 +115,19 @@ fn process_target_pixel_in_chunks(
         let cols = raw.cols;
         let mut chunk_quality_removed = 0usize;
         let mut chunk_invalid_time_removed = 0usize;
+        let mut chunk_nonfinite_removed = 0usize;
+        let mut chunk_nonpositive_time_removed = 0usize;
         for index in 0..raw_cadences {
             let time = raw.time[index];
             let quality = raw.quality.get(index).copied().unwrap_or(0);
-            if !time.is_finite() || time <= 0.0 {
-                chunk_invalid_time_removed += 1;
-            } else if config.tpf_quality_mode == "strict" && quality != 0 {
+            if config.tpf_quality_mode == "strict" && quality != 0 {
                 chunk_quality_removed += 1;
+            } else if !time.is_finite() {
+                chunk_invalid_time_removed += 1;
+                chunk_nonfinite_removed += 1;
+            } else if time <= 0.0 {
+                chunk_invalid_time_removed += 1;
+                chunk_nonpositive_time_removed += 1;
             }
         }
         if tic_id.is_none() {
@@ -131,6 +139,8 @@ fn process_target_pixel_in_chunks(
                 output_cadences += processed.processing.output_cadences;
                 quality_removed += processed.processing.quality_removed;
                 invalid_time_removed += processed.processing.invalid_time_removed;
+                nonfinite_removed += processed.processing.nonfinite_removed;
+                nonpositive_time_removed += processed.processing.nonpositive_time_removed;
                 let pixels_in_chunk = processed.processing.output_cadences * rows * cols;
                 finite_pixels +=
                     processed.processing.finite_pixel_fraction as f64 * pixels_in_chunk as f64;
@@ -144,6 +154,8 @@ fn process_target_pixel_in_chunks(
                 // fails if every chunk is empty.
                 quality_removed += chunk_quality_removed;
                 invalid_time_removed += chunk_invalid_time_removed;
+                nonfinite_removed += chunk_nonfinite_removed;
+                nonpositive_time_removed += chunk_nonpositive_time_removed;
                 tracing::warn!(
                     object_key = %event.object_key,
                     chunk_cadences = raw_cadences,
@@ -179,6 +191,8 @@ fn process_target_pixel_in_chunks(
         output_cadences,
         quality_removed,
         invalid_time_removed,
+        nonfinite_removed,
+        nonpositive_time_removed,
         finite_pixel_fraction,
     };
 

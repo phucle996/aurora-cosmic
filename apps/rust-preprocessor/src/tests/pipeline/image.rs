@@ -107,9 +107,10 @@ fn test_tpf_quality_strict_filtering() {
 #[test]
 fn test_tpf_invalid_time_filtering() {
     let raw = RawTargetPixel {
-        time: vec![1.0, f64::NAN, 3.0],
-        quality: vec![0, 0, 0],
+        time: vec![1.0, f64::NAN, 0.0, 3.0],
+        quality: vec![0, 0, 0, 0],
         flux: vec![
+            vec![vec![100.0, 200.0], vec![300.0, 400.0]],
             vec![vec![100.0, 200.0], vec![300.0, 400.0]],
             vec![vec![100.0, 200.0], vec![300.0, 400.0]],
             vec![vec![100.0, 200.0], vec![300.0, 400.0]],
@@ -123,7 +124,9 @@ fn test_tpf_invalid_time_filtering() {
 
     let res = preprocess_target_pixel(raw, &event, &cfg).unwrap();
     assert_eq!(res.time.len(), 2);
-    assert_eq!(res.processing.invalid_time_removed, 1);
+    assert_eq!(res.processing.invalid_time_removed, 2);
+    assert_eq!(res.processing.nonfinite_removed, 1);
+    assert_eq!(res.processing.nonpositive_time_removed, 1);
 }
 
 #[test]

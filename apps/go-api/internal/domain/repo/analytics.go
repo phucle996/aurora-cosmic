@@ -29,3 +29,7 @@ type TrainingReadinessRepository interface {
 type TrainingLabelOverrideRepository interface {
 	OverrideTrainingLabel(context.Context, entity.TrainingLabelOverride) error
 }
+
+type TrainingReviewListRepository interface {
+	ListTrainingReviews(context.Context, int) ([]entity.TrainingReview, error)
+}

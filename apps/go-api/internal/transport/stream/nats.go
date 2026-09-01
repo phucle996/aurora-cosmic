@@ -109,6 +109,8 @@ func (s *NATSStream) Start(ctx context.Context) error {
 		"aurora.v1.ml.>",
 		"aurora.v1.preprocessing.control",
 		"aurora.v1.preprocessing.runtime",
+		"aurora.v1.ingest.runtime.>",
+		"aurora.live.gold.>",
 	}
 
 	for _, subject := range defaultSubjects {
@@ -180,13 +182,17 @@ func (s *NATSStream) dispatchMessage(ctx context.Context, msg *nats.Msg) {
 
 	// Try extracting job_id if present in payload JSON
 	var meta struct {
-		JobID string `json:"job_id"`
-		Task  string `json:"task"`
+		JobID    string `json:"job_id"`
+		Task     string `json:"task"`
+		TicketID string `json:"ticket_id"`
 	}
 	if len(msg.Data) > 0 {
 		_ = json.Unmarshal(msg.Data, &meta)
 		if meta.JobID != "" {
 			event.JobID = meta.JobID
+		}
+		if meta.TicketID != "" {
+			event.TicketID = meta.TicketID
 		}
 	}
 
@@ -205,6 +211,8 @@ func (s *NATSStream) dispatchMessage(ctx context.Context, msg *nats.Msg) {
 		s.handleMLEvent(ctx, msg, event)
 	case strings.HasPrefix(subject, "aurora.v1.preprocessing."):
 		s.handlePreprocessingEvent(ctx, msg, event)
+	case strings.HasPrefix(subject, "aurora.live.gold."):
+		s.handleGoldEvent(ctx, msg, event)
 	}
 
 	if s.broker != nil {

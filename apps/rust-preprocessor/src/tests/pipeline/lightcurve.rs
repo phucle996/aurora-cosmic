@@ -122,6 +122,13 @@ fn test_non_finite_filtering() {
     let res = preprocess_lc(raw, &event, &cfg).unwrap();
     assert_eq!(res.time.len(), 5);
     assert_eq!(res.processing.invalid_removed, 2);
+    assert_eq!(res.processing.nonfinite_removed, 2);
+    assert_eq!(res.processing.nonpositive_time_removed, 0);
+    assert!(res
+        .processing
+        .normalized_scatter_before_clip_ppm
+        .is_finite());
+    assert!(res.processing.normalized_scatter_after_clip_ppm.is_finite());
 }
 
 #[test]
@@ -192,6 +199,23 @@ fn test_transit_preservation() {
         res.flux[9] < res.flux[0],
         "Transit dip point must remain lower than baseline"
     );
+}
+
+#[test]
+fn test_sigma_clip_records_rejection_band() {
+    let mut fluxes = vec![1000.0; 100];
+    fluxes.push(2000.0);
+    let raw = make_raw_lc(fluxes, vec![0; 101]);
+    let event = make_event();
+    let mut cfg = default_config();
+    cfg.min_points = 10;
+    cfg.sigma_clip = Some(5.0);
+
+    let result = preprocess_lc(raw, &event, &cfg).unwrap();
+    assert_eq!(result.processing.outlier_removed, 1);
+    assert_eq!(result.processing.sigma_clip_3_4_removed, 0);
+    assert_eq!(result.processing.sigma_clip_4_5_removed, 0);
+    assert_eq!(result.processing.sigma_clip_ge_5_removed, 1);
 }
 
 #[test]

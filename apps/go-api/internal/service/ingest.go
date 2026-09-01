@@ -66,6 +66,27 @@ type ingestionProduct struct {
 	UpdatedAt         time.Time `json:"updated_at"`           // Thời gian cập nhật trạng thái
 }
 
+// applyPlanningStatus promotes an active control run to planning only while the
+// durable catalog or manifest protocol reports that it is still in progress.
+// The API owns this workflow-state mapping; clients must render Status as-is.
+func applyPlanningStatus(status *entity.IngestStatus, controlJob *entity.IngestControlJob) {
+	if status == nil || controlJob == nil || !strings.EqualFold(controlJob.Status, "running") {
+		return
+	}
+	isPlanning := func(state string) bool {
+		switch strings.ToLower(state) {
+		case "planned", "running":
+			return true
+		default:
+			return false
+		}
+	}
+	if (status.CatalogProgress != nil && isPlanning(status.CatalogProgress.State)) ||
+		(status.ManifestProgress != nil && isPlanning(status.ManifestProgress.State)) {
+		status.Status = "planning"
+	}
+}
+
 // NewIngestService khởi tạo thể hiện của IngestService
 func NewIngestService(objects repo.ObjectRepository, prometheus repo.PrometheusQuerier, bucket string, controllers ...repo.IngestController) domainService.Ingest {
 	var controller repo.IngestController
@@ -146,7 +167,8 @@ func (s *IngestService) Start(ctx context.Context, request entity.IngestStartReq
 // ============================================================================
 // HÀM HỦY BỎ TIẾN TRÌNH (Cancel Ingestion)
 // ============================================================================
-// Cancel gửi tín hiệu dừng khẩn cấp một tác vụ thu thập đang chạy.
+// Cancel requests a graceful stop. The ingester drains products already owned
+// by workers before it reports the terminal stopped state.
 func (s *IngestService) Cancel(ctx context.Context, jobID string) (*entity.IngestControlJob, error) {
 	jobID = strings.TrimSpace(jobID)
 	if jobID == "" || jobID == "current" || jobID == "active" {
@@ -189,7 +211,6 @@ func (s *IngestService) Cancel(ctx context.Context, jobID string) (*entity.Inges
 	s.runtimeJob = job
 	if s.runtime != nil {
 		s.runtime.Status = strings.ToLower(job.Status)
-		s.runtime.Downloading = 0
 		s.runtime.UpdatedAt = job.UpdatedAt
 		s.runtime.ObservedAt = time.Now().UTC()
 	}
@@ -271,11 +292,11 @@ func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error
 			cached.Products = append([]entity.IngestProduct(nil), s.runtime.Products...)
 			s.runtimeMu.RUnlock()
 			attachPlanningProgress(&cached)
+			applyPlanningStatus(&cached, controlJob)
 			return &cached, nil
 		}
 		s.runtimeMu.RUnlock()
 		status := &entity.IngestStatus{Observed: false, Source: "minio-checkpoint", Status: "not_observed", ObservedAt: time.Now().UTC()}
-		attachPlanningProgress(status)
 		return status, nil
 	}
 
@@ -384,9 +405,18 @@ func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error
 		status.Status = "stopped"
 		status.Downloading = 0
 	}
+	applyPlanningStatus(status, controlJob)
+	if status.Status != "planning" {
+		// Planner documents are retained for audit, but must not make an idle or
+		// completed run appear to have an active planning phase.
+		status.CatalogProgress = nil
+		status.ManifestProgress = nil
+	}
 
-	// 5. Truy vấn telemetry từ Prometheus nếu tiến trình đang chạy
-	if s.prometheus != nil && status.Status == "running" {
+	// Planning has no download workers yet, therefore its authoritative
+	// telemetry is the durable catalog/manifest protocol. Avoid holding the
+	// ticket-driven status endpoint on Prometheus while MAST is being queried.
+	if s.prometheus != nil && (status.Status == "running" || status.Status == "draining") {
 		end := time.Now().UTC()
 		start := end.Add(-5 * time.Minute)
 		queries := map[string]string{
@@ -417,6 +447,12 @@ func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error
 		status.BytesPerSecond = values["bytes"]
 		status.QueueDepth = values["queue"]
 		status.InflightProducts = values["inflight"]
+	}
+	// Prometheus is scrape-based and can lag the durable checkpoint by one or
+	// more intervals. A product marked DOWNLOADING is authoritative evidence of
+	// an active worker, so never report fewer active workers than the checkpoint.
+	if checkpointInflight := float64(status.Downloading); checkpointInflight > status.InflightProducts {
+		status.InflightProducts = checkpointInflight
 	}
 
 	s.runtimeMu.Lock()

@@ -43,6 +43,20 @@ type ProgressEvent struct {
 // return quickly; a slow reporter back-pressures workers by design.
 type ProgressReporter func(ProgressEvent)
 
+// TransferProgressEvent reports the bytes read for the product currently owned
+// by a worker. Unlike ProgressEvent, it is emitted while a FITS stream is in
+// flight so observers can render real per-file download progress.
+type TransferProgressEvent struct {
+	WorkerID      int
+	ProductID     string
+	ProductKind   model.ProductKind
+	BytesRead     int64
+	ExpectedBytes int64
+	Done          bool
+}
+
+type TransferProgressReporter func(TransferProgressEvent)
+
 // CapacityGate blocks until one more Bronze object can be admitted safely.
 // It is deliberately a small port: storage pressure belongs to the lifecycle
 // policy, while the ingestion data plane only needs permission per product.
@@ -64,7 +78,9 @@ type Options struct {
 	WorkerCount        int
 	CheckpointInterval time.Duration
 	CapacityGate       CapacityGate
+	Drain              <-chan struct{}
 	Progress           ProgressReporter
+	TransferProgress   TransferProgressReporter
 	Metrics            *observer.Metrics
 	Logger             *slog.Logger
 }
@@ -80,7 +96,9 @@ type Pipeline struct {
 	concurrency        int
 	checkpointInterval time.Duration
 	capacityGate       CapacityGate
+	drain              <-chan struct{}
 	progress           ProgressReporter
+	transferProgress   TransferProgressReporter
 	metrics            *observer.Metrics
 	log                *slog.Logger
 }
@@ -105,7 +123,9 @@ func NewPipeline(dependencies Dependencies, options Options) *Pipeline {
 		concurrency:        options.WorkerCount,
 		checkpointInterval: options.CheckpointInterval,
 		capacityGate:       options.CapacityGate,
+		drain:              options.Drain,
 		progress:           options.Progress,
+		transferProgress:   options.TransferProgress,
 		metrics:            options.Metrics,
 		log:                options.Logger,
 	}
@@ -211,6 +231,7 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest) (*mode
 		// Fast path A: product was STORED/PUBLISHED in a previous run.
 		// Verify the Bronze object still exists with one StatObject — if valid, skip download.
 		if prev, ok := prevDone[prod.SourceProductID]; ok {
+			recoveryStart := time.Now()
 			info, exists, statErr := p.minioClient.StatObject(ctx, p.bucket, prev.objectKey)
 			if statErr == nil && exists && info.Size > 0 {
 				res := p.publishOnly(ctx, prod, prev.objectKey, info.Size, prev.sha256)
@@ -222,6 +243,7 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest) (*mode
 				}
 				resultsChan <- res
 				reportProgress(res)
+				recordMetrics(p.metrics, res, time.Since(recoveryStart))
 				continue
 			}
 			// Object missing or stat error — checkpoint invalid, log and re-download.
@@ -303,10 +325,26 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest) (*mode
 	}
 
 	for i := 0; i < workerCount; i++ {
+		workerID := i + 1
 		wg.Add(1)
-		go func() {
+		go func(workerID int) {
 			defer wg.Done()
-			for prod := range jobs {
+			for {
+				select {
+				case <-p.drain:
+					return
+				default:
+				}
+				var prod model.ManifestProduct
+				var ok bool
+				select {
+				case <-p.drain:
+					return
+				case prod, ok = <-jobs:
+					if !ok {
+						return
+					}
+				}
 				if ctx.Err() != nil {
 					return
 				}
@@ -332,8 +370,9 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest) (*mode
 					if p.cpManager != nil {
 						p.cpManager.UpdateProductState(prod.SourceProductID, model.StateDownloading, 0, "", nil)
 					}
-					res = p.ingestProduct(ctx, prod)
+					res = p.ingestProduct(ctx, prod, workerID)
 				}
+				p.finishTransfer(workerID, prod)
 				activeWorkers.Add(-1)
 				if p.metrics != nil {
 					p.metrics.ProductFinished(metricStatus(res), time.Since(productStart).Seconds(), res.SizeBytes)
@@ -360,7 +399,7 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest) (*mode
 				resultsChan <- res
 				reportProgress(res)
 			}
-		}()
+		}(workerID)
 	}
 
 enqueue:
@@ -371,6 +410,8 @@ enqueue:
 				p.metrics.SetQueueDepth(len(jobs))
 			}
 		case <-ctx.Done():
+			break enqueue
+		case <-p.drain:
 			break enqueue
 		}
 	}

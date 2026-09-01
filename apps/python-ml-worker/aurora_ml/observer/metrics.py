@@ -68,12 +68,6 @@ class Metrics:
             "Jobs waiting for an ML worker.",
             registry=self.registry,
         )
-        self.rows = Counter(
-            "aurora_ml_rows_processed_total",
-            "Rows successfully processed by operation.",
-            ["operation"],
-            registry=self.registry,
-        )
         self.last_success = Gauge(
             "aurora_ml_last_success_timestamp_seconds",
             "Unix timestamp of the last successful ML job.",
@@ -101,6 +95,13 @@ class Metrics:
         )
         self._nvml_ready = False
         self.queue_depth.set(0)
+        # Materialize the bounded labels so an idle worker exports a complete
+        # zero-valued metric contract before the first job arrives.
+        for operation in _OPERATIONS:
+            for status in _STATUSES:
+                self.jobs.labels(operation=operation, status=status)
+            self.duration.labels(operation=operation)
+            self.errors.labels(operation=operation)
 
     def refresh_hardware(self) -> None:
         """Collect instantaneous GPU state without adding high-cardinality labels."""
@@ -123,10 +124,10 @@ class Metrics:
             self.gpu_memory_used.set(0)
             self.gpu_memory_total.set(0)
 
-    def job(self, operation: str, rows: int = 0) -> JobObservation:
+    def job(self, operation: str) -> JobObservation:
         """Return a context manager that records one terminal job outcome."""
 
-        return JobObservation(self, _operation(operation), rows)
+        return JobObservation(self, _operation(operation))
 
     def set_queue_depth(self, depth: int) -> None:
         self.queue_depth.set(max(0, depth))
@@ -135,18 +136,14 @@ class Metrics:
 class JobObservation:
     """RAII-style accounting so every job is recorded exactly once."""
 
-    def __init__(self, metrics: Metrics, operation: str, rows: int = 0) -> None:
+    def __init__(self, metrics: Metrics, operation: str) -> None:
         self._metrics = metrics
         self._operation = operation
-        self._rows = max(0, rows)
         self._status = "success"
         self._started = 0.0
 
     def set_status(self, status: str) -> None:
         self._status = _status(status)
-
-    def set_rows(self, rows: int) -> None:
-        self._rows = max(0, rows)
 
     def __enter__(self) -> JobObservation:
         self._started = time.monotonic()
@@ -167,8 +164,6 @@ class JobObservation:
             max(0.0, time.monotonic() - self._started)
         )
         if status == "success":
-            if self._rows:
-                self._metrics.rows.labels(operation=self._operation).inc(self._rows)
             self._metrics.last_success.set(time.time())
         self._metrics.inflight.dec()
         return False

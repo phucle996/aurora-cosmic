@@ -65,6 +65,7 @@ func (r *Router) registerRoutes() {
 		api.GET("/lightcurves", r.module.AnalyticsHandler.GetLightcurve)
 		api.GET("/models", r.module.ModelsHandler.ListModels)
 		api.GET("/models/training-readiness", r.module.ModelsHandler.TrainingReadiness)
+		api.GET("/models/training-cohort/reviews", r.module.ModelsHandler.ListTrainingReviews)
 		api.POST("/models/training-cohort/labels", r.module.ModelsHandler.OverrideTrainingLabel)
 		api.POST("/models/train", r.module.ModelsHandler.StartTraining)
 		api.POST("/models/deploy", r.module.ModelsHandler.DeployModel)

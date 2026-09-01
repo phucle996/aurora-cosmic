@@ -168,6 +168,8 @@ services:
       dockerfile: python-gold-builder/Dockerfile
     container_name: aurora-gold-builder
     restart: unless-stopped
+    ports:
+      - "${AURORA_GOLD_METRICS_PORT:-8088}:8088"
     env_file:
       - ./apps/python-gold-builder/.env.example
     networks:
@@ -179,6 +181,12 @@ services:
         condition: service_completed_successfully
       nats:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8088/metrics', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
 
   rust-inference:
     image: ghcr.io/phucle996/aurora-rust-inference:latest

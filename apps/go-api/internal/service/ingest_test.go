@@ -82,6 +82,21 @@ func TestIngestCancelDoesNotFabricateStateOrRewriteCheckpoint(t *testing.T) {
 	}
 }
 
+func TestIngestCancelPreservesActiveDownloadsWhileDraining(t *testing.T) {
+	now := time.Now().UTC()
+	controller := fakeRuntimeIngestController{job: &entity.IngestControlJob{JobID: "ingest-job-drain", Status: "draining", UpdatedAt: now}}
+	svc := NewIngestServiceWithEvents(fakeIngestObjects{}, nil, "aurora", controller, nil).(*IngestService)
+	svc.runtime = &entity.IngestStatus{Status: "running", Downloading: 2, InflightProducts: 2}
+
+	job, err := svc.Cancel(context.Background(), "ingest-job-drain")
+	if err != nil || job.Status != "draining" {
+		t.Fatalf("cancel job=%+v err=%v", job, err)
+	}
+	if svc.runtime.Status != "draining" || svc.runtime.Downloading != 2 || svc.runtime.InflightProducts != 2 {
+		t.Fatalf("API erased draining worker state: %+v", svc.runtime)
+	}
+}
+
 func TestIngestStatusReadsCheckpointAndTelemetry(t *testing.T) {
 	objects := fakeIngestObjects{objects: map[string][]byte{
 		"checkpoints/ingestion/current.json":    []byte(`{"active_run_id":"run-1"}`),
@@ -91,7 +106,7 @@ func TestIngestStatusReadsCheckpointAndTelemetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	if !status.Observed || status.RunID != "run-1" || status.TotalProducts != 2 || status.CompletedProducts != 1 || status.Downloading != 1 || status.QueueDepth != 2 {
+	if !status.Observed || status.RunID != "run-1" || status.TotalProducts != 2 || status.CompletedProducts != 1 || status.Downloading != 1 || status.InflightProducts != 1 || status.QueueDepth != 2 {
 		t.Fatalf("unexpected status: %#v", status)
 	}
 }
@@ -118,6 +133,24 @@ func TestIngestStatusPrefersFreshRuntimeJobOverOlderCheckpoint(t *testing.T) {
 	}
 	if status.Source != "api-runtime" || status.Status != "running" || status.ControlJobID != "ingest-job-live" || status.TotalProducts != 0 {
 		t.Fatalf("expected fresh runtime state, got %#v", status)
+	}
+}
+
+func TestIngestStatusReportsPlanningFromActiveControlRun(t *testing.T) {
+	objects := fakeIngestObjects{objects: map[string][]byte{
+		"checkpoints/ingestion/current.json":      []byte(`{"active_run_id":"old-run"}`),
+		"checkpoints/ingestion/runs/old-run.json": []byte(`{"run_id":"old-run","status":"COMPLETED","updated_at":"2026-08-09T00:01:00Z","products":{}}`),
+		"control/ingest/catalog-status.json":      []byte(`{"state":"RUNNING","stage":"DOWNLOADING_TOI","completed":1,"total":2}`),
+		"control/ingest/manifest-status.json":     []byte(`{"state":"PLANNED","stage":"DISCOVERING_MAST_PRODUCTS","completed":0,"total":5}`),
+	}}
+	now := time.Now().UTC()
+	controller := fakeRuntimeIngestController{job: &entity.IngestControlJob{JobID: "ingest-job-planning", Status: "running", StartedAt: now, UpdatedAt: now}}
+	status, err := NewIngestServiceWithEvents(objects, nil, "aurora", controller, nil).Status(context.Background())
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if status.Status != "planning" || status.CatalogProgress == nil || status.ManifestProgress == nil {
+		t.Fatalf("expected backend planning status with durable progress, got %#v", status)
 	}
 }
 

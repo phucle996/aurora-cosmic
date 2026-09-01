@@ -95,6 +95,17 @@ type HabitabilityAssessment struct {
 type CandidateDetail struct {
 	Candidate    Candidate
 	Evidence     CandidateEvidence
+	Review       CandidateReview
 	Physics      PlanetPhysics
 	Habitability HabitabilityAssessment
+}
+
+// CandidateReview is the mutable human-decision overlay stored beside an
+// immutable Gold candidate. Gold evidence is never rewritten by vetting.
+type CandidateReview struct {
+	TrainingLabel string
+	LabelSource   string
+	ReviewStatus  string
+	TrainEligible bool
+	UpdatedAt     string
 }

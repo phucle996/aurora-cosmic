@@ -20,6 +20,13 @@ type testGoldRow struct {
 
 type memoryGoldObjects struct{ data map[string][]byte }
 
+type recordingGoldPublisher struct{ events []entity.WorkflowEvent }
+
+func (p *recordingGoldPublisher) Publish(_ context.Context, event entity.WorkflowEvent) error {
+	p.events = append(p.events, event)
+	return nil
+}
+
 func (m *memoryGoldObjects) Ping(context.Context) error { return nil }
 func (m *memoryGoldObjects) ListObjects(_ context.Context, prefix string) ([]repo.ObjectInfo, error) {
 	objects := make([]repo.ObjectInfo, 0)
@@ -106,7 +113,8 @@ func (m *memoryGoldObjects) DeleteObject(_ context.Context, key string) error {
 
 func TestGoldControlStartsAndPausesDurably(t *testing.T) {
 	objects := &memoryGoldObjects{data: map[string][]byte{}}
-	service := NewGoldControlService(objects, nil)
+	publisher := &recordingGoldPublisher{}
+	service := NewGoldControlService(objects, publisher)
 
 	initial, err := service.Query(context.Background())
 	if err != nil || initial.Control.Mode != "PAUSED" {
@@ -114,10 +122,13 @@ func TestGoldControlStartsAndPausesDurably(t *testing.T) {
 	}
 
 	started, err := service.Start(context.Background(), entity.GoldControlStartRequest{
-		Mode: "stream", IdleFlushSeconds: 180,
+		Mode: "stream", IdleFlushSeconds: 180, TicketID: "gold-observer-test",
 	})
 	if err != nil || started.Control.Mode != "STREAM" || started.Control.CommandID == "" {
 		t.Fatalf("expected durable stream control, got %#v err=%v", started, err)
+	}
+	if len(publisher.events) != 1 || publisher.events[0].TicketID != "gold-observer-test" || publisher.events[0].JobID != started.Control.CommandID {
+		t.Fatalf("expected ticket-scoped start event, got %#v", publisher.events)
 	}
 
 	stopped, err := service.Stop(context.Background())

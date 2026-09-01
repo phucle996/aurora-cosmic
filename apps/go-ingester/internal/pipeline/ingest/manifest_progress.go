@@ -18,6 +18,8 @@ type manifestProgress struct {
 	Stage              string            `json:"stage"`
 	Completed          int               `json:"completed"`
 	Total              int               `json:"total"`
+	StageCompleted     int               `json:"stage_completed,omitempty"`
+	StageTotal         int               `json:"stage_total,omitempty"`
 	DiscoveredProducts int               `json:"discovered_products"`
 	PairedSamples      int               `json:"paired_samples"`
 	SelectedSamples    int               `json:"selected_samples"`
@@ -43,4 +45,8 @@ func reportManifestFailure(ctx context.Context, store *storage.MinIOClient, buck
 		progress.Error = err.Error()
 	}
 	writeManifestProgress(ctx, store, bucket, progress)
+}
+
+func reportManifestCanceled(ctx context.Context, store *storage.MinIOClient, bucket, stage string) {
+	writeManifestProgress(ctx, store, bucket, manifestProgress{State: "CANCELED", Stage: stage})
 }

@@ -20,6 +20,7 @@ class Config:
     scratch_dir: str
     durable: str
     stream: str
+    metrics_addr: str
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -52,4 +53,5 @@ class Config:
             ),
             durable=os.getenv("AURORA_GOLD_DURABLE", "aurora-gold-builder"),
             stream=os.getenv("AURORA_GOLD_STREAM", "AURORA_SILVER"),
+            metrics_addr=os.getenv("AURORA_GOLD_METRICS_ADDR", ":8088"),
         )

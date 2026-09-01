@@ -38,6 +38,8 @@ type IngestManifestProgress struct {
 	Stage              string            `json:"stage"`
 	Completed          int               `json:"completed"`
 	Total              int               `json:"total"`
+	StageCompleted     int               `json:"stage_completed,omitempty"`
+	StageTotal         int               `json:"stage_total,omitempty"`
 	DiscoveredProducts int               `json:"discovered_products"`
 	PairedSamples      int               `json:"paired_samples"`
 	SelectedSamples    int               `json:"selected_samples"`

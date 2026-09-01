@@ -31,6 +31,12 @@ func (r *ObjectMinIO) ListObjects(ctx context.Context, prefix string) ([]repo.Ob
 	return r.client.ListObjects(ctx, prefix)
 }
 
+// ListObjectsWithMetadata returns lightweight user metadata required for
+// durable scientific evidence aggregation.
+func (r *ObjectMinIO) ListObjectsWithMetadata(ctx context.Context, prefix string) ([]repo.ObjectInfo, error) {
+	return r.client.ListObjectsWithMetadata(ctx, prefix)
+}
+
 // GetObject tải về toàn bộ nội dung dạng bytes của một object theo key trong bucket MinIO
 func (r *ObjectMinIO) GetObject(ctx context.Context, key string) ([]byte, error) {
 	return r.client.GetObject(ctx, key)

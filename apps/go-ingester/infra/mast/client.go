@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"go-ingester/internal/model"
@@ -19,6 +21,35 @@ type Client struct {
 	baseURL     string
 	downloadURL string
 	httpClient  *http.Client
+	queryClient *http.Client
+}
+
+type rotatingDialer struct {
+	dialer   net.Dialer
+	resolver *net.Resolver
+	next     atomic.Uint64
+}
+
+func (d *rotatingDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil || net.ParseIP(host) != nil {
+		return d.dialer.DialContext(ctx, network, address)
+	}
+	addresses, err := d.resolver.LookupIPAddr(ctx, host)
+	if err != nil || len(addresses) == 0 {
+		return d.dialer.DialContext(ctx, network, address)
+	}
+	start := int(d.next.Add(1)-1) % len(addresses)
+	var lastErr error
+	for offset := range len(addresses) {
+		candidate := net.JoinHostPort(addresses[(start+offset)%len(addresses)].IP.String(), port)
+		connection, dialErr := d.dialer.DialContext(ctx, network, candidate)
+		if dialErr == nil {
+			return connection, nil
+		}
+		lastErr = dialErr
+	}
+	return nil, lastErr
 }
 
 // NewClient constructs a MAST Client instance.
@@ -26,6 +57,12 @@ func NewClient(baseURL string, timeout time.Duration) *Client {
 	if baseURL == "" {
 		baseURL = "https://mast.stsci.edu/api/v0/invoke"
 	}
+	if timeout <= 0 {
+		timeout = 90 * time.Second
+	}
+	metadataTimeout := min(timeout, 25*time.Second)
+	downloadDialer := &rotatingDialer{dialer: net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}, resolver: net.DefaultResolver}
+	queryDialer := &rotatingDialer{dialer: net.Dialer{Timeout: 10 * time.Second}, resolver: net.DefaultResolver}
 	return &Client{
 		baseURL:     baseURL,
 		downloadURL: "https://mast.stsci.edu/api/v0.1/Download/file",
@@ -34,11 +71,25 @@ func NewClient(baseURL string, timeout time.Duration) *Client {
 			// acquisition instead and let the caller's context cancel the body.
 			Timeout: 0,
 			Transport: &http.Transport{
+				DialContext:           downloadDialer.DialContext,
 				MaxIdleConns:          256,
 				MaxIdleConnsPerHost:   64,
 				MaxConnsPerHost:       64,
 				IdleConnTimeout:       90 * time.Second,
 				ResponseHeaderTimeout: timeout,
+				ForceAttemptHTTP2:     true,
+			},
+		},
+		queryClient: &http.Client{
+			Timeout: metadataTimeout,
+			Transport: &http.Transport{
+				DialContext:           queryDialer.DialContext,
+				MaxIdleConns:          16,
+				MaxIdleConnsPerHost:   8,
+				MaxConnsPerHost:       64,
+				IdleConnTimeout:       30 * time.Second,
+				ResponseHeaderTimeout: metadataTimeout,
+				TLSHandshakeTimeout:   10 * time.Second,
 				ForceAttemptHTTP2:     true,
 			},
 		},
@@ -74,8 +125,12 @@ func (c *Client) Query(ctx context.Context, reqBody url.Values) ([]byte, error) 
 			}
 
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			resp, err := c.httpClient.Do(req)
+			resp, err := c.queryClient.Do(req)
 			if err != nil {
+				// A MAST cluster node can accept TCP/TLS and then never return an
+				// HTTP header. Drop its idle HTTP/2 connection so the rotating
+				// dialer selects another resolved node on the next attempt.
+				c.queryClient.CloseIdleConnections()
 				if ctx.Err() != nil {
 					return nil, fmt.Errorf("mast query: execute: %w", ctx.Err())
 				}

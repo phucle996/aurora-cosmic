@@ -1,26 +1,78 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
-import { Activity, AlertCircle, CheckCircle2, Clock3, Database, Play, Radio, RefreshCw, Square, Waves } from 'lucide-react';
+import {
+  Activity,
+  AlertCircle,
+  CheckCircle2,
+  Clock3,
+  Database,
+  Play,
+  Radio,
+  RefreshCw,
+  Square,
+  Terminal,
+  Waves,
+  Zap,
+} from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import type { GoldControlOverview, GoldLiveEvent, GoldWorkerTelemetry } from '@/features/enrichment/types';
+import type { FactoryRunDetail } from '@/features/factory-history/types';
 import { apiBase, apiFetch } from '@/lib/api';
 
-import type { GoldControlOverview } from './types';
-import type { FactoryRunDetail } from '../data-factory/history-types';
+const CONFIG_KEY = 'aurora.gold.console.config.v1';
+const consoleCard = 'rounded-none border-border/80 shadow-none';
+
+type GoldConfig = { mode: 'stream' | 'batch'; maxBatchRecords: number; idleFlushSeconds: number };
+type ConnectionState = 'connecting' | 'live' | 'reconnecting';
+type EventRow = { id: string; worker: GoldWorkerTelemetry; observedAt: string };
 
 const stateLabel: Record<string, string> = {
-  IDLE: 'Idle',
-  RUNNING: 'Running',
-  DRAINING: 'Draining',
-  FROZEN: 'Frozen',
-  CATALOG_SYNCING: 'Đang đồng bộ catalog',
-  WAITING_FOR_CATALOG_SYNC: 'Chờ catalog xác thực',
-  WAITING_FOR_TPF: 'Chờ TPF',
-  READY: 'Sẵn sàng đúc Gold',
+  IDLE: 'IDLE',
+  RUNNING: 'RUNNING',
+  DRAINING: 'DRAINING',
+  FROZEN: 'FROZEN',
+  CATALOG_SYNCING: 'CATALOG SYNC',
+  WAITING_FOR_CATALOG_SYNC: 'CATALOG RETRY',
+  WAITING_FOR_MODALITY: 'WAITING LC/TPF',
+  READY: 'READY',
 };
+
+const actionLabel: Record<string, string> = {
+  WAITING_FOR_BATCH: 'WAITING FOR BATCH',
+  FROZEN: 'FROZEN BY OPERATOR',
+  DEQUEUED_BATCH: 'CLAIMED BATCH',
+  WAITING_FOR_RESUME: 'WAITING FOR RESUME',
+  SYNCING_CATALOGS: 'SYNCING TIC / TOI',
+  MATERIALIZING_AND_INDEXING: 'MATERIALIZING + INDEXING',
+  COMMITTING_SNAPSHOT: 'COMMITTING SNAPSHOT',
+  SNAPSHOT_COMMITTED: 'SNAPSHOT COMMITTED',
+  RETRYING_CATALOG_SYNC: 'CATALOG RETRY',
+  FAILED_RETRY_SCHEDULED: 'FAILED · RETRY SCHEDULED',
+  CANCELLED: 'KILLED / CANCELLED',
+};
+
+function loadLocalConfig(): GoldConfig {
+  const fallback: GoldConfig = { mode: 'stream', maxBatchRecords: 500, idleFlushSeconds: 180 };
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(CONFIG_KEY) ?? 'null') as Partial<GoldConfig> | null;
+    if (!parsed) return fallback;
+    return {
+      mode: parsed.mode === 'batch' ? 'batch' : 'stream',
+      maxBatchRecords: Number(parsed.maxBatchRecords) || fallback.maxBatchRecords,
+      idleFlushSeconds: Number(parsed.idleFlushSeconds) || fallback.idleFlushSeconds,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function newTicket(): string {
+  return `gold-${window.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
+}
 
 function formatTime(value?: string): string {
   if (!value) return '—';
@@ -28,27 +80,34 @@ function formatTime(value?: string): string {
   return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('vi-VN');
 }
 
-function formatAge(value?: string): string {
-  if (!value) return 'Chưa có worker report';
-  const milliseconds = Date.now() - new Date(value).getTime();
-  if (!Number.isFinite(milliseconds) || milliseconds < 0) return 'Vừa cập nhật';
-  const seconds = Math.floor(milliseconds / 1000);
-  if (seconds < 5) return 'Vừa cập nhật';
-  if (seconds < 60) return `${seconds}s trước`;
-  return `${Math.floor(seconds / 60)} phút trước`;
+function shortTime(value?: string): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleTimeString('vi-VN');
+}
+
+function toneForWorker(worker: GoldWorkerTelemetry): string {
+  if (worker.lifecycle === 'KILLED') return 'border-rose-500/50 bg-rose-500/5 text-rose-600';
+  if (/FAILED|RETRY/.test(worker.action)) return 'border-amber-500/50 bg-amber-500/5 text-amber-600';
+  if (/MATERIALIZING|SYNCING|COMMITTING|DEQUEUED/.test(worker.action)) return 'border-primary/50 bg-primary/5 text-primary';
+  return 'border-border/80 bg-background text-muted-foreground';
 }
 
 export default function EnrichmentPage(): JSX.Element {
+  const initialConfig = useMemo(loadLocalConfig, []);
   const [overview, setOverview] = useState<GoldControlOverview | null>(null);
   const [runDetail, setRunDetail] = useState<FactoryRunDetail | null>(null);
-  const [mode, setMode] = useState<'stream' | 'batch'>('stream');
-  const [maxBatchRecords, setMaxBatchRecords] = useState(500);
-  const [idleFlushSeconds, setIdleFlushSeconds] = useState(180);
+  const [mode, setMode] = useState(initialConfig.mode);
+  const [maxBatchRecords, setMaxBatchRecords] = useState(initialConfig.maxBatchRecords);
+  const [idleFlushSeconds, setIdleFlushSeconds] = useState(initialConfig.idleFlushSeconds);
+  const [liveWorkers, setLiveWorkers] = useState<Record<string, GoldWorkerTelemetry>>({});
+  const [eventRows, setEventRows] = useState<EventRow[]>([]);
+  const [connection, setConnection] = useState<ConnectionState>('connecting');
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [pendingDelta, setPendingDelta] = useState<number | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [observerTicket] = useState(newTicket);
   const latestOverview = useRef<GoldControlOverview | null>(null);
   const overviewRequestInFlight = useRef(false);
   const historyRequestInFlight = useRef(false);
@@ -59,21 +118,12 @@ export default function EnrichmentPage(): JSX.Element {
     if (manual) setRefreshing(true);
     try {
       const next = await apiFetch<GoldControlOverview>('/v1/gold/control');
-      const previousPending = latestOverview.current?.runtime?.pending_total;
-      if (typeof previousPending === 'number' && typeof next.runtime?.pending_total === 'number') {
-        setPendingDelta(next.runtime.pending_total - previousPending);
-      }
       latestOverview.current = next;
       setOverview(next);
-      if (next.control.mode === 'STREAM' || next.control.mode === 'BATCH') {
-        setMode(next.control.mode.toLowerCase() as 'stream' | 'batch');
-        setMaxBatchRecords(next.control.max_batch_records);
-        setIdleFlushSeconds(Math.round(next.control.idle_flush_seconds));
-      }
       setError(null);
       return next;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Không tải được trạng thái Gold');
+      setError(cause instanceof Error ? cause.message : 'Không tải được Gold control plane');
       return null;
     } finally {
       overviewRequestInFlight.current = false;
@@ -90,11 +140,8 @@ export default function EnrichmentPage(): JSX.Element {
     historyRequestInFlight.current = true;
     setHistoryLoading(true);
     try {
-      const detail = await apiFetch<FactoryRunDetail>(`/v1/data-factory/runs/${encodeURIComponent(commandID)}`);
-      setRunDetail(detail);
+      setRunDetail(await apiFetch<FactoryRunDetail>(`/v1/data-factory/runs/${encodeURIComponent(commandID)}`));
     } catch {
-      // History is durable but asynchronous. Keep live runtime visible without
-      // pretending an uncommitted batch has a finished timeline.
       setRunDetail(null);
     } finally {
       historyRequestInFlight.current = false;
@@ -103,23 +150,42 @@ export default function EnrichmentPage(): JSX.Element {
   }, []);
 
   useEffect(() => {
+    window.localStorage.setItem(CONFIG_KEY, JSON.stringify({ mode, maxBatchRecords, idleFlushSeconds }));
+  }, [idleFlushSeconds, maxBatchRecords, mode]);
+
+  useEffect(() => {
     void loadOverview();
-    const stream = new EventSource(`${apiBase}/v1/events?workflow=gold`);
-    let debounceTimer: number | undefined;
-    const refresh = () => {
-      window.clearTimeout(debounceTimer);
-      debounceTimer = window.setTimeout(() => void loadOverview(), 400);
-    };
-    stream.addEventListener('workflow', refresh);
-    // The control record is a tiny object-store read. History is loaded in a
-    // separate effect below, so live updates never wait for ClickHouse.
-    const timer = window.setInterval(() => void loadOverview(), 5_000);
-    return () => {
-      stream.close();
-      window.clearInterval(timer);
-      window.clearTimeout(debounceTimer);
-    };
-  }, [loadOverview]);
+    const stream = new EventSource(`${apiBase}/v1/events?workflow=gold&ticket=${encodeURIComponent(observerTicket)}`);
+    stream.onopen = () => setConnection('live');
+    stream.onerror = () => setConnection('reconnecting');
+    stream.addEventListener('ready', () => setConnection('live'));
+    stream.addEventListener('workflow', (rawEvent) => {
+      try {
+        const message = JSON.parse((rawEvent as MessageEvent<string>).data) as GoldLiveEvent;
+        const payload = message.payload;
+        if (payload?.runtime) {
+          setOverview((current) => {
+            if (!current) return current;
+            const next = { ...current, runtime: payload.runtime };
+            latestOverview.current = next;
+            return next;
+          });
+        }
+        if (payload?.worker) {
+          const worker = payload.worker;
+          setLiveWorkers((current) => ({ ...current, [worker.worker_id]: worker }));
+          const eventID = `${worker.worker_id}:${worker.updated_at}:${worker.action}`;
+          setEventRows((current) => current.some((row) => row.id === eventID)
+            ? current
+            : [{ id: eventID, worker, observedAt: payload.occurred_at ?? message.occurred_at ?? worker.updated_at }, ...current].slice(0, 80));
+          if (worker.action === 'SNAPSHOT_COMMITTED') void loadHistory(worker.command_id);
+        }
+      } catch {
+        // Malformed live messages never replace the durable runtime snapshot.
+      }
+    });
+    return () => stream.close();
+  }, [loadHistory, loadOverview, observerTicket]);
 
   useEffect(() => {
     void loadHistory(overview?.control.command_id);
@@ -131,12 +197,12 @@ export default function EnrichmentPage(): JSX.Element {
     try {
       const next = await apiFetch<GoldControlOverview>('/v1/gold/control/start', {
         method: 'POST',
-        body: JSON.stringify({ mode, max_batch_records: maxBatchRecords, idle_flush_seconds: idleFlushSeconds }),
+        body: JSON.stringify({ mode, max_batch_records: maxBatchRecords, idle_flush_seconds: idleFlushSeconds, ticket_id: observerTicket }),
       });
       latestOverview.current = next;
       setOverview(next);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Không thể bắt đầu làm giàu dữ liệu');
+      setError(cause instanceof Error ? cause.message : 'Không thể khởi chạy Gold run');
     } finally {
       setBusy(false);
     }
@@ -150,181 +216,116 @@ export default function EnrichmentPage(): JSX.Element {
       latestOverview.current = next;
       setOverview(next);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Không thể dừng Gold Builder');
+      setError(cause instanceof Error ? cause.message : 'Không thể đóng băng Gold Builder');
     } finally {
       setBusy(false);
     }
   };
-
-  const runtime = overview?.runtime;
-  const isFrozen = overview?.control.mode === 'PAUSED';
-  const runtimeState = runtime?.state ?? (isFrozen ? 'FROZEN' : 'IDLE');
-  const readiness = runtime?.readiness;
-  const catalogSync = runtime?.catalog_sync;
-  const controlModeLabel = isFrozen ? 'FROZEN' : overview?.control.mode === 'BATCH' ? 'BACKLOG' : 'STREAM';
-  const latestBatches = [...(runDetail?.batches ?? [])].reverse().slice(0, 6);
-  const observedRun = runDetail?.run;
-  const workerReportAge = formatAge(runtime?.updated_at);
-  const workerReportStale = Boolean(runtime?.updated_at) && Date.now() - new Date(runtime?.updated_at ?? '').getTime() > 15_000;
-  const executionStages = useMemo(() => buildExecutionStages({
-    isFrozen,
-    runtimeState,
-    pendingTotal: runtime?.pending_total ?? 0,
-    pendingDelta,
-    readiness,
-    catalogSync,
-    activeBuilds: runtime?.active_builds ?? 0,
-    lastSnapshotID: runtime?.last_snapshot_id,
-    indexedRows: observedRun?.indexed_rows ?? 0,
-  }), [catalogSync, isFrozen, observedRun?.indexed_rows, pendingDelta, readiness, runtime?.active_builds, runtime?.last_snapshot_id, runtime?.pending_total, runtimeState]);
 
   const refresh = async (): Promise<void> => {
     const next = await loadOverview(true);
     await loadHistory(next?.control.command_id);
   };
 
+  const runtime = overview?.runtime;
+  const readiness = runtime?.readiness;
+  const catalog = runtime?.catalog_sync;
+  const isFrozen = overview?.control.mode === 'PAUSED';
+  const runtimeState = runtime?.state ?? (isFrozen ? 'FROZEN' : 'IDLE');
+  const commandAcknowledged = Boolean(overview?.control.command_id) && runtime?.command_id === overview?.control.command_id;
+  const workers = useMemo(() => {
+    const merged = new Map<string, GoldWorkerTelemetry>();
+    for (const worker of runtime?.workers ?? []) merged.set(worker.worker_id, worker);
+    for (const worker of Object.values(liveWorkers)) merged.set(worker.worker_id, worker);
+    return [...merged.values()].sort((left, right) => left.worker_id.localeCompare(right.worker_id));
+  }, [liveWorkers, runtime?.workers]);
+  const activeWorkers = workers.filter((worker) => worker.lifecycle !== 'KILLED').length;
+  const latestBatches = [...(runDetail?.batches ?? [])].reverse().slice(0, 8);
+  const observedRun = runDetail?.run;
+  const stages = [
+    { label: '01 / SILVER INTAKE', value: `${runtime?.pending_total ?? 0} LC queued`, detail: `${runtime?.pending_by_kind?.TARGET_PIXEL ?? 0} TPF events pending`, active: (runtime?.pending_total ?? 0) > 0 },
+    { label: '02 / PAIR LC + TPF', value: `${readiness?.ready_lightcurves ?? 0} eligible`, detail: `${readiness?.missing_tpf ?? 0} missing TPF`, active: (readiness?.ready_lightcurves ?? 0) > 0 },
+    { label: '03 / TIC + TOI', value: catalog?.state ?? 'IDLE', detail: `${catalog?.target_count ?? 0} batch targets`, active: catalog?.state === 'SYNCING' },
+    { label: '04 / MATERIALIZE', value: `${runtime?.active_builds ?? 0} active builds`, detail: `${activeWorkers} worker slots alive`, active: (runtime?.active_builds ?? 0) > 0 },
+    { label: '05 / COMMIT', value: runtime?.last_snapshot_id ? 'COMMITTED' : 'NO SNAPSHOT', detail: runtime?.last_snapshot_id ?? 'Awaiting first Gold output', active: Boolean(runtime?.last_snapshot_id) },
+  ];
+
   return (
-    <div className="space-y-6">
-      <div>
-        <div>
-          <div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
-            <Waves className="size-4 text-primary" /> Silver → Gold control plane
+    <div className="space-y-5">
+      <Card className={consoleCard}>
+        <CardHeader className="border-b border-border/70 pb-4">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+            <div className="min-w-0">
+              <p className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-primary"><Waves className="size-3.5" />Silver → Gold research console</p>
+              <CardTitle className="mt-1 text-xl">Làm giàu dữ liệu</CardTitle>
+              <CardDescription className="mt-1">Quan sát trạng thái run, worker lifecycle, dữ liệu đầu vào và Gold output.</CardDescription>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 font-mono text-[10px] uppercase">
+              <Badge variant="outline" className="rounded-none">{stateLabel[runtimeState] ?? runtimeState}</Badge>
+              {overview?.control.command_id ? <Badge variant={commandAcknowledged ? 'default' : 'secondary'} className="rounded-none">{commandAcknowledged ? 'worker ack' : 'ack pending'}</Badge> : null}
+              <Badge variant={connection === 'live' ? 'default' : 'secondary'} className="rounded-none"><Radio className="mr-1 size-3" />{connection === 'live' ? 'Live updates' : 'Reconnecting'}</Badge>
+              <span className="max-w-[22rem] truncate border border-border/70 bg-muted/20 px-2.5 py-1.5 normal-case" title={observerTicket}>trace / {observerTicket}</span>
+              <Button variant="outline" size="sm" onClick={() => void refresh()} disabled={refreshing} className="h-8 rounded-none font-mono text-[9px] uppercase"><RefreshCw className={`size-3 ${refreshing ? 'animate-spin' : ''}`} />Sync status</Button>
+            </div>
           </div>
-          <h2 className="font-heading text-2xl font-semibold tracking-tight md:text-3xl">Làm giàu dữ liệu</h2>
-          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Điều khiển Gold Builder. Stream chỉ bắt đầu gom khi Silver đầu tiên đã được nhận; không tạo snapshot Gold rỗng.
-          </p>
-        </div>
-      </div>
-
-      {error && <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive"><AlertCircle className="size-4" />{error}</div>}
-
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Card><CardHeader className="pb-2"><CardDescription>Trạng thái runtime</CardDescription><CardTitle className="flex items-center gap-2 text-base"><Radio className="size-4 text-primary" />{stateLabel[runtimeState] ?? runtimeState}</CardTitle></CardHeader><CardContent><Badge variant={isFrozen ? 'secondary' : 'default'}>{controlModeLabel}</Badge></CardContent></Card>
-        <Card><CardHeader className="pb-2"><CardDescription>Light curve đang chờ</CardDescription><CardTitle className="text-2xl">{runtime?.pending_total ?? 0}</CardTitle></CardHeader><CardContent className="text-xs text-muted-foreground">{readiness ? `TPF context ${readiness.tpf_contexts}` : 'Worker chưa xuất readiness telemetry'}</CardContent></Card>
-        <Card><CardHeader className="pb-2"><CardDescription>Flush kế tiếp</CardDescription><CardTitle className="flex items-center gap-2 text-sm"><Clock3 className="size-4 text-amber-500" />{formatTime(runtime?.next_flush_at)}</CardTitle></CardHeader><CardContent className="text-xs text-muted-foreground">Idle window: {Math.round(overview?.control.idle_flush_seconds ?? idleFlushSeconds)} giây</CardContent></Card>
-        <Card><CardHeader className="pb-2"><CardDescription>Gold snapshot gần nhất</CardDescription><CardTitle className="flex items-center gap-2 text-sm"><Database className="size-4 text-emerald-500" />{runtime?.last_snapshot_id ? <Link className="font-mono text-primary hover:underline" to={`/gold/snapshots/${encodeURIComponent(runtime.last_snapshot_id)}`}>{runtime.last_snapshot_id}</Link> : 'Chưa có'}</CardTitle></CardHeader><CardContent className="text-xs text-muted-foreground">Active builds: {runtime?.active_builds ?? 0}</CardContent></Card>
-      </div>
-
-      {runtime && readiness && (
-        <Card>
-          <CardHeader className="pb-3"><CardTitle className="text-base">Điều kiện Gold research-ready</CardTitle><CardDescription>Gold đọc ingest checkpoint để ghép đúng một TPF với mỗi light curve, rồi chỉ đồng bộ TIC/TOI cho batch đã đủ dữ liệu. Hai catalog được pin thành snapshot bất biến trước khi đúc Gold.</CardDescription></CardHeader>
-          <CardContent className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
-            <ReadinessMetric label="Catalog evidence" value={catalogSync?.state === 'READY' ? (catalogSync.cache_hit ? 'Đã xác thực (cache)' : 'Đã xác thực') : catalogSync?.state === 'SYNCING' ? 'Đang đồng bộ' : catalogSync?.state === 'RETRYING' ? 'Sẽ thử lại' : 'Theo batch, on-demand'} ready={catalogSync?.state === 'READY'} />
-            <ReadinessMetric label="Phạm vi catalog batch" value={catalogSync?.target_count ? `${catalogSync.target_count.toLocaleString()} TIC · ${catalogSync.tic_records.toLocaleString()} TIC row · ${catalogSync.toi_records.toLocaleString()} TOI row` : 'Chưa có batch sẵn sàng'} ready={catalogSync?.state === 'READY'} />
-            <ReadinessMetric label="LC đủ điều kiện" value={`${(readiness?.ready_lightcurves ?? 0).toLocaleString()} LC`} ready={(readiness?.ready_lightcurves ?? 0) > 0} />
-            <ReadinessMetric label="LC còn thiếu TPF" value={`${(readiness?.missing_tpf ?? 0).toLocaleString()} LC`} ready={(readiness?.waiting_lightcurves ?? 0) === 0} />
-            <p className="sm:col-span-2 xl:col-span-4 text-xs text-muted-foreground">Contract ingest: {(readiness?.contracted_lightcurves ?? 0).toLocaleString()} LC được đối chiếu theo manifest · {(readiness?.uncontracted_lightcurves ?? 0).toLocaleString()} LC chưa có manifest lưu vết nên dùng ghép cặp theo sample/sector. {catalogSync?.error ? `Catalog: ${catalogSync.error}` : 'Không có catalog global được suy diễn.'}</p>
-          </CardContent>
-        </Card>
-      )}
-
-      {runtime && !readiness && <div className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">Worker đang chạy chưa xuất readiness telemetry. Không suy đoán trạng thái TPF hoặc catalog từ số pending cũ.</div>}
-
-      <Card>
-        <CardHeader className="pb-3"><CardTitle className="text-base">Điều khiển Gold Builder</CardTitle><CardDescription>Chọn giới hạn trước khi bắt đầu. Các giá trị được lưu bền vững và worker đọc trực tiếp từ control plane.</CardDescription></CardHeader>
-        <CardContent className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            <label className="grid gap-1.5 text-xs font-medium text-foreground"><span>Chế độ</span><select value={mode} onChange={(event) => setMode(event.target.value as 'stream' | 'batch')} disabled={busy || !isFrozen} className="h-9 rounded-md border border-border bg-background px-3 text-xs font-medium"><option value="stream">Stream mode</option><option value="batch">Backlog batch mode</option></select></label>
-            <label className="grid gap-1.5 text-xs font-medium text-foreground"><span>Số bản ghi tối đa / batch</span><select value={maxBatchRecords} onChange={(event) => setMaxBatchRecords(Number(event.target.value))} disabled={busy || !isFrozen} className="h-9 rounded-md border border-border bg-background px-3 text-xs font-medium"><option value={100}>100 bản ghi</option><option value={250}>250 bản ghi</option><option value={500}>500 bản ghi</option><option value={1000}>1,000 bản ghi</option><option value={2500}>2,500 bản ghi</option><option value={5000}>5,000 bản ghi</option></select></label>
-            {mode === 'stream' && <label className="grid gap-1.5 text-xs font-medium text-foreground"><span>Thời gian batch tối đa</span><select value={idleFlushSeconds} onChange={(event) => setIdleFlushSeconds(Number(event.target.value))} disabled={busy || !isFrozen} className="h-9 rounded-md border border-border bg-background px-3 text-xs font-medium"><option value={60}>1 phút</option><option value={120}>2 phút</option><option value={180}>3 phút</option><option value={300}>5 phút</option><option value={600}>10 phút</option><option value={900}>15 phút</option></select></label>}
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {isFrozen ? <Button size="sm" onClick={start} disabled={busy} className="gap-1.5"><Play className="size-3.5 fill-current" />{busy ? 'Đang khởi động...' : mode === 'stream' ? 'Bắt đầu stream' : 'Chạy backlog'}</Button> : <Button size="sm" onClick={stop} disabled={busy} className="gap-1.5 bg-red-600 text-white hover:bg-red-700"><Square className="size-3.5 fill-current" />{busy ? 'Đang đóng băng...' : 'Đóng băng & xả dở'}</Button>}
-            <Button variant="outline" size="sm" onClick={() => void refresh()} disabled={busy || refreshing} className="gap-1.5"><RefreshCw className={`size-3.5 ${refreshing ? 'animate-spin' : ''}`} />Đồng bộ trạng thái</Button>
-          </div>
-        </CardContent>
+        </CardHeader>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base"><Activity className="size-4 text-primary" />Quan sát Gold Builder</CardTitle>
-          <CardDescription>Chỉ hiển thị trạng thái worker đã báo về. Không có thanh tiến độ, hoạt ảnh hay batch được suy diễn.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          <div className={`flex items-center gap-2 rounded-md border px-3 py-2 text-xs ${workerReportStale ? 'border-amber-500/40 bg-amber-500/5 text-amber-600 dark:text-amber-400' : 'border-emerald-500/35 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400'}`}>
-            <Radio className="size-3.5" />
-            <span className="font-medium">{workerReportStale ? 'Worker chưa báo telemetry mới' : 'Worker telemetry đã xác nhận'}</span>
-            <span className="ml-auto tabular-nums">{workerReportAge}</span>
-          </div>
+      {error ? <div className="flex items-center gap-2 border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive"><AlertCircle className="size-4" />{error}</div> : null}
 
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-            {executionStages.map((stage) => <ExecutionStage key={stage.title} {...stage} />)}
-          </div>
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="space-y-5">
+          <Card className={consoleCard}>
+            <CardHeader className="border-b border-border/70 pb-3"><CardTitle className="font-mono text-[10px] uppercase tracking-[0.14em] text-primary">Data process / execution rail</CardTitle><CardDescription>Mỗi node phản ánh dữ liệu và trạng thái worker đã báo; không dựng progress giả.</CardDescription></CardHeader>
+            <CardContent className="grid gap-px bg-border/60 p-0 sm:grid-cols-2 xl:grid-cols-5">{stages.map((stage) => <ProcessNode key={stage.label} {...stage} />)}</CardContent>
+          </Card>
 
-          <div className="grid gap-3 rounded-lg border border-border/70 bg-muted/20 p-3 text-sm md:grid-cols-3">
-            <div><p className="text-xs text-muted-foreground">Run quan sát</p><p className="mt-1 font-mono text-xs text-primary">{observedRun?.run_id ?? overview?.control.command_id ?? 'Chưa có run'}</p></div>
-            <div><p className="text-xs text-muted-foreground">Worker report thật</p><p className="mt-1 font-medium">{formatTime(runtime?.updated_at)}</p></div>
-            <div><p className="text-xs text-muted-foreground">Snapshot gần nhất</p><p className="mt-1 truncate font-mono text-xs">{runtime?.last_snapshot_id ?? observedRun?.last_snapshot_id ?? '—'}</p></div>
-          </div>
+          <Card className={consoleCard}>
+            <CardHeader className="border-b border-border/70 pb-3"><div className="flex items-end justify-between gap-3"><div><CardTitle className="flex items-center gap-2 text-sm"><Activity className="size-4 text-primary" />Worker telemetry</CardTitle><CardDescription>Theo dõi worker được tạo, hành vi hiện tại và thời điểm kết thúc.</CardDescription></div><span className="font-mono text-[10px] text-muted-foreground">{workers.length.toString().padStart(2, '0')} slots</span></div></CardHeader>
+            <CardContent className="space-y-2 p-3">{workers.length === 0 ? <div className="border border-dashed border-border/70 p-6 text-center text-xs text-muted-foreground">Đang chờ worker bắt đầu hoạt động.</div> : workers.map((worker) => <WorkerRow key={worker.worker_id} worker={worker} />)}</CardContent>
+          </Card>
+        </div>
 
-          <div>
-            <div className="mb-2 flex items-center justify-between gap-3"><div><p className="text-sm font-medium">Snapshot Gold vừa materialize</p><p className="text-xs text-muted-foreground">Sáu batch gần nhất trong durable run ledger.</p></div>{historyLoading ? <Badge variant="secondary">Đang đọc history</Badge> : observedRun?.status && <Badge variant="secondary">{observedRun.status}</Badge>}</div>
-            {latestBatches.length === 0 ? <div className="rounded-md border border-dashed border-border p-5 text-center text-sm text-muted-foreground">Chưa có batch Gold nào được ClickHouse ghi nhận cho run này.</div> : <div className="overflow-x-auto rounded-md border border-border"><table className="w-full min-w-[720px] text-sm"><thead className="border-b bg-muted/30 text-left text-xs text-muted-foreground"><tr><th className="p-3">Snapshot</th><th className="p-3 text-right">Silver in</th><th className="p-3 text-right">Gold rows</th><th className="p-3 text-right">Indexed</th><th className="p-3">Committed</th></tr></thead><tbody>{latestBatches.map((batch) => <tr key={batch.batch_id} className="border-b border-border/60 last:border-0"><td className="p-3"><Link to={`/gold/snapshots/${encodeURIComponent(batch.snapshot_id ?? batch.batch_id)}`} className="font-mono text-xs text-primary hover:underline">{batch.snapshot_id ?? batch.batch_id}</Link></td><td className="p-3 text-right tabular-nums">{batch.input_records.toLocaleString()}</td><td className="p-3 text-right tabular-nums">{batch.candidate_rows.toLocaleString()}</td><td className="p-3 text-right tabular-nums">{batch.indexed_rows.toLocaleString()}</td><td className="p-3 text-xs text-muted-foreground">{formatTime(batch.completed_at)}</td></tr>)}</tbody></table></div>}
-          </div>
-        </CardContent>
+        <Card className={`${consoleCard} h-fit`}>
+          <CardHeader className="border-b border-border/70 pb-3"><CardTitle className="flex items-center gap-2 text-sm"><Zap className="size-4 text-primary" />Operator intervention</CardTitle><CardDescription>Điều chỉnh cách gom batch và thời điểm materialize Gold output.</CardDescription></CardHeader>
+          <CardContent className="space-y-4 p-4">
+            <div className="space-y-3">
+              <ConsoleSelect label="Execution mode" value={mode} disabled={busy || !isFrozen} onChange={(value) => setMode(value as 'stream' | 'batch')} options={[['stream', 'STREAM · coalesce Silver'], ['batch', 'BATCH · drain backlog']]} />
+              <ConsoleSelect label="Maximum LC / batch" value={String(maxBatchRecords)} disabled={busy || !isFrozen} onChange={(value) => setMaxBatchRecords(Number(value))} options={[100, 250, 500, 1000, 2500, 5000].map((value) => [String(value), value.toLocaleString()])} />
+              {mode === 'stream' ? <ConsoleSelect label="Idle flush window" value={String(idleFlushSeconds)} disabled={busy || !isFrozen} onChange={(value) => setIdleFlushSeconds(Number(value))} options={[[60, '1 minute'], [120, '2 minutes'], [180, '3 minutes'], [300, '5 minutes'], [600, '10 minutes'], [900, '15 minutes']].map(([value, label]) => [String(value), String(label)])} /> : null}
+            </div>
+            <div className="border border-border/70 bg-muted/20 p-3 font-mono text-[10px]"><KeyValue label="Run ID" value={overview?.control.command_id ?? 'not-issued'} /><KeyValue label="Active run" value={runtime?.command_id ?? 'not-observed'} /><KeyValue label="Next flush" value={formatTime(runtime?.next_flush_at)} /><KeyValue label="Last update" value={formatTime(runtime?.updated_at)} /></div>
+            {isFrozen ? <Button onClick={start} disabled={busy} className="w-full rounded-none font-mono text-[10px] uppercase"><Play className="size-3.5 fill-current" />{busy ? 'Starting run…' : 'Launch Gold run'}</Button> : <Button onClick={stop} disabled={busy} className="w-full rounded-none bg-rose-600 font-mono text-[10px] uppercase text-white hover:bg-rose-700"><Square className="size-3.5 fill-current" />{busy ? 'Requesting freeze…' : 'Freeze and drain'}</Button>}
+            <p className="text-[11px] leading-relaxed text-muted-foreground">Freeze không kill batch đang commit. Worker chuyển sang FROZEN sau khi xả công việc đã nhận; KILLED chỉ xuất hiện khi worker task thực sự thoát.</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className={consoleCard}>
+        <CardHeader className="border-b border-border/70 pb-3"><div className="flex items-end justify-between"><div><CardTitle className="flex items-center gap-2 text-sm"><Terminal className="size-4 text-primary" />Worker activity log</CardTitle><CardDescription>Dòng thời gian spawn, xử lý, hoàn tất và dừng của từng worker trong run.</CardDescription></div><span className="font-mono text-[10px] text-muted-foreground">{eventRows.length} events</span></div></CardHeader>
+        <CardContent className="max-h-80 overflow-auto bg-slate-950 p-0 text-slate-200">{eventRows.length === 0 ? <p className="p-4 font-mono text-[11px] text-slate-500">$ waiting for worker activity…</p> : eventRows.map((row) => <div key={row.id} className="grid gap-1 border-b border-slate-800 px-3 py-2 font-mono text-[10px] sm:grid-cols-[90px_80px_90px_minmax(0,1fr)]"><span className="text-slate-500">{shortTime(row.observedAt)}</span><span className="text-cyan-400">{row.worker.worker_id}</span><span className={row.worker.lifecycle === 'KILLED' ? 'text-rose-400' : 'text-emerald-400'}>{row.worker.lifecycle}</span><span><strong className="font-medium text-slate-100">{actionLabel[row.worker.action] ?? row.worker.action}</strong><span className="ml-2 text-slate-500">{row.worker.detail}</span></span></div>)}</CardContent>
+      </Card>
+
+      <Card className={consoleCard}>
+        <CardHeader className="border-b border-border/70 pb-3"><div className="flex items-end justify-between"><div><CardTitle className="flex items-center gap-2 text-sm"><Database className="size-4 text-primary" />Materialized Gold data</CardTitle><CardDescription>Snapshot đã commit trong durable run ledger, không phải số liệu suy diễn từ object count.</CardDescription></div>{historyLoading ? <Badge variant="secondary" className="rounded-none">reading ledger</Badge> : observedRun?.status ? <Badge variant="secondary" className="rounded-none">{observedRun.status}</Badge> : null}</div></CardHeader>
+        <CardContent className="p-0">{latestBatches.length === 0 ? <div className="p-8 text-center text-xs text-muted-foreground">Chưa có Gold batch được ghi nhận cho control job này.</div> : <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-sm"><thead className="border-b bg-muted/30 text-left font-mono text-[9px] uppercase text-muted-foreground"><tr><th className="p-3">Snapshot</th><th className="p-3 text-right">Silver input</th><th className="p-3 text-right">Gold rows</th><th className="p-3 text-right">Indexed</th><th className="p-3">Committed at</th></tr></thead><tbody>{latestBatches.map((batch) => <tr key={batch.batch_id} className="border-b border-border/60 last:border-0"><td className="p-3"><Link to={`/gold/snapshots/${encodeURIComponent(batch.snapshot_id ?? batch.batch_id)}`} className="font-mono text-xs text-primary hover:underline">{batch.snapshot_id ?? batch.batch_id}</Link></td><td className="p-3 text-right tabular-nums">{batch.input_records.toLocaleString()}</td><td className="p-3 text-right tabular-nums">{batch.candidate_rows.toLocaleString()}</td><td className="p-3 text-right tabular-nums">{batch.indexed_rows.toLocaleString()}</td><td className="p-3 text-xs text-muted-foreground">{formatTime(batch.completed_at)}</td></tr>)}</tbody></table></div>}</CardContent>
       </Card>
     </div>
   );
 }
 
-type ExecutionTone = 'idle' | 'running' | 'ready' | 'blocked';
-
-type ExecutionStageProps = {
-  title: string;
-  value: string;
-  detail: string;
-  tone: ExecutionTone;
-};
-
-function buildExecutionStages({ isFrozen, runtimeState, pendingTotal, pendingDelta, readiness, catalogSync, activeBuilds, lastSnapshotID, indexedRows }: {
-  isFrozen: boolean;
-  runtimeState: string;
-  pendingTotal: number;
-  pendingDelta: number | null;
-  readiness: NonNullable<GoldControlOverview['runtime']>['readiness'] | undefined;
-  catalogSync: NonNullable<GoldControlOverview['runtime']>['catalog_sync'] | undefined;
-  activeBuilds: number;
-  lastSnapshotID?: string;
-  indexedRows: number;
-}): ExecutionStageProps[] {
-  const stopped = isFrozen || runtimeState === 'FROZEN';
-  const delta = pendingDelta === null || pendingDelta === 0 ? 'không đổi từ lần report trước' : pendingDelta < 0 ? `${Math.abs(pendingDelta).toLocaleString()} đã rời hàng chờ` : `+${pendingDelta.toLocaleString()} mới vào hàng chờ`;
-  const pairing = stopped
-    ? { value: 'Chưa đánh giá', detail: 'Worker chỉ kiểm tra ghép LC/TPF khi batch bắt đầu.', tone: 'idle' as const }
-    : (readiness?.missing_tpf ?? 0) > 0
-      ? { value: `${readiness!.missing_tpf.toLocaleString()} thiếu TPF`, detail: `${readiness?.waiting_lightcurves?.toLocaleString() ?? 0} LC đang bị chặn thật.`, tone: 'blocked' as const }
-      : { value: `${readiness?.ready_lightcurves?.toLocaleString() ?? 0} LC sẵn sàng`, detail: `${readiness?.tpf_contexts?.toLocaleString() ?? 0} TPF context đã quan sát.`, tone: 'ready' as const };
-  const catalogs = catalogSync?.state === 'SYNCING'
-    ? { value: 'Đang đồng bộ', detail: `${catalogSync.target_count.toLocaleString()} TIC trong batch hiện tại.`, tone: 'running' as const }
-    : catalogSync?.state === 'READY'
-      ? { value: `${catalogSync.target_count.toLocaleString()} TIC đã pin`, detail: `TIC ${catalogSync.tic_records.toLocaleString()} · TOI ${catalogSync.toi_records.toLocaleString()}.`, tone: 'ready' as const }
-      : { value: 'Chờ batch', detail: 'Catalog chỉ tải khi LC/TPF của batch đã đủ.', tone: 'idle' as const };
-  const materialize = activeBuilds > 0
-    ? { value: `${activeBuilds} batch đang build`, detail: 'Gold files và ClickHouse đang được materialize.', tone: 'running' as const }
-    : stopped
-      ? { value: 'Đã đóng băng', detail: 'Không có batch nào được bắt đầu khi control đang PAUSED.', tone: 'idle' as const }
-      : { value: 'Chưa có build active', detail: 'Không suy diễn build chỉ từ số bản ghi đang chờ.', tone: 'idle' as const };
-  return [
-    { title: '1. Silver queue', value: `${pendingTotal.toLocaleString()} LC chờ`, detail: delta, tone: stopped ? 'idle' : pendingTotal > 0 ? 'running' : 'idle' },
-    { title: '2. Ghép LC + TPF', ...pairing },
-    { title: '3. TIC / TOI evidence', ...catalogs },
-    { title: '4. Materialize Gold', ...materialize },
-    { title: '5. Commit & index', value: lastSnapshotID ? 'Đã có snapshot' : 'Chưa commit', detail: lastSnapshotID ? `${indexedRows.toLocaleString()} row index trong run hiện tại.` : 'Sẽ chỉ xuất hiện sau khi batch commit hoàn tất.', tone: lastSnapshotID ? 'ready' : 'idle' },
-  ];
+function ProcessNode({ label, value, detail, active }: { label: string; value: string; detail: string; active: boolean }): JSX.Element {
+  return <div className={`min-h-32 bg-background p-3 ${active ? 'shadow-[inset_0_2px_0_hsl(var(--primary))]' : ''}`}><div className="flex items-center justify-between gap-2"><p className="font-mono text-[9px] tracking-[0.1em] text-muted-foreground">{label}</p>{active ? <CheckCircle2 className="size-3.5 text-primary" /> : <Clock3 className="size-3.5 text-muted-foreground/50" />}</div><p className="mt-5 font-mono text-sm font-medium">{value}</p><p className="mt-2 break-words text-[11px] leading-relaxed text-muted-foreground">{detail}</p></div>;
 }
 
-function ExecutionStage({ title, value, detail, tone }: ExecutionStageProps): JSX.Element {
-  const style = {
-    idle: 'border-border bg-card',
-    running: 'border-primary/50 bg-primary/5',
-    ready: 'border-emerald-500/35 bg-emerald-500/5',
-    blocked: 'border-amber-500/40 bg-amber-500/5',
-  }[tone];
-  const label = { idle: 'Chờ', running: 'Đang hoạt động', ready: 'Đã xác thực', blocked: 'Đang chặn' }[tone];
-  return <div className={`min-h-36 rounded-lg border p-4 ${style}`}><div className="flex items-start justify-between gap-2"><p className="text-xs font-medium text-muted-foreground">{title}</p>{tone === 'ready' ? <CheckCircle2 className="size-4 text-emerald-500" /> : <Badge variant={tone === 'blocked' ? 'destructive' : tone === 'running' ? 'default' : 'secondary'} className="px-1.5 py-0 text-[10px]">{label}</Badge>}</div><p className="mt-4 text-base font-semibold tabular-nums">{value}</p><p className="mt-2 text-xs leading-relaxed text-muted-foreground">{detail}</p></div>;
+function WorkerRow({ worker }: { worker: GoldWorkerTelemetry }): JSX.Element {
+  return <div className={`grid min-w-0 items-center gap-2 border px-3 py-2.5 md:grid-cols-[90px_90px_minmax(170px,1fr)_100px_110px] ${toneForWorker(worker)}`}><div className="flex items-center gap-2"><span className={`size-2 rounded-full ${worker.lifecycle === 'KILLED' ? 'bg-rose-500' : 'bg-primary'}`} /><span className="font-mono text-[10px] font-semibold">{worker.worker_id}</span></div><Badge variant="outline" className="w-fit rounded-none font-mono text-[9px]">{worker.lifecycle}</Badge><div className="min-w-0"><p className="truncate font-mono text-[10px] font-medium text-foreground" title={worker.action}>{actionLabel[worker.action] ?? worker.action}</p><p className="truncate text-[10px] text-muted-foreground" title={worker.detail}>{worker.detail || 'No action detail'}</p></div><p className="font-mono text-[10px] text-foreground">{worker.input_count.toLocaleString()} inputs</p><p className="truncate text-right font-mono text-[9px] text-muted-foreground" title={worker.updated_at}>{shortTime(worker.updated_at)}</p></div>;
 }
 
-function ReadinessMetric({ label, value, ready }: { label: string; value: string; ready: boolean | undefined }): JSX.Element {
-  return <div className={`rounded-md border p-3 ${ready ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-amber-500/30 bg-amber-500/5'}`}><p className="text-xs text-muted-foreground">{label}</p><p className={`mt-1 font-medium ${ready ? 'text-emerald-500' : 'text-amber-500'}`}>{value}</p></div>;
+function ConsoleSelect({ label, value, options, disabled, onChange }: { label: string; value: string; options: string[][]; disabled: boolean; onChange: (value: string) => void }): JSX.Element {
+  return <label className="grid gap-1.5"><span className="font-mono text-[9px] uppercase tracking-[0.1em] text-muted-foreground">{label}</span><select value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} className="h-9 rounded-none border border-input bg-background px-3 font-mono text-[10px] uppercase outline-none focus:border-ring disabled:cursor-not-allowed disabled:opacity-50">{options.map(([optionValue, optionLabel]) => <option key={optionValue} value={optionValue}>{optionLabel}</option>)}</select></label>;
+}
+
+function KeyValue({ label, value }: { label: string; value: string }): JSX.Element {
+  return <div className="flex min-w-0 items-center justify-between gap-3 border-b border-border/60 py-1.5 last:border-0"><span className="shrink-0 text-muted-foreground">{label}</span><span className="truncate text-right text-foreground" title={value}>{value}</span></div>;
 }

@@ -83,9 +83,18 @@ export type HabitabilityAssessment = {
 export type CandidateDetailResponse = {
   candidate: CandidateRecord;
   evidence: CandidateEvidence;
+  review: CandidateReview;
   planet_physics: PlanetPhysics;
   habitability: HabitabilityAssessment;
   snapshot_id: string;
+};
+
+export type CandidateReview = {
+  training_label: 'POSITIVE' | 'NEGATIVE' | 'UNRESOLVED';
+  label_source: string;
+  review_status: string;
+  train_eligible: boolean;
+  updated_at: string;
 };
 
 export type TargetRecord = {

@@ -65,41 +65,114 @@ type PreprocessingRuntimeSnapshot struct {
 // plane. Checkpoint counts come from durable MinIO state; backlog counts come
 // from the JetStream consumer observer.
 type PreprocessingProgress struct {
-	BronzeTotal         int
-	BronzeBytes         int64
-	BronzeCompleted     int
-	BronzePending       int
-	BronzeFailed        int
-	BronzeObserved      bool
-	SilverTotal         int
-	SilverBytes         int64
-	GoldTotal           int
-	GoldBytes           int64
-	FootprintObserved   bool
-	CheckpointTotal     int
-	CheckpointCompleted int
-	CheckpointPending   int
-	CheckpointFailed    int
-	BacklogPending      int
-	BacklogAckPending   int
-	ItemsToProcess      int
-	ObservedAt          time.Time
+	BronzeTotal           int
+	BronzeBytes           int64
+	BronzeCompleted       int
+	BronzePending         int
+	BronzeFailed          int
+	BronzeObserved        bool
+	BronzeLightCurves     int
+	BronzeTargetPixels    int
+	SilverTotal           int
+	SilverBytes           int64
+	SilverLightCurves     int
+	SilverTargetPixels    int
+	GoldTotal             int
+	GoldBytes             int64
+	FootprintObserved     bool
+	CheckpointTotal       int
+	CheckpointCompleted   int
+	CheckpointPending     int
+	CheckpointFailed      int
+	CompletedLightCurves  int
+	CompletedTargetPixels int
+	ScienceCountsObserved bool
+	LCInputSamples        int64
+	LCOutputSamples       int64
+	LCQualityRemoved      int64
+	LCInvalidRemoved      int64
+	LCNonfiniteRemoved    int64
+	LCNonpositiveRemoved  int64
+	LCOutlierRemoved      int64
+	LCSigmaClip3To4       int64
+	LCSigmaClip4To5       int64
+	LCSigmaClipGE5        int64
+	LCTransformProducts   int
+	LCScatterProducts     int
+	LCScatterBeforeMean   float64
+	LCScatterBeforeP50    float64
+	LCScatterBeforeP95    float64
+	LCScatterAfterMean    float64
+	LCScatterAfterP50     float64
+	LCScatterAfterP95     float64
+	LCOutlierFractionP50  float64
+	LCOutlierFractionP95  float64
+	TPFInputSamples       int64
+	TPFOutputSamples      int64
+	TPFQualityRemoved     int64
+	TPFInvalidRemoved     int64
+	TPFNonfiniteRemoved   int64
+	TPFNonpositiveRemoved int64
+	TPFFiniteProducts     int
+	TPFFiniteFractionMean float64
+	TPFFiniteFractionP05  float64
+	TPFFiniteFractionP50  float64
+	BacklogPending        int
+	BacklogAckPending     int
+	ItemsToProcess        int
+	ObservedAt            time.Time
+	LCScatterPoints       []PreprocessingScatterPoint
+	MaterializationPoints []PreprocessingMaterializationPoint
+	EncodeFailures        []PreprocessingEncodeFailure
+}
+
+// PreprocessingScatterPoint is one durable Light Curve artifact observation.
+// It intentionally carries no cadence-level samples, keeping the graph payload
+// bounded while still allowing before/after scientific comparison per product.
+type PreprocessingScatterPoint struct {
+	ObjectKey      string  `json:"object_key"`
+	BeforePPM      float64 `json:"before_ppm"`
+	AfterPPM       float64 `json:"after_ppm"`
+	OutlierRemoved int64   `json:"outlier_removed"`
+	PreclipSamples int64   `json:"preclip_samples"`
+	SigmaClipLevel float64 `json:"sigma_clip_level"`
+}
+
+type PreprocessingMaterializationPoint struct {
+	ObjectKey        string    `json:"object_key"`
+	ProductKind      string    `json:"product_kind"`
+	Rows             int64     `json:"rows"`
+	SizeBytes        int64     `json:"size_bytes"`
+	SourceBytes      int64     `json:"source_bytes"`
+	EncodeDurationMS float64   `json:"encode_duration_ms"`
+	CompletedAt      time.Time `json:"completed_at"`
+}
+
+type PreprocessingEncodeFailure struct {
+	ObjectKey   string    `json:"object_key"`
+	ProductKind string    `json:"product_kind"`
+	Reason      string    `json:"reason"`
+	Recovered   bool      `json:"recovered"`
+	OccurredAt  time.Time `json:"occurred_at"`
 }
 
 // PreprocessingHop is service-scoped because preprocessor metrics do not carry
 // a TIC label. It describes the observed pipeline contract, not a single run.
 type PreprocessingHop struct {
-	ID          string
-	Label       string
-	Description string
-	Contract    string
-	Status      string
-	Input       string
-	Output      string
-	ObservedAt  time.Time
-	Metrics     map[string]float64
-	Telemetry   map[string][]MonitoringPoint
-	Details     map[string]string
+	ID                    string
+	Label                 string
+	Description           string
+	Contract              string
+	Status                string
+	Input                 string
+	Output                string
+	ObservedAt            time.Time
+	Metrics               map[string]float64
+	Telemetry             map[string][]MonitoringPoint
+	Details               map[string]string
+	ScatterPoints         []PreprocessingScatterPoint
+	MaterializationPoints []PreprocessingMaterializationPoint
+	EncodeFailures        []PreprocessingEncodeFailure
 }
 
 type PreprocessingEdge struct {

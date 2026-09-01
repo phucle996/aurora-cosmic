@@ -26,8 +26,8 @@ const pageNames: Record<string, string> = {
 
 export default function Header(): JSX.Element {
   const location = useLocation();
-  const pageName = location.pathname.startsWith('/targets/')
-    ? 'Target detail'
+  const pageName = location.pathname.startsWith('/research-factory/workbench/') || location.pathname.startsWith('/targets/')
+    ? 'Scientific Research Factory · Target Analysis'
     : location.pathname.startsWith('/candidates/')
       ? 'Candidate detail'
       : location.pathname.startsWith('/gold/snapshots/')
@@ -46,16 +46,12 @@ export default function Header(): JSX.Element {
         ? 'Scientific Research Factory · TESS Discovery'
       : location.pathname === '/research-factory/workbench'
         ? 'Scientific Research Factory · Workbench'
-      : location.pathname === '/research-factory/transit-candidates'
-        ? 'Scientific Research Factory · Transit Candidates'
-      : location.pathname.startsWith('/research-factory/transit-candidates/')
+      : location.pathname === '/research-factory/candidates'
+        ? 'Scientific Research Factory · Candidate Review'
+      : location.pathname.startsWith('/research-factory/candidates/') || location.pathname.startsWith('/research-factory/transit-candidates/')
         ? 'Scientific Research Factory · Candidate Physics'
-      : location.pathname === '/research-factory/systems'
-        ? 'Scientific Research Factory · 3D Systems'
-      : location.pathname === '/research-factory/vetting'
-        ? 'Scientific Research Factory · Vetting'
-      : location.pathname === '/research-factory/evidence'
-        ? 'Scientific Research Factory · Evidence & Runs'
+      : location.pathname === '/research-factory/history'
+        ? 'Scientific Research Factory · Research History'
       : pageNames[location.pathname] ?? 'Dashboard';
 
   return (

@@ -14,4 +14,6 @@ RUN python -m pip install --no-cache-dir .
 COPY python-ml-worker/aurora_ml/__init__.py ./aurora_ml/__init__.py
 COPY python-ml-worker/aurora_ml/pipeline ./aurora_ml/pipeline
 
+EXPOSE 8088
+
 CMD ["python", "-m", "aurora.gold_builder.service"]

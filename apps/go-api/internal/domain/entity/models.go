@@ -123,3 +123,14 @@ type TrainingLabelOverride struct {
 	SourceProductID string
 	TrainingLabel   string
 }
+
+// TrainingReview is one durable human decision in the mutable training cohort.
+type TrainingReview struct {
+	SnapshotID      string `json:"snapshot_id"`
+	SourceProductID string `json:"source_product_id"`
+	TICID           int64  `json:"tic_id"`
+	Sector          int    `json:"sector"`
+	TrainingLabel   string `json:"training_label"`
+	ReviewStatus    string `json:"review_status"`
+	UpdatedAt       string `json:"updated_at"`
+}

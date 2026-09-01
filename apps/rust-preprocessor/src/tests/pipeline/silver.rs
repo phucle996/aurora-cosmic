@@ -97,8 +97,16 @@ fn test_serialize_lightcurve_parquet_roundtrip() {
             output_points: 3,
             quality_removed: 0,
             invalid_removed: 0,
+            nonfinite_removed: 0,
+            nonpositive_time_removed: 0,
             outlier_removed: 0,
+            sigma_clip_3_4_removed: 0,
+            sigma_clip_4_5_removed: 0,
+            sigma_clip_ge_5_removed: 0,
             flux_median: 1000.0,
+            normalized_scatter_before_clip_ppm: 12.5,
+            normalized_scatter_after_clip_ppm: 10.0,
+            sigma_clip_level: Some(5.0),
         },
     };
 
@@ -106,6 +114,11 @@ fn test_serialize_lightcurve_parquet_roundtrip() {
     assert_eq!(artifact.schema_version, "silver-lightcurve-v1");
     assert!(artifact.size_bytes > 0);
     assert_eq!(artifact.sha256.len(), 64);
+    assert!(artifact
+        .metadata
+        .get("parquet-encode-duration-ms")
+        .and_then(|value| value.parse::<f64>().ok())
+        .is_some_and(|value| value >= 0.0));
 
     // Read back Parquet file
     let file = File::open(&artifact.local_path).unwrap();
@@ -156,6 +169,8 @@ fn test_serialize_target_pixel_parquet_roundtrip() {
             output_cadences: 2,
             quality_removed: 0,
             invalid_time_removed: 0,
+            nonfinite_removed: 0,
+            nonpositive_time_removed: 0,
             finite_pixel_fraction: 1.0,
         },
     };
@@ -204,6 +219,8 @@ fn test_stream_target_pixel_parquet_writes_multiple_chunks() {
         output_cadences: 2,
         quality_removed: 0,
         invalid_time_removed: 0,
+        nonfinite_removed: 0,
+        nonpositive_time_removed: 0,
         finite_pixel_fraction: 1.0,
     };
     let first = ProcessedTargetPixel {
@@ -276,6 +293,8 @@ fn test_serialize_ffi_parquet_roundtrip() {
             output_cadences: 1,
             quality_removed: 0,
             invalid_time_removed: 0,
+            nonfinite_removed: 0,
+            nonpositive_time_removed: 0,
             finite_pixel_fraction: 1.0,
         },
     };

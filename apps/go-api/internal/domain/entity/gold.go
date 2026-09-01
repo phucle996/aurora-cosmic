@@ -9,6 +9,7 @@ type GoldControlStartRequest struct {
 	Mode             string `json:"mode"`
 	MaxBatchRecords  int    `json:"max_batch_records"`
 	IdleFlushSeconds int    `json:"idle_flush_seconds"`
+	TicketID         string `json:"ticket_id,omitempty"`
 }
 
 type GoldControlState struct {
@@ -36,12 +37,28 @@ type GoldRuntimeStatus struct {
 	Readiness        GoldReadinessStatus   `json:"readiness"`
 	CatalogSync      GoldCatalogSyncStatus `json:"catalog_sync"`
 	ActiveBuilds     int                   `json:"active_builds"`
+	Workers          []GoldWorkerStatus    `json:"workers"`
 	FirstSilverAt    string                `json:"first_silver_at"`
 	LastSilverAt     string                `json:"last_silver_at"`
 	NextFlushAt      string                `json:"next_flush_at"`
 	LastSnapshotID   string                `json:"last_snapshot_id"`
 	LastError        string                `json:"last_error"`
 	UpdatedAt        string                `json:"updated_at"`
+}
+
+// GoldWorkerStatus is authored by the worker runtime. Lifecycle describes
+// whether a process-pool slot exists; Action describes what that slot is doing
+// right now. The API never derives either value from aggregate counters.
+type GoldWorkerStatus struct {
+	WorkerID   string `json:"worker_id"`
+	Lifecycle  string `json:"lifecycle"`
+	Action     string `json:"action"`
+	CommandID  string `json:"command_id,omitempty"`
+	BatchRef   string `json:"batch_ref,omitempty"`
+	InputCount int    `json:"input_count"`
+	SnapshotID string `json:"snapshot_id,omitempty"`
+	Detail     string `json:"detail,omitempty"`
+	UpdatedAt  string `json:"updated_at"`
 }
 
 // GoldCatalogSyncStatus describes the real, batch-scoped catalog evidence

@@ -29,19 +29,38 @@ type Service struct {
 	cfg     *config.Config
 	log     *slog.Logger
 	metrics *observer.Metrics
+	runtime *observer.IngestRuntimeObserver
 }
 
-func NewService(cfg *config.Config, log *slog.Logger, metrics *observer.Metrics) *Service {
+func NewService(cfg *config.Config, log *slog.Logger, metrics *observer.Metrics, runtimes ...*observer.IngestRuntimeObserver) *Service {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Service{cfg: cfg, log: log, metrics: metrics}
+	var runtime *observer.IngestRuntimeObserver
+	if len(runtimes) > 0 {
+		runtime = runtimes[0]
+	}
+	return &Service{cfg: cfg, log: log, metrics: metrics, runtime: runtime}
 }
 
-func (s *Service) Run(ctx context.Context, command control.Command) error {
+func (s *Service) Run(ctx context.Context, command control.Command) (runErr error) {
+	defer func() {
+		event := observer.IngestRuntimeEvent{JobID: command.JobID, Status: "completed"}
+		switch {
+		case ctx.Err() != nil:
+			event.Status = "canceled"
+		case runErr != nil:
+			event.Status = "failed"
+			event.Error = runErr.Error()
+		case drainRequested(command.Drain):
+			event.Status = "stopped"
+		}
+		s.runtime.Publish(event)
+	}()
 	if s.cfg == nil {
 		return fmt.Errorf("ingestion configuration is required")
 	}
+	s.publishPlanning(command, "PREPARING_BRONZE_STORAGE", 0, 5)
 
 	minioClient, err := storage.NewMinIOClient(s.cfg.MinIO.Endpoint, s.cfg.MinIO.AccessKey, s.cfg.MinIO.SecretKey)
 	if err != nil {
@@ -49,12 +68,13 @@ func (s *Service) Run(ctx context.Context, command control.Command) error {
 	}
 	preferredTICs, toiSnapshotID, toiRows, err := catalog.SyncTOI(ctx, minioClient, s.cfg.MinIO.Bucket)
 	if err != nil {
-		catalog.ReportFailure(ctx, minioClient, s.cfg.MinIO.Bucket, "DOWNLOADING_TOI", err)
+		s.reportPlanningTerminal(ctx, minioClient, "DOWNLOADING_TOI", err)
 		return fmt.Errorf("sync shared TOI catalog: %w", err)
 	}
+	s.publishPlanning(command, "TOI_READY_WAITING_FOR_MANIFEST_TARGETS", 1, 5)
 	manifest, manifestRef, discoveredProducts, err := s.resolveManifest(ctx, command, preferredTICs, minioClient)
 	if err != nil {
-		reportManifestFailure(ctx, minioClient, s.cfg.MinIO.Bucket, "BUILDING_MANIFEST", err)
+		s.reportPlanningTerminal(ctx, minioClient, "BUILDING_MANIFEST", err)
 		return err
 	}
 	ticIDs := make([]int64, 0, len(manifest.Samples))
@@ -72,8 +92,7 @@ func (s *Service) Run(ctx context.Context, command control.Command) error {
 	})
 	ticSnapshotID, err := catalog.SyncTIC(ctx, minioClient, s.cfg.MinIO.Bucket, ticIDs, toiSnapshotID, toiRows)
 	if err != nil {
-		catalog.ReportFailure(ctx, minioClient, s.cfg.MinIO.Bucket, "DOWNLOADING_TIC", err)
-		reportManifestFailure(ctx, minioClient, s.cfg.MinIO.Bucket, "PINNING_CATALOG_SNAPSHOTS", err)
+		s.reportPlanningTerminal(ctx, minioClient, "DOWNLOADING_TIC", err)
 		return fmt.Errorf("sync shared TIC catalog: %w", err)
 	}
 	manifest.CatalogSnapshots = map[string]string{"TIC": ticSnapshotID, "TOI": toiSnapshotID}
@@ -124,10 +143,42 @@ func (s *Service) Run(ctx context.Context, command control.Command) error {
 			WorkerCount:        command.Concurrency,
 			CheckpointInterval: s.cfg.Ingest.CheckpointInterval,
 			CapacityGate:       capacityGate,
-			Metrics:            s.metrics,
-			Logger:             s.log,
+			Drain:              command.Drain,
+			Progress: func(progress ProgressEvent) {
+				s.runtime.Publish(observer.IngestRuntimeEvent{
+					JobID:             command.JobID,
+					Status:            "progress",
+					ProductID:         progress.Result.SourceProductID,
+					CompletedProducts: progress.CompletedProducts,
+					TotalProducts:     progress.TotalProducts,
+					CompletedBytes:    progress.CompletedBytes,
+					ExpectedBytes:     progress.TotalBytes,
+					ActiveWorkers:     progress.ActiveWorkers,
+				})
+			},
+			TransferProgress: func(progress TransferProgressEvent) {
+				status := "transfer"
+				if progress.Done {
+					status = "transfer_complete"
+				}
+				s.runtime.Publish(observer.IngestRuntimeEvent{
+					JobID:                command.JobID,
+					Status:               status,
+					WorkerID:             progress.WorkerID,
+					ProductID:            progress.ProductID,
+					ProductKind:          string(progress.ProductKind),
+					ProductBytes:         progress.BytesRead,
+					ProductExpectedBytes: progress.ExpectedBytes,
+				})
+			},
+			Metrics: s.metrics,
+			Logger:  s.log,
 		},
 	)
+	if command.ReportRunning != nil {
+		command.ReportRunning()
+	}
+	s.runtime.Publish(observer.IngestRuntimeEvent{JobID: command.JobID, Status: "running"})
 
 	summary, _, err := pipeline.IngestManifest(ctx, manifest)
 	if err != nil {
@@ -137,6 +188,18 @@ func (s *Service) Run(ctx context.Context, command control.Command) error {
 		return fmt.Errorf("ingestion completed with %d failed products", summary.FailedCount)
 	}
 	return nil
+}
+
+func drainRequested(drain <-chan struct{}) bool {
+	if drain == nil {
+		return false
+	}
+	select {
+	case <-drain:
+		return true
+	default:
+		return false
+	}
 }
 
 type rollingCapacityGate struct {
@@ -181,9 +244,11 @@ func (g *rollingCapacityGate) Acquire(ctx context.Context, expectedBytes int64) 
 }
 
 func (s *Service) resolveManifest(ctx context.Context, command control.Command, preferredTICs map[int64]struct{}, store *storage.MinIOClient) (*model.Manifest, string, int, error) {
+	const planningTotal = 5
 	writeManifestProgress(ctx, store, s.cfg.MinIO.Bucket, manifestProgress{
 		State: "RUNNING", Stage: "DISCOVERING_MAST_PRODUCTS", Completed: 0,
 	})
+	s.publishPlanning(command, "DISCOVERING_MAST_PRODUCTS", 0, planningTotal)
 	if command.ManifestPath != "" {
 		manifest, err := plan.Read(command.ManifestPath)
 		if err != nil {
@@ -197,12 +262,38 @@ func (s *Service) resolveManifest(ctx context.Context, command control.Command, 
 		return manifest, command.ManifestPath, len(manifest.Samples) * 2, nil
 	}
 
-	products, err := mast.DiscoverTESS(ctx, s.newMASTClient(), mast.DiscoverOptions{
+	// MAST_TIMEOUT bounds each remote request. A full sector spans many pages,
+	// so its workflow deadline is intentionally separate and substantially
+	// longer than one HTTP request.
+	discoveryTimeout := s.cfg.MAST.DiscoveryTimeout
+	if discoveryTimeout <= 0 {
+		discoveryTimeout = 10 * time.Minute
+	}
+	discoveryCtx, cancelDiscovery := context.WithTimeout(ctx, discoveryTimeout)
+	defer cancelDiscovery()
+	progressWriter := newManifestProgressWriter(ctx, store, s.cfg.MinIO.Bucket)
+
+	products, err := mast.DiscoverTESS(discoveryCtx, s.newMASTClient(), mast.DiscoverOptions{
 		Sector:   command.Sector,
 		Limit:    command.Limit,
 		PageSize: s.cfg.MAST.PageSize,
+		Progress: func(progress mast.DiscoverProgress) {
+			progressWriter.Report(manifestProgress{
+				State:              "RUNNING",
+				Stage:              progress.Stage,
+				Completed:          0,
+				StageCompleted:     progress.Completed,
+				StageTotal:         progress.Total,
+				DiscoveredProducts: progress.Products,
+			})
+			s.publishMeasuredPlanning(command, progress)
+		},
 	}, s.log)
+	progressWriter.Close()
 	if err != nil {
+		if errors.Is(discoveryCtx.Err(), context.DeadlineExceeded) {
+			return nil, "", 0, fmt.Errorf("discover TESS products: MAST discovery deadline exceeded after %s", discoveryTimeout)
+		}
 		return nil, "", 0, fmt.Errorf("discover TESS products: %w", err)
 	}
 	writeManifestProgress(ctx, store, s.cfg.MinIO.Bucket, manifestProgress{
@@ -219,6 +310,99 @@ func (s *Service) resolveManifest(ctx context.Context, command control.Command, 
 		SelectedSamples: len(manifest.Samples), PrioritySamples: countPreferredSamples(manifest, preferredTICs),
 	})
 	return manifest, manifestReference(command), len(products), nil
+}
+
+type manifestProgressWriter struct {
+	ctx     context.Context
+	store   *storage.MinIOClient
+	bucket  string
+	updates chan manifestProgress
+	done    chan struct{}
+}
+
+func newManifestProgressWriter(ctx context.Context, store *storage.MinIOClient, bucket string) *manifestProgressWriter {
+	w := &manifestProgressWriter{
+		ctx:     ctx,
+		store:   store,
+		bucket:  bucket,
+		updates: make(chan manifestProgress, 1),
+		done:    make(chan struct{}),
+	}
+	go func() {
+		defer close(w.done)
+		for progress := range w.updates {
+			writeCtx, cancel := context.WithTimeout(w.ctx, 2*time.Second)
+			writeManifestProgress(writeCtx, w.store, w.bucket, progress)
+			cancel()
+		}
+	}()
+	return w
+}
+
+// Report coalesces operator snapshots so a slow MinIO telemetry write can
+// never block MAST discovery or consume its deadline.
+func (w *manifestProgressWriter) Report(progress manifestProgress) {
+	select {
+	case w.updates <- progress:
+		return
+	default:
+	}
+	select {
+	case <-w.updates:
+	default:
+	}
+	select {
+	case w.updates <- progress:
+	default:
+	}
+}
+
+func (w *manifestProgressWriter) Close() {
+	close(w.updates)
+	<-w.done
+}
+
+func (s *Service) publishPlanning(command control.Command, stage string, completed, total int) {
+	if s.runtime == nil {
+		return
+	}
+	s.runtime.Publish(observer.IngestRuntimeEvent{
+		JobID:             command.JobID,
+		Status:            "planning",
+		PlanningStage:     stage,
+		PlanningCompleted: completed,
+		PlanningTotal:     total,
+	})
+}
+
+func (s *Service) publishMeasuredPlanning(command control.Command, progress mast.DiscoverProgress) {
+	if s.runtime == nil {
+		return
+	}
+	s.runtime.Publish(observer.IngestRuntimeEvent{
+		JobID:             command.JobID,
+		Status:            "planning",
+		PlanningStage:     progress.Stage,
+		PlanningCompleted: progress.Completed,
+		PlanningTotal:     progress.Total,
+		PlanningProducts:  progress.Products,
+	})
+}
+
+// reportPlanningTerminal must survive cancellation. The control context is
+// intentionally canceled during a stop or service restart; a short independent
+// write lets the next status read distinguish CANCELED/FAILED from a stale
+// RUNNING planner document.
+func (s *Service) reportPlanningTerminal(runCtx context.Context, store *storage.MinIOClient, stage string, runErr error) {
+	persistCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if runCtx.Err() != nil {
+		catalog.ReportCanceled(persistCtx, store, s.cfg.MinIO.Bucket, stage)
+		reportManifestCanceled(persistCtx, store, s.cfg.MinIO.Bucket, stage)
+		return
+	}
+	catalog.ReportFailure(persistCtx, store, s.cfg.MinIO.Bucket, stage, runErr)
+	reportManifestFailure(persistCtx, store, s.cfg.MinIO.Bucket, stage, runErr)
 }
 
 func countPreferredSamples(manifest *model.Manifest, preferredTICs map[int64]struct{}) int {

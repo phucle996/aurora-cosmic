@@ -30,6 +30,9 @@ pub struct Metrics {
     bytes: IntCounterVec,
     samples: IntCounterVec,
     finite_pixel_fraction: GaugeVec,
+    normalized_scatter_ppm: HistogramVec,
+    sigma_clip_fraction: HistogramVec,
+    finite_pixel_fraction_distribution: HistogramVec,
     last_success: Gauge,
 }
 
@@ -96,6 +99,30 @@ impl Metrics {
             ),
             &["kind"],
         )?;
+        let normalized_scatter_ppm = HistogramVec::new(
+            prometheus::HistogramOpts::new(
+                "aurora_preprocessor_lc_normalized_scatter_ppm",
+                "Distribution of per-product normalized Light Curve scatter before and after sigma clipping, in ppm.",
+            )
+            .buckets(vec![10.0, 30.0, 100.0, 300.0, 1_000.0, 3_000.0, 10_000.0, 30_000.0, 100_000.0, 1_000_000.0]),
+            &["phase"],
+        )?;
+        let sigma_clip_fraction = HistogramVec::new(
+            prometheus::HistogramOpts::new(
+                "aurora_preprocessor_lc_sigma_clip_fraction",
+                "Distribution of the fraction of quality-valid Light Curve cadences removed by sigma clipping.",
+            )
+            .buckets(vec![0.0, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0]),
+            &[],
+        )?;
+        let finite_pixel_fraction_distribution = HistogramVec::new(
+            prometheus::HistogramOpts::new(
+                "aurora_preprocessor_tpf_finite_pixel_fraction",
+                "Distribution of finite-pixel fractions across processed Target Pixel products.",
+            )
+            .buckets(vec![0.5, 0.75, 0.9, 0.95, 0.99, 0.999, 1.0]),
+            &[],
+        )?;
         let last_success = Gauge::new(
             "aurora_preprocessor_last_success_timestamp_seconds",
             "Unix timestamp of the last successful or recovered product.",
@@ -111,7 +138,43 @@ impl Metrics {
         registry.register(Box::new(bytes.clone()))?;
         registry.register(Box::new(samples.clone()))?;
         registry.register(Box::new(finite_pixel_fraction.clone()))?;
+        registry.register(Box::new(normalized_scatter_ppm.clone()))?;
+        registry.register(Box::new(sigma_clip_fraction.clone()))?;
+        registry.register(Box::new(finite_pixel_fraction_distribution.clone()))?;
         registry.register(Box::new(last_success.clone()))?;
+
+        // Materialize every bounded counter/histogram label at startup. Idle
+        // workers then export zero-valued families instead of appearing to
+        // have a broken Prometheus contract before their first product.
+        for kind in ["lightcurve", "target_pixel", "ffi", "unknown"] {
+            for status in [STATUS_SUCCESS, STATUS_RECOVERED, STATUS_FAILED] {
+                products.with_label_values(&[kind, status]);
+            }
+            duration.with_label_values(&[kind]);
+            errors.with_label_values(&[kind]);
+            for stage in ["bronze", "silver"] {
+                bytes.with_label_values(&[kind, stage]);
+            }
+            for outcome in [
+                "input",
+                "output",
+                "quality_removed",
+                "invalid_removed",
+                "nonfinite_removed",
+                "nonpositive_time_removed",
+                "outlier_removed",
+                "sigma_clip_3_4_removed",
+                "sigma_clip_4_5_removed",
+                "sigma_clip_ge_5_removed",
+            ] {
+                samples.with_label_values(&[kind, outcome]);
+            }
+        }
+        for phase in ["before_clip", "after_clip"] {
+            normalized_scatter_ppm.with_label_values(&[phase]);
+        }
+        sigma_clip_fraction.with_label_values(&[]);
+        finite_pixel_fraction_distribution.with_label_values(&[]);
 
         Ok(Self {
             registry,
@@ -125,6 +188,9 @@ impl Metrics {
             bytes,
             samples,
             finite_pixel_fraction,
+            normalized_scatter_ppm,
+            sigma_clip_fraction,
+            finite_pixel_fraction_distribution,
             last_success,
         })
     }
@@ -157,8 +223,15 @@ impl Metrics {
             output_samples: 0,
             quality_removed: 0,
             invalid_removed: 0,
+            nonfinite_removed: 0,
+            nonpositive_time_removed: 0,
             outlier_removed: 0,
+            sigma_clip_3_4_removed: 0,
+            sigma_clip_4_5_removed: 0,
+            sigma_clip_ge_5_removed: 0,
             finite_pixel_fraction: None,
+            normalized_scatter_before_ppm: None,
+            normalized_scatter_after_ppm: None,
         }
     }
 
@@ -176,7 +249,18 @@ impl Metrics {
             ("output", observation.output_samples),
             ("quality_removed", observation.quality_removed),
             ("invalid_removed", observation.invalid_removed),
+            ("nonfinite_removed", observation.nonfinite_removed),
+            (
+                "nonpositive_time_removed",
+                observation.nonpositive_time_removed,
+            ),
             ("outlier_removed", observation.outlier_removed),
+            ("sigma_clip_3_4_removed", observation.sigma_clip_3_4_removed),
+            ("sigma_clip_4_5_removed", observation.sigma_clip_4_5_removed),
+            (
+                "sigma_clip_ge_5_removed",
+                observation.sigma_clip_ge_5_removed,
+            ),
         ] {
             if value > 0 {
                 self.samples
@@ -188,6 +272,31 @@ impl Metrics {
             self.finite_pixel_fraction
                 .with_label_values(&[kind])
                 .set(value);
+            if kind == "target_pixel" {
+                self.finite_pixel_fraction_distribution
+                    .with_label_values(&[])
+                    .observe(value);
+            }
+        }
+        if kind == "lightcurve" {
+            if let Some(value) = observation.normalized_scatter_before_ppm {
+                self.normalized_scatter_ppm
+                    .with_label_values(&["before_clip"])
+                    .observe(value);
+            }
+            if let Some(value) = observation.normalized_scatter_after_ppm {
+                self.normalized_scatter_ppm
+                    .with_label_values(&["after_clip"])
+                    .observe(value);
+            }
+            let preclip_samples = observation
+                .output_samples
+                .saturating_add(observation.outlier_removed);
+            if preclip_samples > 0 {
+                self.sigma_clip_fraction
+                    .with_label_values(&[])
+                    .observe(observation.outlier_removed as f64 / preclip_samples as f64);
+            }
         }
 
         if status == STATUS_FAILED {
@@ -236,8 +345,15 @@ pub struct ProductObservation {
     output_samples: u64,
     quality_removed: u64,
     invalid_removed: u64,
+    nonfinite_removed: u64,
+    nonpositive_time_removed: u64,
     outlier_removed: u64,
+    sigma_clip_3_4_removed: u64,
+    sigma_clip_4_5_removed: u64,
+    sigma_clip_ge_5_removed: u64,
     finite_pixel_fraction: Option<f64>,
+    normalized_scatter_before_ppm: Option<f64>,
+    normalized_scatter_after_ppm: Option<f64>,
 }
 
 impl ProductObservation {
@@ -271,12 +387,27 @@ impl ProductObservation {
         self.output_samples = integer(&["output-points", "output-cadences"]);
         self.quality_removed = integer(&["quality-removed"]);
         self.invalid_removed = integer(&["invalid-removed", "invalid-time-removed"]);
+        self.nonfinite_removed = integer(&["nonfinite-removed"]);
+        self.nonpositive_time_removed = integer(&["nonpositive-time-removed"]);
         self.outlier_removed = integer(&["outlier-removed"]);
+        self.sigma_clip_3_4_removed = integer(&["sigma-clip-3-4-removed"]);
+        self.sigma_clip_4_5_removed = integer(&["sigma-clip-4-5-removed"]);
+        self.sigma_clip_ge_5_removed = integer(&["sigma-clip-ge-5-removed"]);
         self.finite_pixel_fraction = metadata
             .get("finite-pixel-fraction")
             .and_then(|value| value.parse::<f64>().ok())
             .filter(|value| value.is_finite());
+        self.normalized_scatter_before_ppm =
+            finite_nonnegative(metadata.get("normalized-scatter-before-clip-ppm"));
+        self.normalized_scatter_after_ppm =
+            finite_nonnegative(metadata.get("normalized-scatter-after-clip-ppm"));
     }
+}
+
+fn finite_nonnegative(value: Option<&String>) -> Option<f64> {
+    value
+        .and_then(|raw| raw.parse::<f64>().ok())
+        .filter(|parsed| parsed.is_finite() && *parsed >= 0.0)
 }
 
 impl Drop for ProductObservation {
@@ -381,7 +512,20 @@ mod tests {
             ("input-points".to_string(), "100".to_string()),
             ("output-points".to_string(), "75".to_string()),
             ("quality-removed".to_string(), "20".to_string()),
+            ("nonfinite-removed".to_string(), "3".to_string()),
+            ("nonpositive-time-removed".to_string(), "2".to_string()),
             ("outlier-removed".to_string(), "5".to_string()),
+            ("sigma-clip-3-4-removed".to_string(), "1".to_string()),
+            ("sigma-clip-4-5-removed".to_string(), "1".to_string()),
+            ("sigma-clip-ge-5-removed".to_string(), "3".to_string()),
+            (
+                "normalized-scatter-before-clip-ppm".to_string(),
+                "1200".to_string(),
+            ),
+            (
+                "normalized-scatter-after-clip-ppm".to_string(),
+                "800".to_string(),
+            ),
         ]));
         observation.set_success();
         drop(observation);
@@ -402,5 +546,17 @@ mod tests {
             "aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"input\"} 100"
         ));
         assert!(text.contains("aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"outlier_removed\"} 5"));
+        assert!(text.contains("aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"sigma_clip_3_4_removed\"} 1"));
+        assert!(text.contains("aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"sigma_clip_4_5_removed\"} 1"));
+        assert!(text.contains("aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"sigma_clip_ge_5_removed\"} 3"));
+        assert!(text.contains("aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"nonfinite_removed\"} 3"));
+        assert!(text.contains("aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"nonpositive_time_removed\"} 2"));
+        assert!(text.contains(
+            "aurora_preprocessor_lc_normalized_scatter_ppm_count{phase=\"before_clip\"} 1"
+        ));
+        assert!(text.contains(
+            "aurora_preprocessor_lc_normalized_scatter_ppm_count{phase=\"after_clip\"} 1"
+        ));
+        assert!(text.contains("aurora_preprocessor_lc_sigma_clip_fraction_count 1"));
     }
 }

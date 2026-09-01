@@ -47,6 +47,12 @@ class GoldBuildResult:
     artifact_count: int
     set_current: bool
     dataset_row_counts: Dict[str, int] = field(default_factory=dict)
+    lightcurve_inputs: int = 0
+    target_pixel_inputs: int = 0
+    lightcurve_feature_rows: int = 0
+    bls_evidence_rows: int = 0
+    target_pixel_evidence_rows: int = 0
+    catalog_enriched_rows: int = 0
 
 
 def _sha256(data: bytes) -> str:
@@ -203,8 +209,8 @@ class GoldBuilder:
                 self.store,
                 event,
                 lc_features,
-            scratch_dir=self.scratch_dir,
-            feature_version=TPF_FEATURE_VERSION,
+                scratch_dir=self.scratch_dir,
+                feature_version=TPF_FEATURE_VERSION,
             )
         except TpfFeatureError as exc:
             raise GoldBuildError(str(exc)) from exc
@@ -488,6 +494,17 @@ class GoldBuilder:
             artifact_count=len(artifact_records),
             set_current=set_current,
             dataset_row_counts=dataset_row_counts,
+            lightcurve_inputs=len(lc_events),
+            target_pixel_inputs=len(tpf_events),
+            lightcurve_feature_rows=len(lc_features_by_source),
+            bls_evidence_rows=sum(
+                bool(features.bls_available)
+                for features in lc_features_by_source.values()
+            ),
+            target_pixel_evidence_rows=len(tpf_rows),
+            catalog_enriched_rows=sum(
+                bool(row.get("tic_available")) for row in candidate_rows
+            ),
         )
 
     def _candidate_row_from_features(

@@ -8,6 +8,7 @@ type WorkflowEvent struct {
 	Workflow   string
 	Status     string
 	JobID      string
+	TicketID   string
 	OccurredAt time.Time
 	Payload    []byte
 }

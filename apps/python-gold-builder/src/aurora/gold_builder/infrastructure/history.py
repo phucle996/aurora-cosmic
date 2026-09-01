@@ -240,6 +240,60 @@ class FactoryHistoryWriter:
                 output_rows=result.row_count,
                 snapshot_id=result.snapshot_id,
             )
+            for component_id, component_input, component_output in (
+                (
+                    "gold-pairing",
+                    result.lightcurve_inputs + result.target_pixel_inputs,
+                    result.row_count,
+                ),
+                (
+                    "gold-catalog",
+                    result.lightcurve_inputs,
+                    result.catalog_enriched_rows,
+                ),
+                (
+                    "gold-lc-features",
+                    result.lightcurve_inputs,
+                    result.lightcurve_feature_rows,
+                ),
+                (
+                    "gold-bls",
+                    result.lightcurve_feature_rows,
+                    result.bls_evidence_rows,
+                ),
+                (
+                    "gold-tpf-evidence",
+                    result.target_pixel_inputs,
+                    result.target_pixel_evidence_rows,
+                ),
+                (
+                    "gold-candidate",
+                    result.lightcurve_feature_rows + result.target_pixel_evidence_rows,
+                    result.row_count,
+                ),
+                (
+                    "gold-parquet",
+                    result.row_count,
+                    result.artifact_count,
+                ),
+            ):
+                self._component_event(
+                    control.command_id,
+                    component_id,
+                    "COMPLETED",
+                    input_records=component_input,
+                    output_rows=component_output,
+                    snapshot_id=result.snapshot_id,
+                )
+            self._component_event(
+                control.command_id,
+                "gold-index",
+                "COMPLETED",
+                input_records=result.row_count,
+                output_rows=result.row_count,
+                indexed_rows=indexed_rows,
+                snapshot_id=result.snapshot_id,
+            )
             self._component_event(
                 control.command_id,
                 "gold-commit",

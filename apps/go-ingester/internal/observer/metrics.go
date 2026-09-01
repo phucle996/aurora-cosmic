@@ -83,6 +83,13 @@ func New() *Metrics {
 	m.registry.MustRegister(m.queue)
 	m.registry.MustRegister(m.bytes)
 	m.registry.MustRegister(m.lastOK)
+	// Materialize the bounded status label space at startup. An idle ingester
+	// should expose zero counters and histogram buckets instead of making
+	// Prometheus look as if the metric contract is missing.
+	for _, status := range []string{"success", "skipped", "failed"} {
+		m.products.WithLabelValues(status)
+		m.duration.WithLabelValues(status)
+	}
 	return m
 }
 

@@ -15,6 +15,14 @@ type ObjectInfo struct {
 	Size         int64
 	ETag         string
 	LastModified time.Time
+	UserMetadata map[string]string
+}
+
+// ObjectMetadataRepository is an optional capability used by scientific
+// inventory readers that need object-level evidence without downloading the
+// artifact body.
+type ObjectMetadataRepository interface {
+	ListObjectsWithMetadata(context.Context, string) ([]ObjectInfo, error)
 }
 
 type CatalogObject struct {

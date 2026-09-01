@@ -40,153 +40,163 @@ type metricSpec struct {
 }
 
 type componentSpec struct {
-	ID        string       // Mã service (VD: "go-ingester", "rust-preprocessor")
-	Name      string       // Tên component hiển thị
-	Group     string       // Nhóm: "Pipeline" (các worker xử lý) hoặc "Platform" (hạ tầng nền tảng)
-	Container string       // Tên container docker tương ứng
-	Job       string       // Tên scrape job trong prometheus.yml
-	Metrics   []metricSpec // Danh sách các metrics cần thu thập
+	ID          string
+	Name        string
+	Group       string
+	Container   string
+	Job         string
+	HealthQuery string
+	Metrics     []metricSpec
 }
 
-// rate tạo câu truy vấn PromQL tính tốc độ biến thiên theo cửa sổ 2 phút: sum(rate(metric[2m]))
+// Labelled counters often do not exist before their first event. Returning a
+// real zero series keeps an idle but healthy component distinct from a failed
+// Prometheus scrape.
 func rate(metric string) string {
-	return fmt.Sprintf("sum(rate(%s[2m]))", metric)
+	return fmt.Sprintf("sum(rate(%s[2m])) or vector(0)", metric)
 }
 
-// averageDuration tạo câu truy vấn PromQL tính thời gian xử lý trung bình: sum(rate(metric_sum)) / sum(rate(metric_count))
-func averageDuration(metric string) string {
-	return fmt.Sprintf("sum(rate(%s_sum[2m])) / clamp_min(sum(rate(%s_count[2m])), 1)", metric, metric)
+// p95Duration reports the slow tail of a real histogram. The count guard
+// removes the NaN emitted by an idle histogram before falling back to zero.
+func p95Duration(metric, selector string) string {
+	return fmt.Sprintf(
+		"(histogram_quantile(0.95, sum by (le) (rate(%s_bucket%s[5m]))) and on() (sum(increase(%s_count%s[5m])) > 0)) or vector(0)",
+		metric, selector, metric, selector,
+	)
 }
 
 func systemdMetrics(unit string) []metricSpec {
 	selector := fmt.Sprintf(`{unit=%q}`, unit)
 	return []metricSpec{
-		{Key: "availability", Name: "Systemd active", Unit: "up", Kind: "gauge", Query: "max(aurora_systemd_unit_active" + selector + ")"},
-		{Key: "restarts", Name: "Systemd restarts", Unit: "restarts", Kind: "gauge", Query: "max(aurora_systemd_unit_restarts_total" + selector + ")"},
-		{Key: "memory", Name: "Systemd memory", Unit: "bytes", Kind: "gauge", Query: "max(aurora_systemd_unit_memory_bytes" + selector + ")"},
-		{Key: "cpu", Name: "Systemd CPU time", Unit: "seconds", Kind: "gauge", Query: "max(aurora_systemd_unit_cpu_seconds_total" + selector + ")"},
+		{Key: "memory", Name: "Process memory", Unit: "bytes", Kind: "gauge", Query: "max(aurora_systemd_unit_memory_bytes" + selector + ")"},
+		{Key: "memory_total", Name: "Host memory capacity", Unit: "bytes", Kind: "gauge", Query: "max(aurora_host_memory_total_bytes)"},
+		{Key: "cpu_cores", Name: "CPU cores in use", Unit: "cores", Kind: "gauge", Query: "rate(aurora_systemd_unit_cpu_seconds_total" + selector + "[1m])"},
+		{Key: "cpu_cores_total", Name: "Host logical CPU cores", Unit: "cores", Kind: "gauge", Query: "max(aurora_host_cpu_logical_cores)"},
+		{Key: "disk_read", Name: "Process disk read", Unit: "bytes/s", Kind: "rate", Query: "rate(aurora_systemd_unit_io_read_bytes_total" + selector + "[1m])"},
+		{Key: "disk_write", Name: "Process disk write", Unit: "bytes/s", Kind: "rate", Query: "rate(aurora_systemd_unit_io_write_bytes_total" + selector + "[1m])"},
 	}
+}
+
+func combineMetrics(groups ...[]metricSpec) []metricSpec {
+	total := 0
+	for _, group := range groups {
+		total += len(group)
+	}
+	combined := make([]metricSpec, 0, total)
+	for _, group := range groups {
+		combined = append(combined, group...)
+	}
+	return combined
 }
 
 // ============================================================================
 // DANH SÁCH CÁC COMPONENT ĐƯỢC GIÁM SÁT
 // ============================================================================
 var components = []componentSpec{
-	// 1. Go Ingester (Thu thập FITS từ MAST)
 	{
-		ID: "go-ingester", Name: "Go Ingester", Group: "Pipeline", Container: "aurora-go-ingester", Job: "aurora-go-ingester",
-		Metrics: []metricSpec{
-			{Key: "throughput", Name: "Products / second", Unit: "products/s", Kind: "rate", Query: rate("aurora_ingester_products_total")},
-			{Key: "duration", Name: "Processing duration", Unit: "seconds", Kind: "duration", Query: averageDuration("aurora_ingester_product_duration_seconds")},
+		ID: "go-ingester", Name: "Go Ingester", Group: "Pipeline", Container: "aurora-go-ingester", Job: "aurora-go-ingester", HealthQuery: `max(up{job="aurora-go-ingester"})`,
+		Metrics: combineMetrics([]metricSpec{
+			{Key: "throughput", Name: "Stored products / second", Unit: "products/s", Kind: "rate", Query: rate(`aurora_ingester_products_total{status="success"}`)},
+			{Key: "duration_p95", Name: "Product latency p95", Unit: "seconds", Kind: "histogram p95", Query: p95Duration("aurora_ingester_product_duration_seconds", `{status="success"}`)},
 			{Key: "errors", Name: "Errors / second", Unit: "errors/s", Kind: "rate", Query: rate("aurora_ingester_errors_total")},
 			{Key: "inflight", Name: "In-flight products", Unit: "products", Kind: "gauge", Query: "sum(aurora_ingester_inflight_products)"},
 			{Key: "queue", Name: "Queue depth", Unit: "products", Kind: "gauge", Query: "sum(aurora_ingester_queue_depth)"},
-			{Key: "bytes", Name: "Bytes / second", Unit: "bytes/s", Kind: "rate", Query: rate("aurora_ingester_bytes_processed_total")},
-		},
+			{Key: "bytes", Name: "Stored bytes / second", Unit: "bytes/s", Kind: "rate", Query: rate("aurora_ingester_bytes_processed_total")},
+		}, systemdMetrics("aurora-go-ingester.service")),
 	},
-	// 2. Rust Preprocessor (Tiền xử lý FITS sang Parquet)
 	{
-		ID: "rust-preprocessor", Name: "Rust Preprocessor", Group: "Pipeline", Container: "aurora-rust-preprocessor", Job: "aurora-rust-preprocessor",
-		Metrics: []metricSpec{
-			{Key: "throughput", Name: "Products / second", Unit: "products/s", Kind: "rate", Query: rate("aurora_preprocessor_products_total")},
-			{Key: "duration", Name: "Processing duration", Unit: "seconds", Kind: "duration", Query: averageDuration("aurora_preprocessor_processing_duration_seconds")},
+		ID: "rust-preprocessor", Name: "Rust Preprocessor", Group: "Pipeline", Container: "aurora-rust-preprocessor", Job: "aurora-rust-preprocessor", HealthQuery: `max(up{job="aurora-rust-preprocessor"})`,
+		Metrics: combineMetrics([]metricSpec{
+			{Key: "throughput", Name: "Prepared products / second", Unit: "products/s", Kind: "rate", Query: rate(`aurora_preprocessor_products_total{status=~"success|recovered"}`)},
+			{Key: "duration_p95", Name: "Preprocessing latency p95", Unit: "seconds", Kind: "histogram p95", Query: p95Duration("aurora_preprocessor_processing_duration_seconds", "")},
 			{Key: "errors", Name: "Errors / second", Unit: "errors/s", Kind: "rate", Query: rate("aurora_preprocessor_errors_total")},
 			{Key: "inflight", Name: "In-flight workers", Unit: "workers", Kind: "gauge", Query: "sum(aurora_preprocessor_inflight_workers)"},
 			{Key: "queue", Name: "Queue depth", Unit: "products", Kind: "gauge", Query: "sum(aurora_preprocessor_queue_depth)"},
-			{Key: "bytes", Name: "Bytes / second", Unit: "bytes/s", Kind: "rate", Query: rate("aurora_preprocessor_bytes_total")},
-		},
+			{Key: "bytes", Name: "Silver output / second", Unit: "bytes/s", Kind: "rate", Query: rate(`aurora_preprocessor_bytes_total{stage="silver"}`)},
+		}, systemdMetrics("aurora-rust-preprocessor.service")),
 	},
-	// 3. Python ML Worker (Huấn luyện mô hình PyTorch)
 	{
-		ID: "python-ml-worker", Name: "Python ML Worker", Group: "Pipeline", Container: "aurora-python-ml-worker", Job: "aurora-python-ml-worker",
-		Metrics: []metricSpec{
-			{Key: "throughput", Name: "Jobs / second", Unit: "jobs/s", Kind: "rate", Query: rate("aurora_ml_jobs_total")},
-			{Key: "duration", Name: "Job duration", Unit: "seconds", Kind: "duration", Query: averageDuration("aurora_ml_job_duration_seconds")},
+		ID: "python-ml-worker", Name: "Python ML Worker", Group: "Pipeline", Container: "aurora-python-ml-worker", Job: "aurora-python-ml-worker", HealthQuery: `max(up{job="aurora-python-ml-worker"})`,
+		Metrics: combineMetrics([]metricSpec{
+			{Key: "throughput", Name: "Successful jobs / second", Unit: "jobs/s", Kind: "rate", Query: rate(`aurora_ml_jobs_total{status="success"}`)},
+			{Key: "duration_p95", Name: "Training latency p95", Unit: "seconds", Kind: "histogram p95", Query: p95Duration("aurora_ml_job_duration_seconds", `{operation="training"}`)},
 			{Key: "errors", Name: "Errors / second", Unit: "errors/s", Kind: "rate", Query: rate("aurora_ml_errors_total")},
 			{Key: "inflight", Name: "In-flight jobs", Unit: "jobs", Kind: "gauge", Query: "sum(aurora_ml_inflight_jobs)"},
 			{Key: "queue", Name: "Queue depth", Unit: "jobs", Kind: "gauge", Query: "sum(aurora_ml_queue_depth)"},
-			{Key: "rows", Name: "Rows / second", Unit: "rows/s", Kind: "rate", Query: rate("aurora_ml_rows_processed_total")},
-			{Key: "memory", Name: "Worker memory", Unit: "bytes", Kind: "gauge", Query: "max(aurora_systemd_unit_memory_bytes{unit=\"aurora-python-ml-worker.service\"})"},
-			{Key: "cpu_time", Name: "Worker CPU time", Unit: "seconds", Kind: "gauge", Query: "max(aurora_systemd_unit_cpu_seconds_total{unit=\"aurora-python-ml-worker.service\"})"},
-			{Key: "cpu_cores", Name: "Worker CPU cores in use", Unit: "cores", Kind: "gauge", Query: "rate(aurora_systemd_unit_cpu_seconds_total{unit=\"aurora-python-ml-worker.service\"}[1m])"},
-			{Key: "cpu_cores_total", Name: "Host CPU logical cores", Unit: "cores", Kind: "gauge", Query: "max(aurora_host_cpu_logical_cores)"},
+		}, systemdMetrics("aurora-python-ml-worker.service"), []metricSpec{
 			{Key: "cpu_info", Name: "Host CPU info", Unit: "info", Kind: "gauge", Query: "aurora_host_cpu_info"},
-			{Key: "memory_total", Name: "Host memory total", Unit: "bytes", Kind: "gauge", Query: "max(aurora_host_memory_total_bytes)"},
-			{Key: "disk_read", Name: "Worker disk read", Unit: "bytes/s", Kind: "rate", Query: "rate(aurora_systemd_unit_io_read_bytes_total{unit=\"aurora-python-ml-worker.service\"}[1m])"},
-			{Key: "disk_write", Name: "Worker disk write", Unit: "bytes/s", Kind: "rate", Query: "rate(aurora_systemd_unit_io_write_bytes_total{unit=\"aurora-python-ml-worker.service\"}[1m])"},
-			{Key: "gpu_utilization", Name: "GPU utilization", Unit: "percent", Kind: "gauge", Query: "max(aurora_ml_gpu_utilization_percent)"},
-			{Key: "gpu_memory_used", Name: "GPU memory used", Unit: "bytes", Kind: "gauge", Query: "max(aurora_ml_gpu_memory_used_bytes)"},
-			{Key: "gpu_memory_total", Name: "GPU memory total", Unit: "bytes", Kind: "gauge", Query: "max(aurora_ml_gpu_memory_total_bytes)"},
-		},
+			{Key: "gpu_available", Name: "GPU available", Unit: "up", Kind: "metadata", Query: "max(aurora_ml_gpu_available)"},
+			{Key: "gpu_utilization", Name: "Shared GPU device utilization", Unit: "percent", Kind: "gauge", Query: "max(aurora_ml_gpu_utilization_percent)"},
+			{Key: "gpu_memory_used", Name: "Shared GPU device memory used", Unit: "bytes", Kind: "gauge", Query: "max(aurora_ml_gpu_memory_used_bytes)"},
+			{Key: "gpu_memory_total", Name: "Shared GPU device memory total", Unit: "bytes", Kind: "gauge", Query: "max(aurora_ml_gpu_memory_total_bytes)"},
+		}),
 	},
-	// 4. Rust GPU Inference (Suy luận mô hình ONNX)
 	{
-		ID: "rust-inference", Name: "Rust GPU Inference", Group: "Pipeline", Container: "aurora-rust-inference", Job: "aurora-rust-inference",
-		Metrics: []metricSpec{
-			{Key: "throughput", Name: "Jobs / second", Unit: "jobs/s", Kind: "rate", Query: rate("aurora_inference_jobs_total")},
-			{Key: "duration", Name: "Inference duration", Unit: "seconds", Kind: "duration", Query: averageDuration("aurora_inference_processing_duration_seconds")},
+		ID: "rust-inference", Name: "Rust GPU Inference", Group: "Pipeline", Container: "aurora-rust-inference", Job: "aurora-rust-inference", HealthQuery: `max(up{job="aurora-rust-inference"})`,
+		Metrics: combineMetrics([]metricSpec{
+			{Key: "throughput", Name: "Successful jobs / second", Unit: "jobs/s", Kind: "rate", Query: rate(`aurora_inference_jobs_total{status="success"}`)},
+			{Key: "duration_p95", Name: "Inference latency p95", Unit: "seconds", Kind: "histogram p95", Query: p95Duration("aurora_inference_processing_duration_seconds", "")},
 			{Key: "errors", Name: "Errors / second", Unit: "errors/s", Kind: "rate", Query: rate("aurora_inference_errors_total")},
 			{Key: "inflight", Name: "In-flight jobs", Unit: "jobs", Kind: "gauge", Query: "sum(aurora_inference_inflight_jobs)"},
 			{Key: "queue", Name: "Queue depth", Unit: "jobs", Kind: "gauge", Query: "sum(aurora_inference_queue_depth)"},
-			{Key: "rows", Name: "Rows / second", Unit: "rows/s", Kind: "rate", Query: rate("aurora_inference_rows_processed_total")},
-		},
+			{Key: "rows", Name: "Inferred rows / second", Unit: "rows/s", Kind: "rate", Query: rate("aurora_inference_rows_processed_total")},
+		}, systemdMetrics("aurora-rust-inference.service")),
 	},
-	// 5. Go API Gateway
 	{
-		ID: "go-api", Name: "Go API", Group: "Platform", Container: "aurora-go-api", Job: "aurora-go-api",
-		Metrics: []metricSpec{
+		ID: "go-api", Name: "Go API", Group: "Platform", Container: "aurora-go-api", Job: "aurora-go-api", HealthQuery: `max(up{job="aurora-go-api"})`,
+		Metrics: combineMetrics([]metricSpec{
 			{Key: "throughput", Name: "Requests / second", Unit: "requests/s", Kind: "rate", Query: rate("aurora_api_http_requests_total")},
-			{Key: "duration", Name: "Request duration", Unit: "seconds", Kind: "duration", Query: averageDuration("aurora_api_http_request_duration_seconds")},
+			{Key: "duration_p95", Name: "Request latency p95", Unit: "seconds", Kind: "histogram p95", Query: p95Duration("aurora_api_http_request_duration_seconds", "")},
 			{Key: "errors", Name: "Errors / second", Unit: "errors/s", Kind: "rate", Query: rate("aurora_api_http_errors_total")},
 			{Key: "inflight", Name: "In-flight requests", Unit: "requests", Kind: "gauge", Query: "sum(aurora_api_http_inflight_requests)"},
-		},
+		}, systemdMetrics("aurora-go-api.service")),
 	},
-	// 6. Gold Builder has no own HTTP metrics endpoint yet, so its health and
-	// resource telemetry are reported directly by the systemd user exporter.
 	{
-		ID: "gold-builder", Name: "Gold Builder", Group: "Pipeline", Container: "aurora-gold-builder", Job: "aurora-systemd",
-		Metrics: systemdMetrics("aurora-gold-builder.service"),
+		ID: "gold-builder", Name: "Gold Builder", Group: "Pipeline", Container: "aurora-gold-builder", Job: "aurora-gold-builder", HealthQuery: `max(up{job="aurora-gold-builder"}) or max(aurora_systemd_unit_active{unit="aurora-gold-builder.service"})`,
+		Metrics: combineMetrics([]metricSpec{
+			{Key: "throughput", Name: "Committed batches / second", Unit: "batches/s", Kind: "rate", Query: rate(`aurora_gold_batches_total{status="success"}`)},
+			{Key: "duration_p95", Name: "Gold build latency p95", Unit: "seconds", Kind: "histogram p95", Query: p95Duration("aurora_gold_batch_duration_seconds", `{status="success"}`)},
+			{Key: "errors", Name: "Failed builds / second", Unit: "errors/s", Kind: "rate", Query: rate(`aurora_gold_batches_total{status="failed"}`)},
+			{Key: "deferred", Name: "Catalog deferrals / second", Unit: "deferrals/s", Kind: "rate", Query: rate(`aurora_gold_batches_total{status="deferred"}`)},
+			{Key: "inflight", Name: "In-flight builds", Unit: "builds", Kind: "gauge", Query: "sum(aurora_gold_inflight_builds) or vector(0)"},
+			{Key: "queue", Name: "Queue depth", Unit: "batches", Kind: "gauge", Query: "sum(aurora_gold_queue_depth) or vector(0)"},
+			{Key: "rows", Name: "Committed rows / second", Unit: "rows/s", Kind: "rate", Query: rate("aurora_gold_output_rows_total")},
+		}, systemdMetrics("aurora-gold-builder.service")),
 	},
-	// 7. Dashboard is a native Vite service in development and is likewise
-	// monitored by its systemd unit rather than an application endpoint.
 	{
-		ID: "dashboard", Name: "Dashboard", Group: "Platform", Container: "aurora-dashboard", Job: "aurora-systemd",
+		ID: "dashboard", Name: "Dashboard", Group: "Platform", Container: "aurora-dashboard", Job: "aurora-systemd", HealthQuery: `max(aurora_systemd_unit_active{unit="aurora-dashboard.service"})`,
 		Metrics: systemdMetrics("aurora-dashboard.service"),
 	},
-	// 8. MinIO Storage
 	{
-		ID: "minio", Name: "MinIO Storage", Group: "Platform", Container: "aurora-minio", Job: "aurora-minio",
+		ID: "minio", Name: "MinIO Storage", Group: "Platform", Container: "aurora-minio", Job: "aurora-minio", HealthQuery: `max(up{job="aurora-minio"})`,
 		Metrics: []metricSpec{
-			{Key: "availability", Name: "Availability", Unit: "up", Kind: "gauge", Query: `max(up{job="aurora-minio"})`},
-			{Key: "requests", Name: "S3 requests / second", Unit: "requests/s", Kind: "rate", Query: rate("minio_s3_requests_incoming_total")},
+			{Key: "requests", Name: "S3 requests / second", Unit: "requests/s", Kind: "rate", Query: rate("minio_s3_requests_total")},
+			{Key: "ttfb_p95", Name: "S3 TTFB p95 (lifetime)", Unit: "seconds", Kind: "distribution p95", Query: "histogram_quantile(0.95, sum by (le) (minio_s3_requests_ttfb_seconds_distribution))"},
+			{Key: "inflight", Name: "In-flight S3 requests", Unit: "requests", Kind: "gauge", Query: "sum(minio_s3_requests_inflight_total)"},
+			{Key: "errors", Name: "S3 errors / second", Unit: "errors/s", Kind: "rate", Query: rate("minio_s3_requests_errors_total")},
 			{Key: "traffic_in", Name: "Traffic received", Unit: "bytes/s", Kind: "rate", Query: rate("minio_s3_traffic_received_bytes")},
 			{Key: "traffic_out", Name: "Traffic sent", Unit: "bytes/s", Kind: "rate", Query: rate("minio_s3_traffic_sent_bytes")},
-			{Key: "usage", Name: "Storage used", Unit: "bytes", Kind: "gauge", Query: "minio_cluster_usage_total_bytes"},
-			{Key: "objects", Name: "Objects", Unit: "objects", Kind: "gauge", Query: "minio_cluster_usage_object_total"},
-			{Key: "offline_drives", Name: "Offline drives", Unit: "drives", Kind: "gauge", Query: "minio_cluster_drive_offline_total"},
+			{Key: "usage", Name: "Storage used", Unit: "bytes", Kind: "gauge", Query: "sum(minio_cluster_usage_total_bytes)"},
+			{Key: "objects", Name: "Stored objects", Unit: "objects", Kind: "gauge", Query: "sum(minio_cluster_usage_object_total)"},
+			{Key: "offline_drives", Name: "Offline drives", Unit: "drives", Kind: "gauge", Query: "sum(minio_cluster_drive_offline_total)"},
 		},
 	},
-	// 9. NATS JetStream
 	{
-		ID: "nats", Name: "NATS JetStream", Group: "Platform", Container: "aurora-nats", Job: "aurora-nats",
+		ID: "nats", Name: "NATS JetStream", Group: "Platform", Container: "aurora-nats", Job: "aurora-nats", HealthQuery: `max(up{job="aurora-nats"})`,
 		Metrics: []metricSpec{
-			{Key: "availability", Name: "Availability", Unit: "up", Kind: "gauge", Query: `max(up{job="aurora-nats"})`},
 			{Key: "inbound", Name: "Inbound messages", Unit: "messages/s", Kind: "rate", Query: rate("gnatsd_varz_in_msgs")},
 			{Key: "outbound", Name: "Outbound messages", Unit: "messages/s", Kind: "rate", Query: rate("gnatsd_varz_out_msgs")},
 			{Key: "connections", Name: "Connections", Unit: "connections", Kind: "gauge", Query: "max(gnatsd_varz_connections)"},
-			{Key: "cpu", Name: "CPU usage", Unit: "percent", Kind: "gauge", Query: "100 * max(gnatsd_varz_cpu)"},
+			{Key: "cpu", Name: "CPU usage", Unit: "percent", Kind: "gauge", Query: "max(gnatsd_varz_cpu)"},
 			{Key: "memory", Name: "Memory", Unit: "bytes", Kind: "gauge", Query: "max(gnatsd_varz_mem)"},
 			{Key: "pending_bytes", Name: "Pending bytes", Unit: "bytes", Kind: "gauge", Query: "max(gnatsd_connz_pending_bytes)"},
 		},
 	},
-	// 10. ClickHouse Analytics Database
 	{
-		ID: "clickhouse", Name: "ClickHouse", Group: "Platform", Container: "aurora-clickhouse", Job: "aurora-clickhouse",
+		ID: "clickhouse", Name: "ClickHouse", Group: "Platform", Container: "aurora-clickhouse", Job: "aurora-clickhouse", HealthQuery: `max(up{job="aurora-clickhouse"})`,
 		Metrics: []metricSpec{
-			{Key: "availability", Name: "Availability", Unit: "up", Kind: "gauge", Query: `max(up{job="aurora-clickhouse"})`},
 			{Key: "queries", Name: "Queries / second", Unit: "queries/s", Kind: "rate", Query: rate("ClickHouseProfileEvents_Query")},
-			{Key: "selects", Name: "Selects / second", Unit: "queries/s", Kind: "rate", Query: rate("ClickHouseProfileEvents_SelectQuery")},
-			{Key: "inserts", Name: "Inserts / second", Unit: "queries/s", Kind: "rate", Query: rate("ClickHouseProfileEvents_InsertQuery")},
+			{Key: "duration", Name: "Average query latency", Unit: "seconds", Kind: "duration", Query: "(sum(rate(ClickHouseProfileEvents_QueryTimeMicroseconds[2m])) / clamp_min(sum(rate(ClickHouseProfileEvents_Query[2m])), 0.000001) / 1000000) or vector(0)"},
 			{Key: "failed_queries", Name: "Failed queries / second", Unit: "queries/s", Kind: "rate", Query: rate("ClickHouseProfileEvents_FailedQuery")},
 			{Key: "active_queries", Name: "Active queries", Unit: "queries", Kind: "gauge", Query: "max(ClickHouseMetrics_Query)"},
 			{Key: "memory", Name: "Memory used", Unit: "bytes", Kind: "gauge", Query: "max(ClickHouseMetrics_MemoryTracking)"},
@@ -246,41 +256,52 @@ func (s *MonitoringService) queryComponent(ctx context.Context, spec componentSp
 		Metrics:   make([]entity.MonitoringMetric, len(spec.Metrics)),
 	}
 
+	var healthPoints []entity.MonitoringPoint
+	var healthErr error
+	queryFailed := make([]bool, len(spec.Metrics))
 	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		healthPoints, healthErr = s.prometheus.QueryRange(ctx, spec.HealthQuery, start, end, step)
+	}()
 	for i, metric := range spec.Metrics {
 		wg.Add(1)
 		go func(i int, metric metricSpec) {
 			defer wg.Done()
-			points, err := s.prometheus.QueryRange(ctx, metric.Query, start, end, step)
-			if err != nil {
-				return
-			}
-			component.Metrics[i] = entity.MonitoringMetric{
+			result := entity.MonitoringMetric{
 				Key:    metric.Key,
 				Name:   metric.Name,
 				Unit:   metric.Unit,
 				Kind:   metric.Kind,
-				Points: points,
+				Points: []entity.MonitoringPoint{},
 			}
+			points, err := s.prometheus.QueryRange(ctx, metric.Query, start, end, step)
+			if err == nil {
+				result.Points = points
+			} else {
+				queryFailed[i] = true
+			}
+			component.Metrics[i] = result
 		}(i, metric)
 	}
 	wg.Wait()
 
-	// Đánh giá trạng thái Component:
-	// - Nếu tất cả metrics đều có dữ liệu: "up"
-	// - Nếu chỉ có 1 phần metrics phản hồi: "degraded"
-	// - Nếu không có metric nào phản hồi: "no_data"
-	available := 0
-	for _, metric := range component.Metrics {
-		if len(metric.Points) > 0 {
-			available++
-		}
+	// Component health comes from its scrape/unit signal, never from whether
+	// user traffic happened to create counter samples in this window.
+	if healthErr != nil || len(healthPoints) == 0 {
+		return component
 	}
-	switch {
-	case available == len(component.Metrics) && available > 0:
-		component.Status = "up"
-	case available > 0:
+	component.Status = "up"
+	if healthPoints[len(healthPoints)-1].Value <= 0 {
 		component.Status = "degraded"
+		return component
+	}
+	for _, failed := range queryFailed {
+		if failed {
+			component.Status = "degraded"
+			break
+		}
 	}
 	return component
 }

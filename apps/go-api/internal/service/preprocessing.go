@@ -1,11 +1,15 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +19,7 @@ import (
 	domainService "go-api/internal/domain/service"
 
 	"github.com/google/uuid"
+	"github.com/parquet-go/parquet-go"
 )
 
 // ============================================================================
@@ -25,6 +30,9 @@ const (
 	preprocessingInventoryRefresh  = 60 * time.Second
 	preprocessingRuntimeWindow     = 60 * time.Second
 	preprocessingTraceLimit        = 200
+	maxScatterBackfillObjectBytes  = 64 << 20
+	maxLCScatterPoints             = 800
+	maxMaterializationPoints       = 1_200
 )
 
 type preprocessingMetric struct {
@@ -45,12 +53,36 @@ var preprocessingMetrics = []preprocessingMetric{
 	{key: "lc_output_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"output\"}[2m]))"},
 	{key: "lc_quality_removed_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"quality_removed\"}[2m]))"},
 	{key: "lc_invalid_removed_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"invalid_removed\"}[2m]))"},
+	{key: "lc_nonfinite_removed_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"nonfinite_removed\"}[2m]))"},
+	{key: "lc_nonpositive_removed_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"nonpositive_time_removed\"}[2m]))"},
 	{key: "lc_outlier_removed_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"outlier_removed\"}[2m]))"},
+	{key: "lc_sigma_clip_3_4_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"sigma_clip_3_4_removed\"}[2m]))"},
+	{key: "lc_sigma_clip_4_5_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"sigma_clip_4_5_removed\"}[2m]))"},
+	{key: "lc_sigma_clip_ge_5_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"sigma_clip_ge_5_removed\"}[2m]))"},
 	{key: "tpf_input_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"target_pixel\",outcome=\"input\"}[2m]))"},
 	{key: "tpf_output_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"target_pixel\",outcome=\"output\"}[2m]))"},
 	{key: "tpf_quality_removed_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"target_pixel\",outcome=\"quality_removed\"}[2m]))"},
 	{key: "tpf_invalid_removed_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"target_pixel\",outcome=\"invalid_removed\"}[2m]))"},
+	{key: "tpf_nonfinite_removed_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"target_pixel\",outcome=\"nonfinite_removed\"}[2m]))"},
+	{key: "tpf_nonpositive_removed_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"target_pixel\",outcome=\"nonpositive_time_removed\"}[2m]))"},
+	{key: "lc_input_total", query: "sum(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"input\"})"},
+	{key: "lc_quality_removed_total", query: "sum(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"quality_removed\"})"},
+	{key: "lc_nonfinite_removed_total", query: "sum(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"nonfinite_removed\"})"},
+	{key: "lc_nonpositive_removed_total", query: "sum(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"nonpositive_time_removed\"})"},
+	{key: "lc_sigma_clip_3_4_total", query: "sum(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"sigma_clip_3_4_removed\"})"},
+	{key: "lc_sigma_clip_4_5_total", query: "sum(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"sigma_clip_4_5_removed\"})"},
+	{key: "lc_sigma_clip_ge_5_total", query: "sum(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"sigma_clip_ge_5_removed\"})"},
+	{key: "tpf_input_total", query: "sum(aurora_preprocessor_science_samples_total{kind=\"target_pixel\",outcome=\"input\"})"},
+	{key: "tpf_quality_removed_total", query: "sum(aurora_preprocessor_science_samples_total{kind=\"target_pixel\",outcome=\"quality_removed\"})"},
+	{key: "tpf_nonfinite_removed_total", query: "sum(aurora_preprocessor_science_samples_total{kind=\"target_pixel\",outcome=\"nonfinite_removed\"})"},
+	{key: "tpf_nonpositive_removed_total", query: "sum(aurora_preprocessor_science_samples_total{kind=\"target_pixel\",outcome=\"nonpositive_time_removed\"})"},
 	{key: "tpf_finite_pixel_fraction", query: "max(aurora_preprocessor_finite_pixel_fraction{kind=\"target_pixel\"})"},
+	{key: "lc_scatter_before_p50", query: "histogram_quantile(0.50, sum by (le) (rate(aurora_preprocessor_lc_normalized_scatter_ppm_bucket{phase=\"before_clip\"}[15m])))"},
+	{key: "lc_scatter_before_p95", query: "histogram_quantile(0.95, sum by (le) (rate(aurora_preprocessor_lc_normalized_scatter_ppm_bucket{phase=\"before_clip\"}[15m])))"},
+	{key: "lc_scatter_after_p50", query: "histogram_quantile(0.50, sum by (le) (rate(aurora_preprocessor_lc_normalized_scatter_ppm_bucket{phase=\"after_clip\"}[15m])))"},
+	{key: "lc_scatter_after_p95", query: "histogram_quantile(0.95, sum by (le) (rate(aurora_preprocessor_lc_normalized_scatter_ppm_bucket{phase=\"after_clip\"}[15m])))"},
+	{key: "lc_sigma_clip_fraction_p95", query: "histogram_quantile(0.95, sum by (le) (rate(aurora_preprocessor_lc_sigma_clip_fraction_bucket[15m])))"},
+	{key: "tpf_finite_pixel_fraction_p05", query: "histogram_quantile(0.05, sum by (le) (rate(aurora_preprocessor_tpf_finite_pixel_fraction_bucket[15m])))"},
 	{key: "bronze_bytes_rate", query: "sum(rate(aurora_preprocessor_bytes_total{stage=\"bronze\"}[2m]))"},
 	{key: "silver_bytes_rate", query: "sum(rate(aurora_preprocessor_bytes_total{stage=\"silver\"}[2m]))"},
 	{key: "lc_duration_p95", query: "histogram_quantile(0.95, sum by (le) (rate(aurora_preprocessor_processing_duration_seconds_bucket{kind=\"lightcurve\"}[5m])))"},
@@ -77,6 +109,13 @@ type PreprocessingService struct {
 	progressRefreshing bool                            // Cờ đánh dấu đang quét nền checkpoint
 	runtime            entity.PreprocessingRuntimeSnapshot
 	completionTimes    []time.Time
+	scienceCacheMu     sync.Mutex
+	lcScatterCache     map[string]scatterCacheEntry
+}
+
+type scatterCacheEntry struct {
+	value    float64
+	observed bool
 }
 
 // NewPreprocessingService khởi tạo PreprocessingService cơ bản
@@ -488,8 +527,15 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 			status = "running"
 		}
 	}
-	if runtimeJob != nil && (runtimeJob.Status == "completed" || runtimeJob.Status == "failed") {
-		status = runtimeJob.Status
+	if runtimeJob != nil && runtimeJob.Status == "completed" {
+		if hasCompletedPreprocessingEvidence(runtimeProgress) {
+			status = "completed"
+		} else {
+			status = "not_observed"
+		}
+	}
+	if runtimeJob != nil && runtimeJob.Status == "failed" {
+		status = "failed"
 	}
 	if runtimeJob != nil && (runtimeJob.Status == "cancelling" || runtimeJob.Status == "canceled" || runtimeJob.Status == "cancelled") {
 		status = runtimeJob.Status
@@ -497,12 +543,18 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 
 	// 5. Dựng 8 bước Pipeline DAG Hops và các cạnh kết nối (Edges)
 	hops := preprocessingHops(values, observations, end, checkpointDetails, runtimeProgress)
-	edges := make([]entity.PreprocessingEdge, 0, len(hops)-1)
-	for i := 0; i < len(hops)-1; i++ {
+	topology := [][2]string{
+		{"bronze", "route"},
+		{"route", "lc-quality"}, {"lc-quality", "lc-transform"}, {"lc-transform", "lc-parquet"}, {"lc-parquet", "silver"},
+		{"route", "tpf-quality"}, {"tpf-quality", "tpf-transform"}, {"tpf-transform", "tpf-parquet"}, {"tpf-parquet", "silver"},
+		{"silver", "checkpoint"}, {"checkpoint", "lineage"}, {"lineage", "event"}, {"event", "ack"},
+	}
+	edges := make([]entity.PreprocessingEdge, 0, len(topology))
+	for i, connection := range topology {
 		edges = append(edges, entity.PreprocessingEdge{
 			ID:         fmt.Sprintf("edge-%d", i),
-			Source:     hops[i].ID,
-			Target:     hops[i+1].ID,
+			Source:     connection[0],
+			Target:     connection[1],
 			Status:     status,
 			ObservedAt: end,
 		})
@@ -541,6 +593,19 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 	}, nil
 }
 
+// A durable run is only complete once the persisted input, output and
+// checkpoint inventories can account for its work. This prevents a restored
+// control record from briefly presenting a completed DAG with empty charts
+// while the asynchronous object inventory is still loading.
+func hasCompletedPreprocessingEvidence(progress entity.PreprocessingProgress) bool {
+	return progress.BronzeObserved &&
+		progress.FootprintObserved &&
+		progress.BronzeTotal > 0 &&
+		progress.CheckpointCompleted > 0 &&
+		progress.SilverTotal > 0 &&
+		progress.SilverBytes > 0
+}
+
 // refreshCheckpointProgress refreshes durable checkpoint progress and the
 // physically stored lakehouse footprint.  The latter is deliberately based on
 // ObjectInfo.Size from MinIO; transformations such as decoded FITS arrays are
@@ -553,6 +618,8 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 	}
 
 	completed := 0
+	completedLightCurves := 0
+	completedTargetPixels := 0
 	completedBronzeKeys := make(map[string]struct{})
 	failed := 0
 	failedBronzeKeys := make(map[string]struct{})
@@ -560,6 +627,7 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 	var countWG sync.WaitGroup
 	var latestAt time.Time
 	var latestDetails map[string]string
+	encodeFailures := make([]entity.PreprocessingEncodeFailure, 0)
 	semaphore := make(chan struct{}, 32)
 
 	for _, object := range objects {
@@ -596,6 +664,7 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 				State               string  `json:"state"`
 				Attempts            uint32  `json:"attempts"`
 				LastError           *string `json:"last_error"`
+				LastErrorKind       *string `json:"last_error_kind"`
 				Terminal            bool    `json:"terminal"`
 				CreatedAt           string  `json:"created_at"`
 				UpdatedAt           string  `json:"updated_at"`
@@ -609,6 +678,12 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 				countMu.Lock()
 				if strings.EqualFold(checkpoint.State, "COMPLETED") {
 					completed++
+					switch strings.ToUpper(strings.ReplaceAll(checkpoint.ProductKind, "-", "_")) {
+					case "LIGHT_CURVE", "LIGHTCURVE":
+						completedLightCurves++
+					case "TARGET_PIXEL", "TARGETPIXEL":
+						completedTargetPixels++
+					}
 					if checkpoint.BronzeObjectKey != "" {
 						completedBronzeKeys[checkpoint.BronzeObjectKey] = struct{}{}
 					}
@@ -617,6 +692,13 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 					if checkpoint.BronzeObjectKey != "" {
 						failedBronzeKeys[checkpoint.BronzeObjectKey] = struct{}{}
 					}
+				}
+				if checkpoint.LastErrorKind != nil && strings.EqualFold(*checkpoint.LastErrorKind, "PARQUET_ENCODE_FAILED") {
+					encodeFailures = append(encodeFailures, entity.PreprocessingEncodeFailure{
+						ObjectKey: checkpoint.BronzeObjectKey, ProductKind: checkpoint.ProductKind,
+						Reason: optionalString(checkpoint.LastError), Recovered: strings.EqualFold(checkpoint.State, "COMPLETED"),
+						OccurredAt: updatedAt,
+					})
 				}
 				if latestDetails == nil || updatedAt.After(latestAt) {
 					latestAt = updatedAt
@@ -653,7 +735,10 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 	bronzeBytes := int64(0)
 	bronzeCompleted := 0
 	bronzeFailed := 0
+	bronzeLightCurves := 0
+	bronzeTargetPixels := 0
 	bronzeInventoryRead := false
+	bronzeSizeByKey := make(map[string]int64)
 	if bronzeObjects, bronzeErr := s.objects.ListObjects(ctx, "bronze/"); bronzeErr == nil {
 		bronzeInventoryRead = true
 		for _, object := range bronzeObjects {
@@ -662,6 +747,13 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 			}
 			bronzeTotal++
 			bronzeBytes += object.Size
+			bronzeSizeByKey[object.Key] = object.Size
+			lowerKey := strings.ToLower(object.Key)
+			if strings.Contains(lowerKey, "/lightcurve/") {
+				bronzeLightCurves++
+			} else if strings.Contains(lowerKey, "/target-pixel/") {
+				bronzeTargetPixels++
+			}
 			if _, ok := completedBronzeKeys[object.Key]; ok {
 				bronzeCompleted++
 			}
@@ -673,8 +765,21 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 
 	silverTotal := 0
 	silverBytes := int64(0)
+	silverLightCurves := 0
+	silverTargetPixels := 0
+	scienceCountsObserved := false
+	var lcInputSamples, lcOutputSamples, lcQualityRemoved, lcInvalidRemoved, lcNonfiniteRemoved, lcNonpositiveRemoved, lcOutlierRemoved int64
+	var lcSigmaClip3To4, lcSigmaClip4To5, lcSigmaClipGE5 int64
+	var tpfInputSamples, tpfOutputSamples, tpfQualityRemoved, tpfInvalidRemoved, tpfNonfiniteRemoved, tpfNonpositiveRemoved int64
+	lcOutlierFractions := make([]float64, 0)
+	lcScatterBefore := make([]float64, 0)
+	lcScatterAfter := make([]float64, 0)
+	lcScatterPoints := make([]entity.PreprocessingScatterPoint, 0, min(silverLightCurves, maxLCScatterPoints))
+	tpfFiniteFractions := make([]float64, 0)
+	materializationPoints := make([]entity.PreprocessingMaterializationPoint, 0)
 	silverInventoryRead := false
-	if silverObjects, silverErr := s.objects.ListObjects(ctx, "silver/"); silverErr == nil {
+	silverObjects, silverErr := listObjectsWithMetadata(ctx, s.objects, "silver/")
+	if silverErr == nil {
 		silverInventoryRead = true
 		for _, object := range silverObjects {
 			if !strings.HasSuffix(strings.ToLower(object.Key), ".parquet") {
@@ -682,6 +787,80 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 			}
 			silverTotal++
 			silverBytes += object.Size
+			lowerKey := strings.ToLower(object.Key)
+			productKind := ""
+			rows := int64(0)
+			if strings.Contains(lowerKey, "/lightcurve/") {
+				productKind = "lightcurve"
+				rows = metadataInt64(object.UserMetadata, "output-points")
+				silverLightCurves++
+				if _, ok := object.UserMetadata["input-points"]; ok {
+					scienceCountsObserved = true
+				}
+				lcInputSamples += metadataInt64(object.UserMetadata, "input-points")
+				lcOutputSamples += metadataInt64(object.UserMetadata, "output-points")
+				lcQualityRemoved += metadataInt64(object.UserMetadata, "quality-removed")
+				lcInvalidRemoved += metadataInt64(object.UserMetadata, "invalid-removed")
+				lcNonfiniteRemoved += metadataInt64(object.UserMetadata, "nonfinite-removed")
+				lcNonpositiveRemoved += metadataInt64(object.UserMetadata, "nonpositive-time-removed")
+				outlierRemoved := metadataInt64(object.UserMetadata, "outlier-removed")
+				lcOutlierRemoved += outlierRemoved
+				lcSigmaClip3To4 += metadataInt64(object.UserMetadata, "sigma-clip-3-4-removed")
+				lcSigmaClip4To5 += metadataInt64(object.UserMetadata, "sigma-clip-4-5-removed")
+				lcSigmaClipGE5 += metadataInt64(object.UserMetadata, "sigma-clip-ge-5-removed")
+				outputSamples := metadataInt64(object.UserMetadata, "output-points")
+				if preclipSamples := outputSamples + outlierRemoved; preclipSamples > 0 {
+					lcOutlierFractions = append(lcOutlierFractions, float64(outlierRemoved)/float64(preclipSamples))
+				}
+				beforeScatter, beforeObserved := metadataFloat64(object.UserMetadata, "normalized-scatter-before-clip-ppm")
+				afterScatter, afterObserved := metadataFloat64(object.UserMetadata, "normalized-scatter-after-clip-ppm")
+				if !afterObserved {
+					afterScatter, afterObserved = s.lightCurveScatterPPM(ctx, object)
+				}
+				// If no cadence was clipped, the stored output is exactly the
+				// pre-clip series and therefore provides both distributions.
+				if !beforeObserved && afterObserved && outlierRemoved == 0 {
+					beforeScatter, beforeObserved = afterScatter, true
+				}
+				if beforeObserved {
+					lcScatterBefore = append(lcScatterBefore, beforeScatter)
+				}
+				if afterObserved {
+					lcScatterAfter = append(lcScatterAfter, afterScatter)
+				}
+				if beforeObserved && afterObserved && len(lcScatterPoints) < maxLCScatterPoints {
+					sigmaClipLevel, _ := metadataFloat64(object.UserMetadata, "sigma-clip-level")
+					lcScatterPoints = append(lcScatterPoints, entity.PreprocessingScatterPoint{
+						ObjectKey: object.Key, BeforePPM: beforeScatter, AfterPPM: afterScatter,
+						OutlierRemoved: outlierRemoved, PreclipSamples: outputSamples + outlierRemoved,
+						SigmaClipLevel: sigmaClipLevel,
+					})
+				}
+			} else if strings.Contains(lowerKey, "/target-pixel/") {
+				productKind = "target_pixel"
+				rows = metadataInt64(object.UserMetadata, "output-cadences")
+				silverTargetPixels++
+				if _, ok := object.UserMetadata["input-cadences"]; ok {
+					scienceCountsObserved = true
+				}
+				tpfInputSamples += metadataInt64(object.UserMetadata, "input-cadences")
+				tpfOutputSamples += metadataInt64(object.UserMetadata, "output-cadences")
+				tpfQualityRemoved += metadataInt64(object.UserMetadata, "quality-removed")
+				tpfInvalidRemoved += metadataInt64(object.UserMetadata, "invalid-time-removed")
+				tpfNonfiniteRemoved += metadataInt64(object.UserMetadata, "nonfinite-removed")
+				tpfNonpositiveRemoved += metadataInt64(object.UserMetadata, "nonpositive-time-removed")
+				if value, ok := metadataFloat64(object.UserMetadata, "finite-pixel-fraction"); ok && value <= 1 {
+					tpfFiniteFractions = append(tpfFiniteFractions, value)
+				}
+			}
+			if productKind != "" && len(materializationPoints) < maxMaterializationPoints {
+				bronzeKey := strings.TrimSpace(object.UserMetadata["bronze-object-key"])
+				encodeDurationMS, _ := metadataFloat64(object.UserMetadata, "parquet-encode-duration-ms")
+				materializationPoints = append(materializationPoints, entity.PreprocessingMaterializationPoint{
+					ObjectKey: object.Key, ProductKind: productKind, Rows: rows, SizeBytes: object.Size,
+					SourceBytes: bronzeSizeByKey[bronzeKey], EncodeDurationMS: encodeDurationMS, CompletedAt: object.LastModified,
+				})
+			}
 		}
 	}
 
@@ -704,10 +883,48 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 		s.progress.BronzeFailed = bronzeFailed
 		s.progress.BronzePending = bronzeTotal - bronzeCompleted - bronzeFailed
 		s.progress.BronzeObserved = true
+		s.progress.BronzeLightCurves = bronzeLightCurves
+		s.progress.BronzeTargetPixels = bronzeTargetPixels
 	}
 	if silverInventoryRead {
 		s.progress.SilverTotal = silverTotal
 		s.progress.SilverBytes = silverBytes
+		s.progress.SilverLightCurves = silverLightCurves
+		s.progress.SilverTargetPixels = silverTargetPixels
+		s.progress.ScienceCountsObserved = scienceCountsObserved
+		s.progress.LCInputSamples = lcInputSamples
+		s.progress.LCOutputSamples = lcOutputSamples
+		s.progress.LCQualityRemoved = lcQualityRemoved
+		s.progress.LCInvalidRemoved = lcInvalidRemoved
+		s.progress.LCNonfiniteRemoved = lcNonfiniteRemoved
+		s.progress.LCNonpositiveRemoved = lcNonpositiveRemoved
+		s.progress.LCOutlierRemoved = lcOutlierRemoved
+		s.progress.LCSigmaClip3To4 = lcSigmaClip3To4
+		s.progress.LCSigmaClip4To5 = lcSigmaClip4To5
+		s.progress.LCSigmaClipGE5 = lcSigmaClipGE5
+		s.progress.LCTransformProducts = len(lcOutlierFractions)
+		s.progress.LCScatterProducts = min(len(lcScatterBefore), len(lcScatterAfter))
+		s.progress.LCScatterBeforeMean = meanFloat64(lcScatterBefore)
+		s.progress.LCScatterBeforeP50 = quantileFloat64(lcScatterBefore, 0.50)
+		s.progress.LCScatterBeforeP95 = quantileFloat64(lcScatterBefore, 0.95)
+		s.progress.LCScatterAfterMean = meanFloat64(lcScatterAfter)
+		s.progress.LCScatterAfterP50 = quantileFloat64(lcScatterAfter, 0.50)
+		s.progress.LCScatterAfterP95 = quantileFloat64(lcScatterAfter, 0.95)
+		s.progress.LCOutlierFractionP50 = quantileFloat64(lcOutlierFractions, 0.50)
+		s.progress.LCOutlierFractionP95 = quantileFloat64(lcOutlierFractions, 0.95)
+		s.progress.LCScatterPoints = lcScatterPoints
+		s.progress.TPFInputSamples = tpfInputSamples
+		s.progress.TPFOutputSamples = tpfOutputSamples
+		s.progress.TPFQualityRemoved = tpfQualityRemoved
+		s.progress.TPFInvalidRemoved = tpfInvalidRemoved
+		s.progress.TPFNonfiniteRemoved = tpfNonfiniteRemoved
+		s.progress.TPFNonpositiveRemoved = tpfNonpositiveRemoved
+		s.progress.TPFFiniteProducts = len(tpfFiniteFractions)
+		s.progress.TPFFiniteFractionMean = meanFloat64(tpfFiniteFractions)
+		s.progress.TPFFiniteFractionP05 = quantileFloat64(tpfFiniteFractions, 0.05)
+		s.progress.TPFFiniteFractionP50 = quantileFloat64(tpfFiniteFractions, 0.50)
+		s.progress.MaterializationPoints = materializationPoints
+		s.progress.EncodeFailures = encodeFailures
 	}
 	if goldInventoryRead {
 		s.progress.GoldTotal = goldTotal
@@ -719,11 +936,139 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 		s.progress.CheckpointCompleted = completed
 		s.progress.CheckpointFailed = failed
 		s.progress.CheckpointPending = len(objects) - completed - failed
+		s.progress.CompletedLightCurves = completedLightCurves
+		s.progress.CompletedTargetPixels = completedTargetPixels
 		s.checkpointDetails = latestDetails
 	}
 	s.progressAt = time.Now().UTC()
 	s.progressRefreshing = false
+	jobID := ""
+	if s.runtimeJob != nil {
+		jobID = s.runtimeJob.JobID
+	}
+	observedAt := s.progressAt
 	s.runtimeMu.Unlock()
+
+	if s.publisher != nil && (checkpointInventoryRead || bronzeInventoryRead || silverInventoryRead) {
+		payload, _ := json.Marshal(map[string]any{"science_counts_observed": scienceCountsObserved, "silver_objects": silverTotal})
+		_ = s.publisher.Publish(ctx, entity.WorkflowEvent{
+			Type: "workflow", Workflow: "preprocessing", Status: "evidence_refreshed",
+			JobID: jobID, OccurredAt: observedAt, Payload: payload,
+		})
+	}
+}
+
+func listObjectsWithMetadata(ctx context.Context, objects repo.ObjectRepository, prefix string) ([]repo.ObjectInfo, error) {
+	if metadataObjects, ok := objects.(repo.ObjectMetadataRepository); ok {
+		return metadataObjects.ListObjectsWithMetadata(ctx, prefix)
+	}
+	return objects.ListObjects(ctx, prefix)
+}
+
+func metadataInt64(metadata map[string]string, key string) int64 {
+	value, err := strconv.ParseInt(strings.TrimSpace(metadata[key]), 10, 64)
+	if err != nil || value < 0 {
+		return 0
+	}
+	return value
+}
+
+func metadataFloat64(metadata map[string]string, key string) (float64, bool) {
+	value, err := strconv.ParseFloat(strings.TrimSpace(metadata[key]), 64)
+	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
+		return 0, false
+	}
+	return value, true
+}
+
+type lightCurveScatterRow struct {
+	Flux float32 `parquet:"flux"`
+}
+
+func (s *PreprocessingService) lightCurveScatterPPM(ctx context.Context, object repo.ObjectInfo) (float64, bool) {
+	if object.Size <= 0 || object.Size > maxScatterBackfillObjectBytes {
+		return 0, false
+	}
+	cacheKey := fmt.Sprintf("%s:%s:%d:%d", object.Key, object.ETag, object.Size, object.LastModified.UnixNano())
+	s.scienceCacheMu.Lock()
+	if entry, ok := s.lcScatterCache[cacheKey]; ok {
+		s.scienceCacheMu.Unlock()
+		return entry.value, entry.observed
+	}
+	s.scienceCacheMu.Unlock()
+
+	data, err := s.objects.GetObject(ctx, object.Key)
+	value, observed := 0.0, false
+	if err == nil && len(data) <= maxScatterBackfillObjectBytes {
+		value, err = normalizedFluxScatterPPM(data)
+		observed = err == nil
+	}
+
+	s.scienceCacheMu.Lock()
+	if s.lcScatterCache == nil {
+		s.lcScatterCache = make(map[string]scatterCacheEntry)
+	}
+	s.lcScatterCache[cacheKey] = scatterCacheEntry{value: value, observed: observed}
+	s.scienceCacheMu.Unlock()
+	return value, observed
+}
+
+func normalizedFluxScatterPPM(data []byte) (float64, error) {
+	reader := parquet.NewGenericReader[lightCurveScatterRow](bytes.NewReader(data))
+	defer reader.Close()
+	rows := make([]lightCurveScatterRow, 4096)
+	count := 0.0
+	mean, m2 := 0.0, 0.0
+	for {
+		n, err := reader.Read(rows)
+		if err != nil && !errors.Is(err, io.EOF) {
+			return 0, fmt.Errorf("read normalized Light Curve flux: %w", err)
+		}
+		for _, row := range rows[:n] {
+			value := float64(row.Flux)
+			if math.IsNaN(value) || math.IsInf(value, 0) {
+				continue
+			}
+			count++
+			delta := value - mean
+			mean += delta / count
+			m2 += delta * (value - mean)
+		}
+		if errors.Is(err, io.EOF) {
+			break
+		}
+	}
+	if count == 0 {
+		return 0, fmt.Errorf("normalized Light Curve contains no finite flux samples")
+	}
+	return math.Sqrt(m2/count) * 1_000_000, nil
+}
+
+func meanFloat64(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	total := 0.0
+	for _, value := range values {
+		total += value
+	}
+	return total / float64(len(values))
+}
+
+func quantileFloat64(values []float64, q float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	ordered := append([]float64(nil), values...)
+	sort.Float64s(ordered)
+	position := q * float64(len(ordered)-1)
+	lower := int(math.Floor(position))
+	upper := int(math.Ceil(position))
+	if lower == upper {
+		return ordered[lower]
+	}
+	weight := position - float64(lower)
+	return ordered[lower]*(1-weight) + ordered[upper]*weight
 }
 
 func lastPoint(points []entity.MonitoringPoint) entity.MonitoringPoint {
@@ -774,6 +1119,8 @@ func preprocessingHops(values map[string]float64, observations map[string][]enti
 			Output:      "Verified Bronze object",
 			Metrics: map[string]float64{
 				"total_files":        float64(progress.BronzeTotal),
+				"lightcurve_files":   float64(progress.BronzeLightCurves),
+				"target_pixel_files": float64(progress.BronzeTargetPixels),
 				"pending_files":      float64(progress.BronzePending),
 				"failed_files":       float64(progress.BronzeFailed),
 				"bronze_bytes":       float64(progress.BronzeBytes),
@@ -789,12 +1136,34 @@ func preprocessingHops(values map[string]float64, observations map[string][]enti
 			Contract:    "product-kind validation",
 			Input:       "Bronze FITS",
 			Output:      "Validated samples",
-			Metrics: metricValues(values,
+			Metrics: mergeMetricValues(metricValues(values,
 				"lc_input_rate", "tpf_input_rate", "lc_quality_removed_rate", "tpf_quality_removed_rate",
-				"lc_invalid_removed_rate", "tpf_invalid_removed_rate", "errors"),
+				"lc_invalid_removed_rate", "tpf_invalid_removed_rate", "lc_nonfinite_removed_rate", "tpf_nonfinite_removed_rate",
+				"lc_nonpositive_removed_rate", "tpf_nonpositive_removed_rate", "lc_input_total", "tpf_input_total",
+				"lc_quality_removed_total", "tpf_quality_removed_total", "lc_nonfinite_removed_total", "tpf_nonfinite_removed_total",
+				"lc_nonpositive_removed_total", "tpf_nonpositive_removed_total", "errors"), map[string]float64{
+				"completed_lightcurves":   float64(progress.CompletedLightCurves),
+				"completed_target_pixels": float64(progress.CompletedTargetPixels),
+				"science_counts_observed": boolToMetric(progress.ScienceCountsObserved),
+				"lc_input_samples":        float64(progress.LCInputSamples),
+				"lc_output_samples":       float64(progress.LCOutputSamples),
+				"lc_quality_removed":      float64(progress.LCQualityRemoved),
+				"lc_invalid_removed":      float64(progress.LCInvalidRemoved),
+				"lc_nonfinite_removed":    float64(progress.LCNonfiniteRemoved),
+				"lc_nonpositive_removed":  float64(progress.LCNonpositiveRemoved),
+				"lc_outlier_removed":      float64(progress.LCOutlierRemoved),
+				"tpf_input_samples":       float64(progress.TPFInputSamples),
+				"tpf_output_samples":      float64(progress.TPFOutputSamples),
+				"tpf_quality_removed":     float64(progress.TPFQualityRemoved),
+				"tpf_invalid_removed":     float64(progress.TPFInvalidRemoved),
+				"tpf_nonfinite_removed":   float64(progress.TPFNonfiniteRemoved),
+				"tpf_nonpositive_removed": float64(progress.TPFNonpositiveRemoved),
+				"failed_products":         float64(progress.CheckpointFailed),
+			}),
 			Telemetry: metricSeries(observations,
 				"lc_input_rate", "tpf_input_rate", "lc_quality_removed_rate", "tpf_quality_removed_rate",
-				"lc_invalid_removed_rate", "tpf_invalid_removed_rate"),
+				"lc_invalid_removed_rate", "tpf_invalid_removed_rate", "lc_nonfinite_removed_rate", "tpf_nonfinite_removed_rate",
+				"lc_nonpositive_removed_rate", "tpf_nonpositive_removed_rate"),
 		},
 		{
 			ID:          "transform",
@@ -803,12 +1172,37 @@ func preprocessingHops(values map[string]float64, observations map[string][]enti
 			Contract:    "lc-preprocess-v1 / tpf-preprocess-v2-chunked",
 			Input:       "Validated samples",
 			Output:      "Silver rows",
-			Metrics: metricValues(values,
-				"lc_output_rate", "tpf_output_rate", "lc_outlier_removed_rate",
-				"tpf_finite_pixel_fraction", "lc_duration_p95", "tpf_duration_p95", "throughput"),
+			Metrics: mergeMetricValues(metricValues(values,
+				"lc_output_rate", "tpf_output_rate", "lc_outlier_removed_rate", "lc_sigma_clip_3_4_rate", "lc_sigma_clip_4_5_rate", "lc_sigma_clip_ge_5_rate",
+				"tpf_finite_pixel_fraction", "lc_scatter_before_p50", "lc_scatter_before_p95", "lc_scatter_after_p50", "lc_scatter_after_p95",
+				"lc_sigma_clip_fraction_p95", "tpf_finite_pixel_fraction_p05", "lc_duration_p95", "tpf_duration_p95", "throughput"), map[string]float64{
+				"completed_lightcurves":            float64(progress.CompletedLightCurves),
+				"completed_target_pixels":          float64(progress.CompletedTargetPixels),
+				"lc_preclip_samples":               float64(progress.LCOutputSamples + progress.LCOutlierRemoved),
+				"lc_retained_samples":              float64(progress.LCOutputSamples),
+				"lc_outlier_removed":               float64(progress.LCOutlierRemoved),
+				"lc_sigma_clip_3_4_removed":        float64(progress.LCSigmaClip3To4),
+				"lc_sigma_clip_4_5_removed":        float64(progress.LCSigmaClip4To5),
+				"lc_sigma_clip_ge_5_removed":       float64(progress.LCSigmaClipGE5),
+				"lc_transform_products":            float64(progress.LCTransformProducts),
+				"lc_scatter_products":              float64(progress.LCScatterProducts),
+				"lc_scatter_before_mean_durable":   progress.LCScatterBeforeMean,
+				"lc_scatter_before_p50_durable":    progress.LCScatterBeforeP50,
+				"lc_scatter_before_p95_durable":    progress.LCScatterBeforeP95,
+				"lc_scatter_after_mean_durable":    progress.LCScatterAfterMean,
+				"lc_scatter_after_p50_durable":     progress.LCScatterAfterP50,
+				"lc_scatter_after_p95_durable":     progress.LCScatterAfterP95,
+				"lc_outlier_fraction_p50_durable":  progress.LCOutlierFractionP50,
+				"lc_outlier_fraction_p95_durable":  progress.LCOutlierFractionP95,
+				"tpf_finite_products":              float64(progress.TPFFiniteProducts),
+				"tpf_finite_fraction_mean_durable": progress.TPFFiniteFractionMean,
+				"tpf_finite_fraction_p05_durable":  progress.TPFFiniteFractionP05,
+				"tpf_finite_fraction_p50_durable":  progress.TPFFiniteFractionP50,
+			}),
 			Telemetry: metricSeries(observations,
-				"lc_output_rate", "tpf_output_rate", "lc_outlier_removed_rate",
-				"tpf_finite_pixel_fraction", "lc_duration_p95", "tpf_duration_p95"),
+				"lc_output_rate", "tpf_output_rate", "lc_outlier_removed_rate", "lc_sigma_clip_3_4_rate", "lc_sigma_clip_4_5_rate", "lc_sigma_clip_ge_5_rate",
+				"tpf_finite_pixel_fraction", "lc_scatter_before_p50", "lc_scatter_before_p95", "lc_scatter_after_p50", "lc_scatter_after_p95",
+				"lc_sigma_clip_fraction_p95", "tpf_finite_pixel_fraction_p05", "lc_duration_p95", "tpf_duration_p95"),
 		},
 		{
 			ID:          "silver",
@@ -818,12 +1212,14 @@ func preprocessingHops(values map[string]float64, observations map[string][]enti
 			Input:       "Silver rows",
 			Output:      "Verified Parquet",
 			Metrics: map[string]float64{
-				"silver_objects":     float64(progress.SilverTotal),
-				"silver_bytes":       float64(progress.SilverBytes),
-				"inventory_observed": boolToMetric(progress.FootprintObserved),
-				"throughput":         values["throughput"],
-				"bronze_bytes_rate":  values["bronze_bytes_rate"],
-				"silver_bytes_rate":  values["silver_bytes_rate"],
+				"silver_objects":       float64(progress.SilverTotal),
+				"silver_lightcurves":   float64(progress.SilverLightCurves),
+				"silver_target_pixels": float64(progress.SilverTargetPixels),
+				"silver_bytes":         float64(progress.SilverBytes),
+				"inventory_observed":   boolToMetric(progress.FootprintObserved),
+				"throughput":           values["throughput"],
+				"bronze_bytes_rate":    values["bronze_bytes_rate"],
+				"silver_bytes_rate":    values["silver_bytes_rate"],
 			},
 			Telemetry: metricSeries(observations, "throughput", "bronze_bytes_rate", "silver_bytes_rate"),
 		},
@@ -877,6 +1273,32 @@ func preprocessingHops(values map[string]float64, observations map[string][]enti
 			Metrics:     baseMetrics,
 		},
 	}
+	legacy := make(map[string]entity.PreprocessingHop, len(hops))
+	for _, hop := range hops {
+		legacy[hop.ID] = hop
+	}
+	variant := func(sourceID, id, label, description, contract, input, output string) entity.PreprocessingHop {
+		hop := legacy[sourceID]
+		hop.ID = id
+		hop.Label = label
+		hop.Description = description
+		hop.Contract = contract
+		hop.Input = input
+		hop.Output = output
+		return hop
+	}
+	hops = []entity.PreprocessingHop{
+		variant("bronze", "bronze", "Bronze verify & fetch", "Verify object identity, size and checksum before local staging", "bronze/tess/<product>/sector=<sector>/tic=<tic>/", "NASA MAST FITS", "Verified local FITS"),
+		variant("decode", "route", "Product router & FITS reader", "Route each verified product to the full LC decoder or bounded-memory TPF chunk reader", "fits-product-router-v1", "Verified local FITS", "Typed LC stream or TPF chunks"),
+		variant("decode", "lc-quality", "LC cadence quality control", "Apply quality bitmask, finite-value checks, time validity and cadence deduplication", "quality-flag-bitmask-v1/lc", "Decoded Light Curve", "Quality-valid LC cadences"),
+		variant("transform", "lc-transform", "LC normalization & sigma clip", "Normalize relative flux by its median and optionally remove configured sigma outliers", "lc-preprocess-v1", "Quality-valid LC cadences", "Normalized LC samples"),
+		variant("silver", "lc-parquet", "LC Parquet encode", "Encode the complete normalized Light Curve as a checksummed ZSTD Parquet artifact", "silver-lightcurve-v1", "Normalized LC samples", "Local LC Parquet"),
+		variant("decode", "tpf-quality", "TPF chunk decode & cadence QC", "Read bounded cadence chunks and apply quality, finite-time and time-validity filters", "quality-flag-bitmask-v1/tpf-chunk", "Target Pixel FITS", "Quality-valid TPF chunks"),
+		variant("transform", "tpf-transform", "TPF temporal pixel normalization", "Normalize each bounded Target Pixel chunk against its temporal pixel reference", "tpf-preprocess-v2-chunked", "Quality-valid TPF chunk", "Normalized TPF chunk"),
+		variant("silver", "tpf-parquet", "TPF row-group append & finalize", "Append each normalized chunk as a Parquet row group, then finalize the complete artifact", "silver-target-pixel-v1/chunked", "Normalized TPF chunks", "Local TPF Parquet"),
+		variant("silver", "silver", "Silver upload & integrity verify", "Upload the finalized LC or TPF Parquet object and verify durable size, checksum and metadata", "silver/tess/<product>/processor=<version>/", "Finalized local Parquet", "Verified Silver object"),
+		legacy["checkpoint"], legacy["lineage"], legacy["event"], legacy["ack"],
+	}
 	statuses := preprocessingHopStatuses(values, progress)
 	for i := range hops {
 		hops[i].Status = statuses[hops[i].ID]
@@ -884,6 +1306,26 @@ func preprocessingHops(values map[string]float64, observations map[string][]enti
 		hops[i].Details = hopDetails(hops[i].ID, details)
 		if hops[i].Metrics == nil {
 			hops[i].Metrics = baseMetrics
+		}
+		if hops[i].ID == "lc-transform" {
+			hops[i].ScatterPoints = append([]entity.PreprocessingScatterPoint(nil), progress.LCScatterPoints...)
+		}
+		if hops[i].ID == "lc-parquet" || hops[i].ID == "tpf-parquet" {
+			kind := "lightcurve"
+			if hops[i].ID == "tpf-parquet" {
+				kind = "target_pixel"
+			}
+			for _, point := range progress.MaterializationPoints {
+				if point.ProductKind == kind {
+					hops[i].MaterializationPoints = append(hops[i].MaterializationPoints, point)
+				}
+			}
+			for _, failure := range progress.EncodeFailures {
+				normalizedKind := strings.ToLower(strings.ReplaceAll(failure.ProductKind, "-", "_"))
+				if normalizedKind == kind || (kind == "lightcurve" && normalizedKind == "light_curve") {
+					hops[i].EncodeFailures = append(hops[i].EncodeFailures, failure)
+				}
+			}
 		}
 	}
 	return hops
@@ -899,6 +1341,13 @@ func metricValues(values map[string]float64, keys ...string) map[string]float64 
 	return result
 }
 
+func mergeMetricValues(target map[string]float64, source map[string]float64) map[string]float64 {
+	for key, value := range source {
+		target[key] = value
+	}
+	return target
+}
+
 func metricSeries(observations map[string][]entity.MonitoringPoint, keys ...string) map[string][]entity.MonitoringPoint {
 	result := make(map[string][]entity.MonitoringPoint, len(keys))
 	for _, key := range keys {
@@ -911,16 +1360,23 @@ func metricSeries(observations map[string][]entity.MonitoringPoint, keys ...stri
 
 func preprocessingHopStatuses(values map[string]float64, progress entity.PreprocessingProgress) map[string]string {
 	statuses := map[string]string{
-		"bronze": "not_observed", "decode": "not_observed", "transform": "not_observed", "silver": "not_observed",
+		"bronze": "not_observed", "route": "not_observed",
+		"lc-quality": "not_observed", "lc-transform": "not_observed", "lc-parquet": "not_observed",
+		"tpf-quality": "not_observed", "tpf-transform": "not_observed", "tpf-parquet": "not_observed", "silver": "not_observed",
 		"checkpoint": "not_observed", "lineage": "not_observed", "event": "not_observed", "ack": "not_observed",
 	}
 	if progress.BronzeObserved && progress.BronzeTotal > 0 {
 		statuses["bronze"] = observedComponentStatus(values, true)
+		statuses["route"] = observedComponentStatus(values, true)
 	}
-	decodeObserved := progress.CheckpointCompleted > 0 || values["lc_input_rate"] > 0 || values["tpf_input_rate"] > 0
-	transformObserved := progress.CheckpointCompleted > 0 || values["lc_output_rate"] > 0 || values["tpf_output_rate"] > 0
-	statuses["decode"] = observedComponentStatus(values, decodeObserved)
-	statuses["transform"] = observedComponentStatus(values, transformObserved)
+	lcObserved := progress.CompletedLightCurves > 0 || progress.SilverLightCurves > 0 || values["lc_input_rate"] > 0 || values["lc_output_rate"] > 0
+	tpfObserved := progress.CompletedTargetPixels > 0 || progress.SilverTargetPixels > 0 || values["tpf_input_rate"] > 0 || values["tpf_output_rate"] > 0
+	for _, id := range []string{"lc-quality", "lc-transform", "lc-parquet"} {
+		statuses[id] = observedComponentStatus(values, lcObserved)
+	}
+	for _, id := range []string{"tpf-quality", "tpf-transform", "tpf-parquet"} {
+		statuses[id] = observedComponentStatus(values, tpfObserved)
+	}
 	if progress.FootprintObserved && progress.SilverTotal > 0 {
 		statuses["silver"] = observedComponentStatus(values, true)
 	}

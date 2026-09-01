@@ -70,6 +70,17 @@ func (s *ModelsService) OverrideTrainingLabel(ctx context.Context, value entity.
 	return overrides.OverrideTrainingLabel(ctx, value)
 }
 
+func (s *ModelsService) ListTrainingReviews(ctx context.Context, limit int) ([]entity.TrainingReview, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	reviews, ok := s.analytics.(repo.TrainingReviewListRepository)
+	if !ok {
+		return nil, fmt.Errorf("training review repository is unavailable")
+	}
+	return reviews.ListTrainingReviews(ctx, limit)
+}
+
 // ============================================================================
 // DTO RUNTIME MANIFEST CỦA MODEL PACKAGE
 // ============================================================================

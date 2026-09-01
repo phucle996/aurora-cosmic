@@ -33,6 +33,40 @@ type fixedSourceReader struct {
 	size int64
 }
 
+type gatedSourceReader struct {
+	data    []byte
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+	mu      sync.Mutex
+	opens   int
+}
+
+func (s *gatedSourceReader) OpenProduct(context.Context, string) (io.ReadCloser, int64, error) {
+	s.mu.Lock()
+	s.opens++
+	s.mu.Unlock()
+	return &gatedReadCloser{source: s}, int64(len(s.data)), nil
+}
+
+type gatedReadCloser struct {
+	source *gatedSourceReader
+	offset int
+}
+
+func (r *gatedReadCloser) Read(output []byte) (int, error) {
+	r.source.once.Do(func() { close(r.source.started) })
+	<-r.source.release
+	if r.offset >= len(r.source.data) {
+		return 0, io.EOF
+	}
+	n := copy(output, r.source.data[r.offset:])
+	r.offset += n
+	return n, nil
+}
+
+func (*gatedReadCloser) Close() error { return nil }
+
 func (s fixedSourceReader) OpenProduct(context.Context, string) (io.ReadCloser, int64, error) {
 	return io.NopCloser(bytes.NewReader(s.data)), s.size, nil
 }
@@ -233,6 +267,50 @@ func TestPipelineStreamingIngestion(t *testing.T) {
 	}
 	if progressEvents[len(progressEvents)-1].CompletedProducts != 2 || progressEvents[len(progressEvents)-1].ConfiguredWorkers != 2 {
 		t.Errorf("unexpected progress counters: %+v", progressEvents[len(progressEvents)-1])
+	}
+}
+
+func TestPipelineDrainFinishesClaimedProductWithoutStartingNext(t *testing.T) {
+	drain := make(chan struct{})
+	source := &gatedSourceReader{
+		data:    []byte("CURRENT_FITS_TRANSFER"),
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	storage := newMockStorageClient()
+	pipe := ingest.NewPipeline(
+		ingest.Dependencies{Source: source, Storage: storage},
+		ingest.Options{Bucket: "aurora", WorkerCount: 1, Drain: drain},
+	)
+	manifest := &model.Manifest{Samples: []model.Sample{
+		{LightCurve: &model.ManifestProduct{SourceProductID: "current", Kind: model.KindLightCurve, Filename: "current_lc.fits", DataURI: "memory://current", SizeBytes: int64(len(source.data)), Sector: 1, TICID: 1}},
+		{LightCurve: &model.ManifestProduct{SourceProductID: "next", Kind: model.KindLightCurve, Filename: "next_lc.fits", DataURI: "memory://next", SizeBytes: int64(len(source.data)), Sector: 1, TICID: 2}},
+	}}
+	type outcome struct {
+		summary *model.Summary
+		results []model.ProductResult
+		err     error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		summary, results, err := pipe.IngestManifest(context.Background(), manifest)
+		done <- outcome{summary: summary, results: results, err: err}
+	}()
+	<-source.started
+	close(drain)
+	close(source.release)
+
+	result := <-done
+	if result.err != nil {
+		t.Fatalf("drain pipeline: %v", result.err)
+	}
+	if result.summary.StoredCount != 1 || len(result.results) != 1 {
+		t.Fatalf("drain should finish only the claimed product, summary=%+v results=%+v", result.summary, result.results)
+	}
+	source.mu.Lock()
+	defer source.mu.Unlock()
+	if source.opens != 1 {
+		t.Fatalf("drain started %d products, want exactly the active transfer", source.opens)
 	}
 }
 

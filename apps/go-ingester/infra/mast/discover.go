@@ -9,6 +9,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"go-ingester/internal/model"
@@ -19,6 +20,16 @@ type DiscoverOptions struct {
 	Sector   int
 	Limit    int
 	PageSize int
+	Progress func(DiscoverProgress)
+}
+
+// DiscoverProgress reports measured work from MAST, never an estimated timer.
+// Completed/Total describe the current stage and may reset when Stage changes.
+type DiscoverProgress struct {
+	Stage     string
+	Completed int
+	Total     int
+	Products  int
 }
 
 // DiscoverTESS discovers only complete target products. Full-frame images are
@@ -31,7 +42,7 @@ func DiscoverTESS(ctx context.Context, client *Client, opts DiscoverOptions, log
 	if err != nil {
 		return nil, fmt.Errorf("discover TESS target observations: %w", err)
 	}
-	observations, err := queryTargetProducts(ctx, client, parents, log)
+	observations, err := queryTargetProducts(ctx, client, parents, log, opts.Progress)
 	if err != nil {
 		return nil, fmt.Errorf("discover TESS target products: %w", err)
 	}
@@ -124,34 +135,63 @@ func classifyFilenameProduct(filename string) model.ProductKind {
 }
 
 // queryTargetProducts expands a CAOM LC parent into its exact sibling TPF + LC.
-func queryTargetProducts(ctx context.Context, client *Client, parents []Observation, log *slog.Logger) ([]Observation, error) {
+func queryTargetProducts(ctx context.Context, client *Client, parents []Observation, log *slog.Logger, progress func(DiscoverProgress)) ([]Observation, error) {
 	products := make([]Observation, 0, len(parents)*2)
-	for _, parent := range parents {
+	for index, parent := range parents {
 		if pair, ok := deriveTargetProductPair(parent); ok {
 			products = append(products, pair...)
-			continue
-		}
-		if parent.CatalogID <= 0 {
+		} else if parent.CatalogID <= 0 {
 			products = append(products, parent)
-			continue
-		}
-		children, err := queryMASTProducts(ctx, client, parent.CatalogID)
-		if err != nil {
-			return nil, fmt.Errorf("load products for observation %d: %w", parent.CatalogID, err)
-		}
-		for _, child := range children {
-			kind := classifyFilenameProduct(child.ProductFilename)
-			if kind != model.KindTargetPixel && kind != model.KindLightCurve {
-				continue
+		} else if !shouldExpandTargetProducts(parent) {
+			// Multi-sector DV rows and other non-LC/TP timeseries products are
+			// not acquisition samples. Expanding them one-by-one through
+			// Mast.Caom.Products previously added thousands of remote calls.
+		} else {
+			children, err := queryMASTProducts(ctx, client, parent.CatalogID)
+			if err != nil {
+				return nil, fmt.Errorf("load products for observation %d: %w", parent.CatalogID, err)
 			}
-			child.TargetName = parent.TargetName
-			child.SequenceNumber = parent.SequenceNumber
-			child.RA, child.Dec = parent.RA, parent.Dec
-			products = append(products, child)
+			for _, child := range children {
+				kind := classifyFilenameProduct(child.ProductFilename)
+				if kind != model.KindTargetPixel && kind != model.KindLightCurve {
+					continue
+				}
+				child.TargetName = parent.TargetName
+				child.SequenceNumber = parent.SequenceNumber
+				child.RA, child.Dec = parent.RA, parent.Dec
+				products = append(products, child)
+			}
+		}
+		completed := index + 1
+		if progress != nil && (completed%1000 == 0 || completed == len(parents)) {
+			progress(DiscoverProgress{Stage: "RESOLVING_MAST_PRODUCTS", Completed: completed, Total: len(parents), Products: len(products)})
 		}
 	}
 	log.Info("mast: resolved target pairs", slog.Int("parents", len(parents)), slog.Int("products", len(products)))
 	return products, nil
+}
+
+func shouldExpandTargetProducts(parent Observation) bool {
+	if isMultiSectorObservation(parent.ObsID) {
+		return false
+	}
+	// A non-empty URI that is not an LC/TP contract identifies another
+	// timeseries family (for example DVT validation products), not a missing
+	// target pair. Only rows without a URI require a Products lookup.
+	return strings.TrimSpace(observationDataURI(parent)) == ""
+}
+
+func isMultiSectorObservation(obsID string) bool {
+	sectorTokens := 0
+	for _, token := range strings.Split(strings.ToLower(obsID), "-") {
+		if len(token) != 5 || token[0] != 's' {
+			continue
+		}
+		if _, err := strconv.Atoi(token[1:]); err == nil {
+			sectorTokens++
+		}
+	}
+	return sectorTokens > 1
 }
 
 func deriveTargetProductPair(parent Observation) ([]Observation, bool) {
@@ -164,21 +204,27 @@ func deriveTargetProductPair(parent Observation) ([]Observation, bool) {
 		}
 	}
 	lowerURI := strings.ToLower(dataURI)
-	lcSuffix, tpSuffix := "", ""
+	inputSuffix, lcSuffix, tpSuffix := "", "", ""
 	switch {
 	case strings.HasSuffix(lowerURI, "_lc.fits"):
-		lcSuffix, tpSuffix = "_lc.fits", "_tp.fits"
+		inputSuffix, lcSuffix, tpSuffix = "_lc.fits", "_lc.fits", "_tp.fits"
 	case strings.HasSuffix(lowerURI, "-lc.fits"):
-		lcSuffix, tpSuffix = "-lc.fits", "-tp.fits"
+		inputSuffix, lcSuffix, tpSuffix = "-lc.fits", "-lc.fits", "-tp.fits"
+	case strings.HasSuffix(lowerURI, "_tp.fits"):
+		inputSuffix, lcSuffix, tpSuffix = "_tp.fits", "_lc.fits", "_tp.fits"
+	case strings.HasSuffix(lowerURI, "-tp.fits"):
+		inputSuffix, lcSuffix, tpSuffix = "-tp.fits", "-lc.fits", "-tp.fits"
 	}
-	if classifyFilenameProduct(filename) != model.KindLightCurve || lcSuffix == "" {
+	if inputSuffix == "" {
 		return nil, false
 	}
+	baseFilename := filename[:len(filename)-len(inputSuffix)]
+	baseURI := dataURI[:len(dataURI)-len(inputSuffix)]
 	lc := parent
-	lc.ProductFilename, lc.DataURI, lc.DataURL, lc.ProductSubGroup = filename, dataURI, "", "LC"
+	lc.ProductFilename, lc.DataURI, lc.DataURL, lc.ProductSubGroup = baseFilename+lcSuffix, baseURI+lcSuffix, "", "LC"
 	targetPixel := parent
-	targetPixel.ProductFilename = filename[:len(filename)-len(lcSuffix)] + tpSuffix
-	targetPixel.DataURI = dataURI[:len(dataURI)-len(lcSuffix)] + tpSuffix
+	targetPixel.ProductFilename = baseFilename + tpSuffix
+	targetPixel.DataURI = baseURI + tpSuffix
 	targetPixel.DataURL, targetPixel.ProductSubGroup = "", "TP"
 	// Exact TPF Content-Length is reserved by the capacity gate before storage.
 	targetPixel.SizeBytes = 0
@@ -213,15 +259,19 @@ func queryTargetObservations(ctx context.Context, client *Client, opts DiscoverO
 		filters = append(filters, map[string]any{"paramName": "sequence_number", "values": []string{strconv.Itoa(opts.Sector)}})
 	}
 	pageSize := opts.PageSize
-	if opts.Limit <= 0 && pageSize < 25_000 {
-		pageSize = 25_000
-	}
 	if opts.Limit > 0 && opts.Limit < pageSize {
 		pageSize = opts.Limit
 	}
 	first, rowsTotal, err := queryTargetObservationPage(ctx, client, filters, pageSize, 1)
 	if err != nil {
 		return nil, err
+	}
+	totalTargets := rowsTotal
+	if totalTargets < len(first) {
+		totalTargets = len(first)
+	}
+	if opts.Progress != nil {
+		opts.Progress(DiscoverProgress{Stage: "DISCOVERING_MAST_TARGETS", Completed: len(first), Total: totalTargets})
 	}
 	if opts.Limit > 0 && len(first) >= opts.Limit {
 		return first[:opts.Limit], nil
@@ -230,13 +280,65 @@ func queryTargetObservations(ctx context.Context, client *Client, opts DiscoverO
 		return first, nil
 	}
 	totalPages := (rowsTotal + pageSize - 1) / pageSize
-	observations := first
-	for pageNumber := 2; pageNumber <= totalPages; pageNumber++ {
-		pageRows, _, pageErr := queryTargetObservationPage(ctx, client, filters, pageSize, pageNumber)
-		if pageErr != nil {
-			return nil, pageErr
+	pageRows := make([][]Observation, totalPages+1)
+	pageRows[1] = first
+	type result struct {
+		page int
+		rows []Observation
+		err  error
+	}
+	workerCtx, cancelWorkers := context.WithCancel(ctx)
+	defer cancelWorkers()
+	jobs := make(chan int)
+	results := make(chan result)
+	workerCount := min(4, totalPages-1)
+	var workers sync.WaitGroup
+	for range workerCount {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for pageNumber := range jobs {
+				rows, _, pageErr := queryTargetObservationPage(workerCtx, client, filters, pageSize, pageNumber)
+				results <- result{page: pageNumber, rows: rows, err: pageErr}
+			}
+		}()
+	}
+	go func() {
+		defer close(jobs)
+		for pageNumber := 2; pageNumber <= totalPages; pageNumber++ {
+			select {
+			case <-workerCtx.Done():
+				return
+			case jobs <- pageNumber:
+			}
 		}
-		observations = append(observations, pageRows...)
+	}()
+	go func() {
+		workers.Wait()
+		close(results)
+	}()
+	completedTargets := len(first)
+	var firstErr error
+	for pageResult := range results {
+		if pageResult.err != nil {
+			if firstErr == nil {
+				firstErr = pageResult.err
+				cancelWorkers()
+			}
+			continue
+		}
+		pageRows[pageResult.page] = pageResult.rows
+		completedTargets += len(pageResult.rows)
+		if opts.Progress != nil {
+			opts.Progress(DiscoverProgress{Stage: "DISCOVERING_MAST_TARGETS", Completed: completedTargets, Total: totalTargets})
+		}
+	}
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	observations := make([]Observation, 0, rowsTotal)
+	for pageNumber := 1; pageNumber <= totalPages; pageNumber++ {
+		observations = append(observations, pageRows[pageNumber]...)
 	}
 	log.Info("mast: target catalog loaded", slog.Int("rows", len(observations)), slog.Duration("elapsed", time.Since(startedAt)))
 	return observations, nil
@@ -245,7 +347,10 @@ func queryTargetObservations(ctx context.Context, client *Client, opts DiscoverO
 func queryTargetObservationPage(ctx context.Context, client *Client, filters []map[string]any, pageSize, pageNumber int) ([]Observation, int, error) {
 	request := map[string]any{
 		"service": "Mast.Caom.Filtered", "format": "json", "pagesize": pageSize, "page": pageNumber, "timeout": 30,
-		"params": map[string]any{"columns": "*", "filters": filters},
+		"params": map[string]any{
+			"columns": "obsid,obs_id,target_name,sequence_number,dataURL,s_ra,s_dec,dataproduct_type",
+			"filters": filters,
+		},
 	}
 	body, err := queryJSON(ctx, client, request)
 	if err != nil {

@@ -68,9 +68,8 @@ async def _consume(config: Config, metrics: Metrics, stop: asyncio.Event) -> Non
                         raise ValueError("training event must be a JSON object")
                     payload = decoded
                     request = TrainingRequest.from_payload(payload)
-                    with metrics.job("training") as observation:
+                    with metrics.job("training"):
                         result = await asyncio.to_thread(application.execute, request)
-                        observation.set_rows(1)
                     await _publish(nc, COMPLETED_SUBJECT, result)
                     for inference_request in result.get("inference_requests", []):
                         await nc.jetstream().publish(

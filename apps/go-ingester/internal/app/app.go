@@ -22,7 +22,13 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, metrics *obs
 		log = slog.Default()
 	}
 
-	runner := ingest.NewService(cfg, log, metrics)
+	runtimeObserver, err := observer.NewIngestRuntimeObserver(cfg.NATS.URL)
+	if err != nil {
+		return fmt.Errorf("start ingest runtime observer: %w", err)
+	}
+	defer runtimeObserver.Close()
+
+	runner := ingest.NewService(cfg, log, metrics, runtimeObserver)
 	jobs := control.NewJobManager(ctx, cfg.Ingest.Concurrency, runner)
 	server := control.NewServer(cfg.Control.Addr, jobs)
 	if err := server.Start(); err != nil {

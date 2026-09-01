@@ -59,6 +59,55 @@ func TestDiscoverTESSOnlyReturnsTargetProductsWhenSampleLimitIsBounded(t *testin
 	}
 }
 
+func TestDiscoverTESSKeepsConfiguredPageSizeAndReportsMeasuredProgress(t *testing.T) {
+	var pageSizes []int
+	var progress []mast.DiscoverProgress
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse form: %v", err)
+		}
+		var request map[string]any
+		if err := json.Unmarshal([]byte(r.FormValue("request")), &request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		pageSize := int(request["pagesize"].(float64))
+		page := int(request["page"].(float64))
+		pageSizes = append(pageSizes, pageSize)
+		rows := []mast.Observation{
+			{TargetName: "TIC 1", DataURL: "mast:TESS/product/one_lc.fits"},
+			{TargetName: "TIC 2", DataURL: "mast:TESS/product/two_lc.fits"},
+		}
+		if page == 2 {
+			rows = []mast.Observation{{TargetName: "TIC 3", DataURL: "mast:TESS/product/three_lc.fits"}}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "COMPLETE",
+			"data":   rows,
+			"paging": map[string]any{"rowsTotal": 3},
+		})
+	}))
+	defer ts.Close()
+
+	products, err := mast.DiscoverTESS(context.Background(), mast.NewClient(ts.URL, 5*time.Second), mast.DiscoverOptions{
+		Sector:   1,
+		PageSize: 2,
+		Progress: func(update mast.DiscoverProgress) { progress = append(progress, update) },
+	}, slog.Default())
+	if err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	if len(pageSizes) != 2 || pageSizes[0] != 2 || pageSizes[1] != 2 {
+		t.Fatalf("unbounded discovery changed configured page size: %v", pageSizes)
+	}
+	if len(products) != 6 {
+		t.Fatalf("expected three TPF/LC pairs, got %d products", len(products))
+	}
+	last := progress[len(progress)-1]
+	if last.Stage != "RESOLVING_MAST_PRODUCTS" || last.Completed != 3 || last.Total != 3 || last.Products != 6 {
+		t.Fatalf("unexpected final progress: %+v", last)
+	}
+}
+
 func TestDiscoverTESSDoesNotQueryImageOrFFIParents(t *testing.T) {
 	var productParentIDs []string
 	var serverURL string
@@ -195,6 +244,29 @@ func TestMASTQueryPollsExecutingResponse(t *testing.T) {
 	}
 	if string(body) != `{"status":"COMPLETE","data":[]}` {
 		t.Fatalf("unexpected final response: %s", body)
+	}
+}
+
+func TestMASTQueryRetriesAfterMetadataAttemptTimeout(t *testing.T) {
+	var calls int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		if calls == 1 {
+			time.Sleep(100 * time.Millisecond)
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"COMPLETE","data":[]}`))
+	}))
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	body, err := mast.NewClient(ts.URL, 25*time.Millisecond).Query(ctx, url.Values{"request": []string{"{}"}})
+	if err != nil {
+		t.Fatalf("expected retry on a stalled MAST node: %v", err)
+	}
+	if calls != 2 || string(body) != `{"status":"COMPLETE","data":[]}` {
+		t.Fatalf("calls=%d body=%s", calls, body)
 	}
 }
 

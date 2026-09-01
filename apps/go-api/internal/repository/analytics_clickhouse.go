@@ -152,6 +152,40 @@ func (r *AnalyticsClickHouse) OverrideTrainingLabel(ctx context.Context, value e
 	return r.client.Exec(ctx, insert)
 }
 
+func (r *AnalyticsClickHouse) ListTrainingReviews(ctx context.Context, limit int) ([]entity.TrainingReview, error) {
+	query := fmt.Sprintf(`SELECT snapshot_id, source_product_id, tic_id, sector, training_label, review_status, toString(updated_at) AS updated_at
+		FROM candidate_training_cohort_v1 FINAL
+		WHERE label_source = 'HUMAN_REVIEW'
+		ORDER BY updated_at DESC
+		LIMIT %d FORMAT JSON`, limit)
+	body, err := r.client.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	var response struct {
+		Data []struct {
+			SnapshotID      string `json:"snapshot_id"`
+			SourceProductID string `json:"source_product_id"`
+			TICID           any    `json:"tic_id"`
+			Sector          int    `json:"sector"`
+			TrainingLabel   string `json:"training_label"`
+			ReviewStatus    string `json:"review_status"`
+			UpdatedAt       string `json:"updated_at"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("parse training review history: %w", err)
+	}
+	items := make([]entity.TrainingReview, 0, len(response.Data))
+	for _, row := range response.Data {
+		items = append(items, entity.TrainingReview{
+			SnapshotID: row.SnapshotID, SourceProductID: row.SourceProductID, TICID: toInt64(row.TICID),
+			Sector: row.Sector, TrainingLabel: row.TrainingLabel, ReviewStatus: row.ReviewStatus, UpdatedAt: row.UpdatedAt,
+		})
+	}
+	return items, nil
+}
+
 func (r *AnalyticsClickHouse) ListCandidates(ctx context.Context, sector int, snapshotID string, page entity.PageRequest) (entity.Page[entity.Candidate], error) {
 	query := "SELECT prediction_id, source_product_id, tic_id, sector, raw_logit, candidate_score, decision_threshold, above_threshold, model_version, registered_model_id, gold_snapshot_id, runtime_validation_id, runtime_package_id, predicted_at FROM candidate_predictions"
 	conditions := make([]string, 0, 2)
@@ -237,10 +271,17 @@ func (r *AnalyticsClickHouse) GetCandidate(ctx context.Context, predictionID str
 		ifNull(f.pixel_mad_median, 0) AS pixel_mad_median, ifNull(f.variability_peak_fraction, 0) AS variability_peak_fraction,
 		ifNull(f.transit_evidence_available, 0) AS transit_evidence_available, ifNull(f.transit_deficit_sum, 0) AS transit_deficit_sum, ifNull(f.transit_deficit_center_offset_pixels, 0) AS transit_deficit_center_offset_pixels,
 		ifNull(f.tic_available, 0) AS tic_available, ifNull(f.tmag, 0) AS tmag, ifNull(f.teff, 0) AS teff, ifNull(f.stellar_radius, 0) AS stellar_radius, ifNull(f.stellar_mass, 0) AS stellar_mass, ifNull(f.logg, 0) AS logg,
-		ifNull(f.matched_toi_id, '') AS matched_toi_id, ifNull(f.toi_match_status, '') AS toi_match_status
+		ifNull(f.matched_toi_id, '') AS matched_toi_id, ifNull(f.toi_match_status, '') AS toi_match_status,
+		if(r.source_product_id = '', 'UNRESOLVED', r.training_label) AS training_label,
+		if(r.source_product_id = '', '', r.label_source) AS label_source,
+		if(r.source_product_id = '', 'PENDING', r.review_status) AS review_status,
+		if(r.source_product_id = '', 0, r.train_eligible) AS train_eligible,
+		if(r.source_product_id = '', '', toString(r.updated_at)) AS review_updated_at
 	FROM candidate_predictions AS p
 	LEFT JOIN candidate_features_current_v1 AS f
 		ON f.snapshot_id = p.gold_snapshot_id AND f.source_product_id = p.source_product_id
+	LEFT JOIN candidate_training_cohort_v1 AS r FINAL
+		ON r.snapshot_id = p.gold_snapshot_id AND r.source_product_id = p.source_product_id
 	WHERE %s
 	LIMIT 1 FORMAT JSON`, whereClause)
 
@@ -295,6 +336,11 @@ func (r *AnalyticsClickHouse) GetCandidate(ctx context.Context, predictionID str
 			LogG                       float64 `json:"logg"`
 			MatchedTOIID               string  `json:"matched_toi_id"`
 			TOIMatchStatus             string  `json:"toi_match_status"`
+			TrainingLabel              string  `json:"training_label"`
+			LabelSource                string  `json:"label_source"`
+			ReviewStatus               string  `json:"review_status"`
+			TrainEligible              any     `json:"train_eligible"`
+			ReviewUpdatedAt            string  `json:"review_updated_at"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
@@ -320,6 +366,10 @@ func (r *AnalyticsClickHouse) GetCandidate(ctx context.Context, predictionID str
 			TransitEvidenceAvailable: row.TransitEvidenceAvailable == 1, TransitDeficitSum: row.TransitDeficitSum, TransitDeficitCenterOffset: row.TransitDeficitCenterOffset,
 			TICAvailable: row.TICAvailable == 1, TMag: row.TMag, Teff: row.Teff, StellarRadius: row.StellarRadius, StellarMass: row.StellarMass, LogG: row.LogG,
 			MatchedTOIID: row.MatchedTOIID, TOIMatchStatus: row.TOIMatchStatus,
+		},
+		Review: entity.CandidateReview{
+			TrainingLabel: row.TrainingLabel, LabelSource: row.LabelSource,
+			ReviewStatus: row.ReviewStatus, TrainEligible: toBool(row.TrainEligible), UpdatedAt: row.ReviewUpdatedAt,
 		},
 	}, nil
 }

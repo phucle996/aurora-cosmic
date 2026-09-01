@@ -121,5 +121,9 @@ func TestLiveClickHouseListTargets(t *testing.T) {
 	if len(page.Items) > 0 && page.Items[0].TICID == 0 {
 		t.Fatalf("Expected non-zero TICID, got 0")
 	}
+	if len(page.Items) == 0 {
+		t.Logf("Got total=%d, items=0 (live ClickHouse is empty)", page.Count)
+		return
+	}
 	t.Logf("Got total=%d, items=%d, first TICID=%d", page.Count, len(page.Items), page.Items[0].TICID)
 }

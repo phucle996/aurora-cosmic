@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { formatBytes, formatDate, StorageListing } from '../types';
+import { formatBytes, formatDate, StorageListing } from '@/features/datasets/types';
 
 interface ObjectBrowserTableProps {
   data: StorageListing | null;
@@ -26,36 +26,36 @@ export function ObjectBrowserTable({
   const objects = data?.objects ?? [];
 
   return (
-    <div className="space-y-4">
+    <div>
       <div className="overflow-x-auto">
-        <Table>
+        <Table className="min-w-[48rem]">
           <TableHeader>
-            <TableRow>
-              <TableHead>Object Key (S3 Path)</TableHead>
-              <TableHead className="w-[120px]">Kích thước</TableHead>
-              <TableHead className="w-[160px]">ETag / Hash</TableHead>
-              <TableHead className="w-[200px]">Cập nhật lần cuối</TableHead>
+            <TableRow className="bg-muted/20">
+              <TableHead className="font-mono text-[10px] uppercase tracking-[0.08em]">Object key / S3 path</TableHead>
+              <TableHead className="w-[120px] font-mono text-[10px] uppercase tracking-[0.08em]">Bytes</TableHead>
+              <TableHead className="w-[160px] font-mono text-[10px] uppercase tracking-[0.08em]">ETag</TableHead>
+              <TableHead className="w-[200px] font-mono text-[10px] uppercase tracking-[0.08em]">Modified</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
               <TableRow>
                 <TableCell colSpan={4} className="h-32 text-center text-sm text-muted-foreground">
-                  <RefreshCw className="size-4 animate-spin inline mr-2" />
-                  Đang truy vấn MinIO S3...
+                  <RefreshCw className="mr-2 inline size-4 animate-spin" />
+                  Querying MinIO object catalog…
                 </TableCell>
               </TableRow>
             ) : objects.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={4} className="h-32 text-center text-sm text-muted-foreground">
-                  Không có đối tượng nào trong prefix này.
+                  Không có object trong prefix hiện tại.
                 </TableCell>
               </TableRow>
             ) : (
               objects.map((obj) => (
                 <TableRow key={obj.key} className={linkForObject?.(obj.key) ? 'cursor-pointer' : undefined}>
                   <TableCell
-                    className="font-mono text-xs font-medium text-foreground truncate max-w-[400px]"
+                    className="max-w-[400px] truncate font-mono text-[11px] font-medium text-foreground"
                     title={obj.key}
                   >
                     {linkForObject?.(obj.key) ? (
@@ -83,31 +83,31 @@ export function ObjectBrowserTable({
         </Table>
       </div>
 
-      {/* Pagination Controls */}
-      <div className="flex items-center justify-between border-t border-border/60 pt-3 text-xs text-muted-foreground">
-        <span>
-          Tổng cộng: <strong className="text-foreground">{data?.total ?? 0}</strong> đối tượng (
-          {formatBytes(data?.total_bytes ?? 0)})
+      <div className="flex flex-col gap-3 border-t border-border/60 px-4 py-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+        <span className="font-mono text-[10px] uppercase tracking-[0.08em]">
+          <strong className="font-medium text-foreground">{(data?.total ?? 0).toLocaleString()}</strong> objects · {formatBytes(data?.total_bytes ?? 0)}
         </span>
         <div className="flex items-center gap-2">
           <Button
             variant="outline"
             size="sm"
-            className="h-7 w-7 p-0"
+            className="h-7 w-7 rounded-none p-0"
             disabled={page <= 1 || loading}
             onClick={() => onPageChange(page - 1)}
+            aria-label="Previous object page"
           >
             <ChevronLeft className="size-3.5" />
           </Button>
-          <span className="font-mono">
-            Trang {page} / {totalPages}
+          <span className="min-w-20 text-center font-mono text-[10px] uppercase">
+            Page {page} / {totalPages}
           </span>
           <Button
             variant="outline"
             size="sm"
-            className="h-7 w-7 p-0"
+            className="h-7 w-7 rounded-none p-0"
             disabled={page >= totalPages || loading}
             onClick={() => onPageChange(page + 1)}
+            aria-label="Next object page"
           >
             <ChevronRight className="size-3.5" />
           </Button>

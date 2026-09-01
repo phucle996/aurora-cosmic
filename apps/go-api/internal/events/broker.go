@@ -27,6 +27,7 @@ type Broker struct {
 
 type subscriber struct {
 	workflow string
+	ticketID string
 	channel  chan entity.WorkflowEvent
 }
 
@@ -47,6 +48,9 @@ func (b *Broker) Publish(_ context.Context, event entity.WorkflowEvent) error {
 		if sub.workflow != "" && sub.workflow != event.Workflow {
 			continue
 		}
+		if sub.ticketID != "" && sub.ticketID != event.TicketID {
+			continue
+		}
 		select {
 		case sub.channel <- event:
 		default:
@@ -58,7 +62,7 @@ func (b *Broker) Publish(_ context.Context, event entity.WorkflowEvent) error {
 	return nil
 }
 
-func (b *Broker) Subscribe(ctx context.Context, workflow string) *Subscription {
+func (b *Broker) Subscribe(ctx context.Context, workflow string, ticketIDs ...string) *Subscription {
 	if b == nil {
 		return &Subscription{Events: make(chan entity.WorkflowEvent)}
 	}
@@ -66,7 +70,11 @@ func (b *Broker) Subscribe(ctx context.Context, workflow string) *Subscription {
 	b.nextSubID++
 	id := b.nextSubID
 	channel := make(chan entity.WorkflowEvent, 16)
-	b.subscribers[id] = subscriber{workflow: workflow, channel: channel}
+	ticketID := ""
+	if len(ticketIDs) > 0 {
+		ticketID = ticketIDs[0]
+	}
+	b.subscribers[id] = subscriber{workflow: workflow, ticketID: ticketID, channel: channel}
 	b.mu.Unlock()
 
 	closeSubscription := func() {

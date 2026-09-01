@@ -74,15 +74,34 @@ func (c *Client) GetObject(ctx context.Context, key string) ([]byte, error) {
 }
 
 func (c *Client) ListObjects(ctx context.Context, prefix string) ([]repo.ObjectInfo, error) {
+	return c.listObjects(ctx, prefix, false)
+}
+
+func (c *Client) ListObjectsWithMetadata(ctx context.Context, prefix string) ([]repo.ObjectInfo, error) {
+	return c.listObjects(ctx, prefix, true)
+}
+
+func (c *Client) listObjects(ctx context.Context, prefix string, withMetadata bool) ([]repo.ObjectInfo, error) {
 	if c.client == nil {
 		return nil, fmt.Errorf("MinIO client is unavailable")
 	}
 	objects := make([]repo.ObjectInfo, 0)
-	for object := range c.client.ListObjects(ctx, c.Bucket, minioSDK.ListObjectsOptions{Prefix: prefix, Recursive: true}) {
+	for object := range c.client.ListObjects(ctx, c.Bucket, minioSDK.ListObjectsOptions{Prefix: prefix, Recursive: true, WithMetadata: withMetadata}) {
 		if object.Err != nil {
 			return nil, fmt.Errorf("MinIO list objects with prefix %q: %w", prefix, object.Err)
 		}
-		objects = append(objects, repo.ObjectInfo{Key: object.Key, Size: object.Size, ETag: object.ETag, LastModified: object.LastModified})
+		metadata := make(map[string]string, len(object.Metadata)+len(object.UserMetadata))
+		for key, values := range object.Metadata {
+			if len(values) == 0 {
+				continue
+			}
+			normalized := strings.TrimPrefix(strings.ToLower(key), "x-amz-meta-")
+			metadata[normalized] = values[0]
+		}
+		for key, value := range object.UserMetadata {
+			metadata[strings.TrimPrefix(strings.ToLower(key), "x-amz-meta-")] = value
+		}
+		objects = append(objects, repo.ObjectInfo{Key: object.Key, Size: object.Size, ETag: object.ETag, LastModified: object.LastModified, UserMetadata: metadata})
 	}
 	return objects, nil
 }

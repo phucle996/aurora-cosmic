@@ -108,7 +108,7 @@ func NewModule(infra Infrastructure) (*Module, error) {
 		GoldControlHandler:    handler.NewGoldControlHandler(goldControlService),
 		FactoryHistoryHandler: handler.NewFactoryHistoryHandler(factoryHistoryService),
 		IngestHandler:         handler.NewIngestHandler(ingestService),
-		EventsHandler:         handler.NewEventsHandler(eventBroker),
+		EventsHandler:         handler.NewEventsHandler(eventBroker, infra.NATS),
 		NATSStream:            natsStream,
 	}, nil
 }

@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{Context, Result};
 use arrow::array::{
@@ -151,6 +152,14 @@ impl TargetPixelStreamWriter {
             processing.invalid_time_removed.to_string(),
         );
         metadata.insert(
+            "nonfinite-removed".to_string(),
+            processing.nonfinite_removed.to_string(),
+        );
+        metadata.insert(
+            "nonpositive-time-removed".to_string(),
+            processing.nonpositive_time_removed.to_string(),
+        );
+        metadata.insert(
             "finite-pixel-fraction".to_string(),
             processing.finite_pixel_fraction.to_string(),
         );
@@ -267,7 +276,9 @@ pub fn serialize_lightcurve(
     )
     .context("Failed to create Light Curve Arrow RecordBatch")?;
 
+    let encode_started = Instant::now();
     let (local_path, size_bytes, sha256, handle) = write_parquet_batch(schema, batch, tmp_dir)?;
+    let encode_duration_ms = encode_started.elapsed().as_secs_f64() * 1_000.0;
 
     let mut metadata = HashMap::new();
     metadata.insert("schema-version".to_string(), schema_version.clone());
@@ -280,6 +291,10 @@ pub fn serialize_lightcurve(
     metadata.insert("bronze-sha256".to_string(), event.sha256.clone());
     metadata.insert("silver-sha256".to_string(), sha256.clone());
     metadata.insert("product-kind".to_string(), "LIGHT_CURVE".to_string());
+    metadata.insert(
+        "parquet-encode-duration-ms".to_string(),
+        encode_duration_ms.to_string(),
+    );
     if let Some(tic) = lc.tic_id {
         metadata.insert("tic-id".to_string(), tic.to_string());
     }
@@ -305,9 +320,40 @@ pub fn serialize_lightcurve(
         lc.processing.invalid_removed.to_string(),
     );
     metadata.insert(
+        "nonfinite-removed".to_string(),
+        lc.processing.nonfinite_removed.to_string(),
+    );
+    metadata.insert(
+        "nonpositive-time-removed".to_string(),
+        lc.processing.nonpositive_time_removed.to_string(),
+    );
+    metadata.insert(
         "outlier-removed".to_string(),
         lc.processing.outlier_removed.to_string(),
     );
+    metadata.insert(
+        "sigma-clip-3-4-removed".to_string(),
+        lc.processing.sigma_clip_3_4_removed.to_string(),
+    );
+    metadata.insert(
+        "sigma-clip-4-5-removed".to_string(),
+        lc.processing.sigma_clip_4_5_removed.to_string(),
+    );
+    metadata.insert(
+        "sigma-clip-ge-5-removed".to_string(),
+        lc.processing.sigma_clip_ge_5_removed.to_string(),
+    );
+    metadata.insert(
+        "normalized-scatter-before-clip-ppm".to_string(),
+        lc.processing.normalized_scatter_before_clip_ppm.to_string(),
+    );
+    metadata.insert(
+        "normalized-scatter-after-clip-ppm".to_string(),
+        lc.processing.normalized_scatter_after_clip_ppm.to_string(),
+    );
+    if let Some(level) = lc.processing.sigma_clip_level {
+        metadata.insert("sigma-clip-level".to_string(), level.to_string());
+    }
     metadata.insert(
         "flux-median".to_string(),
         lc.processing.flux_median.to_string(),

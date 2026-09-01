@@ -33,6 +33,8 @@ pub enum ErrorKind {
     FitsDecodeFailed,
     /// Valid FITS but scientifically unusable (too few points, invalid shape, etc.).
     PreprocessingRejected,
+    /// Arrow conversion, local Parquet writer, finalization, or local checksum failure.
+    ParquetEncodeFailed,
     /// Temporary MinIO Silver PUT failure.
     SilverWriteFailed,
     /// Silver object lineage conflict at deterministic key.
@@ -149,6 +151,16 @@ pub fn classify_pipeline_error(err: &anyhow::Error) -> ProcessingFailure {
         || msg.contains("Not enough usable")
     {
         return ProcessingFailure::rejected(ErrorKind::PreprocessingRejected, msg);
+    }
+
+    // Local Arrow/Parquet materialization. Keep this separate from the
+    // subsequent MinIO upload so Step 05 and Step 06 have honest outcomes.
+    if msg.contains("Arrow RecordBatch")
+        || msg.contains("Parquet")
+        || msg.contains("temporary Parquet file")
+        || msg.contains("Parquet file for hashing")
+    {
+        return ProcessingFailure::retryable(ErrorKind::ParquetEncodeFailed, msg);
     }
 
     // Silver upload failure — retryable infrastructure

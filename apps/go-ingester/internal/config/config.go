@@ -44,9 +44,10 @@ type BronzeConfig struct {
 }
 
 type MASTConfig struct {
-	APIURL   string
-	Timeout  time.Duration
-	PageSize int
+	APIURL           string
+	Timeout          time.Duration
+	DiscoveryTimeout time.Duration
+	PageSize         int
 }
 
 type Config struct {
@@ -116,7 +117,11 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	mastPageSize, _ := optionalEnvInt("MAST_PAGE_SIZE", 1000)
+	mastDiscoveryTimeout, err := optionalEnvDuration("MAST_DISCOVERY_TIMEOUT", 10*time.Minute)
+	if err != nil {
+		return nil, err
+	}
+	mastPageSize, _ := optionalEnvInt("MAST_PAGE_SIZE", 5000)
 
 	cfg := &Config{
 		Core: CoreConfig{
@@ -146,9 +151,10 @@ func Load() (*Config, error) {
 			LowWatermarkBytes:  lowWMBytes,
 		},
 		MAST: MASTConfig{
-			APIURL:   mastURL,
-			Timeout:  mastTimeout,
-			PageSize: mastPageSize,
+			APIURL:           mastURL,
+			Timeout:          mastTimeout,
+			DiscoveryTimeout: mastDiscoveryTimeout,
+			PageSize:         mastPageSize,
 		},
 	}
 
@@ -182,6 +188,9 @@ func (c *Config) Validate() error {
 	}
 	if c.MAST.Timeout <= 0 {
 		return fmt.Errorf("MAST_TIMEOUT must be positive")
+	}
+	if c.MAST.DiscoveryTimeout < 0 {
+		return fmt.Errorf("MAST_DISCOVERY_TIMEOUT must not be negative")
 	}
 	return nil
 }

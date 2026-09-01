@@ -23,7 +23,7 @@ func existingObjectMatchesExpected(actual, expected int64) bool {
 	return actual == expected
 }
 
-func (p *Pipeline) ingestProduct(ctx context.Context, prod model.ManifestProduct) model.ProductResult {
+func (p *Pipeline) ingestProduct(ctx context.Context, prod model.ManifestProduct, workerID int) model.ProductResult {
 	objectKey, err := storage.ObjectKeyFor(prod)
 	if err != nil {
 		return model.ProductResult{
@@ -128,7 +128,10 @@ func (p *Pipeline) ingestProduct(ctx context.Context, prod model.ManifestProduct
 		}
 		capacityReleases = append(capacityReleases, release)
 	}
-	hr := newHashedReader(stream)
+	p.reportTransfer(workerID, prod, 0, uploadSize)
+	hr := newHashedReader(stream, func(bytesRead int64) {
+		p.reportTransfer(workerID, prod, bytesRead, uploadSize)
+	})
 
 	userMeta := map[string]string{
 		"source-product-id": prod.SourceProductID,
@@ -149,6 +152,7 @@ func (p *Pipeline) ingestProduct(ctx context.Context, prod model.ManifestProduct
 			Error:           fmt.Errorf("minio put: %w", err),
 		}
 	}
+	hr.reportProgress(true)
 
 	sha256Hex := hr.sumHex()
 
@@ -191,6 +195,31 @@ func (p *Pipeline) ingestProduct(ctx context.Context, prod model.ManifestProduct
 
 	// Publish NATS JetStream event ONLY AFTER storage verification succeeds.
 	return p.publishOnly(ctx, prod, objectKey, hr.bytesRead(), sha256Hex)
+}
+
+func (p *Pipeline) reportTransfer(workerID int, prod model.ManifestProduct, bytesRead, expectedBytes int64) {
+	if p.transferProgress == nil {
+		return
+	}
+	p.transferProgress(TransferProgressEvent{
+		WorkerID:      workerID,
+		ProductID:     prod.SourceProductID,
+		ProductKind:   prod.Kind,
+		BytesRead:     bytesRead,
+		ExpectedBytes: expectedBytes,
+	})
+}
+
+func (p *Pipeline) finishTransfer(workerID int, prod model.ManifestProduct) {
+	if p.transferProgress == nil {
+		return
+	}
+	p.transferProgress(TransferProgressEvent{
+		WorkerID:    workerID,
+		ProductID:   prod.SourceProductID,
+		ProductKind: prod.Kind,
+		Done:        true,
+	})
 }
 
 // resolveStoredSHA makes an object uploaded outside the current checkpoint
