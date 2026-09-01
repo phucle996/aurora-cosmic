@@ -73,6 +73,10 @@ fn test_tpf_preprocessing_valid() {
     assert_eq!(res.cols, 2);
     assert_eq!(res.processing.output_cadences, 3);
     assert_eq!(res.processing.quality_removed, 0);
+    assert_eq!(res.processing.input_pixel_values, 12);
+    assert_eq!(res.processing.normalized_pixel_values, 12);
+    assert_eq!(res.processing.nonfinite_pixel_values, 0);
+    assert_eq!(res.processing.invalid_reference_values, 0);
 
     // Temporal median of pixel (0,0) is 100.0 -> normalized = (100.0/100.0) - 1.0 = 0.0
     for cad in 0..3 {
@@ -149,18 +153,21 @@ fn test_tpf_zero_reference_pixel_handling() {
     // Zero reference pixel (0,0) must not divide by zero or produce NaN/Inf
     assert_eq!(res.flux[0][0][0], 0.0);
     assert!(!res.flux[0][0][0].is_nan());
+    assert_eq!(res.processing.invalid_reference_pixels, 1);
+    assert_eq!(res.processing.invalid_reference_values, 2);
 }
 
 #[test]
 fn test_tpf_temporal_variation_preserved() {
-    // 3 cadences, pixel (0,0) has 1% dip in middle cadence
+    // Four cadences with both robust scatter and a shifted second-half median.
     let raw = RawTargetPixel {
-        time: vec![1.0, 2.0, 3.0],
-        quality: vec![0, 0, 0],
+        time: vec![1.0, 2.0, 3.0, 4.0],
+        quality: vec![0, 0, 0, 0],
         flux: vec![
             vec![vec![1000.0]],
             vec![vec![990.0]], // 1% dip
-            vec![vec![1000.0]],
+            vec![vec![1010.0]],
+            vec![vec![1020.0]],
         ],
         rows: 1,
         cols: 1,
@@ -170,11 +177,13 @@ fn test_tpf_temporal_variation_preserved() {
     let cfg = default_image_config();
 
     let res = preprocess_target_pixel(raw, &event, &cfg).unwrap();
-    assert_eq!(res.time.len(), 3);
+    assert_eq!(res.time.len(), 4);
     assert!(
         res.flux[1][0][0] < res.flux[0][0][0],
         "Middle dip cadence must be lower than baseline"
     );
+    assert!(res.processing.pixel_scatter_mad_p50_ppm > 0.0);
+    assert!(res.processing.reference_drift_p50_ppm > 0.0);
 }
 
 #[test]

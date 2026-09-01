@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { JSX } from 'react';
 import { useParams } from 'react-router-dom';
-import { BrainCircuit, CheckCircle2, CircleAlert, RefreshCw, Workflow } from 'lucide-react';
+import { BrainCircuit, CheckCircle2, CircleAlert, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { apiBase, apiFetch } from '@/lib/api';
 
 import { InferenceJobsTable } from './components/InferenceJobsTable';
@@ -31,7 +31,7 @@ import type {
 export type AIModelView = 'training' | 'evaluation' | 'evidence' | 'registry' | 'inference' | 'detail' | 'overview';
 
 const viewCopy: Record<AIModelView, { eyebrow: string; title: string; description: string }> = {
-  training: { eyebrow: 'AI Factory · Training Lab', title: 'Training Lab', description: 'Chọn Train New hoặc Evolve, pin CPU/GPU target và theo dõi tài nguyên runtime trong lúc huấn luyện.' },
+  training: { eyebrow: 'AI Factory / Experimental ML', title: 'Training Lab', description: 'Thiết kế experiment từ immutable Gold snapshots, kiểm tra cohort, khóa cấu hình tái lập và quan sát tài nguyên huấn luyện.' },
   evaluation: { eyebrow: 'AI Factory · Model Evaluation', title: 'Model Evaluation', description: 'Kiểm tra evaluation run, parity PyTorch–ONNX và trạng thái quality gate trước promotion.' },
   evidence: { eyebrow: 'AI Factory · Evolution Evidence', title: 'Evolution Evidence', description: 'Truy vết Gold input → training/evaluation → runtime package → inference của từng thế hệ model.' },
   registry: { eyebrow: 'AI Factory · Model Registry', title: 'Model Registry', description: 'Quản lý version, candidate/validated/champion và deployment có thể rollback.' },
@@ -136,21 +136,12 @@ export default function ModelWorkspace({ view = 'overview' }: { view?: AIModelVi
     if (view === 'training') void loadAvailableSnapshots();
   }, [view, loadAvailableSnapshots]);
 
-  // Live Training Polling & Elapsed Timer
+  // Live training events and local elapsed timer.
   useEffect(() => {
     if (!activeTraining) return;
     const timer = setInterval(() => {
       setTrainingElapsed(Math.floor((Date.now() - activeTraining.startedAt) / 1000));
     }, 1000);
-
-    const poll = setInterval(async () => {
-      try {
-        const res = await apiFetch<ModelResponse>('/v1/models');
-        setModels(res.models ?? []);
-      } catch {
-        // ignore network error while polling
-      }
-    }, 2000);
 
     const eventSource = new EventSource(`${apiBase}/v1/events?workflow=ml`);
     eventSource.addEventListener('workflow', (event) => {
@@ -174,17 +165,16 @@ export default function ModelWorkspace({ view = 'overview' }: { view?: AIModelVi
             .then((res) => setModels(res.models ?? []))
             .catch(() => undefined);
           setActiveTraining(null);
-          setNotice(`Huấn luyện đã hoàn tất. Runtime package đang chờ Rust xác minh parity; promotion chỉ diễn ra khi người vận hành duyệt trong Model Registry.`);
+          setNotice(`Huấn luyện đã hoàn tất. Runtime package đang chờ parity verification; promotion chỉ diễn ra khi người vận hành duyệt trong Model Registry.`);
           void loadAvailableSnapshots();
         }
       } catch {
-        // Ignore malformed events and keep polling the registry.
+        // Ignore malformed workflow events.
       }
     });
 
     return () => {
       clearInterval(timer);
-      clearInterval(poll);
       eventSource.close();
     };
   }, [activeTraining, loadAvailableSnapshots]);
@@ -223,7 +213,7 @@ export default function ModelWorkspace({ view = 'overview' }: { view?: AIModelVi
           compute_target: params.computeTarget,
         }),
       });
-      setNotice(`🚀 Training Job ${res.job_id} đã được gửi tới nhánh ${params.computeTarget.toUpperCase()} với ${snapshotIds.length} Gold snapshot. Promotion cần được duyệt thủ công trong Model Registry.`);
+      setNotice(`Training job ${res.job_id} đã được tạo trên ${params.computeTarget.toUpperCase()} với ${snapshotIds.length} Gold snapshot. Promotion vẫn cần được duyệt trong Model Registry.`);
 
       setActiveTraining({
         jobId: res.job_id,
@@ -294,8 +284,9 @@ export default function ModelWorkspace({ view = 'overview' }: { view?: AIModelVi
   return (
     <div className="space-y-6">
       {/* Page Header */}
-      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
-        <div>
+      <div className={`flex flex-col justify-between gap-4 md:flex-row md:items-end ${view === 'training' ? 'relative overflow-hidden border border-border/70 bg-card px-4 py-5 shadow-sm sm:px-6' : ''}`}>
+        {view === 'training' && <div className="pointer-events-none absolute inset-0 opacity-[0.18] [background-image:linear-gradient(to_right,var(--border)_1px,transparent_1px),linear-gradient(to_bottom,var(--border)_1px,transparent_1px)] [background-size:28px_28px]" />}
+        <div className="relative">
           <div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
             <BrainCircuit className="size-4 text-primary" />
             {copy.eyebrow}
@@ -305,10 +296,10 @@ export default function ModelWorkspace({ view = 'overview' }: { view?: AIModelVi
             {copy.description}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="relative flex flex-wrap items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => void loadData(true)} disabled={loading || refreshing}>
             <RefreshCw className={`size-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-            Refresh Registry
+            Refresh evidence
           </Button>
         </div>
       </div>
@@ -350,16 +341,14 @@ export default function ModelWorkspace({ view = 'overview' }: { view?: AIModelVi
       )}
 
       {view === 'training' && <>
-        <TrainingRuntimePanel />
-        <Card className="border-primary/25 bg-primary/[0.03]">
-          <CardHeader><CardTitle className="flex items-center gap-2 text-base"><Workflow className="size-4 text-primary" /> Gold-to-model control plane</CardTitle><CardDescription>Chọn rõ “new” hay “evolve”; toàn bộ option nằm trên trang và được pin vào training lineage.</CardDescription></CardHeader>
-          <CardContent className="grid gap-3 text-sm sm:grid-cols-3">
-            <TrainingStat label="Gold snapshots available" value={availableSnapshots.length || '—'} detail={snapshotsLoading ? 'Loading MinIO…' : `${untrainedSnapshots} chưa dùng để train`} />
-            <TrainingStat label="Registered base models" value={models.length} detail={`${championCount} đang Champion`} />
-            <TrainingStat label="Active training" value={activeTraining ? '1' : '0'} detail={activeTraining ? `${activeTraining.computeTarget?.toUpperCase()} · ${activeTraining.jobId}` : 'Không có job đang chạy'} />
-          </CardContent>
-        </Card>
+        <section aria-label="Training laboratory summary" className="grid gap-px overflow-hidden border border-border/70 bg-border/70 sm:grid-cols-2 xl:grid-cols-4">
+          <TrainingStat label="Committed Gold inputs" value={availableSnapshots.length || '—'} detail={snapshotsLoading ? 'Reading inventory…' : `${untrainedSnapshots} snapshots unused`} />
+          <TrainingStat label="Registered models" value={models.length} detail={`${validatedCount} validated · ${championCount} champion`} />
+          <TrainingStat label="Current experiment" value={activeTraining ? 'RUNNING' : 'NONE'} detail={activeTraining ? `${activeTraining.computeTarget?.toUpperCase()} · ${activeTraining.jobId}` : 'No active experiment in this view'} />
+          <TrainingStat label="Task contract" value="VETTING" detail="Light Curve + Target Pixel evidence" />
+        </section>
         <TrainingLabControl models={models} availableSnapshots={availableSnapshots} snapshotsLoading={snapshotsLoading} onRefreshSnapshots={() => void loadAvailableSnapshots()} onSubmitTraining={handleStartTraining} submitting={trainingSubmitting} />
+        <TrainingRuntimePanel />
       </>}
 
       {view === 'evaluation' && <>
@@ -423,7 +412,7 @@ export default function ModelWorkspace({ view = 'overview' }: { view?: AIModelVi
 }
 
 function TrainingStat({ label, value, detail }: { label: string; value: string | number; detail: string }): JSX.Element {
-  return <div className="rounded-md border border-border/70 bg-background/40 p-3"><p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p><p className="mt-1 font-mono text-xl font-semibold text-foreground">{value}</p><p className="mt-1 truncate text-xs text-muted-foreground" title={detail}>{detail}</p></div>;
+  return <div className="min-w-0 bg-card p-3.5"><p className="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground">{label}</p><p className="mt-1 font-mono text-lg font-semibold text-foreground">{value}</p><p className="mt-0.5 truncate text-[10px] text-muted-foreground" title={detail}>{detail}</p></div>;
 }
 
 function ModelContextPicker({ title, description, models, selectedRuntimeId, onSelectRuntimeId }: {

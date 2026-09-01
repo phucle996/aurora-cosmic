@@ -98,7 +98,7 @@ function PreprocessNode({ data, selected }: NodeProps): JSX.Element {
         </span>
         <Badge
           variant={
-            hop.status === 'completed' || hop.status === 'running'
+            hop.status === 'completed' || hop.status === 'running' || hop.status === 'catalog_syncing' || hop.status === 'ready'
               ? 'default'
               : hop.status === 'failed'
                 ? 'destructive'
@@ -150,7 +150,7 @@ function StatusEdge({
   const markerID = `pipeline-arrow-${id}`;
   return <>
     <defs><marker id={markerID} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M 0 0 L 8 4 L 0 8 z" fill={color} /></marker></defs>
-    <BaseEdge id={id} path={path} markerEnd={`url(#${markerID})`} style={{ stroke: color, strokeWidth: 2.5, strokeDasharray: status === 'running' ? '4 4' : undefined }} />
+    <BaseEdge id={id} path={path} markerEnd={`url(#${markerID})`} style={{ stroke: color, strokeWidth: 2.5, strokeDasharray: status === 'running' || status === 'draining' || status === 'catalog_syncing' ? '4 4' : undefined }} />
     {edgeData?.label && <EdgeLabelRenderer><div className="nodrag nopan pointer-events-none absolute whitespace-nowrap rounded border border-border/70 bg-background px-2 py-1 text-[10px] font-medium text-muted-foreground shadow-sm" style={{ transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)` }}>{edgeData.label}</div></EdgeLabelRenderer>}
   </>;
 }

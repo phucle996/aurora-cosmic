@@ -163,6 +163,54 @@ impl TargetPixelStreamWriter {
             "finite-pixel-fraction".to_string(),
             processing.finite_pixel_fraction.to_string(),
         );
+        for (key, value) in [
+            (
+                "tpf-input-pixel-values",
+                processing.input_pixel_values.to_string(),
+            ),
+            (
+                "tpf-normalized-pixel-values",
+                processing.normalized_pixel_values.to_string(),
+            ),
+            (
+                "tpf-nonfinite-pixel-values",
+                processing.nonfinite_pixel_values.to_string(),
+            ),
+            (
+                "tpf-invalid-reference-values",
+                processing.invalid_reference_values.to_string(),
+            ),
+            (
+                "tpf-invalid-reference-pixels",
+                processing.invalid_reference_pixels.to_string(),
+            ),
+            (
+                "tpf-pixel-scatter-mad-p50-ppm",
+                processing.pixel_scatter_mad_p50_ppm.to_string(),
+            ),
+            (
+                "tpf-pixel-scatter-mad-p95-ppm",
+                processing.pixel_scatter_mad_p95_ppm.to_string(),
+            ),
+            (
+                "tpf-reference-drift-p50-ppm",
+                processing.reference_drift_p50_ppm.to_string(),
+            ),
+            (
+                "tpf-reference-drift-p95-ppm",
+                processing.reference_drift_p95_ppm.to_string(),
+            ),
+            (
+                "tpf-boundary-jump-p50-ppm",
+                processing.boundary_jump_p50_ppm.to_string(),
+            ),
+            (
+                "tpf-boundary-jump-p95-ppm",
+                processing.boundary_jump_p95_ppm.to_string(),
+            ),
+        ] {
+            metadata.insert(key.to_string(), value);
+        }
         metadata.insert("tpf-chunk-count".to_string(), chunk_count.to_string());
         metadata.insert("tpf-chunk-cadences".to_string(), chunk_cadences.to_string());
         metadata.insert(

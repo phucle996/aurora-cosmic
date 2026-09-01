@@ -55,7 +55,7 @@ func (h *PreprocessingHandler) Query(c *gin.Context) {
 	}
 	hops := make([]gin.H, len(graph.Hops))
 	for i, hop := range graph.Hops {
-		hops[i] = gin.H{"id": hop.ID, "label": hop.Label, "description": hop.Description, "contract": hop.Contract, "status": hop.Status, "input": hop.Input, "output": hop.Output, "observed_at": hop.ObservedAt.Format(time.RFC3339), "metrics": hop.Metrics, "telemetry": hop.Telemetry, "details": hop.Details, "scatter_points": hop.ScatterPoints, "materialization_points": hop.MaterializationPoints, "encode_failures": hop.EncodeFailures}
+		hops[i] = gin.H{"id": hop.ID, "label": hop.Label, "description": hop.Description, "contract": hop.Contract, "status": hop.Status, "input": hop.Input, "output": hop.Output, "observed_at": hop.ObservedAt.Format(time.RFC3339), "metrics": hop.Metrics, "telemetry": hop.Telemetry, "details": hop.Details, "scatter_points": hop.ScatterPoints, "tpf_transform_points": hop.TPFTransformPoints, "materialization_points": hop.MaterializationPoints, "encode_failures": hop.EncodeFailures, "silver_failures": hop.SilverFailures, "checkpoint_points": hop.CheckpointPoints}
 	}
 	edges := make([]gin.H, len(graph.Edges))
 	for i, edge := range graph.Edges {

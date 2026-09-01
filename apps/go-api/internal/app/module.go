@@ -82,7 +82,7 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	if goldControlService == nil {
 		return nil, fmt.Errorf("service GoldControlService is nil")
 	}
-	factoryHistoryRepository := repository.NewFactoryHistoryClickHouse(infra.ClickHouse)
+	factoryHistoryRepository := repository.NewFactoryHistoryClickHouse(infra.ClickHouse, objectRepo)
 	factoryHistoryService := service.NewFactoryHistoryService(factoryHistoryRepository)
 	catalogRepo := repository.NewCatalogClickHouse(infra.ClickHouse)
 	ingestService := service.NewIngestServiceWithCatalogAndEvents(objectRepo, catalogRepo, infra.Prometheus, infra.MinIO.Bucket, infra.Ingester, eventBroker)

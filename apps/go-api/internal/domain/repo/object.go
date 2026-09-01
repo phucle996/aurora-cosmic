@@ -64,6 +64,41 @@ type WorkflowDispatcher interface {
 	Dispatch(context.Context, string, []byte) error
 }
 
+type SilverEventStreamSnapshot struct {
+	Messages  int64
+	Bytes     int64
+	Consumers int
+	FirstAt   time.Time
+	LastAt    time.Time
+	BySubject map[string]int64
+}
+
+// SilverEventStreamObserver reads bounded JetStream metadata only. It does not
+// consume or acknowledge downstream science events.
+type SilverEventStreamObserver interface {
+	ObserveSilverEventStream(context.Context) (SilverEventStreamSnapshot, error)
+}
+
+type BronzeConsumerSnapshot struct {
+	StreamMessages       int64
+	StreamBytes          int64
+	ConsumerName         string
+	DeliveredConsumerSeq int64
+	DeliveredStreamSeq   int64
+	AckFloorConsumerSeq  int64
+	AckFloorStreamSeq    int64
+	AckPending           int
+	Pending              int64
+	CurrentRedelivered   int
+	Waiting              int
+	LastDeliveredAt      time.Time
+	LastAckAt            time.Time
+}
+
+type BronzeConsumerObserver interface {
+	ObserveBronzeConsumer(context.Context) (BronzeConsumerSnapshot, error)
+}
+
 type EventPublisher interface {
 	Publish(context.Context, entity.WorkflowEvent) error
 }

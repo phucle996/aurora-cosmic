@@ -1,6 +1,5 @@
 import { type JSX } from 'react';
-import { BrainCircuit, LoaderCircle } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { Activity, BrainCircuit } from 'lucide-react';
 import type { ActiveTrainingState } from '../types';
 
 interface LiveTrainingBannerProps {
@@ -8,42 +7,28 @@ interface LiveTrainingBannerProps {
   trainingElapsed: number;
 }
 
-export function LiveTrainingBanner({
-  activeTraining,
-  trainingElapsed,
-}: LiveTrainingBannerProps): JSX.Element {
-  return (
-    <div className="relative overflow-hidden rounded-xl border border-primary/50 bg-gradient-to-r from-primary/15 via-purple-500/10 to-primary/5 p-4 shadow-lg shadow-primary/5">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="flex items-start sm:items-center gap-3">
-          <div className="relative flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/20 text-primary border border-primary/40">
-            <BrainCircuit className="size-5 animate-pulse text-primary" />
-            <span className="absolute -top-1 -right-1 flex size-3">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full size-3 bg-emerald-500"></span>
-            </span>
-          </div>
-          <div className="space-y-0.5">
-            <div className="flex items-center gap-2">
-              <h4 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
-                ⚡ {activeTraining.computeTarget?.toUpperCase() || 'GPU'} Worker đang huấn luyện Deep Neural Network
-              </h4>
-              <Badge variant="outline" className="bg-primary/20 text-primary border-primary/40 text-[10px] animate-pulse font-mono">
-                Đang chạy: {trainingElapsed}s
-              </Badge>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Đang xử lý & gộp <strong className="text-foreground">{activeTraining.snapshotCount} Gold Snapshots</strong> • Epochs: <strong className="text-foreground">{activeTraining.epochs}</strong> • Compute: <strong className="text-foreground">{activeTraining.computeTarget?.toUpperCase() || 'GPU'}</strong> • Base: <span className="font-mono text-primary">{activeTraining.baseModel || 'Scratch'}</span> • AdamW + Cosine Annealing LR
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <LoaderCircle className="size-4 animate-spin text-primary" />
-          <span className="text-xs text-muted-foreground font-mono">Tự động nạp khi hoàn tất...</span>
-        </div>
-      </div>
-      {/* Subtle animated progress indicator */}
-      <div className="absolute bottom-0 left-0 h-1 bg-gradient-to-r from-primary via-emerald-400 to-primary w-full animate-pulse opacity-80" />
+function elapsed(seconds: number): string {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor(seconds % 3600 / 60);
+  const remaining = seconds % 60;
+  return hours > 0 ? `${hours}h ${String(minutes).padStart(2, '0')}m ${String(remaining).padStart(2, '0')}s` : `${minutes}m ${String(remaining).padStart(2, '0')}s`;
+}
+
+export function LiveTrainingBanner({ activeTraining, trainingElapsed }: LiveTrainingBannerProps): JSX.Element {
+  const facts = [
+    ['Job', activeTraining.jobId],
+    ['Gold inputs', `${activeTraining.snapshotCount} snapshots`],
+    ['Compute', activeTraining.computeTarget?.toUpperCase() || 'GPU'],
+    ['Epoch budget', activeTraining.epochs.toLocaleString()],
+    ['Initialization', activeTraining.baseModel || 'SCRATCH'],
+    ['Elapsed', elapsed(trainingElapsed)],
+  ];
+  return <section className="border border-primary/50 bg-primary/[0.035]">
+    <div className="flex flex-col gap-3 border-b border-primary/20 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex items-center gap-3"><span className="relative flex size-8 items-center justify-center border border-primary/40 bg-primary/10"><BrainCircuit className="size-4 text-primary" /><span className="absolute -right-1 -top-1 size-2 rounded-full bg-emerald-500" /></span><div><p className="font-mono text-[10px] uppercase tracking-[0.14em] text-primary">Active experiment</p><p className="mt-0.5 text-sm font-semibold">Candidate-vetting training run</p></div></div>
+      <span className="flex w-fit items-center gap-1.5 border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 font-mono text-[10px] text-emerald-700 dark:text-emerald-300"><Activity className="size-3" />RUNNING</span>
     </div>
-  );
+    <div className="grid gap-px bg-border/60 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">{facts.map(([label, value]) => <div key={label} className="min-w-0 bg-card px-3 py-2.5"><p className="font-mono text-[9px] uppercase tracking-wide text-muted-foreground">{label}</p><p className="mt-1 truncate font-mono text-xs font-medium" title={value}>{value}</p></div>)}</div>
+    <div className="h-1 overflow-hidden bg-muted"><div className="h-full w-1/3 animate-pulse bg-primary" /></div>
+  </section>;
 }

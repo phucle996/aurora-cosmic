@@ -1,6 +1,7 @@
 use anyhow::Result;
 use async_nats::jetstream;
 use chrono::Utc;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::event::{BronzeObjectReady, ProductKind, SilverObjectReady};
@@ -50,10 +51,24 @@ pub async fn publish_silver_event(
     };
 
     let payload = serde_json::to_vec(event)?;
+    let message_id = silver_event_message_id(event);
     jetstream
-        .publish(subject.to_string(), payload.into())
+        .send_publish(
+            subject.to_string(),
+            jetstream::context::Publish::build()
+                .message_id(message_id)
+                .payload(payload.into()),
+        )
         .await?
         .await?;
 
     Ok(())
+}
+
+pub(crate) fn silver_event_message_id(event: &SilverObjectReady) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(event.object_key.as_bytes());
+    hasher.update(b":");
+    hasher.update(event.sha256.as_bytes());
+    format!("silver-ready-{}", hex::encode(hasher.finalize()))
 }

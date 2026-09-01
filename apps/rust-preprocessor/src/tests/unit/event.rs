@@ -1,4 +1,5 @@
 use crate::event::{BronzeObjectReady, ProductKind, SilverObjectReady};
+use crate::worker::publisher::silver_event_message_id;
 
 fn target_pixel_json() -> &'static str {
     r#"{
@@ -203,4 +204,40 @@ fn test_silver_object_ready_event_serialization() {
 
     assert_eq!(silver_event, deserialized);
     assert_eq!(deserialized.event_type, "silver.object.ready");
+}
+
+#[test]
+fn test_silver_publish_identity_is_stable_across_recovery_emissions() {
+    let base = SilverObjectReady {
+        event_id: "first-emission".to_string(),
+        event_type: "silver.object.ready".to_string(),
+        source_event_id: "bronze-1".to_string(),
+        source_product_id: "mast-1".to_string(),
+        sample_id: None,
+        bucket: "aurora".to_string(),
+        object_key: "silver/tess/lightcurve/example.parquet".to_string(),
+        product_kind: ProductKind::LightCurve,
+        schema_version: "silver-lightcurve-v1".to_string(),
+        processor_version: "lc-preprocess-v1".to_string(),
+        processing_fingerprint: "f".repeat(64),
+        sector: 2,
+        tic_id: Some(1),
+        camera: None,
+        ccd: None,
+        size_bytes: 128,
+        sha256: "a".repeat(64),
+        occurred_at: "2026-09-02T00:00:00Z".to_string(),
+    };
+    let mut replay = base.clone();
+    replay.event_id = "recovery-emission".to_string();
+    replay.occurred_at = "2026-09-02T00:01:00Z".to_string();
+    assert_eq!(
+        silver_event_message_id(&base),
+        silver_event_message_id(&replay)
+    );
+    replay.sha256 = "b".repeat(64);
+    assert_ne!(
+        silver_event_message_id(&base),
+        silver_event_message_id(&replay)
+    );
 }

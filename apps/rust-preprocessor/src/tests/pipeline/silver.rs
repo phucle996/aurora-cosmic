@@ -172,6 +172,17 @@ fn test_serialize_target_pixel_parquet_roundtrip() {
             nonfinite_removed: 0,
             nonpositive_time_removed: 0,
             finite_pixel_fraction: 1.0,
+            input_pixel_values: 8,
+            normalized_pixel_values: 8,
+            nonfinite_pixel_values: 0,
+            invalid_reference_values: 0,
+            invalid_reference_pixels: 0,
+            pixel_scatter_mad_p50_ppm: 100.0,
+            pixel_scatter_mad_p95_ppm: 250.0,
+            reference_drift_p50_ppm: 20.0,
+            reference_drift_p95_ppm: 40.0,
+            boundary_jump_p50_ppm: 5.0,
+            boundary_jump_p95_ppm: 10.0,
         },
     };
 
@@ -222,6 +233,17 @@ fn test_stream_target_pixel_parquet_writes_multiple_chunks() {
         nonfinite_removed: 0,
         nonpositive_time_removed: 0,
         finite_pixel_fraction: 1.0,
+        input_pixel_values: 4,
+        normalized_pixel_values: 4,
+        nonfinite_pixel_values: 0,
+        invalid_reference_values: 0,
+        invalid_reference_pixels: 0,
+        pixel_scatter_mad_p50_ppm: 100.0,
+        pixel_scatter_mad_p95_ppm: 250.0,
+        reference_drift_p50_ppm: 20.0,
+        reference_drift_p95_ppm: 40.0,
+        boundary_jump_p50_ppm: 5.0,
+        boundary_jump_p95_ppm: 10.0,
     };
     let first = ProcessedTargetPixel {
         time: vec![1.0],
@@ -254,6 +276,18 @@ fn test_stream_target_pixel_parquet_writes_multiple_chunks() {
     assert_eq!(
         artifact.metadata.get("tpf-chunk-cadences"),
         Some(&"1".to_string())
+    );
+    assert_eq!(
+        artifact.metadata.get("tpf-input-pixel-values"),
+        Some(&"4".to_string())
+    );
+    assert_eq!(
+        artifact.metadata.get("tpf-pixel-scatter-mad-p95-ppm"),
+        Some(&"250".to_string())
+    );
+    assert_eq!(
+        artifact.metadata.get("tpf-boundary-jump-p95-ppm"),
+        Some(&"10".to_string())
     );
     let file = File::open(&artifact.local_path).unwrap();
     let reader = ParquetRecordBatchReaderBuilder::try_new(file)
@@ -296,6 +330,17 @@ fn test_serialize_ffi_parquet_roundtrip() {
             nonfinite_removed: 0,
             nonpositive_time_removed: 0,
             finite_pixel_fraction: 1.0,
+            input_pixel_values: 0,
+            normalized_pixel_values: 0,
+            nonfinite_pixel_values: 0,
+            invalid_reference_values: 0,
+            invalid_reference_pixels: 0,
+            pixel_scatter_mad_p50_ppm: 0.0,
+            pixel_scatter_mad_p95_ppm: 0.0,
+            reference_drift_p50_ppm: 0.0,
+            reference_drift_p95_ppm: 0.0,
+            boundary_jump_p50_ppm: 0.0,
+            boundary_jump_p95_ppm: 0.0,
         },
     };
 

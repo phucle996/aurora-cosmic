@@ -33,6 +33,10 @@ pub struct Metrics {
     normalized_scatter_ppm: HistogramVec,
     sigma_clip_fraction: HistogramVec,
     finite_pixel_fraction_distribution: HistogramVec,
+    tpf_normalization_pixels: IntCounterVec,
+    tpf_pixel_scatter_mad_ppm: HistogramVec,
+    tpf_reference_drift_ppm: HistogramVec,
+    tpf_chunk_boundary_jump_ppm: HistogramVec,
     last_success: Gauge,
 }
 
@@ -123,6 +127,49 @@ impl Metrics {
             .buckets(vec![0.5, 0.75, 0.9, 0.95, 0.99, 0.999, 1.0]),
             &[],
         )?;
+        let tpf_normalization_pixels = IntCounterVec::new(
+            Opts::new(
+                "aurora_preprocessor_tpf_normalization_pixels_total",
+                "TPF pixel values observed during temporal normalization by bounded outcome.",
+            ),
+            &["outcome"],
+        )?;
+        let ppm_buckets = vec![
+            10.0,
+            30.0,
+            100.0,
+            300.0,
+            1_000.0,
+            3_000.0,
+            10_000.0,
+            30_000.0,
+            100_000.0,
+            1_000_000.0,
+        ];
+        let tpf_pixel_scatter_mad_ppm = HistogramVec::new(
+            prometheus::HistogramOpts::new(
+                "aurora_preprocessor_tpf_pixel_scatter_mad_ppm",
+                "Per-product robust temporal pixel scatter after normalization, in ppm.",
+            )
+            .buckets(ppm_buckets.clone()),
+            &["quantile"],
+        )?;
+        let tpf_reference_drift_ppm = HistogramVec::new(
+            prometheus::HistogramOpts::new(
+                "aurora_preprocessor_tpf_reference_drift_ppm",
+                "Per-product temporal reference drift between chunk halves, in ppm.",
+            )
+            .buckets(ppm_buckets.clone()),
+            &["quantile"],
+        )?;
+        let tpf_chunk_boundary_jump_ppm = HistogramVec::new(
+            prometheus::HistogramOpts::new(
+                "aurora_preprocessor_tpf_chunk_boundary_jump_ppm",
+                "Per-product normalized flux discontinuity at TPF chunk boundaries, in ppm.",
+            )
+            .buckets(ppm_buckets),
+            &["quantile"],
+        )?;
         let last_success = Gauge::new(
             "aurora_preprocessor_last_success_timestamp_seconds",
             "Unix timestamp of the last successful or recovered product.",
@@ -141,6 +188,10 @@ impl Metrics {
         registry.register(Box::new(normalized_scatter_ppm.clone()))?;
         registry.register(Box::new(sigma_clip_fraction.clone()))?;
         registry.register(Box::new(finite_pixel_fraction_distribution.clone()))?;
+        registry.register(Box::new(tpf_normalization_pixels.clone()))?;
+        registry.register(Box::new(tpf_pixel_scatter_mad_ppm.clone()))?;
+        registry.register(Box::new(tpf_reference_drift_ppm.clone()))?;
+        registry.register(Box::new(tpf_chunk_boundary_jump_ppm.clone()))?;
         registry.register(Box::new(last_success.clone()))?;
 
         // Materialize every bounded counter/histogram label at startup. Idle
@@ -175,6 +226,14 @@ impl Metrics {
         }
         sigma_clip_fraction.with_label_values(&[]);
         finite_pixel_fraction_distribution.with_label_values(&[]);
+        for outcome in ["input", "retained", "nonfinite_input", "invalid_reference"] {
+            tpf_normalization_pixels.with_label_values(&[outcome]);
+        }
+        for quantile in ["p50", "p95"] {
+            tpf_pixel_scatter_mad_ppm.with_label_values(&[quantile]);
+            tpf_reference_drift_ppm.with_label_values(&[quantile]);
+            tpf_chunk_boundary_jump_ppm.with_label_values(&[quantile]);
+        }
 
         Ok(Self {
             registry,
@@ -191,6 +250,10 @@ impl Metrics {
             normalized_scatter_ppm,
             sigma_clip_fraction,
             finite_pixel_fraction_distribution,
+            tpf_normalization_pixels,
+            tpf_pixel_scatter_mad_ppm,
+            tpf_reference_drift_ppm,
+            tpf_chunk_boundary_jump_ppm,
             last_success,
         })
     }
@@ -232,6 +295,16 @@ impl Metrics {
             finite_pixel_fraction: None,
             normalized_scatter_before_ppm: None,
             normalized_scatter_after_ppm: None,
+            tpf_input_pixel_values: 0,
+            tpf_normalized_pixel_values: 0,
+            tpf_nonfinite_pixel_values: 0,
+            tpf_invalid_reference_values: 0,
+            tpf_pixel_scatter_p50_ppm: None,
+            tpf_pixel_scatter_p95_ppm: None,
+            tpf_reference_drift_p50_ppm: None,
+            tpf_reference_drift_p95_ppm: None,
+            tpf_boundary_jump_p50_ppm: None,
+            tpf_boundary_jump_p95_ppm: None,
         }
     }
 
@@ -298,6 +371,53 @@ impl Metrics {
                     .observe(observation.outlier_removed as f64 / preclip_samples as f64);
             }
         }
+        if kind == "target_pixel" {
+            for (outcome, value) in [
+                ("input", observation.tpf_input_pixel_values),
+                ("retained", observation.tpf_normalized_pixel_values),
+                ("nonfinite_input", observation.tpf_nonfinite_pixel_values),
+                (
+                    "invalid_reference",
+                    observation.tpf_invalid_reference_values,
+                ),
+            ] {
+                if value > 0 {
+                    self.tpf_normalization_pixels
+                        .with_label_values(&[outcome])
+                        .inc_by(value);
+                }
+            }
+            for (quantile, value) in [
+                ("p50", observation.tpf_pixel_scatter_p50_ppm),
+                ("p95", observation.tpf_pixel_scatter_p95_ppm),
+            ] {
+                if let Some(value) = value {
+                    self.tpf_pixel_scatter_mad_ppm
+                        .with_label_values(&[quantile])
+                        .observe(value);
+                }
+            }
+            for (quantile, value) in [
+                ("p50", observation.tpf_reference_drift_p50_ppm),
+                ("p95", observation.tpf_reference_drift_p95_ppm),
+            ] {
+                if let Some(value) = value {
+                    self.tpf_reference_drift_ppm
+                        .with_label_values(&[quantile])
+                        .observe(value);
+                }
+            }
+            for (quantile, value) in [
+                ("p50", observation.tpf_boundary_jump_p50_ppm),
+                ("p95", observation.tpf_boundary_jump_p95_ppm),
+            ] {
+                if let Some(value) = value {
+                    self.tpf_chunk_boundary_jump_ppm
+                        .with_label_values(&[quantile])
+                        .observe(value);
+                }
+            }
+        }
 
         if status == STATUS_FAILED {
             self.errors.with_label_values(&[kind]).inc();
@@ -354,6 +474,16 @@ pub struct ProductObservation {
     finite_pixel_fraction: Option<f64>,
     normalized_scatter_before_ppm: Option<f64>,
     normalized_scatter_after_ppm: Option<f64>,
+    tpf_input_pixel_values: u64,
+    tpf_normalized_pixel_values: u64,
+    tpf_nonfinite_pixel_values: u64,
+    tpf_invalid_reference_values: u64,
+    tpf_pixel_scatter_p50_ppm: Option<f64>,
+    tpf_pixel_scatter_p95_ppm: Option<f64>,
+    tpf_reference_drift_p50_ppm: Option<f64>,
+    tpf_reference_drift_p95_ppm: Option<f64>,
+    tpf_boundary_jump_p50_ppm: Option<f64>,
+    tpf_boundary_jump_p95_ppm: Option<f64>,
 }
 
 impl ProductObservation {
@@ -401,6 +531,22 @@ impl ProductObservation {
             finite_nonnegative(metadata.get("normalized-scatter-before-clip-ppm"));
         self.normalized_scatter_after_ppm =
             finite_nonnegative(metadata.get("normalized-scatter-after-clip-ppm"));
+        self.tpf_input_pixel_values = integer(&["tpf-input-pixel-values"]);
+        self.tpf_normalized_pixel_values = integer(&["tpf-normalized-pixel-values"]);
+        self.tpf_nonfinite_pixel_values = integer(&["tpf-nonfinite-pixel-values"]);
+        self.tpf_invalid_reference_values = integer(&["tpf-invalid-reference-values"]);
+        self.tpf_pixel_scatter_p50_ppm =
+            finite_nonnegative(metadata.get("tpf-pixel-scatter-mad-p50-ppm"));
+        self.tpf_pixel_scatter_p95_ppm =
+            finite_nonnegative(metadata.get("tpf-pixel-scatter-mad-p95-ppm"));
+        self.tpf_reference_drift_p50_ppm =
+            finite_nonnegative(metadata.get("tpf-reference-drift-p50-ppm"));
+        self.tpf_reference_drift_p95_ppm =
+            finite_nonnegative(metadata.get("tpf-reference-drift-p95-ppm"));
+        self.tpf_boundary_jump_p50_ppm =
+            finite_nonnegative(metadata.get("tpf-boundary-jump-p50-ppm"));
+        self.tpf_boundary_jump_p95_ppm =
+            finite_nonnegative(metadata.get("tpf-boundary-jump-p95-ppm"));
     }
 }
 
@@ -558,5 +704,46 @@ mod tests {
             "aurora_preprocessor_lc_normalized_scatter_ppm_count{phase=\"after_clip\"} 1"
         ));
         assert!(text.contains("aurora_preprocessor_lc_sigma_clip_fraction_count 1"));
+    }
+
+    #[test]
+    fn target_pixel_diagnostics_are_exported_with_bounded_labels() {
+        let metrics = Arc::new(Metrics::new().unwrap());
+        let mut observation = metrics.begin("TARGET_PIXEL", 256);
+        observation.set_science_metadata(&std::collections::HashMap::from([
+            ("tpf-input-pixel-values".to_string(), "1000".to_string()),
+            ("tpf-normalized-pixel-values".to_string(), "980".to_string()),
+            ("tpf-nonfinite-pixel-values".to_string(), "15".to_string()),
+            ("tpf-invalid-reference-values".to_string(), "5".to_string()),
+            (
+                "tpf-pixel-scatter-mad-p50-ppm".to_string(),
+                "220".to_string(),
+            ),
+            (
+                "tpf-pixel-scatter-mad-p95-ppm".to_string(),
+                "900".to_string(),
+            ),
+            ("tpf-reference-drift-p50-ppm".to_string(), "40".to_string()),
+            ("tpf-reference-drift-p95-ppm".to_string(), "180".to_string()),
+            ("tpf-boundary-jump-p50-ppm".to_string(), "10".to_string()),
+            ("tpf-boundary-jump-p95-ppm".to_string(), "60".to_string()),
+        ]));
+        observation.set_success();
+        drop(observation);
+
+        let text = String::from_utf8(metrics.render()).unwrap();
+        assert!(text.contains(
+            "aurora_preprocessor_tpf_normalization_pixels_total{outcome=\"input\"} 1000"
+        ));
+        assert!(text.contains(
+            "aurora_preprocessor_tpf_normalization_pixels_total{outcome=\"retained\"} 980"
+        ));
+        assert!(text
+            .contains("aurora_preprocessor_tpf_pixel_scatter_mad_ppm_count{quantile=\"p95\"} 1"));
+        assert!(
+            text.contains("aurora_preprocessor_tpf_reference_drift_ppm_count{quantile=\"p95\"} 1")
+        );
+        assert!(text
+            .contains("aurora_preprocessor_tpf_chunk_boundary_jump_ppm_count{quantile=\"p95\"} 1"));
     }
 }

@@ -1,7 +1,14 @@
+import type { BLSSearchEvidence, CandidateAssemblyEvidence, GoldCommitEvidence, GoldMaterializationEvidence, GoldProjectionEvidence, LCFeatureEvidence, TPFSpatialEvidence } from '@/features/factory-history/types';
+
 // Shared Bronze-to-Gold graph and preprocessing runtime contracts.
 export type HopStatus =
   | 'not_observed'
+  | 'idle'
   | 'running'
+  | 'draining'
+  | 'frozen'
+  | 'catalog_syncing'
+  | 'ready'
   | 'completed'
   | 'retry'
   | 'failed'
@@ -24,6 +31,13 @@ export type Hop = {
   metrics?: Record<string, number>;
   telemetry?: Record<string, Array<{ timestamp: number; value: number; labels?: Record<string, string> }>>;
   details?: Record<string, string>;
+  lc_feature_evidence?: LCFeatureEvidence;
+  bls_search_evidence?: BLSSearchEvidence;
+  tpf_spatial_evidence?: TPFSpatialEvidence;
+  candidate_assembly_evidence?: CandidateAssemblyEvidence;
+  gold_materialization_evidence?: GoldMaterializationEvidence;
+  gold_projection_evidence?: GoldProjectionEvidence;
+  gold_commit_evidence?: GoldCommitEvidence;
   scatter_points?: Array<{
     object_key: string;
     before_ppm: number;
@@ -31,6 +45,26 @@ export type Hop = {
     outlier_removed: number;
     preclip_samples: number;
     sigma_clip_level: number;
+  }>;
+  tpf_transform_points?: Array<{
+    object_key: string;
+    completed_at: string;
+    diagnostics_observed: boolean;
+    finite_pixel_fraction: number;
+    input_cadences: number;
+    output_cadences: number;
+    input_pixel_values: number;
+    normalized_pixel_values: number;
+    nonfinite_pixel_values: number;
+    invalid_reference_values: number;
+    invalid_reference_pixels: number;
+    scatter_p50_ppm: number;
+    scatter_p95_ppm: number;
+    drift_p50_ppm: number;
+    drift_p95_ppm: number;
+    boundary_jump_p50_ppm: number;
+    boundary_jump_p95_ppm: number;
+    chunk_count: number;
   }>;
   materialization_points?: Array<{
     object_key: string;
@@ -40,6 +74,15 @@ export type Hop = {
     source_bytes: number;
     encode_duration_ms: number;
     completed_at: string;
+    etag: string;
+    schema_version: string;
+    checksum_bound: boolean;
+    lineage_bound: boolean;
+    size_verified: boolean;
+    schema_verified: boolean;
+    checkpoint_linked: boolean;
+    integrity_verified: boolean;
+    verification_attempts: number;
   }>;
   encode_failures?: Array<{
     object_key: string;
@@ -47,6 +90,30 @@ export type Hop = {
     reason: string;
     recovered: boolean;
     occurred_at: string;
+  }>;
+  silver_failures?: Array<{
+    object_key: string;
+    product_kind: string;
+    kind: string;
+    reason: string;
+    recovered: boolean;
+    attempts: number;
+    occurred_at: string;
+  }>;
+  checkpoint_points?: Array<{
+    checkpoint_id: string;
+    product_kind: string;
+    state: string;
+    schema_version: number;
+    attempts: number;
+    terminal: boolean;
+    silver_object_key: string;
+    silver_verified: boolean;
+    resume_action: 'reuse_and_ack' | 'verify_silver' | 'reprocess' | 'terminal';
+    last_error_kind: string;
+    lifecycle_elapsed_ms: number;
+    created_at: string;
+    updated_at: string;
   }>;
 };
 
@@ -116,7 +183,7 @@ export type PreprocessingGraph = {
     items_to_process: number;
     observed_at?: string;
   };
-  hops: Array<Pick<Hop, 'id' | 'status' | 'observed_at' | 'metrics' | 'telemetry' | 'details' | 'scatter_points' | 'materialization_points' | 'encode_failures'>>;
+  hops: Array<Pick<Hop, 'id' | 'status' | 'observed_at' | 'metrics' | 'telemetry' | 'details' | 'scatter_points' | 'tpf_transform_points' | 'materialization_points' | 'encode_failures' | 'silver_failures' | 'checkpoint_points'>>;
   edges: Array<{ id: string; source: string; target: string; status: HopStatus }>;
 };
 

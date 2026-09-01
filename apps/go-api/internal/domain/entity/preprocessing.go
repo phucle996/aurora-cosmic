@@ -65,65 +65,89 @@ type PreprocessingRuntimeSnapshot struct {
 // plane. Checkpoint counts come from durable MinIO state; backlog counts come
 // from the JetStream consumer observer.
 type PreprocessingProgress struct {
-	BronzeTotal           int
-	BronzeBytes           int64
-	BronzeCompleted       int
-	BronzePending         int
-	BronzeFailed          int
-	BronzeObserved        bool
-	BronzeLightCurves     int
-	BronzeTargetPixels    int
-	SilverTotal           int
-	SilverBytes           int64
-	SilverLightCurves     int
-	SilverTargetPixels    int
-	GoldTotal             int
-	GoldBytes             int64
-	FootprintObserved     bool
-	CheckpointTotal       int
-	CheckpointCompleted   int
-	CheckpointPending     int
-	CheckpointFailed      int
-	CompletedLightCurves  int
-	CompletedTargetPixels int
-	ScienceCountsObserved bool
-	LCInputSamples        int64
-	LCOutputSamples       int64
-	LCQualityRemoved      int64
-	LCInvalidRemoved      int64
-	LCNonfiniteRemoved    int64
-	LCNonpositiveRemoved  int64
-	LCOutlierRemoved      int64
-	LCSigmaClip3To4       int64
-	LCSigmaClip4To5       int64
-	LCSigmaClipGE5        int64
-	LCTransformProducts   int
-	LCScatterProducts     int
-	LCScatterBeforeMean   float64
-	LCScatterBeforeP50    float64
-	LCScatterBeforeP95    float64
-	LCScatterAfterMean    float64
-	LCScatterAfterP50     float64
-	LCScatterAfterP95     float64
-	LCOutlierFractionP50  float64
-	LCOutlierFractionP95  float64
-	TPFInputSamples       int64
-	TPFOutputSamples      int64
-	TPFQualityRemoved     int64
-	TPFInvalidRemoved     int64
-	TPFNonfiniteRemoved   int64
-	TPFNonpositiveRemoved int64
-	TPFFiniteProducts     int
-	TPFFiniteFractionMean float64
-	TPFFiniteFractionP05  float64
-	TPFFiniteFractionP50  float64
-	BacklogPending        int
-	BacklogAckPending     int
-	ItemsToProcess        int
-	ObservedAt            time.Time
-	LCScatterPoints       []PreprocessingScatterPoint
-	MaterializationPoints []PreprocessingMaterializationPoint
-	EncodeFailures        []PreprocessingEncodeFailure
+	BronzeTotal              int
+	BronzeBytes              int64
+	BronzeCompleted          int
+	BronzePending            int
+	BronzeFailed             int
+	BronzeObserved           bool
+	BronzeLightCurves        int
+	BronzeTargetPixels       int
+	SilverTotal              int
+	SilverBytes              int64
+	SilverLightCurves        int
+	SilverTargetPixels       int
+	GoldTotal                int
+	GoldBytes                int64
+	FootprintObserved        bool
+	CheckpointTotal          int
+	CheckpointCompleted      int
+	CheckpointPending        int
+	CheckpointFailed         int
+	SilverEventObserved      bool
+	SilverEventMessages      int64
+	SilverEventBytes         int64
+	SilverEventConsumers     int
+	SilverEventLightCurves   int64
+	SilverEventTargetPixels  int64
+	SilverEventFirstAt       time.Time
+	SilverEventLastAt        time.Time
+	BronzeConsumerObserved   bool
+	BronzeStreamMessages     int64
+	BronzeStreamBytes        int64
+	BronzeDeliveredConsumer  int64
+	BronzeDeliveredStream    int64
+	BronzeAckFloorConsumer   int64
+	BronzeAckFloorStream     int64
+	BronzeConsumerAckPending int
+	BronzeConsumerPending    int64
+	BronzeCurrentRedelivered int
+	BronzeConsumerWaiting    int
+	BronzeLastDeliveredAt    time.Time
+	BronzeLastAckAt          time.Time
+	CompletedLightCurves     int
+	CompletedTargetPixels    int
+	ScienceCountsObserved    bool
+	LCInputSamples           int64
+	LCOutputSamples          int64
+	LCQualityRemoved         int64
+	LCInvalidRemoved         int64
+	LCNonfiniteRemoved       int64
+	LCNonpositiveRemoved     int64
+	LCOutlierRemoved         int64
+	LCSigmaClip3To4          int64
+	LCSigmaClip4To5          int64
+	LCSigmaClipGE5           int64
+	LCTransformProducts      int
+	LCScatterProducts        int
+	LCScatterBeforeMean      float64
+	LCScatterBeforeP50       float64
+	LCScatterBeforeP95       float64
+	LCScatterAfterMean       float64
+	LCScatterAfterP50        float64
+	LCScatterAfterP95        float64
+	LCOutlierFractionP50     float64
+	LCOutlierFractionP95     float64
+	TPFInputSamples          int64
+	TPFOutputSamples         int64
+	TPFQualityRemoved        int64
+	TPFInvalidRemoved        int64
+	TPFNonfiniteRemoved      int64
+	TPFNonpositiveRemoved    int64
+	TPFFiniteProducts        int
+	TPFFiniteFractionMean    float64
+	TPFFiniteFractionP05     float64
+	TPFFiniteFractionP50     float64
+	BacklogPending           int
+	BacklogAckPending        int
+	ItemsToProcess           int
+	ObservedAt               time.Time
+	LCScatterPoints          []PreprocessingScatterPoint
+	TPFTransformPoints       []PreprocessingTPFTransformPoint
+	MaterializationPoints    []PreprocessingMaterializationPoint
+	EncodeFailures           []PreprocessingEncodeFailure
+	SilverFailures           []PreprocessingSilverFailure
+	CheckpointPoints         []PreprocessingCheckpointPoint
 }
 
 // PreprocessingScatterPoint is one durable Light Curve artifact observation.
@@ -138,14 +162,46 @@ type PreprocessingScatterPoint struct {
 	SigmaClipLevel float64 `json:"sigma_clip_level"`
 }
 
+// PreprocessingTPFTransformPoint is one bounded, product-level summary of
+// temporal pixel normalization. It deliberately avoids cadence or pixel IDs.
+type PreprocessingTPFTransformPoint struct {
+	ObjectKey              string    `json:"object_key"`
+	CompletedAt            time.Time `json:"completed_at"`
+	DiagnosticsObserved    bool      `json:"diagnostics_observed"`
+	FinitePixelFraction    float64   `json:"finite_pixel_fraction"`
+	InputCadences          int64     `json:"input_cadences"`
+	OutputCadences         int64     `json:"output_cadences"`
+	InputPixelValues       int64     `json:"input_pixel_values"`
+	NormalizedPixelValues  int64     `json:"normalized_pixel_values"`
+	NonfinitePixelValues   int64     `json:"nonfinite_pixel_values"`
+	InvalidReferenceValues int64     `json:"invalid_reference_values"`
+	InvalidReferencePixels int64     `json:"invalid_reference_pixels"`
+	ScatterP50PPM          float64   `json:"scatter_p50_ppm"`
+	ScatterP95PPM          float64   `json:"scatter_p95_ppm"`
+	DriftP50PPM            float64   `json:"drift_p50_ppm"`
+	DriftP95PPM            float64   `json:"drift_p95_ppm"`
+	BoundaryJumpP50PPM     float64   `json:"boundary_jump_p50_ppm"`
+	BoundaryJumpP95PPM     float64   `json:"boundary_jump_p95_ppm"`
+	ChunkCount             int64     `json:"chunk_count"`
+}
+
 type PreprocessingMaterializationPoint struct {
-	ObjectKey        string    `json:"object_key"`
-	ProductKind      string    `json:"product_kind"`
-	Rows             int64     `json:"rows"`
-	SizeBytes        int64     `json:"size_bytes"`
-	SourceBytes      int64     `json:"source_bytes"`
-	EncodeDurationMS float64   `json:"encode_duration_ms"`
-	CompletedAt      time.Time `json:"completed_at"`
+	ObjectKey            string    `json:"object_key"`
+	ProductKind          string    `json:"product_kind"`
+	Rows                 int64     `json:"rows"`
+	SizeBytes            int64     `json:"size_bytes"`
+	SourceBytes          int64     `json:"source_bytes"`
+	EncodeDurationMS     float64   `json:"encode_duration_ms"`
+	CompletedAt          time.Time `json:"completed_at"`
+	ETag                 string    `json:"etag"`
+	SchemaVersion        string    `json:"schema_version"`
+	ChecksumBound        bool      `json:"checksum_bound"`
+	LineageBound         bool      `json:"lineage_bound"`
+	SizeVerified         bool      `json:"size_verified"`
+	SchemaVerified       bool      `json:"schema_verified"`
+	CheckpointLinked     bool      `json:"checkpoint_linked"`
+	IntegrityVerified    bool      `json:"integrity_verified"`
+	VerificationAttempts int64     `json:"verification_attempts"`
 }
 
 type PreprocessingEncodeFailure struct {
@@ -154,6 +210,35 @@ type PreprocessingEncodeFailure struct {
 	Reason      string    `json:"reason"`
 	Recovered   bool      `json:"recovered"`
 	OccurredAt  time.Time `json:"occurred_at"`
+}
+
+type PreprocessingSilverFailure struct {
+	ObjectKey   string    `json:"object_key"`
+	ProductKind string    `json:"product_kind"`
+	Kind        string    `json:"kind"`
+	Reason      string    `json:"reason"`
+	Recovered   bool      `json:"recovered"`
+	Attempts    int64     `json:"attempts"`
+	OccurredAt  time.Time `json:"occurred_at"`
+}
+
+// PreprocessingCheckpointPoint is one durable recovery record. ResumeAction
+// is resolved by the backend after joining the checkpoint with the verified
+// Silver inventory; clients render that decision instead of reconstructing it.
+type PreprocessingCheckpointPoint struct {
+	CheckpointID       string    `json:"checkpoint_id"`
+	ProductKind        string    `json:"product_kind"`
+	State              string    `json:"state"`
+	SchemaVersion      int64     `json:"schema_version"`
+	Attempts           int64     `json:"attempts"`
+	Terminal           bool      `json:"terminal"`
+	SilverObjectKey    string    `json:"silver_object_key"`
+	SilverVerified     bool      `json:"silver_verified"`
+	ResumeAction       string    `json:"resume_action"`
+	LastErrorKind      string    `json:"last_error_kind"`
+	LifecycleElapsedMS int64     `json:"lifecycle_elapsed_ms"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // PreprocessingHop is service-scoped because preprocessor metrics do not carry
@@ -171,8 +256,11 @@ type PreprocessingHop struct {
 	Telemetry             map[string][]MonitoringPoint
 	Details               map[string]string
 	ScatterPoints         []PreprocessingScatterPoint
+	TPFTransformPoints    []PreprocessingTPFTransformPoint
 	MaterializationPoints []PreprocessingMaterializationPoint
 	EncodeFailures        []PreprocessingEncodeFailure
+	SilverFailures        []PreprocessingSilverFailure
+	CheckpointPoints      []PreprocessingCheckpointPoint
 }
 
 type PreprocessingEdge struct {

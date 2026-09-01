@@ -20,6 +20,28 @@ pub struct ImageProcessingMetadata {
     #[serde(default)]
     pub nonpositive_time_removed: usize,
     pub finite_pixel_fraction: f32,
+    #[serde(default)]
+    pub input_pixel_values: usize,
+    #[serde(default)]
+    pub normalized_pixel_values: usize,
+    #[serde(default)]
+    pub nonfinite_pixel_values: usize,
+    #[serde(default)]
+    pub invalid_reference_values: usize,
+    #[serde(default)]
+    pub invalid_reference_pixels: usize,
+    #[serde(default)]
+    pub pixel_scatter_mad_p50_ppm: f32,
+    #[serde(default)]
+    pub pixel_scatter_mad_p95_ppm: f32,
+    #[serde(default)]
+    pub reference_drift_p50_ppm: f32,
+    #[serde(default)]
+    pub reference_drift_p95_ppm: f32,
+    #[serde(default)]
+    pub boundary_jump_p50_ppm: f32,
+    #[serde(default)]
+    pub boundary_jump_p95_ppm: f32,
 }
 
 /// Statistics calculated over valid (finite) image pixels.
@@ -138,6 +160,7 @@ pub fn preprocess_target_pixel(
     };
     let mut total_pixels = 0usize;
     let mut finite_count = 0usize;
+    let mut reference_drifts_ppm = Vec::with_capacity(raw.rows * raw.cols);
 
     for r in 0..raw.rows {
         for c in 0..raw.cols {
@@ -160,7 +183,23 @@ pub fn preprocess_target_pixel(
             }
 
             pixel_medians[r][c] = if !pixel_series.is_empty() {
-                median_f32(&mut pixel_series)
+                let midpoint = pixel_series.len() / 2;
+                let mut first_half = pixel_series[..midpoint].to_vec();
+                let mut second_half = pixel_series[midpoint..].to_vec();
+                let reference = median_f32(&mut pixel_series);
+                if !first_half.is_empty()
+                    && !second_half.is_empty()
+                    && reference.is_finite()
+                    && reference.abs() > f32::EPSILON
+                {
+                    let first = median_f32(&mut first_half);
+                    let second = median_f32(&mut second_half);
+                    if first.is_finite() && second.is_finite() {
+                        reference_drifts_ppm
+                            .push(((second - first).abs() / reference.abs()) * 1_000_000.0);
+                    }
+                }
+                reference
             } else {
                 0.0
             };
@@ -171,9 +210,24 @@ pub fn preprocess_target_pixel(
         .as_mut()
         .map(|values| median_f32(values))
         .unwrap_or(0.0);
+    let invalid_reference_pixels = match config.tpf_normalization.as_str() {
+        "none" => 0,
+        "global-median" if !global_median.is_finite() || global_median <= 0.0 => {
+            raw.rows * raw.cols
+        }
+        "global-median" => 0,
+        _ => pixel_medians
+            .iter()
+            .flatten()
+            .filter(|value| !value.is_finite() || **value <= 0.0)
+            .count(),
+    };
 
     // 3. Normalize per-pixel temporal flux
     let mut norm_flux = Vec::with_capacity(output_cadences);
+    let mut normalized_pixel_values = 0usize;
+    let mut nonfinite_pixel_values = 0usize;
+    let mut invalid_reference_values = 0usize;
     for &cad_idx in &retained_indices {
         let mut frame = Vec::with_capacity(raw.rows);
         for r in 0..raw.rows {
@@ -195,12 +249,16 @@ pub fn preprocess_target_pixel(
                     _ => unreachable!("normalization mode validated during config loading"),
                 };
                 let norm = if !p.is_finite() {
+                    nonfinite_pixel_values += 1;
                     0.0
                 } else if config.tpf_normalization == "none" {
+                    normalized_pixel_values += 1;
                     p
                 } else if reference.is_finite() && reference > 0.0 {
+                    normalized_pixel_values += 1;
                     (p / reference) - 1.0
                 } else {
+                    invalid_reference_values += 1;
                     // Safe handling for invalid/zero reference: preserve neutral baseline
                     0.0
                 };
@@ -216,6 +274,29 @@ pub fn preprocess_target_pixel(
     } else {
         0.0
     };
+    let mut pixel_scatter_mad_ppm = Vec::with_capacity(raw.rows * raw.cols);
+    for r in 0..raw.rows {
+        for c in 0..raw.cols {
+            let reference_valid = config.tpf_normalization == "none"
+                || match config.tpf_normalization.as_str() {
+                    "global-median" => global_median.is_finite() && global_median > 0.0,
+                    _ => pixel_medians[r][c].is_finite() && pixel_medians[r][c] > 0.0,
+                };
+            if !reference_valid {
+                continue;
+            }
+            let mut series: Vec<f32> = norm_flux
+                .iter()
+                .map(|frame| frame[r][c])
+                .filter(|value| value.is_finite())
+                .collect();
+            if series.len() >= 2 {
+                pixel_scatter_mad_ppm.push(robust_mad(&mut series) * 1_000_000.0);
+            }
+        }
+    }
+    pixel_scatter_mad_ppm.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    reference_drifts_ppm.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
     tracing::info!(
         object_key = %event.object_key,
@@ -252,6 +333,17 @@ pub fn preprocess_target_pixel(
             nonfinite_removed,
             nonpositive_time_removed,
             finite_pixel_fraction,
+            input_pixel_values: total_pixels,
+            normalized_pixel_values,
+            nonfinite_pixel_values,
+            invalid_reference_values,
+            invalid_reference_pixels,
+            pixel_scatter_mad_p50_ppm: quantile_sorted_f32(&pixel_scatter_mad_ppm, 0.50),
+            pixel_scatter_mad_p95_ppm: quantile_sorted_f32(&pixel_scatter_mad_ppm, 0.95),
+            reference_drift_p50_ppm: quantile_sorted_f32(&reference_drifts_ppm, 0.50),
+            reference_drift_p95_ppm: quantile_sorted_f32(&reference_drifts_ppm, 0.95),
+            boundary_jump_p50_ppm: 0.0,
+            boundary_jump_p95_ppm: 0.0,
         },
     })
 }
@@ -266,6 +358,26 @@ fn median_f32(values: &mut [f32]) -> f32 {
         (values[mid - 1] + values[mid]) / 2.0
     } else {
         values[mid]
+    }
+}
+
+fn robust_mad(values: &mut [f32]) -> f32 {
+    let median = median_f32(values);
+    let mut deviations: Vec<f32> = values.iter().map(|value| (value - median).abs()).collect();
+    1.4826 * median_f32(&mut deviations)
+}
+
+fn quantile_sorted_f32(values: &[f32], q: f32) -> f32 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    let position = q * (values.len() - 1) as f32;
+    let lower = position.floor() as usize;
+    let upper = position.ceil() as usize;
+    if lower == upper {
+        values[lower]
+    } else {
+        values[lower] * (upper as f32 - position) + values[upper] * (position - lower as f32)
     }
 }
 
@@ -438,6 +550,17 @@ pub fn preprocess_ffi(
             nonfinite_removed: 0,
             nonpositive_time_removed: 0,
             finite_pixel_fraction,
+            input_pixel_values: 0,
+            normalized_pixel_values: 0,
+            nonfinite_pixel_values: 0,
+            invalid_reference_values: 0,
+            invalid_reference_pixels: 0,
+            pixel_scatter_mad_p50_ppm: 0.0,
+            pixel_scatter_mad_p95_ppm: 0.0,
+            reference_drift_p50_ppm: 0.0,
+            reference_drift_p95_ppm: 0.0,
+            boundary_jump_p50_ppm: 0.0,
+            boundary_jump_p95_ppm: 0.0,
         },
     })
 }

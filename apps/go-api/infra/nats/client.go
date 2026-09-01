@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"go-api/internal/domain/repo"
+
 	"github.com/nats-io/nats.go"
 )
 
@@ -93,6 +95,58 @@ func (d *Dispatcher) Ping(ctx context.Context) error {
 		return err
 	}
 	return d.flush(ctx)
+}
+
+func (d *Dispatcher) ObserveSilverEventStream(ctx context.Context) (repo.SilverEventStreamSnapshot, error) {
+	js, err := d.jetStream(ctx)
+	if err != nil {
+		return repo.SilverEventStreamSnapshot{}, err
+	}
+	info, err := js.StreamInfo(
+		"AURORA_SILVER",
+		&nats.StreamInfoRequest{SubjectsFilter: "aurora.v1.silver.>"},
+		nats.Context(ctx),
+	)
+	if err != nil {
+		return repo.SilverEventStreamSnapshot{}, fmt.Errorf("observe AURORA_SILVER: %w", err)
+	}
+	bySubject := make(map[string]int64, len(info.State.Subjects))
+	for subject, messages := range info.State.Subjects {
+		bySubject[subject] = int64(messages)
+	}
+	return repo.SilverEventStreamSnapshot{
+		Messages: int64(info.State.Msgs), Bytes: int64(info.State.Bytes), Consumers: info.State.Consumers,
+		FirstAt: info.State.FirstTime, LastAt: info.State.LastTime, BySubject: bySubject,
+	}, nil
+}
+
+func (d *Dispatcher) ObserveBronzeConsumer(ctx context.Context) (repo.BronzeConsumerSnapshot, error) {
+	js, err := d.jetStream(ctx)
+	if err != nil {
+		return repo.BronzeConsumerSnapshot{}, err
+	}
+	stream, err := js.StreamInfo("AURORA_BRONZE", nats.Context(ctx))
+	if err != nil {
+		return repo.BronzeConsumerSnapshot{}, fmt.Errorf("observe AURORA_BRONZE: %w", err)
+	}
+	consumer, err := js.ConsumerInfo("AURORA_BRONZE", "aurora-rust-preprocessor", nats.Context(ctx))
+	if err != nil {
+		return repo.BronzeConsumerSnapshot{}, fmt.Errorf("observe Bronze preprocessor consumer: %w", err)
+	}
+	return repo.BronzeConsumerSnapshot{
+		StreamMessages: int64(stream.State.Msgs), StreamBytes: int64(stream.State.Bytes), ConsumerName: consumer.Name,
+		DeliveredConsumerSeq: int64(consumer.Delivered.Consumer), DeliveredStreamSeq: int64(consumer.Delivered.Stream),
+		AckFloorConsumerSeq: int64(consumer.AckFloor.Consumer), AckFloorStreamSeq: int64(consumer.AckFloor.Stream),
+		AckPending: consumer.NumAckPending, Pending: int64(consumer.NumPending), CurrentRedelivered: consumer.NumRedelivered,
+		Waiting: consumer.NumWaiting, LastDeliveredAt: optionalTime(consumer.Delivered.Last), LastAckAt: optionalTime(consumer.AckFloor.Last),
+	}, nil
+}
+
+func optionalTime(value *time.Time) time.Time {
+	if value == nil {
+		return time.Time{}
+	}
+	return *value
 }
 
 func (d *Dispatcher) Close() error {

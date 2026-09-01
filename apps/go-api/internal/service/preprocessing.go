@@ -32,7 +32,9 @@ const (
 	preprocessingTraceLimit        = 200
 	maxScatterBackfillObjectBytes  = 64 << 20
 	maxLCScatterPoints             = 800
+	maxTPFTransformPoints          = 800
 	maxMaterializationPoints       = 1_200
+	maxCheckpointPoints            = 1_200
 )
 
 type preprocessingMetric struct {
@@ -83,6 +85,14 @@ var preprocessingMetrics = []preprocessingMetric{
 	{key: "lc_scatter_after_p95", query: "histogram_quantile(0.95, sum by (le) (rate(aurora_preprocessor_lc_normalized_scatter_ppm_bucket{phase=\"after_clip\"}[15m])))"},
 	{key: "lc_sigma_clip_fraction_p95", query: "histogram_quantile(0.95, sum by (le) (rate(aurora_preprocessor_lc_sigma_clip_fraction_bucket[15m])))"},
 	{key: "tpf_finite_pixel_fraction_p05", query: "histogram_quantile(0.05, sum by (le) (rate(aurora_preprocessor_tpf_finite_pixel_fraction_bucket[15m])))"},
+	{key: "tpf_pixel_input_rate", query: "sum(rate(aurora_preprocessor_tpf_normalization_pixels_total{outcome=\"input\"}[2m]))"},
+	{key: "tpf_pixel_retained_rate", query: "sum(rate(aurora_preprocessor_tpf_normalization_pixels_total{outcome=\"retained\"}[2m]))"},
+	{key: "tpf_pixel_nonfinite_rate", query: "sum(rate(aurora_preprocessor_tpf_normalization_pixels_total{outcome=\"nonfinite_input\"}[2m]))"},
+	{key: "tpf_pixel_invalid_reference_rate", query: "sum(rate(aurora_preprocessor_tpf_normalization_pixels_total{outcome=\"invalid_reference\"}[2m]))"},
+	{key: "tpf_scatter_p50", query: "histogram_quantile(0.50, sum by (le) (rate(aurora_preprocessor_tpf_pixel_scatter_mad_ppm_bucket{quantile=\"p50\"}[15m])))"},
+	{key: "tpf_scatter_p95", query: "histogram_quantile(0.95, sum by (le) (rate(aurora_preprocessor_tpf_pixel_scatter_mad_ppm_bucket{quantile=\"p95\"}[15m])))"},
+	{key: "tpf_reference_drift_p95", query: "histogram_quantile(0.95, sum by (le) (rate(aurora_preprocessor_tpf_reference_drift_ppm_bucket{quantile=\"p95\"}[15m])))"},
+	{key: "tpf_boundary_jump_p95", query: "histogram_quantile(0.95, sum by (le) (rate(aurora_preprocessor_tpf_chunk_boundary_jump_ppm_bucket{quantile=\"p95\"}[15m])))"},
 	{key: "bronze_bytes_rate", query: "sum(rate(aurora_preprocessor_bytes_total{stage=\"bronze\"}[2m]))"},
 	{key: "silver_bytes_rate", query: "sum(rate(aurora_preprocessor_bytes_total{stage=\"silver\"}[2m]))"},
 	{key: "lc_duration_p95", query: "histogram_quantile(0.95, sum by (le) (rate(aurora_preprocessor_processing_duration_seconds_bucket{kind=\"lightcurve\"}[5m])))"},
@@ -101,6 +111,8 @@ type PreprocessingService struct {
 	dispatcher         repo.WorkflowDispatcher         // Gửi lệnh điều khiển (start/stop) tới Rust Preprocessor
 	publisher          repo.EventPublisher             // Phát sự kiện workflow
 	objects            repo.ObjectRepository           // Đọc checkpoint từ MinIO S3
+	eventObserver      repo.SilverEventStreamObserver  // Đọc metadata AURORA_SILVER mà không consume event
+	bronzeObserver     repo.BronzeConsumerObserver     // Đọc trạng thái ACK của durable Bronze consumer
 	runtimeMu          sync.RWMutex                    // Khóa đồng bộ dữ liệu runtime trong RAM
 	runtimeJob         *entity.PreprocessingControlJob // Thông tin job tiền xử lý hiện tại
 	progress           entity.PreprocessingProgress    // Tiến độ xử lý (tổng số checkpoint, đã xong, còn lại)
@@ -118,23 +130,41 @@ type scatterCacheEntry struct {
 	observed bool
 }
 
+type silverCheckpointEvidence struct {
+	ProductKind   string
+	SHA256        string
+	SizeBytes     int64
+	SchemaVersion string
+	Attempts      int64
+}
+
 // NewPreprocessingService khởi tạo PreprocessingService cơ bản
 func NewPreprocessingService(prometheus repo.PrometheusQuerier, dispatchers ...repo.WorkflowDispatcher) domainService.Preprocessing {
 	var dispatcher repo.WorkflowDispatcher
 	if len(dispatchers) > 0 {
 		dispatcher = dispatchers[0]
 	}
-	return &PreprocessingService{prometheus: prometheus, dispatcher: dispatcher}
+	return &PreprocessingService{prometheus: prometheus, dispatcher: dispatcher, eventObserver: silverEventObserver(dispatcher), bronzeObserver: bronzeConsumerObserver(dispatcher)}
 }
 
 // NewPreprocessingServiceWithEvents khởi tạo PreprocessingService có EventPublisher
 func NewPreprocessingServiceWithEvents(prometheus repo.PrometheusQuerier, dispatcher repo.WorkflowDispatcher, publisher repo.EventPublisher) domainService.Preprocessing {
-	return &PreprocessingService{prometheus: prometheus, dispatcher: dispatcher, publisher: publisher}
+	return &PreprocessingService{prometheus: prometheus, dispatcher: dispatcher, publisher: publisher, eventObserver: silverEventObserver(dispatcher), bronzeObserver: bronzeConsumerObserver(dispatcher)}
 }
 
 // NewPreprocessingServiceWithEventsAndObjects khởi tạo PreprocessingService đầy đủ chức năng
 func NewPreprocessingServiceWithEventsAndObjects(prometheus repo.PrometheusQuerier, dispatcher repo.WorkflowDispatcher, publisher repo.EventPublisher, objects repo.ObjectRepository) domainService.Preprocessing {
-	return &PreprocessingService{prometheus: prometheus, dispatcher: dispatcher, publisher: publisher, objects: objects}
+	return &PreprocessingService{prometheus: prometheus, dispatcher: dispatcher, publisher: publisher, objects: objects, eventObserver: silverEventObserver(dispatcher), bronzeObserver: bronzeConsumerObserver(dispatcher)}
+}
+
+func silverEventObserver(dispatcher repo.WorkflowDispatcher) repo.SilverEventStreamObserver {
+	observer, _ := dispatcher.(repo.SilverEventStreamObserver)
+	return observer
+}
+
+func bronzeConsumerObserver(dispatcher repo.WorkflowDispatcher) repo.BronzeConsumerObserver {
+	observer, _ := dispatcher.(repo.BronzeConsumerObserver)
+	return observer
 }
 
 // ============================================================================
@@ -628,6 +658,9 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 	var latestAt time.Time
 	var latestDetails map[string]string
 	encodeFailures := make([]entity.PreprocessingEncodeFailure, 0)
+	silverFailures := make([]entity.PreprocessingSilverFailure, 0)
+	checkpointPoints := make([]entity.PreprocessingCheckpointPoint, 0, min(len(objects), maxCheckpointPoints))
+	completedSilverByKey := make(map[string]silverCheckpointEvidence)
 	semaphore := make(chan struct{}, 32)
 
 	for _, object := range objects {
@@ -648,6 +681,7 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 			}
 
 			var checkpoint struct {
+				SchemaVersion       uint32  `json:"schema_version"`
 				CheckpointID        string  `json:"checkpoint_id"`
 				SourceProductID     string  `json:"source_product_id"`
 				SampleID            *string `json:"sample_id"`
@@ -671,11 +705,26 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 			}
 
 			if json.Unmarshal(data, &checkpoint) == nil {
+				createdAt, _ := time.Parse(time.RFC3339Nano, checkpoint.CreatedAt)
 				updatedAt, _ := time.Parse(time.RFC3339Nano, checkpoint.UpdatedAt)
 				if updatedAt.IsZero() {
 					updatedAt = object.LastModified
 				}
 				countMu.Lock()
+				if len(checkpointPoints) < maxCheckpointPoints {
+					elapsed := updatedAt.Sub(createdAt)
+					if createdAt.IsZero() || elapsed < 0 {
+						elapsed = 0
+					}
+					checkpointPoints = append(checkpointPoints, entity.PreprocessingCheckpointPoint{
+						CheckpointID: checkpoint.CheckpointID, ProductKind: checkpoint.ProductKind,
+						State: strings.ToUpper(checkpoint.State), SchemaVersion: int64(checkpoint.SchemaVersion),
+						Attempts: int64(checkpoint.Attempts), Terminal: checkpoint.Terminal,
+						SilverObjectKey:    optionalString(checkpoint.SilverObjectKey),
+						LastErrorKind:      optionalString(checkpoint.LastErrorKind),
+						LifecycleElapsedMS: elapsed.Milliseconds(), CreatedAt: createdAt, UpdatedAt: updatedAt,
+					})
+				}
 				if strings.EqualFold(checkpoint.State, "COMPLETED") {
 					completed++
 					switch strings.ToUpper(strings.ReplaceAll(checkpoint.ProductKind, "-", "_")) {
@@ -687,6 +736,15 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 					if checkpoint.BronzeObjectKey != "" {
 						completedBronzeKeys[checkpoint.BronzeObjectKey] = struct{}{}
 					}
+					if checkpoint.SilverObjectKey != nil && strings.TrimSpace(*checkpoint.SilverObjectKey) != "" {
+						completedSilverByKey[*checkpoint.SilverObjectKey] = silverCheckpointEvidence{
+							ProductKind:   checkpoint.ProductKind,
+							SHA256:        optionalString(checkpoint.SilverSHA256),
+							SizeBytes:     int64(optionalUint64Value(checkpoint.SilverSizeBytes)),
+							SchemaVersion: optionalString(checkpoint.SilverSchemaVersion),
+							Attempts:      int64(checkpoint.Attempts),
+						}
+					}
 				} else if strings.EqualFold(checkpoint.State, "FAILED") {
 					failed++
 					if checkpoint.BronzeObjectKey != "" {
@@ -697,6 +755,14 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 					encodeFailures = append(encodeFailures, entity.PreprocessingEncodeFailure{
 						ObjectKey: checkpoint.BronzeObjectKey, ProductKind: checkpoint.ProductKind,
 						Reason: optionalString(checkpoint.LastError), Recovered: strings.EqualFold(checkpoint.State, "COMPLETED"),
+						OccurredAt: updatedAt,
+					})
+				}
+				if checkpoint.LastErrorKind != nil && (strings.EqualFold(*checkpoint.LastErrorKind, "SILVER_WRITE_FAILED") || strings.EqualFold(*checkpoint.LastErrorKind, "SILVER_CONFLICT")) {
+					silverFailures = append(silverFailures, entity.PreprocessingSilverFailure{
+						ObjectKey: checkpoint.BronzeObjectKey, ProductKind: checkpoint.ProductKind,
+						Kind: *checkpoint.LastErrorKind, Reason: optionalString(checkpoint.LastError),
+						Recovered: strings.EqualFold(checkpoint.State, "COMPLETED"), Attempts: int64(checkpoint.Attempts),
 						OccurredAt: updatedAt,
 					})
 				}
@@ -776,11 +842,16 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 	lcScatterAfter := make([]float64, 0)
 	lcScatterPoints := make([]entity.PreprocessingScatterPoint, 0, min(silverLightCurves, maxLCScatterPoints))
 	tpfFiniteFractions := make([]float64, 0)
+	tpfTransformPoints := make([]entity.PreprocessingTPFTransformPoint, 0, maxTPFTransformPoints)
 	materializationPoints := make([]entity.PreprocessingMaterializationPoint, 0)
+	verifiedSilverByKey := make(map[string]bool)
 	silverInventoryRead := false
 	silverObjects, silverErr := listObjectsWithMetadata(ctx, s.objects, "silver/")
 	if silverErr == nil {
 		silverInventoryRead = true
+		sort.SliceStable(silverObjects, func(i, j int) bool {
+			return silverObjects[i].LastModified.After(silverObjects[j].LastModified)
+		})
 		for _, object := range silverObjects {
 			if !strings.HasSuffix(strings.ToLower(object.Key), ".parquet") {
 				continue
@@ -849,20 +920,69 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 				tpfInvalidRemoved += metadataInt64(object.UserMetadata, "invalid-time-removed")
 				tpfNonfiniteRemoved += metadataInt64(object.UserMetadata, "nonfinite-removed")
 				tpfNonpositiveRemoved += metadataInt64(object.UserMetadata, "nonpositive-time-removed")
-				if value, ok := metadataFloat64(object.UserMetadata, "finite-pixel-fraction"); ok && value <= 1 {
-					tpfFiniteFractions = append(tpfFiniteFractions, value)
+				finitePixelFraction, finiteObserved := metadataFloat64(object.UserMetadata, "finite-pixel-fraction")
+				if finiteObserved && finitePixelFraction <= 1 {
+					tpfFiniteFractions = append(tpfFiniteFractions, finitePixelFraction)
+				}
+				_, diagnosticsObserved := object.UserMetadata["tpf-input-pixel-values"]
+				if (finiteObserved || diagnosticsObserved) && len(tpfTransformPoints) < maxTPFTransformPoints {
+					scatterP50, _ := metadataFloat64(object.UserMetadata, "tpf-pixel-scatter-mad-p50-ppm")
+					scatterP95, _ := metadataFloat64(object.UserMetadata, "tpf-pixel-scatter-mad-p95-ppm")
+					driftP50, _ := metadataFloat64(object.UserMetadata, "tpf-reference-drift-p50-ppm")
+					driftP95, _ := metadataFloat64(object.UserMetadata, "tpf-reference-drift-p95-ppm")
+					boundaryP50, _ := metadataFloat64(object.UserMetadata, "tpf-boundary-jump-p50-ppm")
+					boundaryP95, _ := metadataFloat64(object.UserMetadata, "tpf-boundary-jump-p95-ppm")
+					tpfTransformPoints = append(tpfTransformPoints, entity.PreprocessingTPFTransformPoint{
+						ObjectKey: object.Key, CompletedAt: object.LastModified,
+						DiagnosticsObserved:    diagnosticsObserved,
+						FinitePixelFraction:    finitePixelFraction,
+						InputCadences:          metadataInt64(object.UserMetadata, "input-cadences"),
+						OutputCadences:         metadataInt64(object.UserMetadata, "output-cadences"),
+						InputPixelValues:       metadataInt64(object.UserMetadata, "tpf-input-pixel-values"),
+						NormalizedPixelValues:  metadataInt64(object.UserMetadata, "tpf-normalized-pixel-values"),
+						NonfinitePixelValues:   metadataInt64(object.UserMetadata, "tpf-nonfinite-pixel-values"),
+						InvalidReferenceValues: metadataInt64(object.UserMetadata, "tpf-invalid-reference-values"),
+						InvalidReferencePixels: metadataInt64(object.UserMetadata, "tpf-invalid-reference-pixels"),
+						ScatterP50PPM:          scatterP50, ScatterP95PPM: scatterP95,
+						DriftP50PPM: driftP50, DriftP95PPM: driftP95,
+						BoundaryJumpP50PPM: boundaryP50, BoundaryJumpP95PPM: boundaryP95,
+						ChunkCount: metadataInt64(object.UserMetadata, "tpf-chunk-count"),
+					})
 				}
 			}
 			if productKind != "" && len(materializationPoints) < maxMaterializationPoints {
 				bronzeKey := strings.TrimSpace(object.UserMetadata["bronze-object-key"])
+				bronzeSHA := strings.TrimSpace(object.UserMetadata["bronze-sha256"])
+				silverSHA := strings.TrimSpace(object.UserMetadata["silver-sha256"])
+				schemaVersion := strings.TrimSpace(object.UserMetadata["schema-version"])
+				checkpoint, checkpointLinked := completedSilverByKey[object.Key]
+				sizeVerified := checkpointLinked && checkpoint.SizeBytes == object.Size && object.Size > 0
+				checksumBound := checkpointLinked && silverSHA != "" && strings.EqualFold(checkpoint.SHA256, silverSHA)
+				schemaVerified := checkpointLinked && schemaVersion != "" && checkpoint.SchemaVersion == schemaVersion
+				lineageBound := bronzeKey != "" && bronzeSHA != ""
 				encodeDurationMS, _ := metadataFloat64(object.UserMetadata, "parquet-encode-duration-ms")
+				integrityVerified := checkpointLinked && sizeVerified && checksumBound && schemaVerified && lineageBound
+				verifiedSilverByKey[object.Key] = integrityVerified
 				materializationPoints = append(materializationPoints, entity.PreprocessingMaterializationPoint{
 					ObjectKey: object.Key, ProductKind: productKind, Rows: rows, SizeBytes: object.Size,
 					SourceBytes: bronzeSizeByKey[bronzeKey], EncodeDurationMS: encodeDurationMS, CompletedAt: object.LastModified,
+					ETag: object.ETag, SchemaVersion: schemaVersion, ChecksumBound: checksumBound,
+					LineageBound: lineageBound, SizeVerified: sizeVerified, SchemaVerified: schemaVerified,
+					CheckpointLinked:     checkpointLinked,
+					IntegrityVerified:    integrityVerified,
+					VerificationAttempts: checkpoint.Attempts,
 				})
 			}
 		}
 	}
+	for i := range checkpointPoints {
+		point := &checkpointPoints[i]
+		point.SilverVerified = verifiedSilverByKey[point.SilverObjectKey]
+		point.ResumeAction = checkpointResumeAction(*point)
+	}
+	sort.SliceStable(checkpointPoints, func(i, j int) bool {
+		return checkpointPoints[i].UpdatedAt.Before(checkpointPoints[j].UpdatedAt)
+	})
 
 	goldTotal := 0
 	goldBytes := int64(0)
@@ -872,6 +992,23 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 		for _, object := range goldObjects {
 			goldTotal++
 			goldBytes += object.Size
+		}
+	}
+
+	var silverEvents repo.SilverEventStreamSnapshot
+	silverEventsObserved := false
+	if s.eventObserver != nil {
+		if snapshot, eventErr := s.eventObserver.ObserveSilverEventStream(ctx); eventErr == nil {
+			silverEvents = snapshot
+			silverEventsObserved = true
+		}
+	}
+	var bronzeConsumer repo.BronzeConsumerSnapshot
+	bronzeConsumerObserved := false
+	if s.bronzeObserver != nil {
+		if snapshot, consumerErr := s.bronzeObserver.ObserveBronzeConsumer(ctx); consumerErr == nil {
+			bronzeConsumer = snapshot
+			bronzeConsumerObserved = true
 		}
 	}
 
@@ -923,8 +1060,10 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 		s.progress.TPFFiniteFractionMean = meanFloat64(tpfFiniteFractions)
 		s.progress.TPFFiniteFractionP05 = quantileFloat64(tpfFiniteFractions, 0.05)
 		s.progress.TPFFiniteFractionP50 = quantileFloat64(tpfFiniteFractions, 0.50)
+		s.progress.TPFTransformPoints = tpfTransformPoints
 		s.progress.MaterializationPoints = materializationPoints
 		s.progress.EncodeFailures = encodeFailures
+		s.progress.SilverFailures = silverFailures
 	}
 	if goldInventoryRead {
 		s.progress.GoldTotal = goldTotal
@@ -938,7 +1077,33 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 		s.progress.CheckpointPending = len(objects) - completed - failed
 		s.progress.CompletedLightCurves = completedLightCurves
 		s.progress.CompletedTargetPixels = completedTargetPixels
+		s.progress.CheckpointPoints = checkpointPoints
 		s.checkpointDetails = latestDetails
+	}
+	if silverEventsObserved {
+		s.progress.SilverEventObserved = true
+		s.progress.SilverEventMessages = silverEvents.Messages
+		s.progress.SilverEventBytes = silverEvents.Bytes
+		s.progress.SilverEventConsumers = silverEvents.Consumers
+		s.progress.SilverEventLightCurves = silverEvents.BySubject["aurora.v1.silver.lightcurve.ready"]
+		s.progress.SilverEventTargetPixels = silverEvents.BySubject["aurora.v1.silver.target_pixel.ready"]
+		s.progress.SilverEventFirstAt = silverEvents.FirstAt
+		s.progress.SilverEventLastAt = silverEvents.LastAt
+	}
+	if bronzeConsumerObserved {
+		s.progress.BronzeConsumerObserved = true
+		s.progress.BronzeStreamMessages = bronzeConsumer.StreamMessages
+		s.progress.BronzeStreamBytes = bronzeConsumer.StreamBytes
+		s.progress.BronzeDeliveredConsumer = bronzeConsumer.DeliveredConsumerSeq
+		s.progress.BronzeDeliveredStream = bronzeConsumer.DeliveredStreamSeq
+		s.progress.BronzeAckFloorConsumer = bronzeConsumer.AckFloorConsumerSeq
+		s.progress.BronzeAckFloorStream = bronzeConsumer.AckFloorStreamSeq
+		s.progress.BronzeConsumerAckPending = bronzeConsumer.AckPending
+		s.progress.BronzeConsumerPending = bronzeConsumer.Pending
+		s.progress.BronzeCurrentRedelivered = bronzeConsumer.CurrentRedelivered
+		s.progress.BronzeConsumerWaiting = bronzeConsumer.Waiting
+		s.progress.BronzeLastDeliveredAt = bronzeConsumer.LastDeliveredAt
+		s.progress.BronzeLastAckAt = bronzeConsumer.LastAckAt
 	}
 	s.progressAt = time.Now().UTC()
 	s.progressRefreshing = false
@@ -979,6 +1144,26 @@ func metadataFloat64(metadata map[string]string, key string) (float64, bool) {
 		return 0, false
 	}
 	return value, true
+}
+
+func checkpointResumeAction(point entity.PreprocessingCheckpointPoint) string {
+	if point.Terminal {
+		return "terminal"
+	}
+	switch strings.ToUpper(point.State) {
+	case "COMPLETED":
+		if point.SilverVerified {
+			return "reuse_and_ack"
+		}
+		return "reprocess"
+	case "SILVER_STORED":
+		if point.SilverVerified {
+			return "verify_silver"
+		}
+		return "reprocess"
+	default:
+		return "reprocess"
+	}
 }
 
 type lightCurveScatterRow struct {
@@ -1108,6 +1293,16 @@ func preprocessingHops(values map[string]float64, observations map[string][]enti
 	for key, value := range values {
 		baseMetrics[key] = value
 	}
+	terminalCheckpoints := 0
+	for _, point := range progress.CheckpointPoints {
+		if point.Terminal {
+			terminalCheckpoints++
+		}
+	}
+	ackLagSeconds := 0.0
+	if !progress.BronzeLastDeliveredAt.IsZero() && !progress.BronzeLastAckAt.IsZero() {
+		ackLagSeconds = math.Max(0, progress.BronzeLastAckAt.Sub(progress.BronzeLastDeliveredAt).Seconds())
+	}
 
 	hops := []entity.PreprocessingHop{
 		{
@@ -1175,7 +1370,9 @@ func preprocessingHops(values map[string]float64, observations map[string][]enti
 			Metrics: mergeMetricValues(metricValues(values,
 				"lc_output_rate", "tpf_output_rate", "lc_outlier_removed_rate", "lc_sigma_clip_3_4_rate", "lc_sigma_clip_4_5_rate", "lc_sigma_clip_ge_5_rate",
 				"tpf_finite_pixel_fraction", "lc_scatter_before_p50", "lc_scatter_before_p95", "lc_scatter_after_p50", "lc_scatter_after_p95",
-				"lc_sigma_clip_fraction_p95", "tpf_finite_pixel_fraction_p05", "lc_duration_p95", "tpf_duration_p95", "throughput"), map[string]float64{
+				"lc_sigma_clip_fraction_p95", "tpf_finite_pixel_fraction_p05", "tpf_pixel_input_rate", "tpf_pixel_retained_rate",
+				"tpf_pixel_nonfinite_rate", "tpf_pixel_invalid_reference_rate", "tpf_scatter_p50", "tpf_scatter_p95",
+				"tpf_reference_drift_p95", "tpf_boundary_jump_p95", "lc_duration_p95", "tpf_duration_p95", "throughput"), map[string]float64{
 				"completed_lightcurves":            float64(progress.CompletedLightCurves),
 				"completed_target_pixels":          float64(progress.CompletedTargetPixels),
 				"lc_preclip_samples":               float64(progress.LCOutputSamples + progress.LCOutlierRemoved),
@@ -1202,7 +1399,9 @@ func preprocessingHops(values map[string]float64, observations map[string][]enti
 			Telemetry: metricSeries(observations,
 				"lc_output_rate", "tpf_output_rate", "lc_outlier_removed_rate", "lc_sigma_clip_3_4_rate", "lc_sigma_clip_4_5_rate", "lc_sigma_clip_ge_5_rate",
 				"tpf_finite_pixel_fraction", "lc_scatter_before_p50", "lc_scatter_before_p95", "lc_scatter_after_p50", "lc_scatter_after_p95",
-				"lc_sigma_clip_fraction_p95", "tpf_finite_pixel_fraction_p05", "lc_duration_p95", "tpf_duration_p95"),
+				"lc_sigma_clip_fraction_p95", "tpf_finite_pixel_fraction_p05", "tpf_pixel_input_rate", "tpf_pixel_retained_rate",
+				"tpf_pixel_nonfinite_rate", "tpf_pixel_invalid_reference_rate", "tpf_scatter_p50", "tpf_scatter_p95",
+				"tpf_reference_drift_p95", "tpf_boundary_jump_p95", "lc_duration_p95", "tpf_duration_p95"),
 		},
 		{
 			ID:          "silver",
@@ -1261,7 +1460,20 @@ func preprocessingHops(values map[string]float64, observations map[string][]enti
 			Contract:    "aurora.v1.silver.<product>.ready",
 			Input:       "Committed lineage",
 			Output:      "Published event",
-			Metrics:     baseMetrics,
+			Metrics: map[string]float64{
+				"stream_observed":        boolToMetric(progress.SilverEventObserved),
+				"eligible_artifacts":     float64(progress.SilverTotal),
+				"eligible_lightcurves":   float64(progress.SilverLightCurves),
+				"eligible_target_pixels": float64(progress.SilverTargetPixels),
+				"event_emissions":        float64(progress.SilverEventMessages),
+				"event_bytes":            float64(progress.SilverEventBytes),
+				"event_consumers":        float64(progress.SilverEventConsumers),
+				"lightcurve_emissions":   float64(progress.SilverEventLightCurves),
+				"target_pixel_emissions": float64(progress.SilverEventTargetPixels),
+				"event_first_timestamp":  timeToMetric(progress.SilverEventFirstAt),
+				"event_last_timestamp":   timeToMetric(progress.SilverEventLastAt),
+				"event_replay_emissions": float64(max(int64(0), progress.SilverEventMessages-int64(progress.SilverTotal))),
+			},
 		},
 		{
 			ID:          "ack",
@@ -1270,7 +1482,25 @@ func preprocessingHops(values map[string]float64, observations map[string][]enti
 			Contract:    "NATS durable consumer ACK",
 			Input:       "Published event",
 			Output:      "Bronze message ACKed",
-			Metrics:     baseMetrics,
+			Metrics: map[string]float64{
+				"consumer_observed":             boolToMetric(progress.BronzeConsumerObserved),
+				"stream_messages":               float64(progress.BronzeStreamMessages),
+				"stream_bytes":                  float64(progress.BronzeStreamBytes),
+				"delivery_attempts":             float64(progress.BronzeDeliveredConsumer),
+				"delivered_stream_positions":    float64(progress.BronzeDeliveredStream),
+				"acknowledged_deliveries":       float64(progress.BronzeAckFloorConsumer),
+				"acknowledged_stream_positions": float64(progress.BronzeAckFloorStream),
+				"historical_redeliveries":       float64(max(int64(0), progress.BronzeDeliveredConsumer-progress.BronzeDeliveredStream)),
+				"ack_pending":                   float64(progress.BronzeConsumerAckPending),
+				"pending":                       float64(progress.BronzeConsumerPending),
+				"current_redelivered":           float64(progress.BronzeCurrentRedelivered),
+				"waiting_fetches":               float64(progress.BronzeConsumerWaiting),
+				"last_delivered_timestamp":      timeToMetric(progress.BronzeLastDeliveredAt),
+				"last_ack_timestamp":            timeToMetric(progress.BronzeLastAckAt),
+				"last_delivery_to_ack_seconds":  ackLagSeconds,
+				"completed_checkpoints":         float64(progress.CheckpointCompleted),
+				"terminal_checkpoints":          float64(terminalCheckpoints),
+			},
 		},
 	}
 	legacy := make(map[string]entity.PreprocessingHop, len(hops))
@@ -1309,6 +1539,19 @@ func preprocessingHops(values map[string]float64, observations map[string][]enti
 		}
 		if hops[i].ID == "lc-transform" {
 			hops[i].ScatterPoints = append([]entity.PreprocessingScatterPoint(nil), progress.LCScatterPoints...)
+		}
+		if hops[i].ID == "tpf-transform" {
+			hops[i].TPFTransformPoints = append([]entity.PreprocessingTPFTransformPoint(nil), progress.TPFTransformPoints...)
+		}
+		if hops[i].ID == "silver" {
+			hops[i].MaterializationPoints = append([]entity.PreprocessingMaterializationPoint(nil), progress.MaterializationPoints...)
+			hops[i].SilverFailures = append([]entity.PreprocessingSilverFailure(nil), progress.SilverFailures...)
+		}
+		if hops[i].ID == "checkpoint" {
+			hops[i].CheckpointPoints = append([]entity.PreprocessingCheckpointPoint(nil), progress.CheckpointPoints...)
+		}
+		if hops[i].ID == "lineage" {
+			hops[i].MaterializationPoints = append([]entity.PreprocessingMaterializationPoint(nil), progress.MaterializationPoints...)
 		}
 		if hops[i].ID == "lc-parquet" || hops[i].ID == "tpf-parquet" {
 			kind := "lightcurve"
@@ -1385,10 +1628,20 @@ func preprocessingHopStatuses(values map[string]float64, progress entity.Preproc
 	} else if progress.CheckpointPending > 0 && values["inflight"] > 0 {
 		statuses["checkpoint"] = "running"
 	}
-	terminalObserved := progress.CheckpointCompleted > 0 && values["last_success"] > 0
-	for _, component := range []string{"lineage", "event", "ack"} {
-		statuses[component] = observedComponentStatus(values, terminalObserved)
+	lineageObserved := progress.CheckpointCompleted > 0 && progress.SilverTotal > 0 && len(progress.MaterializationPoints) == progress.SilverTotal
+	if lineageObserved {
+		for _, point := range progress.MaterializationPoints {
+			if !point.LineageBound {
+				lineageObserved = false
+				break
+			}
+		}
 	}
+	statuses["lineage"] = observedComponentStatus(values, lineageObserved)
+	eventObserved := progress.SilverEventObserved && progress.SilverEventMessages >= int64(progress.SilverTotal) && progress.SilverTotal > 0
+	statuses["event"] = observedComponentStatus(values, eventObserved)
+	ackObserved := progress.BronzeConsumerObserved && progress.BronzeAckFloorStream > 0
+	statuses["ack"] = observedComponentStatus(values, ackObserved)
 	return statuses
 }
 
@@ -1410,6 +1663,13 @@ func boolToMetric(value bool) float64 {
 		return 1
 	}
 	return 0
+}
+
+func timeToMetric(value time.Time) float64 {
+	if value.IsZero() {
+		return 0
+	}
+	return float64(value.Unix())
 }
 
 // hopDetails lọc các trường chi tiết checkpoint phù hợp cho từng bước hop trong DAG
@@ -1455,4 +1715,11 @@ func optionalUint64(value *uint64) string {
 		return ""
 	}
 	return fmt.Sprintf("%d", *value)
+}
+
+func optionalUint64Value(value *uint64) uint64 {
+	if value == nil {
+		return 0
+	}
+	return *value
 }

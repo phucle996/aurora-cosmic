@@ -107,6 +107,17 @@ fn process_target_pixel_in_chunks(
     let mut nonpositive_time_removed = 0usize;
     let mut finite_pixels = 0f64;
     let mut inspected_pixels = 0usize;
+    let mut input_pixel_values = 0usize;
+    let mut normalized_pixel_values = 0usize;
+    let mut nonfinite_pixel_values = 0usize;
+    let mut invalid_reference_values = 0usize;
+    let mut invalid_reference_pixels = 0usize;
+    let mut pixel_scatter_p50 = Vec::new();
+    let mut pixel_scatter_p95 = Vec::new();
+    let mut reference_drift_p50 = Vec::new();
+    let mut reference_drift_p95 = Vec::new();
+    let mut boundary_jumps_ppm = Vec::new();
+    let mut previous_last_frame: Option<Vec<f32>> = None;
     let mut tic_id = event.tic_id;
 
     while let Some(raw) = reader.next_chunk(config.tpf_chunk_cadences)? {
@@ -145,6 +156,39 @@ fn process_target_pixel_in_chunks(
                 finite_pixels +=
                     processed.processing.finite_pixel_fraction as f64 * pixels_in_chunk as f64;
                 inspected_pixels += pixels_in_chunk;
+                input_pixel_values += processed.processing.input_pixel_values;
+                normalized_pixel_values += processed.processing.normalized_pixel_values;
+                nonfinite_pixel_values += processed.processing.nonfinite_pixel_values;
+                invalid_reference_values += processed.processing.invalid_reference_values;
+                invalid_reference_pixels += processed.processing.invalid_reference_pixels;
+                pixel_scatter_p50.push(processed.processing.pixel_scatter_mad_p50_ppm);
+                pixel_scatter_p95.push(processed.processing.pixel_scatter_mad_p95_ppm);
+                reference_drift_p50.push(processed.processing.reference_drift_p50_ppm);
+                reference_drift_p95.push(processed.processing.reference_drift_p95_ppm);
+                if let Some(first_frame) = processed.flux.first() {
+                    let current_first: Vec<f32> = first_frame.iter().flatten().copied().collect();
+                    if let Some(previous) = &previous_last_frame {
+                        let mut jumps: Vec<f32> = previous
+                            .iter()
+                            .zip(&current_first)
+                            .filter_map(|(left, right)| {
+                                if left.is_finite() && right.is_finite() {
+                                    Some((right - left).abs() * 1_000_000.0)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        jumps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                        if !jumps.is_empty() {
+                            boundary_jumps_ppm.push(quantile_sorted(&jumps, 0.50));
+                        }
+                    }
+                }
+                previous_last_frame = processed
+                    .flux
+                    .last()
+                    .map(|frame| frame.iter().flatten().copied().collect());
                 writer.write_chunk(&processed)?;
                 chunk_count += 1;
             }
@@ -194,6 +238,17 @@ fn process_target_pixel_in_chunks(
         nonfinite_removed,
         nonpositive_time_removed,
         finite_pixel_fraction,
+        input_pixel_values,
+        normalized_pixel_values,
+        nonfinite_pixel_values,
+        invalid_reference_values,
+        invalid_reference_pixels,
+        pixel_scatter_mad_p50_ppm: quantile(&mut pixel_scatter_p50, 0.50),
+        pixel_scatter_mad_p95_ppm: quantile(&mut pixel_scatter_p95, 0.95),
+        reference_drift_p50_ppm: quantile(&mut reference_drift_p50, 0.50),
+        reference_drift_p95_ppm: quantile(&mut reference_drift_p95, 0.95),
+        boundary_jump_p50_ppm: quantile(&mut boundary_jumps_ppm, 0.50),
+        boundary_jump_p95_ppm: quantile(&mut boundary_jumps_ppm, 0.95),
     };
 
     tracing::info!(
@@ -215,4 +270,23 @@ fn process_target_pixel_in_chunks(
         config.tpf_chunk_cadences,
         processing_fingerprint,
     )
+}
+
+fn quantile(values: &mut [f32], q: f32) -> f32 {
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    quantile_sorted(values, q)
+}
+
+fn quantile_sorted(values: &[f32], q: f32) -> f32 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    let position = q * (values.len() - 1) as f32;
+    let lower = position.floor() as usize;
+    let upper = position.ceil() as usize;
+    if lower == upper {
+        values[lower]
+    } else {
+        values[lower] * (upper as f32 - position) + values[upper] * (position - lower as f32)
+    }
 }
