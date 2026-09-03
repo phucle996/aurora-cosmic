@@ -41,13 +41,13 @@ export function CameraControls({
   onToggleFullscreen,
 }: CameraControlsProps): JSX.Element {
   return (
-    <div className="absolute top-4 right-4 z-10 flex flex-wrap items-center gap-1.5 bg-background/90 p-1.5 rounded-xl border border-border/60 backdrop-blur-xl shadow-2xl">
+    <div className="absolute top-4 right-4 z-10 flex flex-wrap items-center gap-1.5 border border-border/60 bg-background/90 p-1.5 shadow-none backdrop-blur-xl">
       {/* Zoom In/Out Buttons & Indicator */}
-      <div className="flex items-center gap-1 bg-muted/30 px-1.5 py-0.5 rounded-lg border border-border/40">
+      <div className="flex items-center gap-1 border border-border/40 bg-muted/30 px-1.5 py-0.5">
         <Button
           variant="ghost"
           size="icon-sm"
-          className="size-7"
+          className="size-7 rounded-none"
           title="Zoom In (Close-up)"
           onClick={onZoomIn}
         >
@@ -61,7 +61,7 @@ export function CameraControls({
         <Button
           variant="ghost"
           size="icon-sm"
-          className="size-7"
+          className="size-7 rounded-none"
           title="Zoom Out (Wide View)"
           onClick={onZoomOut}
         >
@@ -76,7 +76,7 @@ export function CameraControls({
         <Button
           variant={cameraMode === 'focus_planet' ? 'default' : 'outline'}
           size="sm"
-          className={`h-8 text-xs gap-1.5 ${
+          className={`h-8 rounded-none text-xs gap-1.5 ${
             cameraMode === 'focus_planet'
               ? 'bg-sky-500 hover:bg-sky-600 text-white shadow-md shadow-sky-500/25'
               : 'border-sky-500/40 text-sky-400'
@@ -93,7 +93,7 @@ export function CameraControls({
       <Button
         variant={cameraMode === 'free' ? 'secondary' : 'ghost'}
         size="sm"
-        className="h-8 text-xs gap-1.5"
+        className="h-8 rounded-none text-xs gap-1.5"
         title="Free 3D Orbit Camera"
         onClick={onResetCamera}
       >
@@ -105,7 +105,7 @@ export function CameraControls({
       <Button
         variant={cameraMode === 'polar' ? 'secondary' : 'ghost'}
         size="sm"
-        className="h-8 text-xs gap-1.5"
+        className="h-8 rounded-none text-xs gap-1.5"
         title="Top-down Polar View"
         onClick={onSetTopDownView}
       >
@@ -117,7 +117,7 @@ export function CameraControls({
       <Button
         variant={cameraMode === 'transit' ? 'secondary' : 'ghost'}
         size="sm"
-        className="h-8 text-xs gap-1.5"
+        className="h-8 rounded-none text-xs gap-1.5"
         title="Side-on Transit Eclipse View"
         onClick={onSetTransitView}
       >
@@ -129,7 +129,7 @@ export function CameraControls({
       <Button
         variant="ghost"
         size="icon-sm"
-        className="size-8"
+        className="size-8 rounded-none"
         title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen / Theater Mode'}
         onClick={onToggleFullscreen}
       >

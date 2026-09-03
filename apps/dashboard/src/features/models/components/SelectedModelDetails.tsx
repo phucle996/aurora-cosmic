@@ -1,139 +1,53 @@
 import { type JSX } from 'react';
 import { Link } from 'react-router-dom';
-import { Database, Gauge, LoaderCircle, Sparkles, Square } from 'lucide-react';
+import { Activity, Check, Circle, CircleAlert, Crown, Database, FileKey2, Fingerprint, LoaderCircle, PackageCheck, ShieldCheck, Sparkles, Square } from 'lucide-react';
+
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
-import { formatBytes, formatDate, statusVariant, taskLabel } from '../types';
-import type { ModelRecord } from '../types';
+import { formatBytes, formatDate, statusVariant, taskLabel, type ModelRecord } from '../types';
 
 interface SelectedModelDetailsProps {
   selectedModel?: ModelRecord;
-  onDeployModel?: (modelId: string, task: string, active: boolean) => Promise<void>;
+  onDeployModel?: (runtimePackageId: string, task: string, active: boolean) => Promise<void>;
   isDeploying?: boolean;
 }
 
-export function SelectedModelDetails({
-  selectedModel,
-  onDeployModel,
-  isDeploying,
-}: SelectedModelDetailsProps): JSX.Element {
-  const isChampion = selectedModel?.status === 'champion';
-
-  return (
-    <Card className="min-w-0 overflow-hidden">
-      <CardHeader>
-        <CardTitle className="text-base font-semibold">Chi tiết Mô hình được chọn</CardTitle>
-        <CardDescription>Thông số kỹ thuật, trạng thái triển khai suy luận và lineage.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        {!selectedModel ? (
-          <div className="flex flex-col items-center justify-center gap-2 py-12 text-center text-sm text-muted-foreground">
-            <Database className="size-6 opacity-60" />
-            <p>Chọn một model để xem chi tiết thông số.</p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {/* Active Inference Deployment Control Card */}
-            {isChampion ? (
-              <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3.5 space-y-2.5 shadow-sm">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className="relative flex size-2.5">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full size-2.5 bg-emerald-500"></span>
-                    </span>
-                    <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1">
-                      👑 ĐANG PHỤC VỤ SUY LUẬN TRỰC TIẾP
-                    </span>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 text-xs border-destructive/40 text-destructive hover:bg-destructive/10 gap-1.5 shrink-0"
-                    onClick={() => onDeployModel?.(selectedModel.runtime_package_id, selectedModel.task, false)}
-                    disabled={isDeploying}
-                  >
-                    {isDeploying ? <LoaderCircle className="size-3 animate-spin" /> : <Square className="size-3" />}
-                    Hủy triển khai
-                  </Button>
-                </div>
-                <p className="text-[11px] text-muted-foreground leading-relaxed">
-                  Mô hình này đang giữ quyền Champion trong MinIO (<code className="text-foreground">champion.json</code>) và được Rust Inference Engine tự động tải để phân loại luồng dữ liệu thời gian thực.
-                </p>
-              </div>
-            ) : (
-              <div className="rounded-lg border border-border bg-muted/20 p-3.5 space-y-2.5">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs text-muted-foreground font-medium flex items-center gap-1.5">
-                    ⚪ Mô hình dự phòng (Chưa kích hoạt suy luận)
-                  </span>
-                  <Button
-                    size="sm"
-                    className="h-7 text-xs gap-1.5 bg-gradient-to-r from-emerald-600 to-primary text-primary-foreground font-semibold shadow-sm shrink-0"
-                    onClick={() => onDeployModel?.(selectedModel.runtime_package_id, selectedModel.task, true)}
-                    disabled={isDeploying || selectedModel.status === 'invalid'}
-                  >
-                    {isDeploying ? <LoaderCircle className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
-                    Triển khai mô hình này (Set Champion)
-                  </Button>
-                </div>
-                <p className="text-[11px] text-muted-foreground leading-relaxed">
-                  Nhấp để chuyển quyền suy luận chính cho mô hình này. Hệ thống sẽ cập nhật con trỏ <code className="text-foreground">champion.json</code> ngay lập tức.
-                </p>
-              </div>
-            )}
-
-            {/* Model Metadata Card */}
-            <div className="rounded-lg border border-border bg-muted/30 p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="font-medium">{selectedModel.model_id}</p>
-                  <p className="mt-1 text-xs text-muted-foreground font-mono">{selectedModel.model_version}</p>
-                </div>
-                <Badge variant={statusVariant(selectedModel.status)}>
-                  {selectedModel.status === 'champion' ? '👑 Champion Model' : selectedModel.status}
-                </Badge>
-              </div>
-              <Separator className="my-3" />
-              <dl className="grid grid-cols-2 gap-3 text-xs">
-                <InfoItem label="Task" value={taskLabel[selectedModel.task] ?? selectedModel.task} />
-                <InfoItem label="Số đặc trưng" value={`${selectedModel.feature_count} features`} />
-                <InfoItem label="Kích thước ONNX" value={formatBytes(selectedModel.onnx_size_bytes)} />
-                <InfoItem label="Parity Test" value={selectedModel.parity_status || 'PASS'} />
-                <InfoItem label="Ngưỡng Threshold" value={selectedModel.decision_threshold.toFixed(4)} />
-                <InfoItem label="Ngày tạo" value={formatDate(selectedModel.created_at)} />
-              </dl>
-              <Link
-                to={`/ai-factory/models/${encodeURIComponent(selectedModel.model_id)}`}
-                className="mt-3 inline-flex text-xs font-medium text-primary hover:underline"
-              >
-                Mở trang Model Detail &amp; evidence →
-              </Link>
-            </div>
-            <div className="min-w-0">
-              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Thứ tự đặc trưng (Feature Order)</p>
-              <p className="max-h-24 overflow-y-auto break-words font-mono text-[11px] leading-5 text-muted-foreground rounded bg-muted/20 p-2">
-                {selectedModel.feature_order.join(' · ') || 'Not provided'}
-              </p>
-            </div>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Gauge className="size-4 text-primary" />
-              GPU-only Rust Inference Engine · ONNX Runtime v1.20
-            </div>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
+function pass(value?: string): boolean {
+  return value?.toUpperCase() === 'PASS' || value?.toUpperCase() === 'PASSED';
 }
 
-function InfoItem({ label, value }: { label: string; value: string }): JSX.Element {
-  return (
-    <div>
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="mt-0.5 truncate font-medium text-foreground">{value}</dd>
+export function SelectedModelDetails({ selectedModel, onDeployModel, isDeploying }: SelectedModelDetailsProps): JSX.Element {
+  if (!selectedModel) return <section className="grid min-h-[520px] place-items-center border border-border/80 bg-card p-6 text-center"><div><Database className="mx-auto size-7 text-muted-foreground/50" /><p className="mt-3 text-sm font-medium">No registry subject selected</p><p className="mt-1 text-xs text-muted-foreground">Select a runtime generation to inspect its promotion evidence.</p></div></section>;
+
+  const champion = selectedModel.status === 'champion';
+  const parityPass = pass(selectedModel.parity_status);
+  const integrityPass = pass(selectedModel.integrity_status);
+  const promotable = selectedModel.status !== 'invalid' && parityPass && integrityPass;
+  const stages = [
+    { label: 'Evaluation bound', passed: Boolean(selectedModel.evaluation_run_id), detail: selectedModel.evaluation_run_id || 'missing' },
+    { label: 'Runtime parity', passed: parityPass, detail: selectedModel.parity_status || 'unobserved' },
+    { label: 'Artifact integrity', passed: integrityPass, detail: selectedModel.integrity_status || 'unobserved' },
+    { label: 'Serving pointer', passed: champion, detail: champion ? 'CHAMPION' : 'standby', neutral: !champion },
+  ];
+
+  return <section className="min-w-0 overflow-hidden border border-border/80 bg-card">
+    <header className="border-b border-border/60 p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="font-mono text-[9px] uppercase tracking-[0.14em] text-primary">Selected generation</p><h3 className="mt-1 truncate font-mono text-sm font-semibold" title={selectedModel.model_id}>{selectedModel.model_id}</h3><p className="mt-1 truncate font-mono text-[9px] text-muted-foreground" title={selectedModel.runtime_package_id}>{selectedModel.runtime_package_id}</p></div><Badge variant={statusVariant(selectedModel.status)} className="shrink-0 rounded-none font-mono text-[9px] uppercase">{champion && <Crown className="mr-1 size-3" />}{selectedModel.status}</Badge></div></header>
+
+    <div className={`border-b p-4 ${champion ? 'border-emerald-500/30 bg-emerald-500/[0.06]' : promotable ? 'border-primary/25 bg-primary/[0.035]' : 'border-red-500/30 bg-red-500/[0.045]'}`}>
+      <div className="flex items-start gap-2">{champion ? <Crown className="mt-0.5 size-4 shrink-0 text-amber-500" /> : promotable ? <PackageCheck className="mt-0.5 size-4 shrink-0 text-emerald-500" /> : <CircleAlert className="mt-0.5 size-4 shrink-0 text-red-500" />}<div><p className="text-xs font-semibold">{champion ? 'Active serving generation' : promotable ? 'Eligible for promotion' : 'Promotion blocked'}</p><p className="mt-1 text-[10px] leading-4 text-muted-foreground">{champion ? 'This runtime package owns the active Champion pointer.' : promotable ? 'Parity and artifact integrity are verified; an operator may promote this package.' : 'Resolve every failed verification gate before this package can serve inference.'}</p></div></div>
+      <div className="mt-3">{champion ? <Button type="button" variant="outline" className="h-8 w-full rounded-none border-destructive/40 text-xs text-destructive" disabled={isDeploying} onClick={() => onDeployModel?.(selectedModel.runtime_package_id, selectedModel.task, false)}>{isDeploying ? <LoaderCircle className="size-3.5 animate-spin" /> : <Square className="size-3.5" />}Deactivate champion</Button> : <Button type="button" className="h-8 w-full rounded-none text-xs" disabled={isDeploying || !promotable} onClick={() => onDeployModel?.(selectedModel.runtime_package_id, selectedModel.task, true)}>{isDeploying ? <LoaderCircle className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}Promote / restore generation</Button>}</div>
     </div>
-  );
+
+    <div className="border-b border-border/60"><div className="border-b border-border/50 px-4 py-2.5"><p className="flex items-center gap-2 text-xs font-medium"><Activity className="size-3.5 text-primary" />Promotion evidence rail</p></div><div className="grid gap-px bg-border/60 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">{stages.map((stage) => <div key={stage.label} className="min-w-0 bg-background/95 p-3"><p className={`flex items-center gap-1.5 text-[10px] font-medium ${stage.neutral ? 'text-muted-foreground' : stage.passed ? 'text-emerald-600 dark:text-emerald-300' : 'text-red-600 dark:text-red-300'}`}>{stage.passed ? <Check className="size-3" /> : stage.neutral ? <Circle className="size-3" /> : <CircleAlert className="size-3" />}{stage.label}</p><p className="mt-1 truncate font-mono text-[9px] text-muted-foreground" title={stage.detail}>{stage.detail}</p></div>)}</div></div>
+
+    <div className="border-b border-border/60 p-4"><p className="flex items-center gap-2 text-xs font-medium"><ShieldCheck className="size-3.5 text-primary" />Runtime contract</p><dl className="mt-3 grid gap-px border border-border/70 bg-border/70 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2"><Fact label="Task" value={taskLabel[selectedModel.task] ?? selectedModel.task} /><Fact label="Model version" value={selectedModel.model_version || '—'} /><Fact label="Preprocessing" value={selectedModel.preprocessing_version || '—'} /><Fact label="Feature vector" value={`${selectedModel.feature_count.toLocaleString()} ordered features`} /><Fact label="Decision threshold" value={selectedModel.decision_threshold.toFixed(6)} /><Fact label="ONNX artifact" value={formatBytes(selectedModel.onnx_size_bytes)} /><Fact label="Created" value={formatDate(selectedModel.created_at)} wide /></dl></div>
+
+    <div className="space-y-3 border-b border-border/60 p-4"><p className="flex items-center gap-2 text-xs font-medium"><Fingerprint className="size-3.5 text-primary" />Immutable identity</p><Identity label="ONNX SHA-256" value={selectedModel.onnx_sha256} /><Identity label="Runtime manifest" value={selectedModel.runtime_manifest_key} /><Identity label="Evaluation run" value={selectedModel.evaluation_run_id} /></div>
+
+    <details className="border-b border-border/60"><summary className="cursor-pointer px-4 py-3 text-xs font-medium"><FileKey2 className="mr-2 inline size-3.5 text-primary" />Ordered feature contract · {selectedModel.feature_count}</summary><div className="grid max-h-52 grid-cols-2 gap-px overflow-y-auto border-t border-border/60 bg-border/60 sm:grid-cols-3 xl:grid-cols-2">{selectedModel.feature_order.map((feature, index) => <div key={`${feature}-${index}`} className="min-w-0 bg-background px-2 py-1.5 font-mono text-[9px]"><span className="mr-1 text-muted-foreground">{String(index + 1).padStart(2, '0')}</span><span title={feature}>{feature}</span></div>)}</div></details>
+    <div className="p-4"><Link to={`/ai-factory/models/${encodeURIComponent(selectedModel.model_id)}`} className="inline-flex text-xs font-medium text-primary hover:underline">Open full model detail and evidence →</Link></div>
+  </section>;
 }
+
+function Fact({ label, value, wide = false }: { label: string; value: string; wide?: boolean }): JSX.Element { return <div className={`min-w-0 bg-background p-2.5 ${wide ? 'sm:col-span-2 xl:col-span-1 2xl:col-span-2' : ''}`}><dt className="font-mono text-[8px] uppercase text-muted-foreground">{label}</dt><dd className="mt-1 truncate text-[10px] font-medium" title={value}>{value}</dd></div>; }
+function Identity({ label, value }: { label: string; value?: string }): JSX.Element { return <div className="min-w-0"><p className="font-mono text-[8px] uppercase text-muted-foreground">{label}</p><p className="mt-1 break-all border border-border/60 bg-muted/15 px-2 py-1.5 font-mono text-[9px] leading-4">{value || 'not recorded'}</p></div>; }

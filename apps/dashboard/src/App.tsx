@@ -7,12 +7,14 @@ import Header from '@/components/Header';
 import Sidebar from '@/components/Sidebar';
 import { ThemeProvider } from '@/components/theme-provider';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
+import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 const CandidateDetailPage = lazy(() => import('@/pages/candidate-detail/page'));
 const OverviewPage = lazy(() => import('@/pages/overview/page'));
 const MonitoringPage = lazy(() => import('@/pages/monitoring/page'));
 const TargetDetailPage = lazy(() => import('@/pages/target-detail/page'));
 const TrainingLabPage = lazy(() => import('@/pages/training-lab/page'));
+const LabelingStudioPage = lazy(() => import('@/pages/labeling-studio/page'));
 const ModelEvaluationPage = lazy(() => import('@/pages/model-evaluation/page'));
 const EvolutionEvidencePage = lazy(() => import('@/pages/evolution-evidence/page'));
 const ModelRegistryPage = lazy(() => import('@/pages/model-registry/page'));
@@ -29,9 +31,7 @@ const LineageExplorerPage = lazy(() => import('@/pages/lineage-explorer/page'));
 const RunHistoryPage = lazy(() => import('@/pages/run-history/page'));
 const ResearchOverviewPage = lazy(() => import('@/pages/research-overview/page'));
 const TargetDiscoveryPage = lazy(() => import('@/pages/target-discovery/page'));
-const ObservationWorkbenchPage = lazy(() => import('@/pages/observation-workbench/page'));
 const CandidateReviewPage = lazy(() => import('@/pages/candidate-review/page'));
-const ResearchHistoryPage = lazy(() => import('@/pages/research-history/page'));
 
 export default function App(): JSX.Element {
   return (
@@ -48,7 +48,7 @@ export default function App(): JSX.Element {
                     <Route path="/" element={<OverviewPage />} />
                     <Route path="/targets" element={<Navigate to="/research-factory/discovery" replace />} />
                     <Route path="/targets/:ticId" element={<TargetDetailPage />} />
-                    <Route path="/exoplanets" element={<Navigate to="/research-factory/workbench" replace />} />
+                    <Route path="/exoplanets" element={<Navigate to="/research-factory/discovery" replace />} />
                     <Route path="/ingest" element={<IngestPage />} />
                     <Route path="/preprocessing" element={<Navigate to="/data-factory/preprocessing" replace />} />
                     <Route path="/enrichment" element={<Navigate to="/data-factory/enrichment" replace />} />
@@ -59,16 +59,16 @@ export default function App(): JSX.Element {
                     <Route path="/data-factory/history" element={<RunHistoryPage />} />
                     <Route path="/research-factory" element={<ResearchOverviewPage />} />
                     <Route path="/research-factory/discovery" element={<TargetDiscoveryPage />} />
-                    <Route path="/research-factory/workbench" element={<ObservationWorkbenchPage />} />
+                    <Route path="/research-factory/workbench" element={<Navigate to="/research-factory/discovery" replace />} />
                     <Route path="/research-factory/workbench/:ticId" element={<TargetDetailPage />} />
                     <Route path="/research-factory/candidates" element={<CandidateReviewPage />} />
                     <Route path="/research-factory/candidates/:predictionId" element={<CandidateDetailPage />} />
-                    <Route path="/research-factory/history" element={<ResearchHistoryPage />} />
+                    <Route path="/research-factory/history" element={<Navigate to="/research-factory" replace />} />
                     <Route path="/research-factory/transit-candidates" element={<Navigate to="/research-factory/candidates" replace />} />
                     <Route path="/research-factory/transit-candidates/:predictionId" element={<CandidateDetailPage />} />
                     <Route path="/research-factory/vetting" element={<Navigate to="/research-factory/candidates" replace />} />
-                    <Route path="/research-factory/systems" element={<Navigate to="/research-factory/workbench" replace />} />
-                    <Route path="/research-factory/evidence" element={<Navigate to="/research-factory/history" replace />} />
+                    <Route path="/research-factory/systems" element={<Navigate to="/research-factory/discovery" replace />} />
+                    <Route path="/research-factory/evidence" element={<Navigate to="/ai-factory/evidence" replace />} />
                     <Route path="/datasets" element={<DatasetsPage />} />
                     <Route path="/gold/snapshots/:snapshotId" element={<GoldSnapshotPage />} />
                     <Route path="/gold/snapshots/:snapshotId/files/:dataset/:sector" element={<GoldArtifactPage />} />
@@ -76,6 +76,7 @@ export default function App(): JSX.Element {
                     <Route path="/candidates/:predictionId" element={<CandidateDetailPage />} />
                     <Route path="/models" element={<Navigate to="/ai-factory/registry" replace />} />
                     <Route path="/ai-factory/training" element={<TrainingLabPage />} />
+                    <Route path="/ai-factory/labeling" element={<LabelingStudioPage />} />
                     <Route path="/ai-factory/evaluation" element={<ModelEvaluationPage />} />
                     <Route path="/ai-factory/evidence" element={<EvolutionEvidencePage />} />
                     <Route path="/ai-factory/registry" element={<ModelRegistryPage />} />
@@ -87,6 +88,7 @@ export default function App(): JSX.Element {
               </SidebarInset>
             </SidebarProvider>
           </div>
+          <Toaster position="bottom-right" richColors closeButton />
         </TooltipProvider>
       </ThemeProvider>
     </Router>

@@ -41,13 +41,13 @@ export function SimulationControls({
   onToggleDistanceRuler,
 }: SimulationControlsProps): JSX.Element {
   return (
-    <div className="absolute bottom-4 inset-x-4 z-10 flex flex-wrap items-center justify-between gap-3 bg-background/90 p-3 px-5 rounded-2xl border border-border/60 backdrop-blur-xl shadow-2xl text-xs">
+    <div className="absolute inset-x-4 bottom-4 z-10 flex flex-wrap items-center justify-between gap-3 border border-border/60 bg-background/90 p-3 px-5 text-xs shadow-none backdrop-blur-xl">
       {/* Play/Pause & Speed Multiplier */}
       <div className="flex items-center gap-4">
         <Button
           variant={isPlaying ? 'secondary' : 'default'}
           size="sm"
-          className="h-8 px-3 text-xs"
+          className="h-8 rounded-none px-3 text-xs"
           onClick={onTogglePlay}
         >
           {isPlaying ? <Pause className="size-3.5 mr-1.5" /> : <Play className="size-3.5 mr-1.5" />}
@@ -76,7 +76,7 @@ export function SimulationControls({
             key={p.name}
             variant={idx === selectedPlanetIndex ? 'default' : 'outline'}
             size="sm"
-            className="h-7 px-2.5 text-xs font-mono"
+            className="h-7 rounded-none px-2.5 font-mono text-xs"
             onClick={() => onSelectPlanet(idx)}
           >
             🪐 {p.name}
@@ -89,7 +89,7 @@ export function SimulationControls({
         <Button
           variant={showDistanceRuler ? 'default' : 'outline'}
           size="sm"
-          className={`h-7 px-2.5 text-xs ${
+          className={`h-7 rounded-none px-2.5 text-xs ${
             showDistanceRuler ? 'bg-sky-600 hover:bg-sky-700 text-white' : ''
           }`}
           onClick={onToggleDistanceRuler}
@@ -102,7 +102,7 @@ export function SimulationControls({
         <Button
           variant={showHabitableZone ? 'default' : 'outline'}
           size="sm"
-          className={`h-7 px-2.5 text-xs ${
+          className={`h-7 rounded-none px-2.5 text-xs ${
             showHabitableZone ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : ''
           }`}
           onClick={onToggleHabitableZone}
@@ -114,7 +114,7 @@ export function SimulationControls({
         <Button
           variant={showTrails ? 'secondary' : 'outline'}
           size="sm"
-          className="h-7 px-2.5 text-xs"
+          className="h-7 rounded-none px-2.5 text-xs"
           onClick={onToggleTrails}
         >
           <Zap className="size-3.5 mr-1" />
@@ -124,7 +124,7 @@ export function SimulationControls({
         <Button
           variant={showGrid ? 'secondary' : 'outline'}
           size="sm"
-          className="h-7 px-2.5 text-xs"
+          className="h-7 rounded-none px-2.5 text-xs"
           onClick={onToggleGrid}
         >
           <Layers className="size-3.5 mr-1" />

@@ -17,9 +17,10 @@ import (
 )
 
 const (
-	defaultPageSize = 100
-	maxPageSize     = 1000
-	maxOffset       = 10_000_000
+	defaultPageSize       = 100
+	maxPageSize           = 1000
+	maxLightcurvePageSize = 50_000
+	maxOffset             = 10_000_000
 )
 
 var snapshotPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
@@ -185,11 +186,11 @@ func (h *AnalyticsHandler) GetCandidate(c *gin.Context) {
 			"matched_toi_id": detail.Evidence.MatchedTOIID, "toi_match_status": detail.Evidence.TOIMatchStatus,
 		},
 		"review": gin.H{
-			"training_label": detail.Review.TrainingLabel,
-			"label_source":   detail.Review.LabelSource,
-			"review_status":  detail.Review.ReviewStatus,
-			"train_eligible": detail.Review.TrainEligible,
-			"updated_at":     detail.Review.UpdatedAt,
+			"decision":      detail.Review.Decision,
+			"review_status": detail.Review.ReviewStatus,
+			"reviewer":      detail.Review.Reviewer,
+			"note":          detail.Review.Note,
+			"updated_at":    detail.Review.UpdatedAt,
 		},
 		"planet_physics": gin.H{
 			"planet_candidate_id":       detail.Physics.PlanetCandidateID,
@@ -237,6 +238,43 @@ func (h *AnalyticsHandler) GetCandidate(c *gin.Context) {
 			"disclaimer": detail.Habitability.Disclaimer,
 		},
 		"snapshot_id": snapshot,
+	})
+}
+
+func (h *AnalyticsHandler) ReviewCandidate(c *gin.Context) {
+	predictionID := strings.TrimSpace(c.Param("prediction_id"))
+	if predictionID == "" || !snapshotPattern.MatchString(predictionID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "prediction_id is invalid"})
+		return
+	}
+	var request struct {
+		SnapshotID string `json:"snapshot_id"`
+		Decision   string `json:"decision"`
+		Note       string `json:"note"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil || !snapshotPattern.MatchString(request.SnapshotID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid candidate review payload"})
+		return
+	}
+	review, err := h.analytics.ReviewCandidate(c.Request.Context(), predictionID, request.SnapshotID, request.Decision, request.Note)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			c.JSON(http.StatusNotFound, gin.H{"error": taxonomy.ErrNotFound.Error()})
+			return
+		}
+		if strings.Contains(err.Error(), "decision") || strings.Contains(err.Error(), "review note") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "candidate review store is unavailable"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"status": "reviewed",
+		"review": gin.H{
+			"decision": review.Decision, "review_status": review.ReviewStatus,
+			"reviewer": review.Reviewer, "note": review.Note, "updated_at": review.UpdatedAt,
+		},
 	})
 }
 
@@ -632,7 +670,7 @@ func (h *AnalyticsHandler) GetLightcurve(c *gin.Context) {
 	page := entity.PageRequest{Limit: defaultPageSize}
 	if raw := c.Query("limit"); raw != "" {
 		limit, err := strconv.Atoi(raw)
-		if err != nil || limit < 1 || limit > maxPageSize {
+		if err != nil || limit < 1 || limit > maxLightcurvePageSize {
 			c.JSON(http.StatusBadRequest, gin.H{"error": taxonomy.ErrInvalidPage.Error()})
 			return
 		}

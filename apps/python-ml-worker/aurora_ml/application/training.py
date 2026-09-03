@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import torch
 
@@ -78,9 +78,37 @@ def _development_rows(rows: list[dict[str, Any]], seed: int) -> list[dict[str, A
 
 
 class TrainingApplication:
-    def __init__(self, config: Config, objects: MinioObjectStore | None = None):
+    def __init__(
+        self,
+        config: Config,
+        objects: MinioObjectStore | None = None,
+        progress: Callable[[dict[str, Any]], None] | None = None,
+    ):
         self.config = config
         self.objects = objects or MinioObjectStore(config)
+        self.progress = progress
+
+    def _progress(
+        self,
+        request: TrainingRequest,
+        phase: str,
+        progress_percent: float,
+        **values: Any,
+    ) -> None:
+        if self.progress is None:
+            return
+        self.progress(
+            {
+                "schema_version": 1,
+                "job_id": request.job_id,
+                "task": request.task,
+                "status": "running",
+                "phase": phase,
+                "progress_percent": max(0.0, min(100.0, progress_percent)),
+                "occurred_at": _now(),
+                **values,
+            }
+        )
 
     def _job_dir(self, request: TrainingRequest) -> Path:
         directory = Path(self.config.work_dir) / "jobs" / request.job_id
@@ -114,7 +142,14 @@ class TrainingApplication:
         store = TrainingStore(self.objects, job_dir, self.config)
         self._journal(store, request, status="RUNNING", started_at=_now())
         try:
+            self._progress(request, "loading_gold", 5)
             loaded = store.load_gold_snapshots(request.task, request.gold_snapshot_ids)
+            self._progress(
+                request,
+                "preparing_dataset",
+                14,
+                loaded_rows=len(loaded.rows),
+            )
             result = self._train_and_package(request, loaded, store, job_dir)
         except Exception as exc:
             self._journal(
@@ -160,6 +195,14 @@ class TrainingApplication:
             if view.positive_count == 0 or view.negative_count == 0:
                 raise TrainingExecutionError("NO_SUPERVISED_LABELS_IN_GOLD")
             split = create_deterministic_group_split(view, seed=request.seed)
+            self._progress(
+                request,
+                "training",
+                20,
+                current_epoch=0,
+                total_epochs=request.epochs,
+                supervised_rows=view.positive_count + view.negative_count,
+            )
             training_manifest, _ = train_candidate_model(
                 gold_manifest=loaded.manifest,
                 split_manifest=split,
@@ -174,7 +217,14 @@ class TrainingApplication:
                 if request.compute_target == "gpu"
                 else 0,
                 base_model_path=str(base_model_path) if base_model_path else None,
+                progress_callback=lambda epoch: self._progress(
+                    request,
+                    "training",
+                    20 + 55 * int(epoch["current_epoch"]) / request.epochs,
+                    **epoch,
+                ),
             )
+            self._progress(request, "evaluating", 78)
             golden = build_candidate_golden_cohort(loaded.manifest, rows, split)
             try:
                 recent = build_candidate_recent_cohort(
@@ -251,6 +301,7 @@ class TrainingApplication:
             exporter_method = "export_anomaly_runtime_package"
             registry_task = TASK_ANOMALY
 
+        self._progress(request, "packaging_runtime", 87)
         evaluation_dir = artifacts_dir / "evaluation" / evaluation.evaluation_run_id
         registry_root = artifacts_dir / "registry"
         registry = ModelRegistry(registry_root=str(registry_root))
@@ -275,6 +326,7 @@ class TrainingApplication:
             validation_rows=development_rows,
         )
 
+        self._progress(request, "persisting_artifacts", 93)
         store.upload_tree(
             artifacts_dir / "training",
             f"models/training-runs/{task_dir}/{training_manifest.training_run_id}",
@@ -296,6 +348,7 @@ class TrainingApplication:
             f"models/runtime/{registry_task}/{model.model_id}/"
             f"{runtime.runtime_package_id}/manifest.json"
         )
+        self._progress(request, "planning_inference", 97)
         inference_requests = MinioInferenceJobPlanner(
             self.objects.client, self.objects.bucket
         ).plan(
@@ -320,6 +373,8 @@ class TrainingApplication:
             "promotion_status": "AWAITING_MANUAL_REVIEW",
             "runtime_validation_status": "REQUESTED",
             "inference_requests": inference_requests,
+            "phase": "completed",
+            "progress_percent": 100,
         }
 
 

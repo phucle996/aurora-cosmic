@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"go-api/internal/domain/entity"
+	"go-api/internal/domain/repo"
 	"go-api/internal/domain/service"
 	"go-api/internal/taxonomy"
 	"go-api/internal/transport/http/dto"
@@ -17,6 +18,23 @@ import (
 type ModelsHandler struct {
 	models    service.Models
 	inference service.Inference
+}
+
+func (h *ModelsHandler) GetModelEvaluation(c *gin.Context) {
+	evaluation, err := h.models.GetModelEvaluation(c.Request.Context(), strings.TrimSpace(c.Param("runtime_package_id")))
+	if err != nil {
+		if errors.Is(err, repo.ErrObjectNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "model evaluation evidence was not found"})
+			return
+		}
+		if errors.Is(err, taxonomy.ErrInvalidRequest) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "model evaluation storage is unavailable"})
+		return
+	}
+	c.JSON(http.StatusOK, evaluation)
 }
 
 func NewModelsHandler(models service.Models, inference service.Inference) *ModelsHandler {
@@ -76,15 +94,21 @@ func (h *ModelsHandler) TrainingReadiness(c *gin.Context) {
 
 func (h *ModelsHandler) OverrideTrainingLabel(c *gin.Context) {
 	var request struct {
-		SnapshotID      string `json:"snapshot_id"`
-		SourceProductID string `json:"source_product_id"`
-		TrainingLabel   string `json:"training_label"`
+		SnapshotID      string  `json:"snapshot_id"`
+		SourceProductID string  `json:"source_product_id"`
+		TrainingLabel   string  `json:"training_label"`
+		ReviewReason    string  `json:"review_reason"`
+		Confidence      float64 `json:"confidence"`
 	}
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid label review payload"})
 		return
 	}
-	err := h.models.OverrideTrainingLabel(c.Request.Context(), entity.TrainingLabelOverride{SnapshotID: request.SnapshotID, SourceProductID: request.SourceProductID, TrainingLabel: request.TrainingLabel})
+	err := h.models.OverrideTrainingLabel(c.Request.Context(), entity.TrainingLabelOverride{
+		SnapshotID: request.SnapshotID, SourceProductID: request.SourceProductID,
+		TrainingLabel: request.TrainingLabel, ReviewReason: request.ReviewReason,
+		Confidence: request.Confidence,
+	})
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -100,6 +124,28 @@ func (h *ModelsHandler) ListTrainingReviews(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": reviews, "count": len(reviews)})
+}
+
+func (h *ModelsHandler) ListTrainingReviewQueue(c *gin.Context) {
+	snapshotIDs := c.QueryArray("snapshot_id")
+	if len(snapshotIDs) == 0 {
+		snapshotIDs = strings.Split(c.Query("snapshot_ids"), ",")
+	}
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	page, err := h.models.ListTrainingReviewQueue(c.Request.Context(), snapshotIDs, entity.PageRequest{Limit: limit, Offset: offset})
+	if err != nil {
+		if errors.Is(err, taxonomy.ErrInvalidRequest) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		} else {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"items": page.Items, "count": page.Count, "limit": page.Limit,
+		"offset": page.Offset, "has_more": page.HasMore,
+	})
 }
 
 func (h *ModelsHandler) ListInferenceJobs(c *gin.Context) {
@@ -123,6 +169,13 @@ func (h *ModelsHandler) ListInferenceJobs(c *gin.Context) {
 			"created_at":                j.CreatedAt,
 			"status":                    j.Status,
 			"output_key":                j.OutputKey,
+			"output_sha256":             j.OutputSHA256,
+			"processed_rows":            j.ProcessedRows,
+			"attempt":                   j.Attempt,
+			"started_at":                j.StartedAt,
+			"updated_at":                j.UpdatedAt,
+			"error":                     j.Error,
+			"producer":                  j.Producer,
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -204,7 +257,8 @@ func (h *ModelsHandler) DeployModel(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "model_id is required when active is true"})
 		return
 	}
-	if err := h.models.SetModelDeployment(c.Request.Context(), strings.TrimSpace(req.ModelID), strings.TrimSpace(req.Task), req.Active); err != nil {
+	result, err := h.models.SetModelDeployment(c.Request.Context(), strings.TrimSpace(req.ModelID), strings.TrimSpace(req.Task), req.Active, strings.TrimSpace(req.TicketID))
+	if err != nil {
 		if errors.Is(err, taxonomy.ErrInvalidRequest) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		} else {
@@ -217,10 +271,15 @@ func (h *ModelsHandler) DeployModel(c *gin.Context) {
 		statusMsg = "Inference deployment deactivated for task " + req.Task + "."
 	}
 	c.JSON(http.StatusOK, dto.ModelDeployResponse{
-		Status:  "success",
-		ModelID: req.ModelID,
-		Task:    req.Task,
-		Active:  req.Active,
-		Message: statusMsg,
+		Status:              "success",
+		ModelID:             req.ModelID,
+		Task:                req.Task,
+		Active:              req.Active,
+		Message:             statusMsg,
+		TicketID:            result.TicketID,
+		RuntimeValidationID: result.RuntimeValidation,
+		Engine:              result.Engine,
+		MaxAbsoluteError:    result.MaxAbsoluteError,
+		MaxRelativeError:    result.MaxRelativeError,
 	})
 }

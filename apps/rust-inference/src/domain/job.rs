@@ -41,6 +41,25 @@ pub struct InferenceJobRequestedEvent {
     pub producer: String,
 }
 
+/// Durable completion event emitted only after the prediction object and
+/// terminal status record have both been persisted successfully.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct InferenceJobCompletedEvent {
+    pub schema_version: i64,
+    pub event_id: String,
+    pub event_type: String,
+    pub occurred_at: String,
+    pub task: String,
+    pub job_id: String,
+    pub gold_snapshot_id: String,
+    pub runtime_package_id: String,
+    pub output_bucket: String,
+    pub output_key: String,
+    pub output_sha256: String,
+    pub processed_rows: i64,
+    pub producer: String,
+}
+
 fn default_manifest_bucket() -> String {
     "aurora-manifests".to_string()
 }

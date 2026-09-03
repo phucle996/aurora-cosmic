@@ -5,6 +5,7 @@ tolerance (|error| <= 1e-5), parity fixture generation, and immutable
 model-runtime-v1 package materialization.
 """
 
+import hashlib
 import json
 import os
 import tempfile
@@ -51,6 +52,8 @@ def setup_test_candidate_registered_model(
     sample_rows = []
     for i in range(16):
         row = {f: 1.0 + i * 0.1 for f in CANDIDATE_MODEL_INPUT_FEATURES}
+        row["bls_available"] = i % 2 == 0
+        row["tic_available"] = i % 3 == 0
         sample_rows.append(row)
 
     prep = CandidatePreprocessor().fit(
@@ -123,7 +126,19 @@ def setup_test_candidate_registered_model(
         )
 
     with open(os.path.join(eval_run_dir, "threshold.json"), "w", encoding="utf-8") as f:
-        json.dump({"decision_threshold": 0.45}, f)
+        json.dump(
+            {
+                "schema_version": 1,
+                "task": "candidate_vetting",
+                "threshold_policy_version": "candidate-threshold-max-f1-v1",
+                "decision_threshold": 0.45,
+                "selection_source": "VALIDATION",
+                "validation_row_count": 6,
+            },
+            f,
+            indent=2,
+            sort_keys=True,
+        )
 
     # 5. Register model package
     registry = ModelRegistry(registry_root)
@@ -171,6 +186,16 @@ def test_candidate_onnx_export_and_python_parity():
         assert os.path.exists(os.path.join(runtime_pkg_dir, "threshold.json"))
         assert os.path.exists(os.path.join(runtime_pkg_dir, "parity-fixture.json"))
         assert os.path.exists(os.path.join(runtime_pkg_dir, "manifest.json"))
+        fixture = json.loads(
+            open(os.path.join(runtime_pkg_dir, "parity-fixture.json"), "rb").read()
+        )
+        assert fixture["cases"][0]["raw_features"]["bls_available"] == 1.0
+        assert fixture["cases"][1]["raw_features"]["bls_available"] == 0.0
+        runtime_threshold = open(
+            os.path.join(runtime_pkg_dir, "threshold.json"), "rb"
+        ).read()
+        assert json.loads(runtime_threshold) == {"decision_threshold": 0.45}
+        assert hashlib.sha256(runtime_threshold).hexdigest() == manifest.threshold_sha256
 
 
 def test_anomaly_onnx_export_and_python_parity():
@@ -269,7 +294,19 @@ def test_anomaly_onnx_export_and_python_parity():
         with open(
             os.path.join(eval_run_dir, "threshold.json"), "w", encoding="utf-8"
         ) as f:
-            json.dump({"decision_threshold": 0.08}, f)
+            json.dump(
+                {
+                    "schema_version": 1,
+                    "task": "astronomical_anomaly_detection",
+                    "threshold_policy_version": "anomaly-threshold-validation-p99-v1",
+                    "decision_threshold": 0.08,
+                    "selection_source": "VALIDATION",
+                    "validation_score_count": 6,
+                },
+                f,
+                indent=2,
+                sort_keys=True,
+            )
 
         registry = ModelRegistry(registry_root)
         pkg = registry.register_model_package(
@@ -296,3 +333,11 @@ def test_anomaly_onnx_export_and_python_parity():
         assert manifest.onnx_output_name == "reconstruction"
         assert manifest.python_parity_status == "PASS"
         assert manifest.decision_threshold == 0.08
+        runtime_pkg_dir = os.path.join(
+            tmp_dir, "models", "runtime", "anomaly", manifest.runtime_package_id
+        )
+        runtime_threshold = open(
+            os.path.join(runtime_pkg_dir, "threshold.json"), "rb"
+        ).read()
+        assert json.loads(runtime_threshold) == {"decision_threshold": 0.08}
+        assert hashlib.sha256(runtime_threshold).hexdigest() == manifest.threshold_sha256

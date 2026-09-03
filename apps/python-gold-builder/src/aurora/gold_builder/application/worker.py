@@ -31,6 +31,40 @@ PendingBatch = list[tuple[str, SilverEvent]]
 DURABLE_SILVER_REFRESH_SECONDS = 10.0
 
 
+def dispatchable_ready_batches(
+    ready_batches: list[PendingBatch],
+    *,
+    max_batch_records: int,
+    last_received_at: float | None,
+    idle_flush_seconds: float,
+    now: float | None = None,
+) -> list[PendingBatch]:
+    """Close full batches immediately and partial batches only after quiescence.
+
+    ``max_batch_records`` is a target count, not merely a queue upper bound.
+    Silver LC/TPF pairs often become ready in small waves; admitting every wave
+    creates many tiny immutable snapshots and defeats backlog batching.
+    """
+    full: list[PendingBatch] = []
+    partial: list[PendingBatch] = []
+    for batch in ready_batches:
+        target_count = sum(
+            event.product_kind == "LIGHT_CURVE" for _, event in batch
+        )
+        if target_count <= 0:
+            continue
+        if target_count >= max_batch_records:
+            full.append(batch)
+        else:
+            partial.append(batch)
+    observed_now = time.monotonic() if now is None else now
+    source_quiet = (
+        last_received_at is not None
+        and observed_now - last_received_at >= idle_flush_seconds
+    )
+    return [*full, *(partial if source_quiet else [])]
+
+
 def _materialize_candidate(
     config: Config, events: list[SilverEvent], catalogs: CatalogBundle
 ):
@@ -293,7 +327,12 @@ async def run_worker(config: Config, metrics: Metrics) -> None:
                 elif catalog_sync["state"] == "RETRYING":
                     state = "WAITING_FOR_CATALOG_SYNC"
             next_flush_at = ""
-            if control.mode == "STREAM" and pending and last_received_at is not None:
+            if (
+                control.mode in {"STREAM", "BATCH"}
+                and pending
+                and 0 < readiness_summary.ready_lightcurves < control.max_batch_records
+                and last_received_at is not None
+            ):
                 remaining = max(
                     0.0,
                     control.idle_flush_seconds - (time.monotonic() - last_received_at),
@@ -840,11 +879,18 @@ async def run_worker(config: Config, metrics: Metrics) -> None:
                 )
 
                 if control.mode == "BATCH":
-                    if ready_batches:
-                        batch = ready_batches[0]
-                        consume_ready(batch)
-                        await enqueue(batch)
-                        last_received_at = None
+                    dispatchable = dispatchable_ready_batches(
+                        ready_batches,
+                        max_batch_records=control.max_batch_records,
+                        last_received_at=last_received_at,
+                        idle_flush_seconds=control.idle_flush_seconds,
+                    )
+                    if dispatchable:
+                        for batch in dispatchable:
+                            consume_ready(batch)
+                            await enqueue(batch)
+                        if not pending:
+                            last_received_at = None
                         # Batch mode used to continue immediately after queuing
                         # work.  That left the persisted runtime status at the
                         # previous FROZEN/IDLE value for the entire batch run,

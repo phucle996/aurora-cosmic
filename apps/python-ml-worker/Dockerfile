@@ -10,5 +10,5 @@ COPY pkg ./pkg
 COPY aurora_ml ./aurora_ml
 RUN python -m pip install --no-cache-dir -e .
 
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD python -c "import torch; assert torch.cuda.is_available(), 'CUDA is required'"
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8083/healthz', timeout=2)"
 CMD ["python", "-m", "aurora_ml.service"]

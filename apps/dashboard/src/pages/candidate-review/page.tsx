@@ -8,7 +8,7 @@ export default function CandidateReviewPage(): JSX.Element {
       detailPath="/research-factory/candidates"
       eyebrow="Scientific Research Factory · ranked evidence + human decision"
       title="Candidate Review"
-      description="Một hàng đợi duy nhất để xếp hạng tín hiệu ML, kiểm tra bằng chứng đo được và ghi quyết định review vào training cohort mà không sửa Gold bất biến."
+      description="Xếp hạng tín hiệu ML, kiểm tra bằng chứng đo được và ghi quyết định khoa học vào review ledger riêng; Gold và training cohort không bị thay đổi."
     />
   );
 }

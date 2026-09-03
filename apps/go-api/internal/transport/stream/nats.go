@@ -19,18 +19,23 @@ import (
 // NATSStream manages message subscriptions over NATS subjects and dispatches
 // incoming messages to domain services and the workflow event broker.
 type NATSStream struct {
-	natsURL       string
-	broker        *events.Broker
-	preprocessing service.Preprocessing
-	ingest        service.Ingest
-	inference     service.Inference
-	models        service.Models
-	log           *slog.Logger
+	natsURL           string
+	broker            *events.Broker
+	preprocessing     service.Preprocessing
+	ingest            service.Ingest
+	inference         service.Inference
+	models            service.Models
+	championInference service.ChampionInferencePlanner
+	predictions       service.PredictionProjector
+	log               *slog.Logger
 
-	mu             sync.Mutex
-	conn           *nats.Conn
-	subscriptions  []*nats.Subscription
-	customHandlers map[string][]MessageHandler
+	mu              sync.Mutex
+	conn            *nats.Conn
+	subscriptions   []*nats.Subscription
+	customHandlers  map[string][]MessageHandler
+	projectorSub    *nats.Subscription
+	projectorCancel context.CancelFunc
+	projectorDone   chan struct{}
 }
 
 // MessageHandler is a callback invoked when a message arrives on a subscribed subject.
@@ -38,13 +43,15 @@ type MessageHandler func(ctx context.Context, msg *nats.Msg) error
 
 // StreamConfig holds the dependencies and configuration for NATSStream.
 type StreamConfig struct {
-	NATSURL       string
-	Broker        *events.Broker
-	Preprocessing service.Preprocessing
-	Ingest        service.Ingest
-	Inference     service.Inference
-	Models        service.Models
-	Logger        *slog.Logger
+	NATSURL             string
+	Broker              *events.Broker
+	Preprocessing       service.Preprocessing
+	Ingest              service.Ingest
+	Inference           service.Inference
+	Models              service.Models
+	ChampionInference   service.ChampionInferencePlanner
+	PredictionProjector service.PredictionProjector
+	Logger              *slog.Logger
 }
 
 // NewNATSStream creates a new NATSStream transport consumer.
@@ -54,14 +61,16 @@ func NewNATSStream(cfg StreamConfig) *NATSStream {
 		logger = slog.Default()
 	}
 	return &NATSStream{
-		natsURL:        cfg.NATSURL,
-		broker:         cfg.Broker,
-		preprocessing:  cfg.Preprocessing,
-		ingest:         cfg.Ingest,
-		inference:      cfg.Inference,
-		models:         cfg.Models,
-		log:            logger,
-		customHandlers: make(map[string][]MessageHandler),
+		natsURL:           cfg.NATSURL,
+		broker:            cfg.Broker,
+		preprocessing:     cfg.Preprocessing,
+		ingest:            cfg.Ingest,
+		inference:         cfg.Inference,
+		models:            cfg.Models,
+		championInference: cfg.ChampionInference,
+		predictions:       cfg.PredictionProjector,
+		log:               logger,
+		customHandlers:    make(map[string][]MessageHandler),
 	}
 }
 
@@ -111,6 +120,7 @@ func (s *NATSStream) Start(ctx context.Context) error {
 		"aurora.v1.preprocessing.runtime",
 		"aurora.v1.ingest.runtime.>",
 		"aurora.live.gold.>",
+		"aurora.live.ml.>",
 	}
 
 	for _, subject := range defaultSubjects {
@@ -133,6 +143,20 @@ func (s *NATSStream) Start(ctx context.Context) error {
 		s.conn = nil
 		return fmt.Errorf("stream: flush subscriptions: %w", err)
 	}
+	if s.predictions != nil {
+		if err := s.startPredictionProjector(nc); err != nil {
+			for _, sub := range s.subscriptions {
+				_ = sub.Unsubscribe()
+			}
+			s.subscriptions = nil
+			nc.Close()
+			s.conn = nil
+			return err
+		}
+	}
+	if s.championInference != nil {
+		go s.reconcileChampionInference()
+	}
 
 	// Register custom handlers subscriptions
 	for subject, handlers := range s.customHandlers {
@@ -153,6 +177,127 @@ func (s *NATSStream) Start(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+const (
+	inferenceStreamName       = "AURORA_INFERENCE"
+	inferenceCompletionFilter = "aurora.v1.inference.*.completed"
+	predictionProjectorName   = "aurora-analytics-projector-v1"
+	predictionProjectedLive   = "aurora.live.ml.prediction.projected"
+)
+
+func (s *NATSStream) startPredictionProjector(nc *nats.Conn) error {
+	js, err := nc.JetStream()
+	if err != nil {
+		return fmt.Errorf("stream: create prediction projector JetStream context: %w", err)
+	}
+	if _, err := js.StreamInfo(inferenceStreamName); err != nil {
+		if !errors.Is(err, nats.ErrStreamNotFound) {
+			return fmt.Errorf("stream: inspect inference stream: %w", err)
+		}
+		if _, err := js.AddStream(&nats.StreamConfig{
+			Name:       inferenceStreamName,
+			Subjects:   []string{"aurora.v1.inference.>"},
+			Storage:    nats.FileStorage,
+			Retention:  nats.LimitsPolicy,
+			Duplicates: 24 * time.Hour,
+		}); err != nil {
+			return fmt.Errorf("stream: create inference stream: %w", err)
+		}
+	}
+	if _, err := js.ConsumerInfo(inferenceStreamName, predictionProjectorName); err != nil {
+		if !errors.Is(err, nats.ErrConsumerNotFound) {
+			return fmt.Errorf("stream: inspect prediction projector consumer: %w", err)
+		}
+		if _, err := js.AddConsumer(inferenceStreamName, &nats.ConsumerConfig{
+			Durable:       predictionProjectorName,
+			AckPolicy:     nats.AckExplicitPolicy,
+			AckWait:       5 * time.Minute,
+			MaxDeliver:    -1,
+			DeliverPolicy: nats.DeliverAllPolicy,
+			FilterSubject: inferenceCompletionFilter,
+		}); err != nil {
+			return fmt.Errorf("stream: create prediction projector consumer: %w", err)
+		}
+	}
+	subscription, err := js.PullSubscribe(
+		inferenceCompletionFilter,
+		predictionProjectorName,
+		nats.Bind(inferenceStreamName, predictionProjectorName),
+	)
+	if err != nil {
+		return fmt.Errorf("stream: bind prediction projector consumer: %w", err)
+	}
+	projectorCtx, cancel := context.WithCancel(context.Background())
+	s.projectorSub = subscription
+	s.projectorCancel = cancel
+	s.projectorDone = make(chan struct{})
+	go s.runPredictionProjector(projectorCtx, nc, subscription, s.projectorDone)
+	return nil
+}
+
+func (s *NATSStream) runPredictionProjector(ctx context.Context, nc *nats.Conn, subscription *nats.Subscription, done chan<- struct{}) {
+	defer close(done)
+	if rows, err := s.predictions.Reconcile(ctx); err != nil {
+		s.log.Warn("Prediction startup reconciliation completed with errors", "inserted_rows", rows, "error", err)
+	} else if rows > 0 {
+		s.log.Info("Prediction startup reconciliation completed", "inserted_rows", rows)
+	}
+	for ctx.Err() == nil {
+		messages, err := subscription.Fetch(1, nats.MaxWait(time.Second))
+		if err != nil {
+			if ctx.Err() != nil || errors.Is(err, nats.ErrBadSubscription) {
+				return
+			}
+			if errors.Is(err, nats.ErrTimeout) {
+				continue
+			}
+			s.log.Warn("Prediction projector fetch failed", "error", err)
+			continue
+		}
+		for _, message := range messages {
+			projectionCtx, cancel := context.WithTimeout(ctx, time.Minute)
+			result, projectErr := s.predictions.ProjectCompletion(projectionCtx, message.Data)
+			cancel()
+			if projectErr != nil {
+				s.log.Error("Prediction projection failed; scheduling retry", "error", projectErr)
+				if err := message.NakWithDelay(5 * time.Second); err != nil {
+					s.log.Warn("Prediction projection NAK failed", "error", err)
+				}
+				continue
+			}
+			livePayload, err := json.Marshal(map[string]any{
+				"schema_version":  1,
+				"event_id":        "prediction-projected-v1-" + result.SourceEventID,
+				"event_type":      predictionProjectedLive,
+				"occurred_at":     time.Now().UTC().Format(time.RFC3339Nano),
+				"source_event_id": result.SourceEventID,
+				"job_id":          result.JobID,
+				"output_key":      result.OutputKey,
+				"projected_rows":  result.InsertedRows,
+				"expected_rows":   result.ExpectedRows,
+				"status":          "ready",
+				"producer":        "go-api",
+			})
+			if err != nil {
+				_ = message.NakWithDelay(5 * time.Second)
+				continue
+			}
+			if err := nc.Publish(predictionProjectedLive, livePayload); err != nil {
+				s.log.Warn("Prediction projected SSE signal failed", "error", err)
+				_ = message.NakWithDelay(5 * time.Second)
+				continue
+			}
+			if err := nc.FlushTimeout(5 * time.Second); err != nil {
+				s.log.Warn("Prediction projected SSE flush failed", "error", err)
+				_ = message.NakWithDelay(5 * time.Second)
+				continue
+			}
+			if err := message.AckSync(nats.Context(ctx)); err != nil {
+				s.log.Warn("Prediction completion ACK failed", "job_id", result.JobID, "error", err)
+			}
+		}
+	}
 }
 
 // makeMsgHandler creates a NATS message handler for a subject pattern.
@@ -182,14 +327,17 @@ func (s *NATSStream) dispatchMessage(ctx context.Context, msg *nats.Msg) {
 
 	// Try extracting job_id if present in payload JSON
 	var meta struct {
-		JobID    string `json:"job_id"`
-		Task     string `json:"task"`
-		TicketID string `json:"ticket_id"`
+		JobID         string `json:"job_id"`
+		TrainingJobID string `json:"training_job_id"`
+		Task          string `json:"task"`
+		TicketID      string `json:"ticket_id"`
 	}
 	if len(msg.Data) > 0 {
 		_ = json.Unmarshal(msg.Data, &meta)
 		if meta.JobID != "" {
 			event.JobID = meta.JobID
+		} else if meta.TrainingJobID != "" {
+			event.JobID = meta.TrainingJobID
 		}
 		if meta.TicketID != "" {
 			event.TicketID = meta.TicketID
@@ -208,6 +356,8 @@ func (s *NATSStream) dispatchMessage(ctx context.Context, msg *nats.Msg) {
 	case strings.HasPrefix(subject, "aurora.v1.inference."):
 		s.handleInferenceEvent(ctx, msg, event)
 	case strings.HasPrefix(subject, "aurora.v1.ml."):
+		s.handleMLEvent(ctx, msg, event)
+	case strings.HasPrefix(subject, "aurora.live.ml."):
 		s.handleMLEvent(ctx, msg, event)
 	case strings.HasPrefix(subject, "aurora.v1.preprocessing."):
 		s.handlePreprocessingEvent(ctx, msg, event)
@@ -228,8 +378,26 @@ func (s *NATSStream) handleSilverEvent(_ context.Context, msg *nats.Msg, _ entit
 	s.log.Debug("Processing Silver event from stream", "subject", msg.Subject)
 }
 
-func (s *NATSStream) handleGoldEvent(_ context.Context, msg *nats.Msg, _ entity.WorkflowEvent) {
+func (s *NATSStream) handleGoldEvent(ctx context.Context, msg *nats.Msg, _ entity.WorkflowEvent) {
 	s.log.Debug("Processing Gold event from stream", "subject", msg.Subject)
+	if msg.Subject != "aurora.v1.gold.candidate.committed" || s.championInference == nil {
+		return
+	}
+	var committed struct {
+		SnapshotID string `json:"snapshot_id"`
+	}
+	if err := json.Unmarshal(msg.Data, &committed); err != nil || committed.SnapshotID == "" {
+		s.log.Warn("Gold commit cannot trigger champion inference", "error", err)
+		return
+	}
+	dispatched, err := s.championInference.EnsureChampionCoverage(ctx, committed.SnapshotID)
+	if err != nil {
+		s.log.Error("Champion inference planning failed for committed Gold snapshot", "snapshot_id", committed.SnapshotID, "error", err)
+		return
+	}
+	if dispatched > 0 {
+		s.log.Info("Champion inference dispatched for committed Gold snapshot", "snapshot_id", committed.SnapshotID, "jobs", dispatched)
+	}
 }
 
 func (s *NATSStream) handleInferenceEvent(_ context.Context, msg *nats.Msg, event entity.WorkflowEvent) {
@@ -238,6 +406,29 @@ func (s *NATSStream) handleInferenceEvent(_ context.Context, msg *nats.Msg, even
 
 func (s *NATSStream) handleMLEvent(_ context.Context, msg *nats.Msg, event entity.WorkflowEvent) {
 	s.log.Info("ML training event received", "subject", msg.Subject, "job_id", event.JobID)
+	if msg.Subject != "aurora.live.ml.promotion.progress" || s.championInference == nil {
+		return
+	}
+	var promotion struct {
+		Status string `json:"status"`
+		Phase  string `json:"phase"`
+	}
+	if json.Unmarshal(msg.Data, &promotion) == nil && promotion.Status == "completed" && promotion.Phase == "completed" {
+		go s.reconcileChampionInference()
+	}
+}
+
+func (s *NATSStream) reconcileChampionInference() {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	dispatched, err := s.championInference.ReconcileChampionCoverage(ctx)
+	if err != nil {
+		s.log.Error("Champion inference reconciliation completed with errors", "dispatched_jobs", dispatched, "error", err)
+		return
+	}
+	if dispatched > 0 {
+		s.log.Info("Champion inference reconciliation dispatched missing jobs", "jobs", dispatched)
+	}
 }
 
 func (s *NATSStream) handlePreprocessingEvent(_ context.Context, msg *nats.Msg, _ entity.WorkflowEvent) {
@@ -275,6 +466,25 @@ func (s *NATSStream) Close() error {
 	if s == nil {
 		return nil
 	}
+	s.mu.Lock()
+	if s.projectorCancel != nil {
+		s.projectorCancel()
+	}
+	if s.projectorSub != nil {
+		_ = s.projectorSub.Unsubscribe()
+	}
+	projectorDone := s.projectorDone
+	s.projectorCancel = nil
+	s.projectorSub = nil
+	s.projectorDone = nil
+	s.mu.Unlock()
+	if projectorDone != nil {
+		select {
+		case <-projectorDone:
+		case <-time.After(2 * time.Second):
+		}
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

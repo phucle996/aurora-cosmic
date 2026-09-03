@@ -96,6 +96,31 @@ func TestNATSStreamDispatchMessagePublishesToBroker(t *testing.T) {
 	}
 }
 
+func TestNATSStreamExtractsTrainingJobIDFromRequestedEvent(t *testing.T) {
+	broker := events.NewBroker()
+	sub := broker.Subscribe(context.Background(), "ml")
+	defer sub.Close()
+
+	ns := NewNATSStream(StreamConfig{Broker: broker})
+	payload, _ := json.Marshal(map[string]any{
+		"training_job_id": "train-immutable-1",
+		"task":            "candidate_vetting",
+	})
+	ns.dispatchMessage(context.Background(), &nats.Msg{
+		Subject: "aurora.v1.ml.training.requested",
+		Data:    payload,
+	})
+
+	select {
+	case event := <-sub.Events:
+		if event.JobID != "train-immutable-1" {
+			t.Fatalf("expected training job id, got %q", event.JobID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for ML event")
+	}
+}
+
 func TestNATSStreamRegisterHandler(t *testing.T) {
 	ns := NewNATSStream(StreamConfig{
 		NATSURL: "nats://localhost:4222",

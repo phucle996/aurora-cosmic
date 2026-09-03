@@ -1,3 +1,4 @@
+mod promotion;
 mod worker;
 
 use std::sync::Arc;
@@ -16,7 +17,7 @@ pub async fn run(config: Config) -> Result<()> {
     let nats = async_nats::connect(&config.nats.url)
         .await
         .with_context(|| format!("connect to NATS at {}", config.nats.url))?;
-    let js = async_nats::jetstream::new(nats);
+    let js = async_nats::jetstream::new(nats.clone());
     worker::ensure_stream(&js, &config.nats).await?;
     let store = Arc::new(ObjectStore::new(&config.minio));
     let cancel = CancellationToken::new();
@@ -35,7 +36,7 @@ pub async fn run(config: Config) -> Result<()> {
     let worker_store = store.clone();
     let worker_js = js.clone();
     let worker_metrics = metrics;
-    let worker_task = tokio::spawn(async move {
+    let mut worker_task = tokio::spawn(async move {
         worker::run_pool(
             worker_js,
             worker_store,
@@ -45,18 +46,37 @@ pub async fn run(config: Config) -> Result<()> {
         )
         .await
     });
+    let promotion_cancel = cancel.clone();
+    let promotion_config = config.clone();
+    let promotion_store = store.clone();
+    let mut promotion_task = tokio::spawn(async move {
+        promotion::run(nats, promotion_store, promotion_config, promotion_cancel).await
+    });
 
-    tokio::select! {
-        result = worker_task => {
+    let runtime_result = tokio::select! {
+        result = &mut worker_task => {
             cancel.cancel();
-            result.context("inference worker task panicked")??;
+            result.context("inference worker task panicked")?
+        }
+        result = &mut promotion_task => {
+            cancel.cancel();
+            result.context("promotion canary task panicked")?
         }
         _ = signal::ctrl_c() => {
             tracing::info!("Shutdown signal received, stopping inference runtime...");
             cancel.cancel();
             tokio::time::sleep(Duration::from_millis(100)).await;
+            Ok(())
         }
+    };
+
+    if !worker_task.is_finished() {
+        let _ = worker_task.await;
     }
+    if !promotion_task.is_finished() {
+        let _ = promotion_task.await;
+    }
+    runtime_result?;
 
     if let Err(error) = observer_task.await {
         tracing::warn!(error = %error, "Observer task exited unexpectedly");

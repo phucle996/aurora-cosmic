@@ -14,15 +14,16 @@ use tokio_util::sync::CancellationToken;
 
 use crate::domain::explanation::{AnomalyExplanation, AnomalyExplanationFeature};
 use crate::domain::job::{
-    compute_job_fingerprint, InferenceJobManifest, InferenceJobRequestedEvent,
-    InferenceJobStatusRecord,
+    compute_job_fingerprint, InferenceJobCompletedEvent, InferenceJobManifest,
+    InferenceJobRequestedEvent, InferenceJobStatusRecord,
 };
 use crate::domain::prediction::{
     compute_anomaly_prediction_id, compute_candidate_prediction_id, compute_model_input_sha256,
     AnomalyPredictionRecord, CandidatePredictionRecord,
 };
 use crate::runtime::{
-    compute_reconstruction_mse, stable_sigmoid, validate_runtime_package_parity, OnnxRuntime,
+    compute_reconstruction_mse, stable_sigmoid, validate_runtime_package_parity_with_device,
+    OnnxRuntime, RuntimeError,
 };
 
 use crate::adapters::gold::{decode_gold_batch, open_gold_reader_from_file, GoldRow};
@@ -123,10 +124,11 @@ pub async fn run_pool(
         let task_store = store.clone();
         let task_config = config.clone();
         let task_metrics = metrics.clone();
+        let task_js = js.clone();
         tasks.spawn(async move {
             let _permit = permit;
             if let Err(error) =
-                process_message(message, task_store, &task_config, task_metrics).await
+                process_message(message, task_js, task_store, &task_config, task_metrics).await
             {
                 tracing::error!(%error, "inference job failed");
             }
@@ -142,6 +144,7 @@ pub async fn run_pool(
 
 async fn process_message(
     message: jetstream::Message,
+    js: jetstream::Context,
     store: Arc<ObjectStore>,
     config: &Config,
     metrics: Arc<Metrics>,
@@ -194,6 +197,7 @@ async fn process_message(
             validate_status(&existing, &job)?;
             if existing.status == "completed" {
                 observation.set_rows(existing.processed_rows.unwrap_or_default() as usize);
+                publish_completion(&js, config, &job, &existing).await?;
                 message
                     .double_ack()
                     .await
@@ -227,20 +231,22 @@ async fn process_message(
     match execution {
         Ok(output) => {
             observation.set_rows(output.rows);
+            let completed = status_record(
+                &job,
+                "completed",
+                delivery_attempt,
+                &started_at,
+                Some(output),
+                None,
+            );
             persist_status(
                 &store,
                 &config.minio.prediction_bucket,
                 &status_key,
-                status_record(
-                    &job,
-                    "completed",
-                    delivery_attempt,
-                    &started_at,
-                    Some(output),
-                    None,
-                ),
+                completed.clone(),
             )
             .await?;
+            publish_completion(&js, config, &job, &completed).await?;
             message
                 .double_ack()
                 .await
@@ -251,7 +257,8 @@ async fn process_message(
             Ok(())
         }
         Err(error) => {
-            let terminal = delivery_attempt >= MAX_DELIVERIES;
+            let terminal =
+                is_non_retryable_execution_error(&error) || delivery_attempt >= MAX_DELIVERIES;
             let status = if terminal { "failed" } else { "retrying" };
             let record = status_record(
                 &job,
@@ -292,6 +299,73 @@ async fn process_message(
     }
 }
 
+async fn publish_completion(
+    js: &jetstream::Context,
+    config: &Config,
+    job: &InferenceJobManifest,
+    status: &InferenceJobStatusRecord,
+) -> Result<()> {
+    let output_key = status
+        .output_key
+        .clone()
+        .context("completed inference status has no output key")?;
+    let output_sha256 = status
+        .output_sha256
+        .clone()
+        .context("completed inference status has no output SHA-256")?;
+    let processed_rows = status
+        .processed_rows
+        .context("completed inference status has no processed row count")?;
+    if processed_rows != job.expected_prediction_count {
+        anyhow::bail!("completed inference row count conflicts with immutable job")
+    }
+    let branch = if job.task == "candidate_vetting" {
+        "candidate"
+    } else {
+        "anomaly"
+    };
+    let subject = format!("aurora.v1.inference.{branch}.completed");
+    let event = InferenceJobCompletedEvent {
+        schema_version: 1,
+        event_id: format!("inference-completed-v1-{}", job.job_id),
+        event_type: subject.clone(),
+        occurred_at: status.updated_at.clone(),
+        task: job.task.clone(),
+        job_id: job.job_id.clone(),
+        gold_snapshot_id: job.gold_snapshot_id.clone(),
+        runtime_package_id: job.runtime_package_id.clone(),
+        output_bucket: config.minio.prediction_bucket.clone(),
+        output_key,
+        output_sha256,
+        processed_rows,
+        producer: "rust-inference".to_string(),
+    };
+    let mut headers = async_nats::HeaderMap::new();
+    headers.insert("Nats-Msg-Id", event.event_id.as_str());
+    js.publish_with_headers(subject, headers, serde_json::to_vec(&event)?.into())
+        .await
+        .context("publish inference completion event")?
+        .await
+        .context("persist inference completion event")?;
+    Ok(())
+}
+
+fn is_non_retryable_execution_error(error: &anyhow::Error) -> bool {
+    matches!(
+        error.downcast_ref::<RuntimeError>(),
+        Some(
+            RuntimeError::Json(_)
+                | RuntimeError::Integrity(_)
+                | RuntimeError::ParityFailed(_)
+                | RuntimeError::UnknownFeature(_)
+                | RuntimeError::MissingFeature(_)
+                | RuntimeError::InvalidPackage(_)
+                | RuntimeError::InvalidOutput(_)
+                | RuntimeError::Ort(_)
+        )
+    )
+}
+
 #[derive(Clone)]
 struct JobOutput {
     key: String,
@@ -313,7 +387,7 @@ async fn execute_job(
         config.ml.intra_threads,
         &config.ml.device,
     )
-    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    .map_err(anyhow::Error::new)?;
     if runtime.manifest.runtime_package_id != job.runtime_package_id
         || runtime.manifest.task != job.task
         || runtime.manifest.source_model_id != job.model_id
@@ -350,11 +424,11 @@ async fn execute_job(
         for row in batch_rows {
             let standardized = runtime
                 .standardize(&row.raw_features)
-                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                .map_err(anyhow::Error::new)?;
             let input_sha = compute_model_input_sha256(&standardized);
             let model_output = runtime
                 .infer_standardized(&standardized)
-                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                .map_err(anyhow::Error::new)?;
             if job.task == "astronomical_anomaly_detection" {
                 let (prediction_id, _) = compute_anomaly_prediction_id(
                     &job.runtime_package_id,
@@ -406,8 +480,8 @@ async fn execute_job(
         "predictions/{}/{}/{}/part-00000.jsonl",
         job.task, job.gold_snapshot_id, job.job_id
     );
-    let sha256 = crate::runtime::compute_sha256(Path::new(&output_path))
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let sha256 =
+        crate::runtime::compute_sha256(Path::new(&output_path)).map_err(anyhow::Error::new)?;
     store
         .put_file(
             &config.minio.prediction_bucket,
@@ -430,7 +504,7 @@ async fn qualify_runtime_package(
     package_dir: &Path,
 ) -> Result<()> {
     let manifest_sha = crate::runtime::compute_sha256(&package_dir.join("manifest.json"))
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        .map_err(anyhow::Error::new)?;
     if manifest_sha != job.runtime_manifest_sha256 {
         anyhow::bail!("downloaded runtime manifest SHA does not match inference job")
     }
@@ -449,8 +523,8 @@ async fn qualify_runtime_package(
         return verify_persisted_runtime_validation(store, config, job, &validation_key).await;
     }
 
-    let validation = validate_runtime_package_parity(package_dir)
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let validation = validate_runtime_package_parity_with_device(package_dir, &config.ml.device)
+        .map_err(anyhow::Error::new)?;
     if validation.validation_status != "PASS"
         || validation.runtime_manifest_sha256 != job.runtime_manifest_sha256
         || validation.runtime_package_id != job.runtime_package_id
@@ -652,8 +726,8 @@ fn build_anomaly_explanation(
             },
         });
     }
-    let mse = compute_reconstruction_mse(standardized, reconstruction)
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let mse =
+        compute_reconstruction_mse(standardized, reconstruction).map_err(anyhow::Error::new)?;
     Ok(AnomalyExplanation {
         schema_version: 1,
         explanation_version: "anomaly-explanation-v1".to_string(),
@@ -781,8 +855,7 @@ fn build_prediction(
         };
         Ok(serde_json::to_value(record)?)
     } else {
-        let mse = compute_reconstruction_mse(standardized, output)
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let mse = compute_reconstruction_mse(standardized, output).map_err(anyhow::Error::new)?;
         let (prediction_id, fp) = compute_anomaly_prediction_id(
             &job.runtime_package_id,
             &job.gold_snapshot_id,
@@ -875,5 +948,25 @@ mod tests {
         assert!(validate_status(&status, &job).is_ok());
         status.job_fingerprint = "x".repeat(64);
         assert!(validate_status(&status, &job).is_err());
+    }
+
+    #[test]
+    fn deterministic_runtime_contract_failures_are_not_retried() {
+        let integrity =
+            anyhow::Error::new(RuntimeError::Integrity("threshold mismatch".to_string()));
+        let schema = anyhow::Error::new(RuntimeError::Json(
+            serde_json::from_slice::<crate::domain::model::ThresholdConfig>(
+                br#"{"schema_version":1,"decision_threshold":0.5}"#,
+            )
+            .expect_err("strict runtime threshold schema must reject metadata"),
+        ));
+        let transient = anyhow::Error::new(RuntimeError::Io(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "temporary read timeout",
+        )));
+
+        assert!(is_non_retryable_execution_error(&integrity));
+        assert!(is_non_retryable_execution_error(&schema));
+        assert!(!is_non_retryable_execution_error(&transient));
     }
 }

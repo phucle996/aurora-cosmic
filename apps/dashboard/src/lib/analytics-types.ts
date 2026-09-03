@@ -90,10 +90,10 @@ export type CandidateDetailResponse = {
 };
 
 export type CandidateReview = {
-  training_label: 'POSITIVE' | 'NEGATIVE' | 'UNRESOLVED';
-  label_source: string;
+  decision: 'CONFIRMED' | 'REJECTED' | 'FOLLOW_UP' | 'PENDING';
   review_status: string;
-  train_eligible: boolean;
+  reviewer: string;
+  note: string;
   updated_at: string;
 };
 

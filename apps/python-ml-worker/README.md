@@ -60,6 +60,8 @@ committed Gold snapshot and real labels/features. It writes a durable job
 journal, immutable training/evaluation/model/runtime artifacts to MinIO, and
 then dispatches an inference job. Rust validates ONNX parity before scoring and
 persists that validation evidence; model promotion still requires human review.
+The worker does not consume inference completions or write prediction serving
+rows. That projection is owned by the Go API background consumer.
 
 ## Observer
 

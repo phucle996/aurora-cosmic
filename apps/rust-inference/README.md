@@ -51,10 +51,11 @@ outcomes, processing duration, errors, in-flight jobs, queue depth, processed
 rows, and last successful job timestamp. Runtime IDs and object keys are never
 metric labels.
 
-Inference is GPU-only: the image includes the ONNX Runtime CUDA execution
-provider, Compose exposes the NVIDIA device, and startup/session creation fails
-if CUDA cannot be registered. Training is also GPU-only in the Python ML
-worker; CPU fallback is disabled for both model paths.
+Inference defaults to `AURORA_ML_DEVICE=auto`: it uses the ONNX Runtime CUDA
+execution provider when the provider library can be loaded and otherwise runs
+the same immutable model package on the CPU provider. Set `cuda` to require GPU
+execution or `cpu` to force the portable provider. Provider selection never
+changes model inputs, thresholds, parity fixtures, or prediction identities.
 
 ## Source layout
 

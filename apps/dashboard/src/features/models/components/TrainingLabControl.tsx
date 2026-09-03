@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState, type JSX, type ReactNode } from 'react';
-import { BrainCircuit, Cpu, Database, FlaskConical, LoaderCircle, MonitorCog, Play, RefreshCw, Search } from 'lucide-react';
+import { BrainCircuit, Check, Circle, CircleAlert, Cpu, Database, FlaskConical, LoaderCircle, MonitorCog, Play, RefreshCw, Search } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { apiFetch } from '@/lib/api';
-import { formatBytes, formatDate, type GoldSnapshotItem, type ModelRecord } from '../types';
+import { formatBytes, formatDate, type ActiveTrainingState, type GoldSnapshotItem, type ModelRecord } from '../types';
 
 type TrainingParams = {
   task: 'candidate_vetting';
@@ -27,6 +27,7 @@ interface Props {
   submitting: boolean;
   onRefreshSnapshots: () => void;
   onSubmitTraining: (params: TrainingParams) => Promise<void>;
+  trainingProgress: ActiveTrainingState | null;
 }
 
 type TrainingReadiness = {
@@ -39,7 +40,14 @@ type TrainingReadiness = {
   positive_targets: number;
   negative_targets: number;
   ready: boolean;
+  tier: 'BLOCKED' | 'EXPERIMENTAL' | 'PRODUCTION_CANDIDATE';
   policy_version: string;
+  experimental_minimum_positive_targets: number;
+  experimental_minimum_negative_targets: number;
+  production_candidate_minimum_positive_targets: number;
+  production_candidate_minimum_negative_targets: number;
+  negative_diversity_target: number;
+  negative_diversity_target_met: boolean;
   blocker?: string;
 };
 
@@ -74,7 +82,7 @@ function readStoredConfig(): StoredTrainingConfig {
   }
 }
 
-export function TrainingLabControl({ models, availableSnapshots, snapshotsLoading, submitting, onRefreshSnapshots, onSubmitTraining }: Props): JSX.Element {
+export function TrainingLabControl({ models, availableSnapshots, snapshotsLoading, submitting, onRefreshSnapshots, onSubmitTraining, trainingProgress }: Props): JSX.Element {
   const stored = useMemo(readStoredConfig, []);
   const [intent, setIntent] = useState<'new' | 'evolve'>(stored.intent);
   const task: TrainingParams['task'] = 'candidate_vetting';
@@ -187,6 +195,7 @@ export function TrainingLabControl({ models, availableSnapshots, snapshotsLoadin
             <Field label="Random seed"><Input type="number" min="0" value={seed} onChange={(event) => setSeed(event.target.value)} className="rounded-none font-mono" /></Field>
           </div>
           <div className="border-l-2 border-primary bg-muted/20 px-3 py-2 text-[10px] leading-4 text-muted-foreground"><span className="font-medium text-foreground">Reproducibility contract.</span> Snapshot IDs, base model, seed and all hyperparameters are submitted as one immutable experiment specification.</div>
+          <TrainingProgressTracker progress={trainingProgress} />
         </div>
       </div>
     </div>
@@ -204,6 +213,57 @@ function IntentOption({ active, icon, title, detail, onClick }: { active: boolea
 function ComputeOption({ active, icon, title, detail, onClick }: { active: boolean; icon: JSX.Element; title: string; detail: string; onClick: () => void }): JSX.Element { return <button type="button" onClick={onClick} className={`p-3 text-left transition-colors ${active ? 'bg-sky-500 text-white' : 'bg-background hover:bg-muted/40'}`}><span className="flex items-center gap-2 text-xs font-semibold">{icon}{title}</span><span className={`mt-1 block text-[10px] ${active ? 'text-white/75' : 'text-muted-foreground'}`}>{detail}</span></button>; }
 function EmptyDataset({ label }: { label: string }): JSX.Element { return <div className="flex min-h-32 flex-col items-center justify-center px-5 text-center"><Database className="mb-2 size-5 text-muted-foreground/60" /><p className="text-xs text-muted-foreground">{label}</p></div>; }
 
+const TRAINING_PHASES = [
+  { key: 'gold', label: 'Gold load', phases: ['worker_acknowledged', 'loading_gold'] },
+  { key: 'dataset', label: 'Dataset + split', phases: ['preparing_dataset'] },
+  { key: 'training', label: 'Optimization', phases: ['training'] },
+  { key: 'evaluation', label: 'Evaluation', phases: ['evaluating'] },
+  { key: 'package', label: 'Runtime package', phases: ['packaging_runtime', 'persisting_artifacts', 'planning_inference', 'completed'] },
+] as const;
+
+const phaseLabels: Record<string, string> = {
+  queued: 'Waiting for worker acknowledgement',
+  worker_acknowledged: 'Worker acknowledged experiment',
+  loading_gold: 'Verifying and loading immutable Gold inputs',
+  preparing_dataset: 'Building supervised dataset and deterministic split',
+  training: 'Optimizing model parameters',
+  evaluating: 'Evaluating frozen cohorts',
+  packaging_runtime: 'Building runtime package',
+  persisting_artifacts: 'Persisting immutable artifacts',
+  planning_inference: 'Planning inference validation',
+  completed: 'Experiment artifacts committed',
+  failed: 'Experiment failed',
+};
+
+function TrainingProgressTracker({ progress }: { progress: ActiveTrainingState | null }): JSX.Element {
+  const currentPhaseIndex = progress ? TRAINING_PHASES.findIndex((stage) => stage.phases.includes(progress.phase as never)) : -1;
+  const completed = progress?.status === 'completed';
+  const failed = progress?.status === 'failed';
+  const observedPercent = Math.max(0, Math.min(100, progress?.progressPercent ?? 0));
+  const epochActive = progress?.phase === 'training' && progress.totalEpochs;
+  return <div className={`border px-3 py-3 ${failed ? 'border-destructive/40 bg-destructive/5' : progress ? 'border-primary/35 bg-primary/[0.025]' : 'border-border/70 bg-muted/10'}`}>
+    <div className="flex items-start justify-between gap-3">
+      <div><p className="font-mono text-[9px] uppercase tracking-[0.12em] text-primary">Run progress / observed</p><p className="mt-1 text-xs font-medium">{progress ? phaseLabels[progress.phase ?? progress.status] ?? progress.phase : 'No experiment submitted'}</p></div>
+      <span className={`font-mono text-xs font-semibold tabular-nums ${failed ? 'text-destructive' : completed ? 'text-emerald-600 dark:text-emerald-300' : 'text-foreground'}`}>{progress ? `${observedPercent.toFixed(0)}%` : '—'}</span>
+    </div>
+    <div className="mt-3 h-1.5 overflow-hidden bg-muted"><div className={`h-full transition-[width] duration-300 ${failed ? 'bg-destructive' : completed ? 'bg-emerald-500' : 'bg-primary'}`} style={{ width: `${observedPercent}%` }} /></div>
+    <div className="mt-3 grid grid-cols-5 gap-1">
+      {TRAINING_PHASES.map((stage, index) => {
+        const isDone = completed || currentPhaseIndex > index;
+        const isActive = !failed && currentPhaseIndex === index;
+        return <div key={stage.key} className="min-w-0">
+          <div className={`flex h-6 items-center justify-center border ${isDone ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300' : isActive ? 'border-primary/50 bg-primary/10 text-primary' : 'border-border/70 text-muted-foreground'}`}>{isDone ? <Check className="size-3" /> : isActive ? <LoaderCircle className="size-3 animate-spin" /> : <Circle className="size-2.5" />}</div>
+          <p className={`mt-1 truncate text-center font-mono text-[8px] uppercase ${isActive ? 'text-primary' : 'text-muted-foreground'}`} title={stage.label}>{stage.label}</p>
+        </div>;
+      })}
+    </div>
+    {progress && <div className="mt-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-border/60 pt-2 font-mono text-[9px] text-muted-foreground">
+      <span className="truncate" title={progress.jobId}>{progress.jobId}</span>
+      {epochActive ? <span>epoch {progress.currentEpoch ?? 0}/{progress.totalEpochs}{progress.bestEpoch ? ` · best ${progress.bestEpoch}` : ''}{Number.isFinite(progress.bestValidationLoss) ? ` · val loss ${progress.bestValidationLoss?.toFixed(5)}` : ''}</span> : <span>{failed && <CircleAlert className="mr-1 inline size-3" />}{progress.status.toUpperCase()}</span>}
+    </div>}
+  </div>;
+}
+
 function TrainingCohortReadiness({ readiness, loading, selectedCount }: { readiness: TrainingReadiness | null; loading: boolean; selectedCount: number }): JSX.Element {
   if (selectedCount === 0) return <div className="border border-dashed border-border/70 px-3 py-4 text-center text-[11px] text-muted-foreground">Select a snapshot to calculate cohort evidence.</div>;
   if (loading) return <div className="border border-dashed border-border/70 px-3 py-4 text-[11px] text-muted-foreground">Calculating cohort eligibility…</div>;
@@ -211,12 +271,18 @@ function TrainingCohortReadiness({ readiness, loading, selectedCount }: { readin
   const total = readiness.total_rows;
   const ratio = (value: number) => total > 0 ? value / total * 100 : 0;
   return <div className={`border px-3 py-3 ${readiness.ready ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-amber-500/40 bg-amber-500/5'}`}>
-    <div className="flex items-center justify-between gap-3"><p className="text-xs font-medium">Training cohort · {readiness.ready ? 'READY' : 'BLOCKED'}</p><Badge variant="outline" className="rounded-none font-mono text-[9px]">{readiness.policy_version}</Badge></div>
+    <div className="flex items-center justify-between gap-3"><p className="text-xs font-medium">Training cohort · {readiness.tier.replaceAll('_', ' ')}</p><Badge variant="outline" className="rounded-none font-mono text-[9px]">{readiness.policy_version}</Badge></div>
     <div className="mt-3 flex h-2 overflow-hidden bg-muted"><span className="bg-emerald-500" style={{ width: `${ratio(readiness.positive_rows)}%` }} /><span className="bg-sky-500" style={{ width: `${ratio(readiness.negative_rows)}%` }} /><span className="bg-amber-500" style={{ width: `${ratio(readiness.unresolved_rows)}%` }} /></div>
     <div className="mt-2 grid grid-cols-3 gap-2 text-[10px]"><CohortValue label="Positive" value={readiness.positive_rows} percent={ratio(readiness.positive_rows)} tone="bg-emerald-500" /><CohortValue label="Negative" value={readiness.negative_rows} percent={ratio(readiness.negative_rows)} tone="bg-sky-500" /><CohortValue label="Unresolved" value={readiness.unresolved_rows} percent={ratio(readiness.unresolved_rows)} tone="bg-amber-500" /></div>
     <p className="mt-2 text-[10px] text-muted-foreground">{readiness.positive_targets.toLocaleString()} positive and {readiness.negative_targets.toLocaleString()} negative independent TIC targets.</p>
+    <div className="mt-2 grid gap-px border border-border/70 bg-border/70 sm:grid-cols-3">
+      <CohortGate label="Experimental" current={`${readiness.positive_targets}/${readiness.negative_targets}`} target={`${readiness.experimental_minimum_positive_targets}/${readiness.experimental_minimum_negative_targets}`} met={readiness.ready} />
+      <CohortGate label="Production candidate" current={`${readiness.positive_targets}/${readiness.negative_targets}`} target={`${readiness.production_candidate_minimum_positive_targets}/${readiness.production_candidate_minimum_negative_targets}`} met={readiness.tier === 'PRODUCTION_CANDIDATE'} />
+      <CohortGate label="Negative diversity" current={readiness.negative_targets.toLocaleString()} target={readiness.negative_diversity_target.toLocaleString()} met={readiness.negative_diversity_target_met} advisory />
+    </div>
     {!readiness.ready && <p className="mt-1 text-[10px] text-amber-700 dark:text-amber-300">{readiness.blocker}</p>}
   </div>;
 }
 
 function CohortValue({ label, value, percent, tone }: { label: string; value: number; percent: number; tone: string }): JSX.Element { return <div><p className="flex items-center gap-1.5 text-muted-foreground"><span className={`size-1.5 ${tone}`} />{label}</p><p className="mt-0.5 font-mono font-medium">{value.toLocaleString()} · {percent.toFixed(1)}%</p></div>; }
+function CohortGate({ label, current, target, met, advisory = false }: { label: string; current: string; target: string; met: boolean; advisory?: boolean }): JSX.Element { return <div className="bg-background/80 p-2"><p className="font-mono text-[9px] uppercase text-muted-foreground">{label}</p><p className={`mt-1 font-mono text-xs font-semibold ${met ? 'text-emerald-600 dark:text-emerald-300' : advisory ? 'text-muted-foreground' : 'text-amber-700 dark:text-amber-300'}`}>{current} <span className="font-normal text-muted-foreground">/ {target}</span></p><p className="mt-0.5 text-[9px] text-muted-foreground">{met ? 'gate met' : advisory ? 'advisory · does not block training' : 'gate not met'}</p></div>; }

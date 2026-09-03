@@ -1,7 +1,7 @@
 {
   "best_epoch": 5,
   "best_val_loss": 0.21333105862140656,
-  "created_at": "2026-08-31T08:31:58.329312+00:00",
+  "created_at": "2026-09-02T23:12:54.850920+00:00",
   "current_epoch": 5,
   "error_message": null,
   "gold_snapshot_id": "gold-v1-anom12345678",
@@ -10,5 +10,5 @@
   "status": "COMPLETED",
   "training_run_id": "run-anom-v1-e049543bb973",
   "training_spec_fingerprint": "e049543bb973d5e94e582f5427668359237769c221f8675bb9c61fa534368c0f",
-  "updated_at": "2026-08-31T08:31:59.258135+00:00"
+  "updated_at": "2026-09-02T23:12:55.837228+00:00"
 }

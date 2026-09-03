@@ -8,7 +8,7 @@ import json
 import os
 import random
 from contextlib import nullcontext
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -129,6 +129,7 @@ def train_candidate_model(
     device_str: str = "cuda",
     max_vram_mb: int = 0,
     base_model_path: Optional[str] = None,
+    progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> Tuple[TrainingRunManifest, TrainingRunCheckpoint]:
     """Execute Phase 6.2 Candidate Tabular Model Training Run.
 
@@ -384,6 +385,15 @@ def train_candidate_model(
         checkpoint.best_val_loss = best_val_loss
         with open(checkpoint_path, "w", encoding="utf-8") as f:
             f.write(checkpoint.to_json())
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "current_epoch": epoch,
+                    "total_epochs": epochs,
+                    "best_epoch": best_epoch,
+                    "best_val_loss": best_val_loss,
+                }
+            )
 
     # Restore best model state
     if best_model_state is not None:

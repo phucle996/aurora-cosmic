@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/repo"
-	domainService "go-api/internal/domain/service"
 	"go-api/internal/taxonomy"
 )
 
@@ -24,13 +23,25 @@ import (
 // 2. Kiểm tra trạng thái hoàn thành (Completed) hay đang chờ (Planned) qua output files.
 // 3. Cho phép kích hoạt chạy lại (Retry / Re-dispatch) một Inference Job qua NATS.
 type InferenceService struct {
-	objects    repo.ObjectRepository    // Repository tương tác trực tiếp với MinIO S3
-	dispatcher repo.InferenceDispatcher // Dispatcher gửi event kích hoạt job qua NATS JetStream
+	objects        repo.ObjectRepository    // Repository tương tác trực tiếp với MinIO S3
+	results        repo.ObjectRepository    // Prediction/status bucket (may differ from the manifest bucket)
+	dispatcher     repo.InferenceDispatcher // Dispatcher gửi event kích hoạt job qua NATS JetStream
+	manifestBucket string
 }
 
 // NewInferenceService khởi tạo thể hiện của InferenceService
-func NewInferenceService(objects repo.ObjectRepository, dispatcher repo.InferenceDispatcher) domainService.Inference {
-	return &InferenceService{objects: objects, dispatcher: dispatcher}
+func NewInferenceService(objects repo.ObjectRepository, dispatcher repo.InferenceDispatcher) *InferenceService {
+	return NewInferenceServiceWithResults(objects, objects, dispatcher, "aurora")
+}
+
+func NewInferenceServiceWithResults(objects, results repo.ObjectRepository, dispatcher repo.InferenceDispatcher, manifestBucket string) *InferenceService {
+	if results == nil {
+		results = objects
+	}
+	if strings.TrimSpace(manifestBucket) == "" {
+		manifestBucket = "aurora"
+	}
+	return &InferenceService{objects: objects, results: results, dispatcher: dispatcher, manifestBucket: manifestBucket}
 }
 
 // ============================================================================
@@ -39,25 +50,35 @@ func NewInferenceService(objects repo.ObjectRepository, dispatcher repo.Inferenc
 // inferenceJobManifestDTO ánh xạ nội dung file JSON bất biến lưu tại:
 // s3://aurora/manifests/inference-jobs/<job_id>.json
 type inferenceJobManifestDTO struct {
-	SchemaVersion             int    `json:"schema_version"`               // Phiên bản schema hợp đồng (schema_version = 1)
-	JobID                     string `json:"job_id"`                       // Định danh duy nhất của job (VD: inference-job-v1-...)
-	JobFingerprint            string `json:"job_fingerprint"`              // Mã băm SHA-256 xác thực tính toàn vẹn cấu hình job
-	Task                      string `json:"task"`                         // Candidate-vetting task contract
-	GoldSnapshotID            string `json:"gold_snapshot_id"`             // ID của snapshot Gold làm đầu vào
-	GoldManifestKey           string `json:"gold_manifest_key"`            // Đường dẫn S3 tới manifest của Gold snapshot
-	GoldArtifactKey           string `json:"gold_artifact_key"`            // Đường dẫn S3 tới file Parquet dữ liệu Gold
-	GoldArtifactContentSHA256 string `json:"gold_artifact_content_sha256"` // SHA-256 nội dung file Parquet
-	GoldArtifactRowCount      int64  `json:"gold_artifact_row_count"`      // Số lượng dòng dữ liệu trong partition
-	Sector                    int    `json:"sector"`                       // Sector quan sát của NASA TESS
-	RuntimePackageID          string `json:"runtime_package_id"`           // Gói runtime ONNX model được sử dụng
-	RuntimeManifestKey        string `json:"runtime_manifest_key"`         // Đường dẫn S3 tới manifest của package model
-	RuntimeManifestSHA256     string `json:"runtime_manifest_sha256"`      // SHA-256 của model runtime manifest
-	RuntimeValidationID       string `json:"runtime_validation_id"`        // Mã chứng nhận kiểm định an toàn runtime
-	ModelID                   string `json:"model_id"`                     // ID mô hình (VD: candidate-cnn-v1)
-	ModelVersion              string `json:"model_version"`                // Phiên bản mô hình (VD: 1.0.0)
-	EvaluationRunID           string `json:"evaluation_run_id"`            // Mã đợt đánh giá chất lượng (Champion/Challenger)
-	ExpectedPredictionCount   int64  `json:"expected_prediction_count"`    // Số lượng bản ghi dự đoán kỳ vọng tạo ra
-	CreatedAt                 string `json:"created_at"`                   // Thời gian tạo job (ISO 8601)
+	SchemaVersion             int      `json:"schema_version"`  // Phiên bản schema hợp đồng (schema_version = 1)
+	JobID                     string   `json:"job_id"`          // Định danh duy nhất của job (VD: inference-job-v1-...)
+	JobFingerprint            string   `json:"job_fingerprint"` // Mã băm SHA-256 xác thực tính toàn vẹn cấu hình job
+	Task                      string   `json:"task"`            // Candidate-vetting task contract
+	SelectionPolicyVersion    string   `json:"selection_policy_version"`
+	GoldSnapshotID            string   `json:"gold_snapshot_id"`  // ID của snapshot Gold làm đầu vào
+	GoldManifestKey           string   `json:"gold_manifest_key"` // Đường dẫn S3 tới manifest của Gold snapshot
+	GoldManifestSHA256        string   `json:"gold_manifest_sha256"`
+	GoldDataset               string   `json:"gold_dataset"`
+	GoldSchemaVersion         string   `json:"gold_schema_version"`
+	GoldArtifactKey           string   `json:"gold_artifact_key"`            // Đường dẫn S3 tới file Parquet dữ liệu Gold
+	GoldArtifactContentSHA256 string   `json:"gold_artifact_content_sha256"` // SHA-256 nội dung file Parquet
+	GoldArtifactParquetSHA256 string   `json:"gold_artifact_parquet_sha256,omitempty"`
+	GoldArtifactSizeBytes     int64    `json:"gold_artifact_size_bytes,omitempty"`
+	GoldArtifactRowCount      int64    `json:"gold_artifact_row_count"` // Số lượng dòng dữ liệu trong partition
+	Sector                    int      `json:"sector"`                  // Sector quan sát của NASA TESS
+	RuntimePackageID          string   `json:"runtime_package_id"`      // Gói runtime ONNX model được sử dụng
+	RuntimeManifestKey        string   `json:"runtime_manifest_key"`    // Đường dẫn S3 tới manifest của package model
+	RuntimeManifestSHA256     string   `json:"runtime_manifest_sha256"` // SHA-256 của model runtime manifest
+	RuntimeValidationID       string   `json:"runtime_validation_id"`   // Mã chứng nhận kiểm định an toàn runtime
+	ModelID                   string   `json:"model_id"`                // ID mô hình (VD: candidate-cnn-v1)
+	ModelVersion              string   `json:"model_version"`           // Phiên bản mô hình (VD: 1.0.0)
+	EvaluationRunID           string   `json:"evaluation_run_id"`       // Mã đợt đánh giá chất lượng (Champion/Challenger)
+	DatasetViewVersion        string   `json:"dataset_view_version"`
+	DatasetViewFingerprint    string   `json:"dataset_view_fingerprint"`
+	FeatureNames              []string `json:"feature_names"`
+	ExpectedPredictionCount   int64    `json:"expected_prediction_count"` // Số lượng bản ghi dự đoán kỳ vọng tạo ra
+	CreatedAt                 string   `json:"created_at"`                // Thời gian tạo job (ISO 8601)
+	Producer                  string   `json:"producer,omitempty"`
 }
 
 // inferenceJobStatusDTO is mutable worker telemetry. The immutable job
@@ -69,7 +90,14 @@ type inferenceJobStatusDTO struct {
 	JobFingerprint string `json:"job_fingerprint"`
 	Task           string `json:"task"`
 	Status         string `json:"status"`
+	Attempt        int64  `json:"attempt"`
+	StartedAt      string `json:"started_at"`
+	UpdatedAt      string `json:"updated_at"`
 	OutputKey      string `json:"output_key"`
+	OutputSHA256   string `json:"output_sha256"`
+	ProcessedRows  *int64 `json:"processed_rows"`
+	Error          string `json:"error"`
+	Producer       string `json:"producer"`
 }
 
 // ============================================================================
@@ -124,26 +152,28 @@ func (s *InferenceService) ListJobs(ctx context.Context, task, model string) ([]
 		// existence keeps historic jobs visible after the status contract rollout.
 		outputKey := fmt.Sprintf("predictions/%s/%s/%s/part-00000.jsonl", manifest.Task, manifest.GoldSnapshotID, manifest.JobID)
 		status := taxonomy.JobStatusPlanned
+		var runtimeStatus inferenceJobStatusDTO
+		runtimeObserved := false
 		statusKey := fmt.Sprintf("inference/status/%s.json", manifest.JobID)
-		if statusData, statusErr := s.objects.GetObject(ctx, statusKey); statusErr == nil {
-			var runtimeStatus inferenceJobStatusDTO
+		if statusData, statusErr := s.results.GetObject(ctx, statusKey); statusErr == nil {
 			if json.Unmarshal(statusData, &runtimeStatus) == nil &&
 				runtimeStatus.SchemaVersion == 1 &&
 				runtimeStatus.JobID == manifest.JobID &&
 				runtimeStatus.JobFingerprint == manifest.JobFingerprint &&
 				runtimeStatus.Task == manifest.Task &&
 				isInferenceRuntimeStatus(runtimeStatus.Status) {
+				runtimeObserved = true
 				status = runtimeStatus.Status
 				if runtimeStatus.OutputKey != "" {
 					outputKey = runtimeStatus.OutputKey
 				}
 			}
-		} else if outputs, listErr := s.objects.ListObjects(ctx, outputKey); listErr == nil && len(outputs) > 0 {
+		} else if outputs, listErr := s.results.ListObjects(ctx, outputKey); listErr == nil && len(outputs) > 0 {
 			status = taxonomy.JobStatusCompleted
 		}
 
 		// 4. Bổ sung job vào danh sách kết quả
-		jobs = append(jobs, entity.InferenceJob{
+		job := entity.InferenceJob{
 			JobID:                   manifest.JobID,
 			Task:                    manifest.Task,
 			ModelID:                 manifest.ModelID,
@@ -156,7 +186,19 @@ func (s *InferenceService) ListJobs(ctx context.Context, task, model string) ([]
 			CreatedAt:               manifest.CreatedAt,
 			Status:                  status,
 			OutputKey:               outputKey,
-		})
+		}
+		if runtimeObserved {
+			job.OutputSHA256 = runtimeStatus.OutputSHA256
+			if runtimeStatus.ProcessedRows != nil {
+				job.ProcessedRows = *runtimeStatus.ProcessedRows
+			}
+			job.Attempt = runtimeStatus.Attempt
+			job.StartedAt = runtimeStatus.StartedAt
+			job.UpdatedAt = runtimeStatus.UpdatedAt
+			job.Error = runtimeStatus.Error
+			job.Producer = runtimeStatus.Producer
+		}
+		jobs = append(jobs, job)
 	}
 
 	// Sắp xếp các job theo thời gian tạo mới nhất lên đầu

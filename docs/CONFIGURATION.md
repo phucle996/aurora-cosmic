@@ -61,9 +61,11 @@ by `limit`/`offset` pagination.
 
 ## 6. GPU & Device Selection
 
-`python-ml-worker` and `rust-inference` require `AURORA_ML_DEVICE=cuda`.
-Training and ONNX inference fail fast when CUDA is unavailable; CPU fallback is
-disabled.
+`python-ml-worker` may select its training device independently. For
+`rust-inference`, `AURORA_ML_DEVICE=auto` is the portable default: CUDA is used
+when its ONNX Runtime provider can be loaded, otherwise the worker falls back to
+the CPU provider while preserving the same model package and parity contract.
+Set `cuda` to require GPU inference or `cpu` to force CPU inference.
 
 ## 7. Stage 5 Light Curve Feature Configuration
 

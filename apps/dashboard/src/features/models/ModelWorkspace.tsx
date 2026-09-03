@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { useParams } from 'react-router-dom';
-import { BrainCircuit, CheckCircle2, CircleAlert, RefreshCw } from 'lucide-react';
+import { BrainCircuit, CircleAlert, RefreshCw } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { apiBase, apiFetch } from '@/lib/api';
 
 import { InferenceJobsTable } from './components/InferenceJobsTable';
+import { LabelingWorkspace } from './components/LabelingWorkspace';
 import { LiveTrainingBanner } from './components/LiveTrainingBanner';
 import { MetricCards } from './components/MetricCards';
 import { ModelEvaluationBoard } from './components/ModelEvaluationBoard';
@@ -21,6 +22,7 @@ import type {
   InferenceJob,
   JobResponse,
   ModelDeployResponse,
+  ModelPromotionState,
   ModelRecord,
   ModelResponse,
   GoldSnapshotInventoryResponse,
@@ -28,10 +30,11 @@ import type {
   TrainingResponse,
 } from './types';
 
-export type AIModelView = 'training' | 'evaluation' | 'evidence' | 'registry' | 'inference' | 'detail' | 'overview';
+export type AIModelView = 'training' | 'labeling' | 'evaluation' | 'evidence' | 'registry' | 'inference' | 'detail' | 'overview';
 
 const viewCopy: Record<AIModelView, { eyebrow: string; title: string; description: string }> = {
   training: { eyebrow: 'AI Factory / Experimental ML', title: 'Training Lab', description: 'Thiết kế experiment từ immutable Gold snapshots, kiểm tra cohort, khóa cấu hình tái lập và quan sát tài nguyên huấn luyện.' },
+  labeling: { eyebrow: 'AI Factory / Scientific supervision', title: 'Labeling Studio', description: 'Kiểm tra Gold evidence, xử lý hàng đợi unresolved và ghi quyết định của con người với model suggestion khi khả dụng.' },
   evaluation: { eyebrow: 'AI Factory · Model Evaluation', title: 'Model Evaluation', description: 'Kiểm tra evaluation run, parity PyTorch–ONNX và trạng thái quality gate trước promotion.' },
   evidence: { eyebrow: 'AI Factory · Evolution Evidence', title: 'Evolution Evidence', description: 'Truy vết Gold input → training/evaluation → runtime package → inference của từng thế hệ model.' },
   registry: { eyebrow: 'AI Factory · Model Registry', title: 'Model Registry', description: 'Quản lý version, candidate/validated/champion và deployment có thể rollback.' },
@@ -50,8 +53,9 @@ export default function ModelWorkspace({ view = 'overview' }: { view?: AIModelVi
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string>();
   const [queueingJob, setQueueingJob] = useState<string>();
-  const [notice, setNotice] = useState<string>();
   const [deploying, setDeploying] = useState(false);
+  const [promotion, setPromotion] = useState<ModelPromotionState>();
+  const promotionEventsRef = useRef<EventSource>();
 
   // Training Dialog state & Snapshots
   const [availableSnapshots, setAvailableSnapshots] = useState<GoldSnapshotItem[]>([]);
@@ -94,6 +98,8 @@ export default function ModelWorkspace({ view = 'overview' }: { view?: AIModelVi
     void loadData();
   }, [loadData]);
 
+  useEffect(() => () => promotionEventsRef.current?.close(), []);
+
   // The API reads only manifest metadata; the browser never scans every Gold object.
   const loadAvailableSnapshots = useCallback(async () => {
     setSnapshotsLoading(true);
@@ -133,7 +139,7 @@ export default function ModelWorkspace({ view = 'overview' }: { view?: AIModelVi
   }, [models]);
 
   useEffect(() => {
-    if (view === 'training') void loadAvailableSnapshots();
+    if (view === 'training' || view === 'labeling') void loadAvailableSnapshots();
   }, [view, loadAvailableSnapshots]);
 
   // Live training events and local elapsed timer.
@@ -150,12 +156,27 @@ export default function ModelWorkspace({ view = 'overview' }: { view?: AIModelVi
         const update = JSON.parse(message.data) as {
           job_id?: string;
           status?: string;
-          payload?: { error?: string };
+          payload?: {
+            error?: string;
+            status?: string;
+            phase?: string;
+            progress_percent?: number;
+            current_epoch?: number;
+            total_epochs?: number;
+            best_epoch?: number;
+            best_val_loss?: number;
+            occurred_at?: string;
+          };
         };
         if (update.job_id !== activeTraining.jobId) return;
 
         if (update.status === 'failed') {
-          setActiveTraining(null);
+          setActiveTraining((current) => current?.jobId === update.job_id ? {
+            ...current,
+            status: 'failed',
+            phase: 'failed',
+            updatedAt: update.payload?.occurred_at,
+          } : current);
           setError(`Huấn luyện thất bại: ${update.payload?.error || 'ML Worker không trả về chi tiết lỗi.'}`);
           return;
         }
@@ -164,9 +185,33 @@ export default function ModelWorkspace({ view = 'overview' }: { view?: AIModelVi
           void apiFetch<ModelResponse>('/v1/models')
             .then((res) => setModels(res.models ?? []))
             .catch(() => undefined);
-          setActiveTraining(null);
-          setNotice(`Huấn luyện đã hoàn tất. Runtime package đang chờ parity verification; promotion chỉ diễn ra khi người vận hành duyệt trong Model Registry.`);
+          setActiveTraining((current) => current?.jobId === update.job_id ? {
+            ...current,
+            status: 'completed',
+            phase: 'completed',
+            progressPercent: 100,
+            currentEpoch: current.totalEpochs ?? current.epochs,
+            updatedAt: update.payload?.occurred_at,
+          } : current);
+          toast.success('Huấn luyện đã hoàn tất', {
+            description: 'Runtime package đang chờ parity verification và phê duyệt trong Model Registry.',
+          });
           void loadAvailableSnapshots();
+          return;
+        }
+
+        if (update.status === 'progress' && update.payload?.status === 'running') {
+          setActiveTraining((current) => current?.jobId === update.job_id ? {
+            ...current,
+            status: 'running',
+            phase: update.payload?.phase ?? current.phase,
+            progressPercent: update.payload?.progress_percent ?? current.progressPercent,
+            currentEpoch: update.payload?.current_epoch ?? current.currentEpoch,
+            totalEpochs: update.payload?.total_epochs ?? current.totalEpochs,
+            bestEpoch: update.payload?.best_epoch ?? current.bestEpoch,
+            bestValidationLoss: update.payload?.best_val_loss ?? current.bestValidationLoss,
+            updatedAt: update.payload?.occurred_at,
+          } : current);
         }
       } catch {
         // Ignore malformed workflow events.
@@ -192,7 +237,6 @@ export default function ModelWorkspace({ view = 'overview' }: { view?: AIModelVi
   }) => {
     setTrainingSubmitting(true);
     setError(undefined);
-    setNotice(undefined);
     try {
       const snapshotIds = [...new Set(params.snapshotIds.map((value) => value.trim()).filter(Boolean))];
       if (snapshotIds.length === 0) {
@@ -213,7 +257,9 @@ export default function ModelWorkspace({ view = 'overview' }: { view?: AIModelVi
           compute_target: params.computeTarget,
         }),
       });
-      setNotice(`Training job ${res.job_id} đã được tạo trên ${params.computeTarget.toUpperCase()} với ${snapshotIds.length} Gold snapshot. Promotion vẫn cần được duyệt trong Model Registry.`);
+      toast.success('Đã tạo training job', {
+        description: `${res.job_id} · ${params.computeTarget.toUpperCase()} · ${snapshotIds.length} Gold snapshot`,
+      });
 
       setActiveTraining({
         jobId: res.job_id,
@@ -223,6 +269,11 @@ export default function ModelWorkspace({ view = 'overview' }: { view?: AIModelVi
         epochs: params.epochs,
         computeTarget: params.computeTarget,
         startedAt: Date.now(),
+        status: res.status === 'queued' ? 'queued' : 'running',
+        phase: 'queued',
+        progressPercent: 0,
+        currentEpoch: 0,
+        totalEpochs: params.epochs,
       });
       setTrainingElapsed(0);
     } catch (trainError) {
@@ -236,35 +287,126 @@ export default function ModelWorkspace({ view = 'overview' }: { view?: AIModelVi
   const handleDeployModel = async (modelId: string, task: string, active: boolean) => {
     setDeploying(true);
     setError(undefined);
-    setNotice(undefined);
+    let events: EventSource | undefined;
     try {
-      await apiFetch<ModelDeployResponse>('/v1/models/deploy', {
+      const ticketId = crypto.randomUUID();
+      if (active) {
+        setPromotion({
+          ticketId,
+          runtimePackageId: modelId,
+          status: 'running',
+          phase: 'connecting_observer',
+          progressPercent: 2,
+          message: 'Connecting to promotion telemetry…',
+        });
+        promotionEventsRef.current?.close();
+        events = new EventSource(`${apiBase}/v1/events?workflow=ml&ticket=${encodeURIComponent(ticketId)}`);
+        promotionEventsRef.current = events;
+        events.addEventListener('workflow', (event) => {
+          try {
+            const envelope = JSON.parse((event as MessageEvent<string>).data) as {
+              ticket_id?: string;
+              payload?: {
+                ticket_id?: string;
+                runtime_package_id?: string;
+                status?: 'running' | 'completed' | 'failed';
+                phase?: string;
+                progress_percent?: number;
+                message?: string;
+                parity_cases?: number;
+                runtime_validation_id?: string;
+                engine?: string;
+                max_absolute_error?: number;
+                max_relative_error?: number;
+                error?: string;
+              };
+            };
+            const update = envelope.payload;
+            if (!update || (update.ticket_id ?? envelope.ticket_id) !== ticketId) return;
+            setPromotion((current) => current?.ticketId === ticketId ? {
+              ...current,
+              status: update.status ?? current.status,
+              phase: update.phase ?? current.phase,
+              progressPercent: update.progress_percent ?? current.progressPercent,
+              message: update.message ?? current.message,
+              parityCases: update.parity_cases ?? current.parityCases,
+              runtimeValidationId: update.runtime_validation_id ?? current.runtimeValidationId,
+              engine: update.engine ?? current.engine,
+              maxAbsoluteError: update.max_absolute_error ?? current.maxAbsoluteError,
+              maxRelativeError: update.max_relative_error ?? current.maxRelativeError,
+              error: update.error ?? current.error,
+            } : current);
+          } catch {
+            // Ignore malformed or unrelated workflow events.
+          }
+        });
+        await new Promise<void>((resolve, reject) => {
+          const timeout = window.setTimeout(() => reject(new Error('Không thể mở promotion telemetry SSE.')), 5000);
+          events?.addEventListener('ready', () => {
+            window.clearTimeout(timeout);
+            resolve();
+          }, { once: true });
+          events?.addEventListener('error', () => {
+            window.clearTimeout(timeout);
+            reject(new Error('Promotion telemetry SSE bị ngắt trước khi đăng ký ticket.'));
+          }, { once: true });
+        });
+      }
+      const response = await apiFetch<ModelDeployResponse>('/v1/models/deploy', {
         method: 'POST',
         body: JSON.stringify({
           model_id: modelId,
           task,
           active,
+          ticket_id: ticketId,
         }),
       });
       if (active) {
-        setNotice(`🚀 Đã chuyển quyền phục vụ suy luận chính (Champion) sang model [${modelId}] thành công!`);
+        setPromotion((current) => current?.ticketId === ticketId ? {
+          ...current,
+          status: 'completed',
+          phase: 'completed',
+          progressPercent: 100,
+          message: 'Champion is serving after a successful Rust runtime canary.',
+          runtimeValidationId: response.runtime_validation_id ?? current.runtimeValidationId,
+          engine: response.engine ?? current.engine,
+          maxAbsoluteError: response.max_absolute_error ?? current.maxAbsoluteError,
+          maxRelativeError: response.max_relative_error ?? current.maxRelativeError,
+        } : current);
+        toast.success('Đã kích hoạt Champion', {
+          description: `Runtime canary PASS · ${modelId}`,
+        });
       } else {
-        setNotice(`⏹️ Đã hủy triển khai mô hình [${modelId}]. Hệ thống tạm dừng suy luận tự động.`);
+        toast.warning('Đã vô hiệu hóa Champion', {
+          description: `Model ${modelId} không còn phục vụ suy luận tự động.`,
+        });
       }
       await loadData(true);
     } catch (deployErr) {
-      setError(deployErr instanceof Error ? deployErr.message : 'Không thể cập nhật trạng thái triển khai model');
+      const message = deployErr instanceof Error ? deployErr.message : 'Không thể cập nhật trạng thái triển khai model';
+      setPromotion((current) => current && current.runtimePackageId === modelId ? {
+        ...current,
+        status: 'failed',
+        progressPercent: 100,
+        message,
+        error: message,
+      } : current);
+      setError(message);
     } finally {
+      events?.close();
+      if (promotionEventsRef.current === events) promotionEventsRef.current = undefined;
       setDeploying(false);
     }
   };
 
   async function queueJob(job: InferenceJob): Promise<void> {
     setQueueingJob(job.job_id);
-    setNotice(undefined);
     try {
-      await apiFetch(`/v1/inference/jobs/${encodeURIComponent(job.job_id)}/retry`, { method: 'POST' });
-      setNotice(`Job ${job.job_id} đã được đưa vào hàng đợi GPU.`);
+      const response = await apiFetch<{ status: string }>(`/v1/inference/jobs/${encodeURIComponent(job.job_id)}/retry`, { method: 'POST' });
+      setJobs((current) => current.map((item) => item.job_id === job.job_id ? { ...item, status: response.status } : item));
+      toast.info('Đã đưa job vào hàng đợi inference', {
+        description: job.job_id,
+      });
     } catch (queueError) {
       setError(queueError instanceof Error ? queueError.message : 'Unable to queue inference job');
     } finally {
@@ -315,23 +457,15 @@ export default function ModelWorkspace({ view = 'overview' }: { view?: AIModelVi
         </div>
       )}
 
-      {/* Notice / Success Alert */}
-      {notice && (
-        <div className="flex items-start gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-300">
-          <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-400" />
-          <p>{notice}</p>
-        </div>
-      )}
-
       {/* Live GPU Training Active Monitor Banner */}
-      {activeTraining && (
+      {activeTraining && (activeTraining.status === 'queued' || activeTraining.status === 'running') && (
         <LiveTrainingBanner
           activeTraining={activeTraining}
           trainingElapsed={trainingElapsed}
         />
       )}
 
-      {(view === 'registry' || view === 'evaluation' || view === 'overview') && (
+      {view === 'overview' && (
         <MetricCards
           totalModels={models.length}
           validatedCount={validatedCount}
@@ -344,31 +478,23 @@ export default function ModelWorkspace({ view = 'overview' }: { view?: AIModelVi
         <section aria-label="Training laboratory summary" className="grid gap-px overflow-hidden border border-border/70 bg-border/70 sm:grid-cols-2 xl:grid-cols-4">
           <TrainingStat label="Committed Gold inputs" value={availableSnapshots.length || '—'} detail={snapshotsLoading ? 'Reading inventory…' : `${untrainedSnapshots} snapshots unused`} />
           <TrainingStat label="Registered models" value={models.length} detail={`${validatedCount} validated · ${championCount} champion`} />
-          <TrainingStat label="Current experiment" value={activeTraining ? 'RUNNING' : 'NONE'} detail={activeTraining ? `${activeTraining.computeTarget?.toUpperCase()} · ${activeTraining.jobId}` : 'No active experiment in this view'} />
+          <TrainingStat label="Current experiment" value={activeTraining ? activeTraining.status.toUpperCase() : 'NONE'} detail={activeTraining ? `${activeTraining.computeTarget?.toUpperCase()} · ${activeTraining.jobId}` : 'No active experiment in this view'} />
           <TrainingStat label="Task contract" value="VETTING" detail="Light Curve + Target Pixel evidence" />
         </section>
-        <TrainingLabControl models={models} availableSnapshots={availableSnapshots} snapshotsLoading={snapshotsLoading} onRefreshSnapshots={() => void loadAvailableSnapshots()} onSubmitTraining={handleStartTraining} submitting={trainingSubmitting} />
+        <TrainingLabControl models={models} availableSnapshots={availableSnapshots} snapshotsLoading={snapshotsLoading} onRefreshSnapshots={() => void loadAvailableSnapshots()} onSubmitTraining={handleStartTraining} submitting={trainingSubmitting} trainingProgress={activeTraining} />
         <TrainingRuntimePanel />
       </>}
 
+      {view === 'labeling' && <LabelingWorkspace models={models} availableSnapshots={availableSnapshots} snapshotsLoading={snapshotsLoading} onRefreshSnapshots={() => void loadAvailableSnapshots()} />}
+
       {view === 'evaluation' && <>
-        <ModelEvaluationBoard models={models} onSelect={setSelectedRuntimeId} />
-        <SelectedModelDetails selectedModel={selectedModel} onDeployModel={handleDeployModel} isDeploying={deploying} />
+        <ModelEvaluationBoard models={models} selectedRuntimeId={selectedRuntimeId} onSelect={setSelectedRuntimeId} />
       </>}
 
-      {view === 'evidence' && <>
-        <ModelContextPicker
-          title="Evidence subject"
-          description="Chọn một thế hệ model để lần theo provenance khoa học và serving evidence."
-          models={models}
-          selectedRuntimeId={selectedRuntimeId}
-          onSelectRuntimeId={setSelectedRuntimeId}
-        />
-        <ModelEvolutionEvidence model={selectedModel} jobs={jobs} />
-      </>}
+      {view === 'evidence' && <ModelEvolutionEvidence models={models} model={selectedModel} jobs={jobs} selectedRuntimeId={selectedRuntimeId} onSelectRuntimeId={setSelectedRuntimeId} />}
 
       {showRegistry && <>
-      <div className="grid min-w-0 gap-6 2xl:grid-cols-[minmax(0,1.25fr)_minmax(0,0.75fr)]">
+      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.55fr)]">
         <ModelRegistryTable
           models={models}
           selectedRuntimeId={selectedRuntimeId}
@@ -378,6 +504,7 @@ export default function ModelWorkspace({ view = 'overview' }: { view?: AIModelVi
           loading={loading}
           onDeployModel={handleDeployModel}
           isDeploying={deploying}
+          promotion={promotion}
         />
 
         <SelectedModelDetails
@@ -389,55 +516,22 @@ export default function ModelWorkspace({ view = 'overview' }: { view?: AIModelVi
       </>}
 
       {showDetail && <>
-        <div className="grid gap-6 xl:grid-cols-2"><SelectedModelDetails selectedModel={selectedModel} onDeployModel={handleDeployModel} isDeploying={deploying} /><ModelEvolutionEvidence model={selectedModel} jobs={jobs} /></div>
+        <div className="grid gap-6 xl:grid-cols-2"><SelectedModelDetails selectedModel={selectedModel} onDeployModel={handleDeployModel} isDeploying={deploying} /><ModelEvolutionEvidence model={selectedModel} jobs={jobs} compact /></div>
       </>}
 
-      {view === 'inference' && <>
-        <ModelContextPicker
-          title="Runtime package"
-          description="Chọn runtime package để xem Gold artifact đang chờ, đã chạy hoặc có thể retry trên Rust inference worker."
+      {view === 'inference' && <InferenceJobsTable
           models={models}
           selectedRuntimeId={selectedRuntimeId}
           onSelectRuntimeId={setSelectedRuntimeId}
-        />
-        <InferenceJobsTable
           selectedModel={selectedModel}
           jobs={jobs}
           onQueueJob={queueJob}
           queueingJobId={queueingJob}
-        />
-      </>}
+        />}
     </div>
   );
 }
 
 function TrainingStat({ label, value, detail }: { label: string; value: string | number; detail: string }): JSX.Element {
   return <div className="min-w-0 bg-card p-3.5"><p className="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground">{label}</p><p className="mt-1 font-mono text-lg font-semibold text-foreground">{value}</p><p className="mt-0.5 truncate text-[10px] text-muted-foreground" title={detail}>{detail}</p></div>;
-}
-
-function ModelContextPicker({ title, description, models, selectedRuntimeId, onSelectRuntimeId }: {
-  title: string;
-  description: string;
-  models: ModelRecord[];
-  selectedRuntimeId?: string;
-  onSelectRuntimeId: (runtimePackageId: string) => void;
-}): JSX.Element {
-  return (
-    <Card className="min-w-0">
-      <CardHeader className="gap-3 md:flex-row md:items-center md:justify-between">
-        <div><CardTitle className="text-base">{title}</CardTitle><CardDescription>{description}</CardDescription></div>
-        <select
-          aria-label={title}
-          className="w-full max-w-xl rounded-md border border-input bg-background px-3 py-2 font-mono text-xs md:w-[32rem]"
-          value={selectedRuntimeId ?? ''}
-          onChange={(event) => onSelectRuntimeId(event.target.value)}
-          disabled={models.length === 0}
-        >
-          {models.length === 0 ? <option value="">No runtime package</option> : models.map((model) => (
-            <option key={model.runtime_package_id} value={model.runtime_package_id}>{model.model_id} · {model.runtime_package_id}</option>
-          ))}
-        </select>
-      </CardHeader>
-    </Card>
-  );
 }

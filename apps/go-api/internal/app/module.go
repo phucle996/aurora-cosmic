@@ -53,6 +53,12 @@ func NewModule(infra Infrastructure) (*Module, error) {
 		return nil, fmt.Errorf("repository prediction ObjectMinIO is nil")
 	}
 	eventBroker := events.NewBroker()
+	predictionProjectionRepo := repository.NewPredictionProjectionClickHouse(infra.ClickHouse)
+	predictionProjector := service.NewPredictionProjectorService(
+		predictionObjectRepo,
+		predictionProjectionRepo,
+		infra.PredictionMinIO.Bucket,
+	)
 
 	analyticsService := service.NewAnalyticsService(analyticsRepo, predictionObjectRepo)
 	if analyticsService == nil {
@@ -62,7 +68,7 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	if modelsService == nil {
 		return nil, fmt.Errorf("service ModelsService is nil")
 	}
-	inferenceService := service.NewInferenceService(objectRepo, infra.NATS)
+	inferenceService := service.NewInferenceServiceWithResults(objectRepo, predictionObjectRepo, infra.NATS, infra.MinIO.Bucket)
 	if inferenceService == nil {
 		return nil, fmt.Errorf("service InferenceService is nil")
 	}
@@ -91,12 +97,14 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	}
 
 	natsStream := stream.NewNATSStream(stream.StreamConfig{
-		NATSURL:       infra.NATS.URL,
-		Broker:        eventBroker,
-		Preprocessing: preprocessingService,
-		Ingest:        ingestService,
-		Inference:     inferenceService,
-		Models:        modelsService,
+		NATSURL:             infra.NATS.URL,
+		Broker:              eventBroker,
+		Preprocessing:       preprocessingService,
+		Ingest:              ingestService,
+		Inference:           inferenceService,
+		Models:              modelsService,
+		ChampionInference:   inferenceService,
+		PredictionProjector: predictionProjector,
 	})
 
 	return &Module{

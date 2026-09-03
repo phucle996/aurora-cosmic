@@ -13,8 +13,8 @@ This document specifies the production inference workflow, runtime package quali
 2. **Immutable Runtime Package Pinning**:
    * Every inference job explicitly pins an exact `runtime_package_id` and `runtime_manifest_sha256`.
    * A job never mutates or re-resolves a model if the registry champion pointer changes mid-flight.
-3. **Rust CUDA Qualification Requirement**:
-   * Inference jobs are processed by the CUDA-enabled Rust ONNX Runtime worker after a verified `model-runtime-validation-v1` parity pass. CPU fallback is disabled so inference does not compete with ingest/preprocessing CPU capacity.
+3. **Rust Runtime Qualification Requirement**:
+   * Inference jobs are processed by the Rust ONNX Runtime worker only after a verified `model-runtime-validation-v1` parity pass. Device mode defaults to `auto`: CUDA is preferred, with a CPU-provider fallback when the CUDA provider is unavailable. Strict `cuda` and `cpu` modes remain available for controlled deployments.
 4. **Work Granularity**:
    * Exactly one inference job per committed Gold partition artifact.
    * Avoids row-level NATS flooding and provides natural retry isolation.
@@ -46,3 +46,13 @@ This document specifies the production inference workflow, runtime package quali
    * *Guardrail*: Anomaly scores measure statistical reconstruction deviation, NOT extraterrestrial signals.
 3. **Model-Input Hashing (`model_input_sha256`)**:
    * SHA-256 computed across little-endian raw bytes of the ordered `float32` standardized input tensor.
+
+---
+
+## 4. Prediction Serving Projection
+
+* Rust inference persists the immutable JSONL output and terminal job status before publishing `aurora.v1.inference.<task>.completed` to `AURORA_INFERENCE`.
+* The Go API prediction projector consumes that completion event durably, verifies the output SHA-256 and immutable row lineage, and inserts deterministic prediction IDs into ClickHouse in a background worker that does not block HTTP traffic.
+* Replayed events are safe: exact prediction IDs are checked before insertion, so restarts do not create duplicate serving rows.
+* Only after ClickHouse is ready does the projector publish the transient `aurora.live.ml.prediction.projected` signal. The Go API forwards it to connected SSE clients so Labeling Studio refreshes against queryable evidence; disconnected browsers do not accumulate replay-only UI telemetry.
+* Go API startup reconciliation scans persisted prediction JSONL objects. This rebuilds a missing ClickHouse serving index without rerunning ONNX inference. Python ML Worker remains limited to training, evaluation and runtime-package export.

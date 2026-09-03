@@ -55,3 +55,6 @@ infra/nats/data/
 logs/
 tmp/
 scratch/
+.runtime/
+aurora-api
+

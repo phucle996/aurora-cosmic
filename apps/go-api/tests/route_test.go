@@ -24,6 +24,13 @@ func (fakeAnalytics) ListCandidates(context.Context, int, string, entity.PageReq
 func (fakeAnalytics) GetCandidate(context.Context, string, string) (*entity.CandidateDetail, error) {
 	return &entity.CandidateDetail{}, nil
 }
+func (fakeAnalytics) ReviewCandidate(context.Context, string, string, string, string) (*entity.CandidateReview, error) {
+	return &entity.CandidateReview{
+		Decision:     "CONFIRMED",
+		ReviewStatus: "REVIEWED",
+		Reviewer:     "HUMAN_OPERATOR",
+	}, nil
+}
 func (fakeAnalytics) ListAnomalies(context.Context, int, string, bool, entity.PageRequest) (entity.Page[entity.Anomaly], error) {
 	return entity.Page[entity.Anomaly]{Items: []entity.Anomaly{}, Limit: 100}, nil
 }
@@ -46,8 +53,16 @@ func (fakeModels) ListModels(context.Context, string) ([]entity.Model, error) {
 	return []entity.Model{}, nil
 }
 
+func (fakeModels) GetModelEvaluation(context.Context, string) (*entity.ModelEvaluation, error) {
+	return &entity.ModelEvaluation{RuntimePackageID: "runtime-test", EvaluationRunID: "eval-test"}, nil
+}
+
 func (fakeModels) ListTrainingReviews(context.Context, int) ([]entity.TrainingReview, error) {
 	return nil, nil
+}
+
+func (fakeModels) ListTrainingReviewQueue(context.Context, []string, entity.PageRequest) (entity.Page[entity.TrainingReviewQueueItem], error) {
+	return entity.Page[entity.TrainingReviewQueueItem]{Items: []entity.TrainingReviewQueueItem{}, Limit: 20}, nil
 }
 
 func (fakeModels) TrainingReadiness(context.Context, []string) (*entity.TrainingReadiness, error) {
@@ -66,8 +81,8 @@ func (fakeModels) StartTrainingJob(context.Context, entity.TrainingJobSpec) (*en
 	}, nil
 }
 
-func (fakeModels) SetModelDeployment(context.Context, string, string, bool) error {
-	return nil
+func (fakeModels) SetModelDeployment(context.Context, string, string, bool, string) (*entity.ModelDeploymentResult, error) {
+	return &entity.ModelDeploymentResult{}, nil
 }
 
 type fakeInference struct{}
@@ -164,7 +179,7 @@ func newTestRouter() *app.Router {
 
 func TestRouterEndpoints(t *testing.T) {
 	router := newTestRouter()
-	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/preprocessing/graph", "/api/v1/gold/control", "/api/v1/gold/snapshots", "/api/v1/gold/snapshots/gold-v1-test", "/api/v1/gold/snapshots/gold-v1-test/artifacts/candidate/42", "/api/v1/ingest/status", "/api/v1/storage?prefix=bronze/&limit=10", "/api/v1/targets", "/api/v1/targets/101?sector=42", "/api/v1/candidates?snapshot_id=gold-v1-test", "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", "/api/v1/lightcurves?tic_id=101&sector=42"} {
+	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/preprocessing/graph", "/api/v1/gold/control", "/api/v1/gold/snapshots", "/api/v1/gold/snapshots/gold-v1-test", "/api/v1/gold/snapshots/gold-v1-test/artifacts/candidate/42", "/api/v1/ingest/status", "/api/v1/storage?prefix=bronze/&limit=10", "/api/v1/targets", "/api/v1/targets/101?sector=42", "/api/v1/candidates?snapshot_id=gold-v1-test", "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", "/api/v1/lightcurves?tic_id=101&sector=42", "/api/v1/models/training-cohort/review-queue?snapshot_id=gold-v1-test"} {
 		req := httptest.NewRequest(http.MethodGet, endpoint, nil)
 		recorder := httptest.NewRecorder()
 		router.ServeHTTP(recorder, req)
@@ -214,6 +229,33 @@ func TestCandidateDetailExposesSeparatePhysicsAndMLAssessments(t *testing.T) {
 	}
 	if value, exists := habitability["ml_score"]; !exists || value != nil {
 		t.Fatalf("unreleased ML score must be present as null, got %#v", value)
+	}
+}
+
+func TestCandidateScientificReviewRoute(t *testing.T) {
+	req := httptest.NewRequest(
+		http.MethodPut,
+		"/api/v1/candidates/prediction-v1/review",
+		strings.NewReader(`{"snapshot_id":"gold-v1-test","decision":"CONFIRMED","note":"Periodic transit evidence survives vetting."}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	newTestRouter().ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("candidate review returned HTTP %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var payload struct {
+		Status string `json:"status"`
+		Review struct {
+			Decision string `json:"decision"`
+			Reviewer string `json:"reviewer"`
+		} `json:"review"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode candidate review response: %v", err)
+	}
+	if payload.Status != "reviewed" || payload.Review.Decision != "CONFIRMED" || payload.Review.Reviewer != "HUMAN_OPERATOR" {
+		t.Fatalf("unexpected candidate review response: %#v", payload)
 	}
 }
 

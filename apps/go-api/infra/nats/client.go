@@ -90,6 +90,26 @@ func (d *Dispatcher) PublishCore(ctx context.Context, subject string, payload []
 	return d.publishCore(ctx, subject, payload)
 }
 
+// RequestCore performs an ephemeral request/reply exchange. It is used for
+// promotion canaries so the serving pointer is committed only after the Rust
+// runtime returns measured validation evidence.
+func (d *Dispatcher) RequestCore(ctx context.Context, subject string, payload []byte) ([]byte, error) {
+	if _, err := d.jetStream(ctx); err != nil {
+		return nil, err
+	}
+	d.mu.Lock()
+	nc := d.nc
+	d.mu.Unlock()
+	if nc == nil || !nc.IsConnected() {
+		return nil, fmt.Errorf("NATS connection is unavailable")
+	}
+	response, err := nc.RequestWithContext(ctx, subject, payload)
+	if err != nil {
+		return nil, fmt.Errorf("request runtime canary: %w", err)
+	}
+	return response.Data, nil
+}
+
 func (d *Dispatcher) Ping(ctx context.Context) error {
 	if _, err := d.jetStream(ctx); err != nil {
 		return err

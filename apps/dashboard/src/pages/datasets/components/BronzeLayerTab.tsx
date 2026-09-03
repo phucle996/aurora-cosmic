@@ -9,8 +9,12 @@ import type { StorageListing } from '@/features/datasets/types';
 import { ObjectBrowserTable } from './ObjectBrowserTable';
 import { SchemaCatalogCard } from './SchemaCatalogCard';
 import {
+  bronzeLightCurveHduSchema,
+  bronzeLightCurvePrimaryHeaderSchema,
   bronzeLightCurveFitsSchema,
   bronzeManifestSchema,
+  bronzeTargetPixelCosmicRaySchema,
+  bronzeTargetPixelHduSchema,
   bronzeTargetPixelFitsSchema,
 } from '@/features/datasets/types';
 
@@ -75,8 +79,12 @@ export function BronzeLayerTab({
       </Card>
 
       <SchemaCatalogCard catalog={bronzeManifestSchema} />
+      <SchemaCatalogCard catalog={bronzeLightCurveHduSchema} />
+      <SchemaCatalogCard catalog={bronzeLightCurvePrimaryHeaderSchema} />
       <SchemaCatalogCard catalog={bronzeLightCurveFitsSchema} />
+      <SchemaCatalogCard catalog={bronzeTargetPixelHduSchema} />
       <SchemaCatalogCard catalog={bronzeTargetPixelFitsSchema} />
+      <SchemaCatalogCard catalog={bronzeTargetPixelCosmicRaySchema} />
     </div>
   );
 }

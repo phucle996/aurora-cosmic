@@ -249,6 +249,7 @@ def test_full_candidate_training_flow_on_cpu():
 
     view = build_candidate_ml_view(manifest, rows)
     split = create_deterministic_group_split(view, seed=42)
+    progress_events = []
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         run_manifest, run_chkpt = train_candidate_model(
@@ -261,11 +262,16 @@ def test_full_candidate_training_flow_on_cpu():
             early_stopping_patience=3,
             dest_dir=tmp_dir,
             device_str="cpu",
+            progress_callback=progress_events.append,
         )
 
         assert isinstance(run_manifest, TrainingRunManifest)
         assert isinstance(run_chkpt, TrainingRunCheckpoint)
         assert run_chkpt.status == "COMPLETED"
+        assert progress_events
+        assert progress_events[-1]["current_epoch"] == run_chkpt.current_epoch
+        assert progress_events[-1]["total_epochs"] == 5
+        assert progress_events[-1]["best_val_loss"] == run_chkpt.best_val_loss
 
         # Check output files exist
         assert os.path.exists(os.path.join(tmp_dir, "model.pt"))

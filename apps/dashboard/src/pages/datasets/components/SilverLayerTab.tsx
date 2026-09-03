@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import type { StorageListing } from '@/features/datasets/types';
 import { ObjectBrowserTable } from './ObjectBrowserTable';
 import { SchemaCatalogCard } from './SchemaCatalogCard';
-import { silverLightCurveSchema, silverTargetPixelSchema } from '@/features/datasets/types';
+import { silverFfiSchema, silverLightCurveSchema, silverTargetPixelSchema } from '@/features/datasets/types';
 
 interface SilverLayerTabProps {
   silverData: StorageListing | null;
@@ -27,6 +27,7 @@ export function SilverLayerTab({
 }: SilverLayerTabProps): JSX.Element {
   const lightCurvePrefix = 'silver/tess/lightcurve/';
   const targetPixelPrefix = 'silver/tess/target-pixel/';
+  const ffiPrefix = 'silver/tess/ffi/';
 
   return (
     <div className="space-y-4">
@@ -36,9 +37,9 @@ export function SilverLayerTab({
             <div>
               <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-primary">Object inspector / silver prefix</p>
               <CardTitle className="mt-1 text-lg">Prepared time-series artifacts</CardTitle>
-              <CardDescription>Light Curve và Target Pixel data đã chuẩn hoá thành Parquet.</CardDescription>
+              <CardDescription>Light Curve, Target Pixel và FFI đã được kiểm tra, chuẩn hoá hoặc tổng hợp thành Parquet.</CardDescription>
             </div>
-            <div className="grid grid-cols-2 gap-2 sm:flex">
+            <div className="grid grid-cols-3 gap-2 sm:flex">
               <Button
                 size="sm"
                 variant={currentPrefix === lightCurvePrefix ? 'default' : 'outline'}
@@ -57,6 +58,15 @@ export function SilverLayerTab({
               >
                 Target pixels
               </Button>
+              <Button
+                size="sm"
+                variant={currentPrefix === ffiPrefix ? 'default' : 'outline'}
+                className="h-9 rounded-none font-mono text-[10px] uppercase"
+                onClick={() => onFilterPreset(ffiPrefix)}
+                aria-pressed={currentPrefix === ffiPrefix}
+              >
+                FFI
+              </Button>
             </div>
           </div>
         </CardHeader>
@@ -73,6 +83,7 @@ export function SilverLayerTab({
 
       <SchemaCatalogCard catalog={silverLightCurveSchema} />
       <SchemaCatalogCard catalog={silverTargetPixelSchema} />
+      <SchemaCatalogCard catalog={silverFfiSchema} />
     </div>
   );
 }

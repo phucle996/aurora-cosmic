@@ -135,10 +135,15 @@ class GoldClickHouseProjector:
                 training_label LowCardinality(String), confidence Float64,
                 label_source LowCardinality(String), review_status LowCardinality(String),
                 train_eligible UInt8, policy_version String, evidence_json String,
+                review_reason String DEFAULT '',
                 updated_at DateTime64(3, 'UTC')
             ) ENGINE = ReplacingMergeTree(updated_at)
             PARTITION BY snapshot_id
             ORDER BY (snapshot_id, source_product_id)"""
+        )
+        self.clickhouse.command(
+            "ALTER TABLE candidate_training_cohort_v1 "
+            "ADD COLUMN IF NOT EXISTS review_reason String DEFAULT ''"
         )
 
     def _project_training_cohort(self, snapshot_id: str, rows: list[dict[str, Any]]) -> dict[str, int]:

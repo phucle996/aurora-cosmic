@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aurora.local/contracts/events/inference-job-completed.schema.json",
+  "title": "Inference Job Completed Event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "event_type",
+    "occurred_at",
+    "task",
+    "job_id",
+    "gold_snapshot_id",
+    "runtime_package_id",
+    "output_bucket",
+    "output_key",
+    "output_sha256",
+    "processed_rows",
+    "producer"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "event_id": { "type": "string", "minLength": 1 },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "aurora.v1.inference.candidate.completed",
+        "aurora.v1.inference.anomaly.completed"
+      ]
+    },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "task": { "type": "string", "minLength": 1 },
+    "job_id": { "type": "string", "minLength": 1 },
+    "gold_snapshot_id": { "type": "string", "minLength": 1 },
+    "runtime_package_id": { "type": "string", "minLength": 1 },
+    "output_bucket": { "type": "string", "minLength": 1 },
+    "output_key": { "type": "string", "pattern": "^predictions/.+\\.jsonl$" },
+    "output_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "processed_rows": { "type": "integer", "minimum": 1 },
+    "producer": { "const": "rust-inference" }
+  }
+}

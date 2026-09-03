@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
 
-import type { CameraMode, CameraState, OrbitViewer3DProps, TrailPoint } from './types';
+import type { CameraMode, CameraState, OrbitViewer3DProps, StarParams, TrailPoint } from './types';
 import { calculateHabitableZone, generateStarfield, getStarColor, solveKeplerOrbit } from './physics';
 import {
   createProjector,
@@ -62,11 +62,28 @@ export function OrbitViewer3D({
   const trailsRef = useRef<Record<number, TrailPoint[]>>({});
 
   // Physics & Styling
-  const hasMeasuredStar = Number.isFinite(star.teff) && Number.isFinite(star.radius) && star.teff > 0 && star.radius > 0;
-  const teff = hasMeasuredStar ? star.teff : 0;
-  const radius = hasMeasuredStar ? star.radius : 0;
-  const hz = calculateHabitableZone(radius, teff);
-  const starStyle = getStarColor(teff);
+  const stableStar = useMemo<StarParams>(() => ({
+    name: star.name,
+    teff: star.teff,
+    radius: star.radius,
+    mass: star.mass,
+    mag: star.mag,
+    luminositySolar: star.luminositySolar,
+    logg: star.logg,
+  }), [
+    star.name,
+    star.teff,
+    star.radius,
+    star.mass,
+    star.mag,
+    star.luminositySolar,
+    star.logg,
+  ]);
+  const hasMeasuredStar = Number.isFinite(stableStar.teff) && Number.isFinite(stableStar.radius) && stableStar.teff > 0 && stableStar.radius > 0;
+  const teff = hasMeasuredStar ? stableStar.teff : 0;
+  const radius = hasMeasuredStar ? stableStar.radius : 0;
+  const hz = useMemo(() => calculateHabitableZone(radius, teff), [radius, teff]);
+  const starStyle = useMemo(() => getStarColor(teff), [teff]);
 
   // Mouse Interaction handlers (Left Drag: Rotate, Shift/Right Drag: Pan, Wheel: Ultra Zoom)
   useEffect(() => {
@@ -150,7 +167,14 @@ export function OrbitViewer3D({
 
     let animationFrameId: number;
 
-    const render = () => {
+    let previousFrameAt: number | undefined;
+    let previousSyncAt = 0;
+
+    const render = (frameAt: number) => {
+      const deltaSeconds = previousFrameAt == null
+        ? 1 / 60
+        : Math.min(Math.max((frameAt - previousFrameAt) / 1_000, 0), 0.05);
+      previousFrameAt = frameAt;
       const width = canvas.clientWidth;
       const height = canvas.clientHeight;
       if (canvas.width !== width || canvas.height !== height) {
@@ -159,7 +183,7 @@ export function OrbitViewer3D({
       }
 
       if (isPlaying) {
-        timeRef.current += 0.016 * speedMultiplier;
+        timeRef.current += deltaSeconds * speedMultiplier;
         if (cameraRef.current.autoRotate && !cameraRef.current.isDragging && cameraMode === 'free') {
           cameraRef.current.targetYaw += 0.0012;
         }
@@ -313,7 +337,7 @@ export function OrbitViewer3D({
 
       renderObjects.forEach((obj) => {
         if (obj.type === 'star') {
-          drawHostStar(ctx, obj.x, obj.y, obj.screenRadius, star, starStyle, timeRef.current);
+          drawHostStar(ctx, obj.x, obj.y, obj.screenRadius, stableStar, starStyle, timeRef.current);
         } else if (obj.planet && obj.index != null) {
           drawPlanet(
             ctx,
@@ -366,7 +390,7 @@ export function OrbitViewer3D({
 
       // Notify Transit Sync Event for Synchronized Light Curve
       const activePlanet = planets[selectedPlanetIndex] ?? planets[0];
-      if (activePlanet && onTimeUpdate) {
+      if (activePlanet && onTimeUpdate && frameAt - previousSyncAt >= 100) {
         const period = Math.max(0.1, activePlanet.periodDays);
         const orbitalSpeedFactor = Math.pow(10.0 / period, 0.65);
         const meanAnom = (activePlanet.initialPhase ?? 0) + (timeRef.current * orbitalSpeedFactor * 0.12) * Math.PI * 2;
@@ -391,6 +415,7 @@ export function OrbitViewer3D({
           transitDepthRatio,
           planetName: activePlanet.name,
         });
+        previousSyncAt = frameAt;
       }
 
       animationFrameId = requestAnimationFrame(render);
@@ -399,7 +424,7 @@ export function OrbitViewer3D({
     animationFrameId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animationFrameId);
   }, [
-    star,
+    stableStar,
     planets,
     isPlaying,
     speedMultiplier,
@@ -471,7 +496,7 @@ export function OrbitViewer3D({
   return (
     <div
       ref={containerRef}
-      className={`relative overflow-hidden rounded-2xl border border-border/80 bg-[#030408] shadow-2xl transition-all duration-300 ${
+      className={`relative overflow-hidden rounded-none border border-border/80 bg-[#030408] shadow-none transition-all duration-300 ${
         isFullscreen ? 'fixed inset-0 z-50 rounded-none' : className
       }`}
       style={{ height: isFullscreen ? '100vh' : height }}
@@ -479,7 +504,7 @@ export function OrbitViewer3D({
       <canvas ref={canvasRef} className="size-full cursor-grab active:cursor-grabbing" />
 
       {/* Top Left System HUD */}
-      <SystemHud star={star} starStyle={starStyle} hz={hz} selectedPlanet={selectedPlanet} />
+      <SystemHud star={stableStar} starStyle={starStyle} hz={hz} selectedPlanet={selectedPlanet} />
 
       {/* Top Right Camera Controls with Deep Zoom & Focus Planet */}
       <CameraControls

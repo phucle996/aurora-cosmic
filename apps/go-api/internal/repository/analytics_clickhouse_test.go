@@ -3,9 +3,10 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"testing"
+
 	"go-api/infra/clickhouse"
 	"go-api/internal/domain/entity"
-	"testing"
 )
 
 func TestUnmarshalClickHouseTargetsJSON(t *testing.T) {
@@ -126,4 +127,45 @@ func TestLiveClickHouseListTargets(t *testing.T) {
 		return
 	}
 	t.Logf("Got total=%d, items=%d, first TICID=%d", page.Count, len(page.Items), page.Items[0].TICID)
+}
+
+func TestApplyTrainingReadinessPolicy(t *testing.T) {
+	tests := []struct {
+		name      string
+		positive  int64
+		negative  int64
+		ready     bool
+		tier      string
+		diversity bool
+	}{
+		{name: "below experimental gate", positive: 81, negative: 22, ready: false, tier: "BLOCKED"},
+		{name: "experimental gate", positive: 60, negative: 60, ready: true, tier: "EXPERIMENTAL"},
+		{name: "production candidate", positive: 100, negative: 100, ready: true, tier: "PRODUCTION_CANDIDATE"},
+		{name: "negative diversity target", positive: 100, negative: 300, ready: true, tier: "PRODUCTION_CANDIDATE", diversity: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			readiness := newTrainingReadiness([]string{"gold-v1-test"})
+			readiness.TotalRows = test.positive + test.negative
+			readiness.PositiveTargets = test.positive
+			readiness.NegativeTargets = test.negative
+			applyTrainingReadinessPolicy(readiness)
+
+			if readiness.Ready != test.ready || readiness.Tier != test.tier {
+				t.Fatalf("got ready=%v tier=%q, want ready=%v tier=%q", readiness.Ready, readiness.Tier, test.ready, test.tier)
+			}
+			if readiness.NegativeDiversityTargetMet != test.diversity {
+				t.Fatalf("got diversity=%v, want %v", readiness.NegativeDiversityTargetMet, test.diversity)
+			}
+		})
+	}
+}
+
+func TestApplyTrainingReadinessPolicyEmptyCohort(t *testing.T) {
+	readiness := newTrainingReadiness([]string{"gold-v1-test"})
+	applyTrainingReadinessPolicy(readiness)
+	if readiness.Ready || readiness.Tier != "BLOCKED" || readiness.Blocker == "" {
+		t.Fatalf("empty cohort must remain blocked: %#v", readiness)
+	}
 }

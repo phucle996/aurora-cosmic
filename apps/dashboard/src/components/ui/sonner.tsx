@@ -9,6 +9,8 @@ const Toaster = ({ ...props }: ToasterProps) => {
     <Sonner
       theme={theme as ToasterProps["theme"]}
       className="toaster group"
+      position="bottom-right"
+      richColors
       icons={{
         success: (
           <CircleCheckIcon className="size-4" />
@@ -35,8 +37,11 @@ const Toaster = ({ ...props }: ToasterProps) => {
         } as React.CSSProperties
       }
       toastOptions={{
+        duration: 4500,
         classNames: {
-          toast: "cn-toast",
+          toast: "cn-toast shadow-xl",
+          title: "font-medium",
+          description: "opacity-90",
         },
       }}
       {...props}

@@ -259,11 +259,34 @@ CREATE TABLE IF NOT EXISTS aurora.candidate_training_cohort_v1 (
     train_eligible UInt8,
     policy_version String,
     evidence_json String,
+    review_reason String DEFAULT '',
     updated_at DateTime64(3, 'UTC')
 )
 ENGINE = ReplacingMergeTree(updated_at)
 PARTITION BY snapshot_id
 ORDER BY (snapshot_id, source_product_id);
+
+ALTER TABLE aurora.candidate_training_cohort_v1
+    ADD COLUMN IF NOT EXISTS review_reason String DEFAULT '' AFTER evidence_json;
+
+-- Scientific adjudication belongs to the research workflow, not to the
+-- supervised-training label overlay. ReplacingMergeTree keeps the latest
+-- decision while preserving immutable candidate and Gold records.
+CREATE TABLE IF NOT EXISTS aurora.candidate_scientific_reviews_v1 (
+    snapshot_id String,
+    prediction_id String,
+    source_product_id String,
+    tic_id Int64,
+    sector Int32,
+    scientific_decision LowCardinality(String),
+    review_status LowCardinality(String),
+    reviewer String,
+    review_note String,
+    updated_at DateTime64(3, 'UTC')
+)
+ENGINE = ReplacingMergeTree(updated_at)
+PARTITION BY snapshot_id
+ORDER BY (snapshot_id, prediction_id);
 
 -- Anomaly Light Curve Projection Table
 CREATE TABLE IF NOT EXISTS aurora.anomaly_lightcurve_v1 (

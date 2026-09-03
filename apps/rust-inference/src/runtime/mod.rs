@@ -241,6 +241,25 @@ fn ort_error(error: impl std::fmt::Display) -> RuntimeError {
     RuntimeError::Ort(error.to_string())
 }
 
+fn build_cpu_session(model_bytes: &[u8], threads: usize) -> Result<Session, RuntimeError> {
+    let mut builder = Session::builder().map_err(ort_error)?;
+    builder = builder.with_intra_threads(threads).map_err(ort_error)?;
+    builder.commit_from_memory(model_bytes).map_err(ort_error)
+}
+
+fn build_cuda_session(model_bytes: &[u8], threads: usize) -> Result<Session, RuntimeError> {
+    let mut builder = Session::builder().map_err(ort_error)?;
+    builder = builder.with_intra_threads(threads).map_err(ort_error)?;
+    builder = builder
+        .with_execution_providers([ep::CUDA::default()
+            .with_device_id(0)
+            .with_conv_algorithm_search(ep::cuda::ConvAlgorithmSearch::Heuristic)
+            .build()
+            .error_on_failure()])
+        .map_err(ort_error)?;
+    builder.commit_from_memory(model_bytes).map_err(ort_error)
+}
+
 fn parity_within_tolerance(actual: f64, expected: f64, atol: f64, rtol: f64) -> bool {
     (actual - expected).abs() <= atol + rtol * expected.abs()
 }
@@ -257,7 +276,7 @@ pub struct OnnxRuntime {
 
 impl OnnxRuntime {
     pub fn load(package_dir: &Path, intra_threads: usize) -> Result<Self, RuntimeError> {
-        Self::load_with_device(package_dir, intra_threads, "cuda")
+        Self::load_with_device(package_dir, intra_threads, "auto")
     }
 
     pub fn load_with_device(
@@ -265,10 +284,10 @@ impl OnnxRuntime {
         intra_threads: usize,
         device: &str,
     ) -> Result<Self, RuntimeError> {
-        if device != "cuda" {
-            return Err(RuntimeError::InvalidPackage(
-                "GPU-only inference requires device=cuda; CPU fallback is disabled".to_string(),
-            ));
+        if !matches!(device, "auto" | "cuda" | "cpu") {
+            return Err(RuntimeError::InvalidPackage(format!(
+                "unsupported inference device '{device}'"
+            )));
         }
         let manifest_bytes = fs::read(package_dir.join("manifest.json"))?;
         let manifest: ModelRuntimeManifest = serde_json::from_slice(&manifest_bytes)?;
@@ -314,18 +333,21 @@ impl OnnxRuntime {
         // previous worker already initialized it, which is safe and expected.
         ort::init().with_name("aurora-inference").commit();
         let threads = intra_threads.max(1);
-        let mut builder = Session::builder().map_err(ort_error)?;
-        builder = builder.with_intra_threads(threads).map_err(ort_error)?;
-        builder = builder
-            .with_execution_providers([ep::CUDA::default()
-                .with_device_id(0)
-                .with_conv_algorithm_search(ep::cuda::ConvAlgorithmSearch::Heuristic)
-                .build()
-                .error_on_failure()])
-            .map_err(ort_error)?;
-        let session = builder
-            .commit_from_memory(&model_bytes)
-            .map_err(ort_error)?;
+        let session = match device {
+            "cuda" => build_cuda_session(&model_bytes, threads)?,
+            "cpu" => build_cpu_session(&model_bytes, threads)?,
+            "auto" => match build_cuda_session(&model_bytes, threads) {
+                Ok(session) => session,
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error,
+                        "CUDA execution provider unavailable; using CPU execution provider"
+                    );
+                    build_cpu_session(&model_bytes, threads)?
+                }
+            },
+            _ => unreachable!("device was validated above"),
+        };
         validate_session_shape(&manifest, &session)?;
 
         Ok(Self {
@@ -439,6 +461,13 @@ fn validate_session_shape(
 pub fn validate_runtime_package_parity(
     package_dir: &Path,
 ) -> Result<ModelRuntimeValidationRecord, RuntimeError> {
+    validate_runtime_package_parity_with_device(package_dir, "auto")
+}
+
+pub fn validate_runtime_package_parity_with_device(
+    package_dir: &Path,
+    device: &str,
+) -> Result<ModelRuntimeValidationRecord, RuntimeError> {
     let manifest_path = package_dir.join("manifest.json");
     let onnx_path = package_dir.join("model.onnx");
     let prep_path = package_dir.join("preprocessing.json");
@@ -513,7 +542,7 @@ pub fn validate_runtime_package_parity(
             "parity fixture does not match runtime manifest".to_string(),
         ));
     }
-    let mut onnx_runtime = OnnxRuntime::load_with_device(package_dir, 1, "cuda")?;
+    let mut onnx_runtime = OnnxRuntime::load_with_device(package_dir, 1, device)?;
 
     // 4. Validate preprocessing and numerical scoring on each fixture case
     let mut max_abs_error: f64 = 0.0;

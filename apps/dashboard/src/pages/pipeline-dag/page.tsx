@@ -93,12 +93,14 @@ export default function PipelineDagPage(): JSX.Element {
   const [goldControl, setGoldControl] = useState<GoldControlOverview>();
   const [runs, setRuns] = useState<FactoryRun[]>([]);
   const [historicalRun, setHistoricalRun] = useState<FactoryRunDetail>();
-  const [selectedHop, setSelectedHop] = useState<Hop>();
+  const [liveEvidenceRun, setLiveEvidenceRun] = useState<FactoryRunDetail>();
+  const [selectedHopID, setSelectedHopID] = useState<string>();
   const [drawerPortal, setDrawerPortal] = useState<HTMLElement | null>(null);
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(false);
   const refreshTimer = useRef<number | undefined>(undefined);
+  const liveEvidenceCache = useRef<{ key: string; detail: FactoryRunDetail }>();
 
   const loadOverview = useCallback(async (showLoading = true): Promise<void> => {
     if (showLoading) setLoading(true);
@@ -111,6 +113,27 @@ export default function PipelineDagPage(): JSX.Element {
       setGraph(normalizePreprocessingGraph(nextGraph));
       setGoldControl(nextGoldControl);
       setRuns(nextRuns.items ?? []);
+      const liveRunID = nextGoldControl.runtime?.command_id || nextGoldControl.control?.command_id;
+      const committedSnapshotID = nextGoldControl.runtime?.last_snapshot_id ?? '';
+      if (liveRunID && committedSnapshotID) {
+        const evidenceKey = `${liveRunID}:${committedSnapshotID}`;
+        if (liveEvidenceCache.current?.key === evidenceKey) {
+          setLiveEvidenceRun(liveEvidenceCache.current.detail);
+        } else {
+          try {
+            const detail = await apiFetch<FactoryRunDetail>(`/v1/data-factory/runs/${encodeURIComponent(liveRunID)}`);
+            liveEvidenceCache.current = { key: evidenceKey, detail };
+            setLiveEvidenceRun(detail);
+          } catch {
+            // A control ticket can exist briefly before its durable run ledger is queryable.
+            // Keep runtime telemetry visible and retry only when the next SSE update arrives.
+            setLiveEvidenceRun(undefined);
+          }
+        }
+      } else {
+        liveEvidenceCache.current = undefined;
+        setLiveEvidenceRun(undefined);
+      }
       setError(undefined);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Không tải được Data Factory footprint');
@@ -144,7 +167,7 @@ export default function PipelineDagPage(): JSX.Element {
   }, [loadOverview]);
 
   useEffect(() => {
-    setSelectedHop(undefined);
+    setSelectedHopID(undefined);
     void loadRun(selectedRunID);
   }, [loadRun, selectedRunID]);
 
@@ -180,6 +203,7 @@ export default function PipelineDagPage(): JSX.Element {
 
   const hops = useMemo<Hop[]>(() => {
     const isHistory = Boolean(selectedRunID);
+    const evidenceRun = historicalRun ?? (isHistory ? undefined : liveEvidenceRun);
     const bronzePending = isHistory ? 0 : graph?.progress?.bronze_pending ?? 0;
     const silverTotal = isHistory ? 0 : graph?.progress?.silver_total ?? 0;
     const goldTotal = historicalRun?.run.completed_batches ?? graph?.progress?.gold_total ?? 0;
@@ -192,7 +216,7 @@ export default function PipelineDagPage(): JSX.Element {
     const encodeFailuresByHop = new Map((graph?.hops ?? []).map((hop) => [hop.id, hop.encode_failures]));
     const silverFailuresByHop = new Map((graph?.hops ?? []).map((hop) => [hop.id, hop.silver_failures]));
     const checkpointPointsByHop = new Map((graph?.hops ?? []).map((hop) => [hop.id, hop.checkpoint_points]));
-    const historyEvents = historicalRun?.components ?? [];
+    const historyEvents = evidenceRun?.components ?? [];
     const upstreamEvidence = (id: string): boolean => {
       if (id === 'bronze') return (graph?.progress?.bronze_total ?? 0) > 0 && (graph?.progress?.bronze_bytes ?? 0) > 0;
       if (id === 'route') return (graph?.progress?.bronze_total ?? 0) > 0;
@@ -219,7 +243,7 @@ export default function PipelineDagPage(): JSX.Element {
     const completedEvents = (id: string) => historyEvents.filter((event) => event.component_id === id && event.status.toUpperCase() === 'COMPLETED');
     const componentMetrics = (id: string, fallbackInput = 0, fallbackOutput = 0, fallbackIndexed = 0): Record<string, number> => {
       const events = completedEvents(id);
-      if (events.length === 0) return { input_records: fallbackInput, output_rows: fallbackOutput, indexed_rows: fallbackIndexed, completed_batches: historicalRun?.run.completed_batches ?? 0 };
+      if (events.length === 0) return { input_records: fallbackInput, output_rows: fallbackOutput, indexed_rows: fallbackIndexed, completed_batches: evidenceRun?.run.completed_batches ?? 0 };
       return {
         input_records: events.reduce((sum, event) => sum + event.input_records, 0),
         output_rows: events.reduce((sum, event) => sum + event.output_rows, 0),
@@ -237,9 +261,9 @@ export default function PipelineDagPage(): JSX.Element {
       })).filter((point) => Number.isFinite(point.timestamp));
       return { input_records: points('input_records'), output_rows: points('output_rows'), indexed_rows: points('indexed_rows') };
     };
-    const completedBatchEvidence = (historicalRun?.batches ?? []).some((batch) => batch.status.toUpperCase() === 'COMPLETED' && batch.input_records > 0);
+    const completedBatchEvidence = (evidenceRun?.batches ?? []).some((batch) => batch.status.toUpperCase() === 'COMPLETED' && batch.input_records > 0);
     const coarseFeatureEvidence = historyEvents.some((event) => event.component_id === 'gold-features' && event.status.toUpperCase() === 'COMPLETED' && event.input_records > 0 && event.output_rows > 0 && Boolean(event.snapshot_id));
-    const commitEvidence = (historicalRun?.batches ?? []).some((batch) => batch.status.toUpperCase() === 'COMPLETED' && batch.candidate_rows > 0 && batch.indexed_rows > 0 && Boolean(batch.snapshot_id));
+    const commitEvidence = (evidenceRun?.batches ?? []).some((batch) => batch.status.toUpperCase() === 'COMPLETED' && batch.candidate_rows > 0 && batch.indexed_rows > 0 && Boolean(batch.snapshot_id));
     const finePhaseStatus = (id: string): HopStatus => {
       const directEvidence = completedEvents(id).some((event) => event.input_records > 0 && Boolean(event.snapshot_id));
       return evidencedPhaseStatus(id, directEvidence || coarseFeatureEvidence, runStatus);
@@ -265,7 +289,9 @@ export default function PipelineDagPage(): JSX.Element {
     const liveCatalogRecords = (catalog?.tic_records ?? 0) + (catalog?.toi_records ?? 0);
     const historicalInputs = historicalRun?.run.input_records ?? 0;
     const historicalOutputs = historicalRun?.run.output_rows ?? 0;
-    const artifactCount = (historicalRun?.batches ?? []).reduce((sum, batch) => sum + batch.artifact_count, 0);
+    const evidenceInputs = evidenceRun?.run.input_records ?? 0;
+    const evidenceOutputs = evidenceRun?.run.output_rows ?? 0;
+    const artifactCount = (evidenceRun?.batches ?? []).reduce((sum, batch) => sum + batch.artifact_count, 0);
 
     const pipelineHops: Hop[] = [
       { id: 'bronze', stepNumber: '01', label: 'Bronze Verify & Fetch', shortTitle: 'Verified source FITS', description: 'Verifies Bronze object identity, size and checksum before local staging.', astronomyGoal: isHistory ? historicalScope : `${bronzePending.toLocaleString()} processable FITS remain without a completed Silver checkpoint.`, contract: 'bronze/tess/<product>/sector=<sector>/tic=<tic>/', status: upstreamStatus('bronze'), input: 'NASA MAST FITS', output: 'Verified local FITS', metrics: isHistory ? undefined : metricsByHop.get('bronze'), telemetry: isHistory ? undefined : telemetryByHop.get('bronze') },
@@ -283,20 +309,30 @@ export default function PipelineDagPage(): JSX.Element {
       { id: 'ack', stepNumber: '10', label: 'Bronze Delivery Finalization', shortTitle: 'Durable ACK reconciliation', description: 'Advances the durable consumer ACK floor only after Silver-ready publication succeeds.', astronomyGoal: isHistory ? historicalScope : 'Prove that every Bronze stream position is finalized without confusing redelivery attempts with new data.', contract: 'AURORA_BRONZE · aurora-rust-preprocessor ACK floor', status: upstreamStatus('ack'), input: 'Published Silver-ready event', output: 'Finalized Bronze delivery', metrics: isHistory ? undefined : metricsByHop.get('ack'), telemetry: isHistory ? undefined : telemetryByHop.get('ack') },
       { id: 'gold-pairing', stepNumber: 'G01', label: 'LC + TPF Pairing & Batch Readiness', shortTitle: 'Research-ready target pairs', description: 'Pairs each Silver light curve with its durable Target Pixel context before scientific enrichment.', astronomyGoal: historicalRun ? `${historicalInputs.toLocaleString()} targets entered completed Gold batches.` : `${liveReady.toLocaleString()} eligible LC/TPF pairs; ${(readiness?.missing_tpf ?? 0).toLocaleString()} LC still miss TPF evidence.`, contract: 'research-ready-target-pair-v4', status: historicalRun ? evidencedPhaseStatus('gold-pairing', completedEvents('gold-pairing').some((event) => event.input_records > 0) || completedBatchEvidence, runStatus) : liveFineStatus(0), input: 'Pending Silver Light Curves + TPF contexts', output: 'Eligible target pairs', metrics: historicalRun ? componentMetrics('gold-pairing', historicalInputs, historicalOutputs) : { readiness_observed: readiness ? 1 : 0, input_records: livePendingLC, output_rows: liveReady, pending_lightcurves: livePendingLC, pending_target_pixels: goldControl?.runtime?.pending_by_kind?.TARGET_PIXEL ?? 0, ready_lightcurves: liveReady, waiting_lightcurves: readiness?.waiting_lightcurves ?? 0, missing_tpf: readiness?.missing_tpf ?? 0, tpf_contexts: liveTPF, contracted_lightcurves: readiness?.contracted_lightcurves ?? 0, uncontracted_lightcurves: readiness?.uncontracted_lightcurves ?? 0, max_batch_records: goldControl?.runtime?.max_batch_records ?? 0, idle_flush_seconds: goldControl?.runtime?.idle_flush_seconds ?? 0, active_builds: goldControl?.runtime?.active_builds ?? 0, pending_total: livePending }, telemetry: historicalRun ? componentTelemetry('gold-pairing') : undefined },
       { id: 'gold-catalog', stepNumber: 8, label: 'TIC + TOI Catalog Resolution', shortTitle: 'Verified stellar context', description: 'Resolves immutable TIC stellar parameters and TOI reference evidence for the active target batch.', astronomyGoal: historicalRun ? `${historicalInputs.toLocaleString()} targets have durable catalog enrichment evidence in the selected run.` : catalog?.target_count ? `${catalog.tic_records.toLocaleString()}/${catalog.target_count.toLocaleString()} targets have required TIC context; ${catalog.toi_records.toLocaleString()} TOI association rows observed.` : 'No batch-scoped catalog sync has started.', contract: 'catalog-enrichment-v4', status: historicalRun ? phaseStatus('gold-catalog', 1) : catalogSyncStatus(catalog?.state), input: 'Eligible target pairs', output: 'Verified TIC + TOI context', metrics: historicalRun ? componentMetrics('gold-catalog', historicalInputs, 0) : { catalog_observed: catalog ? 1 : 0, input_records: catalog?.target_count ?? 0, output_rows: liveCatalogRecords, catalog_target_count: catalog?.target_count ?? 0, tic_records: catalog?.tic_records ?? 0, toi_records: catalog?.toi_records ?? 0, catalog_snapshot_count: Object.keys(catalog?.snapshot_ids ?? {}).length, catalog_cache_hit: catalog?.cache_hit ? 1 : 0 }, details: historicalRun ? undefined : { catalog_state: catalog?.state ?? 'IDLE', catalog_mode: catalog?.mode ?? 'ON_DEMAND', tic_snapshot_id: catalog?.snapshot_ids?.TIC ?? '', toi_snapshot_id: catalog?.snapshot_ids?.TOI ?? '', catalog_error: catalog?.error ?? '' }, telemetry: historicalRun ? componentTelemetry('gold-catalog') : undefined },
-      { id: 'gold-lc-features', stepNumber: 9, label: 'Light-Curve Statistical Features', shortTitle: 'Cadence and variability evidence', description: 'Computes time coverage, cadence, robust flux distribution, uncertainty and variability summaries.', astronomyGoal: 'Produce deterministic light-curve feature records with a versioned scientific fingerprint.', contract: 'lc-features-v1', status: phaseStatus('gold-lc-features', 2), input: 'Paired Silver light curve', output: 'LC statistical feature rows', metrics: historicalRun ? componentMetrics('gold-lc-features', historicalInputs, historicalOutputs) : { input_records: liveReady, output_rows: 0 }, lc_feature_evidence: historicalRun?.scientific_evidence?.lc_features, telemetry: historicalRun ? componentTelemetry('gold-lc-features') : undefined },
-      { id: 'gold-bls', stepNumber: 10, label: 'Box Least Squares Transit Search', shortTitle: 'Periodic transit evidence', description: 'Searches a bounded period-duration grid and records the strongest BLS period, epoch, duration, depth and power.', astronomyGoal: 'Separate an executed search from scientifically unavailable BLS evidence caused by insufficient baseline.', formula: 'arg max P_BLS(period, duration)', contract: 'astropy-box-least-squares / lc-features-v1', status: phaseStatus('gold-bls', 3), input: 'LC statistical feature rows', output: 'BLS transit-search evidence', metrics: historicalRun ? componentMetrics('gold-bls', historicalInputs, 0) : { input_records: liveReady, output_rows: 0 }, bls_search_evidence: historicalRun?.scientific_evidence?.bls_search, telemetry: historicalRun ? componentTelemetry('gold-bls') : undefined },
-      { id: 'gold-tpf-evidence', stepNumber: 11, label: 'TPF Spatial Transit Evidence', shortTitle: 'Pixel-level source evidence', description: 'Measures transit-window pixel deficits, centroids and center offset from the paired Target Pixel cube.', astronomyGoal: 'Test whether the flux deficit is spatially consistent with the target rather than a nearby contaminant.', contract: 'tpf-vetting-v2', status: phaseStatus('gold-tpf-evidence', 4), input: 'Paired Silver TPF + BLS ephemeris', output: 'Spatial transit evidence', metrics: historicalRun ? componentMetrics('gold-tpf-evidence', historicalInputs, historicalOutputs) : { input_records: liveTPF, output_rows: 0 }, tpf_spatial_evidence: historicalRun?.scientific_evidence?.tpf_spatial, telemetry: historicalRun ? componentTelemetry('gold-tpf-evidence') : undefined },
-      { id: 'gold-candidate', stepNumber: 12, label: 'Candidate Evidence Assembly', shortTitle: 'Research candidate rows', description: 'Combines LC, BLS, TPF and catalog evidence into the canonical candidate schema.', astronomyGoal: historicalRun ? `${historicalOutputs.toLocaleString()} canonical candidate rows are attributable to the selected run.` : 'No candidate assembly run is active.', contract: 'gold-candidate-v4', status: phaseStatus('gold-candidate', 5), input: 'LC features + paired TPF + catalog context', output: 'Canonical candidate rows', metrics: historicalRun ? componentMetrics('gold-candidate', historicalInputs, historicalOutputs) : { input_records: liveReady + liveTPF, output_rows: 0 }, candidate_assembly_evidence: historicalRun?.scientific_evidence?.candidate_assembly, telemetry: historicalRun ? componentTelemetry('gold-candidate') : undefined },
-      { id: 'gold-parquet', stepNumber: 13, label: 'Gold Parquet Materialization', shortTitle: 'Immutable candidate artifacts', description: 'Writes partitioned candidate Parquet and verifies manifest, row accounting, object size and digest declarations.', astronomyGoal: historicalRun ? `${artifactCount.toLocaleString()} Gold Parquet artifacts are recorded for the selected run.` : 'No Gold materialization run is active.', contract: 'gold/snapshots/<snapshot-id>/data/candidate/', status: phaseStatus('gold-parquet', 6), input: 'Canonical candidate rows', output: 'Checksummed Gold Parquet', metrics: historicalRun ? componentMetrics('gold-parquet', historicalOutputs, artifactCount) : { input_records: liveReady, output_rows: goldTotal }, gold_materialization_evidence: historicalRun?.scientific_evidence?.gold_materialization, telemetry: historicalRun ? componentTelemetry('gold-parquet') : undefined },
-      { id: 'gold-index', stepNumber: 14, label: 'Gold Analytical Projection', shortTitle: 'Queryable candidate rows', description: 'Projects candidate rows, exact Light Curve samples and reviewable cohorts into the analytical store.', astronomyGoal: historicalRun ? `${historicalRun.run.indexed_rows.toLocaleString()} candidate rows are recorded as indexed for this run.` : 'No Gold analytical projection run is active.', contract: 'candidate-features-v1', status: phaseStatus('gold-index', 7), input: 'Checksummed Gold Parquet', output: 'Queryable Gold rows', metrics: historicalRun ? componentMetrics('gold-index', historicalOutputs, historicalOutputs, historicalRun.run.indexed_rows) : { input_records: liveReady, indexed_rows: 0 }, gold_projection_evidence: historicalRun?.scientific_evidence?.gold_projection, telemetry: historicalRun ? componentTelemetry('gold-index') : undefined },
-      { id: 'gold-commit', stepNumber: 15, label: 'Gold Snapshot Manifest Commit', shortTitle: 'Immutable Gold snapshot', description: 'Commits the snapshot manifest only after artifacts and analytical rows are verified.', astronomyGoal: historicalRun ? `${historicalRun.run.completed_batches.toLocaleString()} snapshots committed with complete provenance.` : `${goldTotal.toLocaleString()} Gold objects are currently stored.`, contract: 'gold/snapshots/<snapshot-id>/manifest.json', status: goldCommitStatus, input: 'Gold Parquet + analytical projection', output: 'Model-ready Gold footprint', metrics: historicalRun ? { input_records: historicalOutputs, output_rows: historicalOutputs, gold_rows: historicalOutputs, indexed_rows: historicalRun.run.indexed_rows, completed_batches: historicalRun.run.completed_batches } : { input_records: liveReady, gold_objects: goldTotal }, gold_commit_evidence: historicalRun?.scientific_evidence?.gold_commit, telemetry: historicalRun ? componentTelemetry('gold-commit') : undefined },
+      { id: 'gold-lc-features', stepNumber: 9, label: 'Light-Curve Statistical Features', shortTitle: 'Cadence and variability evidence', description: 'Computes time coverage, cadence, robust flux distribution, uncertainty and variability summaries.', astronomyGoal: 'Produce deterministic light-curve feature records with a versioned scientific fingerprint.', contract: 'lc-features-v1', status: phaseStatus('gold-lc-features', 2), input: 'Paired Silver light curve', output: 'LC statistical feature rows', metrics: evidenceRun ? componentMetrics('gold-lc-features', evidenceInputs, evidenceOutputs) : { input_records: liveReady, output_rows: 0 }, lc_feature_evidence: evidenceRun?.scientific_evidence?.lc_features, telemetry: evidenceRun ? componentTelemetry('gold-lc-features') : undefined },
+      { id: 'gold-bls', stepNumber: 10, label: 'Box Least Squares Transit Search', shortTitle: 'Periodic transit evidence', description: 'Searches a bounded period-duration grid and records the strongest BLS period, epoch, duration, depth and power.', astronomyGoal: 'Separate an executed search from scientifically unavailable BLS evidence caused by insufficient baseline.', formula: 'arg max P_BLS(period, duration)', contract: 'astropy-box-least-squares / lc-features-v1', status: phaseStatus('gold-bls', 3), input: 'LC statistical feature rows', output: 'BLS transit-search evidence', metrics: evidenceRun ? componentMetrics('gold-bls', evidenceInputs, 0) : { input_records: liveReady, output_rows: 0 }, bls_search_evidence: evidenceRun?.scientific_evidence?.bls_search, telemetry: evidenceRun ? componentTelemetry('gold-bls') : undefined },
+      { id: 'gold-tpf-evidence', stepNumber: 11, label: 'TPF Spatial Transit Evidence', shortTitle: 'Pixel-level source evidence', description: 'Measures transit-window pixel deficits, centroids and center offset from the paired Target Pixel cube.', astronomyGoal: 'Test whether the flux deficit is spatially consistent with the target rather than a nearby contaminant.', contract: 'tpf-vetting-v2', status: phaseStatus('gold-tpf-evidence', 4), input: 'Paired Silver TPF + BLS ephemeris', output: 'Spatial transit evidence', metrics: evidenceRun ? componentMetrics('gold-tpf-evidence', evidenceInputs, evidenceOutputs) : { input_records: liveTPF, output_rows: 0 }, tpf_spatial_evidence: evidenceRun?.scientific_evidence?.tpf_spatial, telemetry: evidenceRun ? componentTelemetry('gold-tpf-evidence') : undefined },
+      { id: 'gold-candidate', stepNumber: 12, label: 'Candidate Evidence Assembly', shortTitle: 'Research candidate rows', description: 'Combines LC, BLS, TPF and catalog evidence into the canonical candidate schema.', astronomyGoal: historicalRun ? `${historicalOutputs.toLocaleString()} canonical candidate rows are attributable to the selected run.` : evidenceRun ? `${evidenceOutputs.toLocaleString()} canonical candidate rows are attributable to the latest committed evidence.` : 'No candidate assembly run is active.', contract: 'gold-candidate-v4', status: phaseStatus('gold-candidate', 5), input: 'LC features + paired TPF + catalog context', output: 'Canonical candidate rows', metrics: evidenceRun ? componentMetrics('gold-candidate', evidenceInputs, evidenceOutputs) : { input_records: liveReady + liveTPF, output_rows: 0 }, candidate_assembly_evidence: evidenceRun?.scientific_evidence?.candidate_assembly, telemetry: evidenceRun ? componentTelemetry('gold-candidate') : undefined },
+      { id: 'gold-parquet', stepNumber: 13, label: 'Gold Parquet Materialization', shortTitle: 'Immutable candidate artifacts', description: 'Writes partitioned candidate Parquet and verifies manifest, row accounting, object size and digest declarations.', astronomyGoal: evidenceRun ? `${artifactCount.toLocaleString()} Gold Parquet artifacts are recorded for the committed evidence.` : 'No Gold materialization run is active.', contract: 'gold/snapshots/<snapshot-id>/data/candidate/', status: phaseStatus('gold-parquet', 6), input: 'Canonical candidate rows', output: 'Checksummed Gold Parquet', metrics: evidenceRun ? componentMetrics('gold-parquet', evidenceOutputs, artifactCount) : { input_records: liveReady, output_rows: goldTotal }, gold_materialization_evidence: evidenceRun?.scientific_evidence?.gold_materialization, telemetry: evidenceRun ? componentTelemetry('gold-parquet') : undefined },
+      { id: 'gold-index', stepNumber: 14, label: 'Gold Analytical Projection', shortTitle: 'Queryable candidate rows', description: 'Projects candidate rows, exact Light Curve samples and reviewable cohorts into the analytical store.', astronomyGoal: evidenceRun ? `${evidenceRun.run.indexed_rows.toLocaleString()} candidate rows are recorded as indexed for the committed evidence.` : 'No Gold analytical projection run is active.', contract: 'candidate-features-v1', status: phaseStatus('gold-index', 7), input: 'Checksummed Gold Parquet', output: 'Queryable Gold rows', metrics: evidenceRun ? componentMetrics('gold-index', evidenceOutputs, evidenceOutputs, evidenceRun.run.indexed_rows) : { input_records: liveReady, indexed_rows: 0 }, gold_projection_evidence: evidenceRun?.scientific_evidence?.gold_projection, telemetry: evidenceRun ? componentTelemetry('gold-index') : undefined },
+      { id: 'gold-commit', stepNumber: 15, label: 'Gold Snapshot Manifest Commit', shortTitle: 'Immutable Gold snapshot', description: 'Commits the snapshot manifest only after artifacts and analytical rows are verified.', astronomyGoal: historicalRun ? `${historicalRun.run.completed_batches.toLocaleString()} snapshots committed with complete provenance.` : evidenceRun ? `${evidenceRun.run.completed_batches.toLocaleString()} snapshots committed with complete provenance in the current run.` : `${goldTotal.toLocaleString()} Gold objects are currently stored.`, contract: 'gold/snapshots/<snapshot-id>/manifest.json', status: goldCommitStatus, input: 'Gold Parquet + analytical projection', output: 'Model-ready Gold footprint', metrics: evidenceRun ? { input_records: evidenceOutputs, output_rows: evidenceOutputs, gold_rows: evidenceOutputs, indexed_rows: evidenceRun.run.indexed_rows, completed_batches: evidenceRun.run.completed_batches } : { input_records: liveReady, gold_objects: goldTotal }, gold_commit_evidence: evidenceRun?.scientific_evidence?.gold_commit, telemetry: evidenceRun ? componentTelemetry('gold-commit') : undefined },
     ];
     const goldPhaseOrder = ['gold-pairing', 'gold-catalog', 'gold-lc-features', 'gold-bls', 'gold-tpf-evidence', 'gold-candidate', 'gold-parquet', 'gold-index', 'gold-commit'];
-    return pipelineHops.map((hop) => {
+    const numberedHops = pipelineHops.map((hop) => {
       const goldIndex = goldPhaseOrder.indexOf(hop.id);
       return goldIndex >= 0 ? { ...hop, stepNumber: `G${String(goldIndex + 1).padStart(2, '0')}` } : hop;
     });
-  }, [goldControl, graph, historicalRun, selectedRunID]);
+    // A selected factory run is scoped to Silver → Gold. Keeping the live
+    // Bronze → Silver graph in that view creates drawers with intentionally
+    // absent metrics and makes those nodes look like incomplete run phases.
+    return isHistory ? numberedHops.filter((hop) => goldPhaseOrder.includes(hop.id)) : numberedHops;
+  }, [goldControl, graph, historicalRun, liveEvidenceRun, selectedRunID]);
+
+  const selectedHop = selectedHopID ? hops.find((hop) => hop.id === selectedHopID) : undefined;
+  const visibleConnections = useMemo(() => {
+    const visibleHopIDs = new Set(hops.map((hop) => hop.id));
+    return dagConnections.filter((connection) => visibleHopIDs.has(connection.source) && visibleHopIDs.has(connection.target));
+  }, [hops]);
 
   const run = historicalRun?.run;
   const summary = run ? [
@@ -334,15 +370,15 @@ export default function PipelineDagPage(): JSX.Element {
         <CardContent className="grid gap-px bg-border/60 p-0 sm:grid-cols-2 xl:grid-cols-5">{summary.map(([label, value, detail]) => <SummaryCell key={label} label={label} value={value} detail={detail} />)}</CardContent>
       </Card>
 
-      {selectedRunID ? <div className="flex flex-wrap items-center gap-2 border border-primary/30 bg-primary/5 px-3 py-2 text-xs"><History className="size-3.5 text-primary" /><span>Historical analysis</span><span className="font-mono text-primary">{selectedRunID}</span><span className="text-muted-foreground">· Silver→Gold run scope</span></div> : null}
+      {selectedRunID ? <div className="flex flex-wrap items-center gap-2 border border-primary/30 bg-primary/5 px-3 py-2 text-xs"><History className="size-3.5 text-primary" /><span>Historical analysis</span><span className="font-mono text-primary">{selectedRunID}</span><span className="text-muted-foreground">· G01–G09 only · Bronze→Silver belongs to a different run scope</span></div> : null}
       {error ? <div className="flex items-center gap-2 border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"><AlertCircle className="size-4" />{error}</div> : null}
 
       {loading && !graph ? <div className="flex items-center justify-center gap-2 border border-dashed border-border/70 py-24 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />Đang tải pipeline contracts…</div> : historyLoading && selectedRunID && !historicalRun ? <div className="flex items-center justify-center gap-2 border border-dashed border-border/70 py-24 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />Đang nạp durable run…</div> : selectedRunID && !historicalRun ? <div className="flex items-center justify-center border border-dashed border-destructive/40 py-24 text-sm text-destructive">Không thể nạp evidence cho run đã chọn; DAG live không được dùng thay thế.</div> : (
-        <PipelineDagCanvas hops={hops} layout="branched" connections={dagConnections} onSelectHop={(id) => setSelectedHop(hops.find((hop) => hop.id === id))} onPortalContainerChange={setDrawerPortal} />
+        <PipelineDagCanvas hops={hops} layout="branched" connections={visibleConnections} onSelectHop={setSelectedHopID} onPortalContainerChange={setDrawerPortal} />
       )}
 
       {historicalRun ? <PhaseLedger detail={historicalRun} /> : null}
-      <HopDetailDrawer selectedHop={selectedHop} onClose={() => setSelectedHop(undefined)} mode={graph?.run?.mode === 'stream' ? 'stream' : 'batch'} totalFiles={historicalRun?.run.input_records ?? graph?.progress?.bronze_total ?? 0} portalContainer={drawerPortal} />
+      <HopDetailDrawer selectedHop={selectedHop} onClose={() => setSelectedHopID(undefined)} mode={graph?.run?.mode === 'stream' ? 'stream' : 'batch'} totalFiles={historicalRun?.run.input_records ?? liveEvidenceRun?.run.input_records ?? graph?.progress?.bronze_total ?? 0} portalContainer={drawerPortal} />
     </div>
   );
 }

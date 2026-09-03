@@ -15,6 +15,7 @@ function elapsed(seconds: number): string {
 }
 
 export function LiveTrainingBanner({ activeTraining, trainingElapsed }: LiveTrainingBannerProps): JSX.Element {
+  const progress = Math.max(0, Math.min(100, activeTraining.progressPercent ?? 0));
   const facts = [
     ['Job', activeTraining.jobId],
     ['Gold inputs', `${activeTraining.snapshotCount} snapshots`],
@@ -29,6 +30,9 @@ export function LiveTrainingBanner({ activeTraining, trainingElapsed }: LiveTrai
       <span className="flex w-fit items-center gap-1.5 border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 font-mono text-[10px] text-emerald-700 dark:text-emerald-300"><Activity className="size-3" />RUNNING</span>
     </div>
     <div className="grid gap-px bg-border/60 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">{facts.map(([label, value]) => <div key={label} className="min-w-0 bg-card px-3 py-2.5"><p className="font-mono text-[9px] uppercase tracking-wide text-muted-foreground">{label}</p><p className="mt-1 truncate font-mono text-xs font-medium" title={value}>{value}</p></div>)}</div>
-    <div className="h-1 overflow-hidden bg-muted"><div className="h-full w-1/3 animate-pulse bg-primary" /></div>
+    <div className="flex items-center gap-3 border-t border-primary/20 px-4 py-2">
+      <div className="h-1 flex-1 overflow-hidden bg-muted"><div className="h-full bg-primary transition-[width] duration-300" style={{ width: `${progress}%` }} /></div>
+      <span className="font-mono text-[9px] tabular-nums text-muted-foreground">{progress.toFixed(0)}%</span>
+    </div>
   </section>;
 }

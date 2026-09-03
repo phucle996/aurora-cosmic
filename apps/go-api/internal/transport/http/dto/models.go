@@ -29,16 +29,22 @@ type TrainingJobResponse struct {
 
 // ModelDeployRequest đại diện cho yêu cầu chọn model làm Champion phục vụ suy luận trực tiếp hoặc hủy kích hoạt
 type ModelDeployRequest struct {
-	ModelID string `json:"model_id"`
-	Task    string `json:"task"`
-	Active  bool   `json:"active"` // true = triển khai làm Champion, false = hủy kích hoạt
+	ModelID  string `json:"model_id"`
+	Task     string `json:"task"`
+	Active   bool   `json:"active"` // true = triển khai làm Champion, false = hủy kích hoạt
+	TicketID string `json:"ticket_id,omitempty"`
 }
 
 // ModelDeployResponse đại diện cho kết quả triển khai mô hình
 type ModelDeployResponse struct {
-	Status  string `json:"status"`
-	ModelID string `json:"model_id"`
-	Task    string `json:"task"`
-	Active  bool   `json:"active"`
-	Message string `json:"message"`
+	Status              string  `json:"status"`
+	ModelID             string  `json:"model_id"`
+	Task                string  `json:"task"`
+	Active              bool    `json:"active"`
+	Message             string  `json:"message"`
+	TicketID            string  `json:"ticket_id,omitempty"`
+	RuntimeValidationID string  `json:"runtime_validation_id,omitempty"`
+	Engine              string  `json:"engine,omitempty"`
+	MaxAbsoluteError    float64 `json:"max_absolute_error,omitempty"`
+	MaxRelativeError    float64 `json:"max_relative_error,omitempty"`
 }

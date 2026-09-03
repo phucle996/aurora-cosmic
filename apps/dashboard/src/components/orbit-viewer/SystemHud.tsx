@@ -24,7 +24,7 @@ export function SystemHud({ star, starStyle, hz, selectedPlanet }: SystemHudProp
   return (
     <div className="absolute top-4 left-4 z-10 flex flex-col gap-3 pointer-events-none max-w-sm">
       {/* Host Star Card */}
-      <div className="rounded-xl border border-border/60 bg-background/92 p-3.5 backdrop-blur-xl pointer-events-auto shadow-2xl">
+      <div className="pointer-events-auto border border-border/60 bg-background/92 p-3.5 shadow-none backdrop-blur-xl">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 font-semibold text-sm">
             <Sun className="size-4 text-amber-400 animate-pulse" />
@@ -32,7 +32,7 @@ export function SystemHud({ star, starStyle, hz, selectedPlanet }: SystemHudProp
           </div>
           <Badge
             variant="outline"
-            className="text-[11px] font-mono border-amber-500/50 text-amber-300 bg-amber-500/10"
+            className="rounded-none border-amber-500/50 bg-amber-500/10 font-mono text-[11px] text-amber-300"
           >
             {starStyle.spectralClass}-Class · {starStyle.type.split(' ')[0]}
           </Badge>
@@ -58,7 +58,7 @@ export function SystemHud({ star, starStyle, hz, selectedPlanet }: SystemHudProp
 
       {/* Selected Exoplanet Card */}
       {selectedPlanet && selectedBiome && (
-        <div className="rounded-xl border border-sky-500/40 bg-background/92 p-3.5 backdrop-blur-xl pointer-events-auto shadow-2xl">
+        <div className="pointer-events-auto border border-sky-500/40 bg-background/92 p-3.5 shadow-none backdrop-blur-xl">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 font-semibold text-xs text-sky-400">
               <Orbit className="size-4" />
@@ -66,7 +66,7 @@ export function SystemHud({ star, starStyle, hz, selectedPlanet }: SystemHudProp
             </div>
             {selectedPlanet.habitabilityScore != null && (
               <Badge
-                className={`text-[10px] ${
+                className={`rounded-none text-[10px] ${
                   selectedPlanet.habitabilityScore > 75
                     ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                     : selectedPlanet.habitabilityScore > 40

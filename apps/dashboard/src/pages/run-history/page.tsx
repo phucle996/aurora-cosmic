@@ -24,6 +24,8 @@ import { apiBase, apiFetch } from '@/lib/api';
 type DetailView = 'batches' | 'components';
 type StatusFilter = 'all' | 'active' | 'completed' | 'attention' | 'stopped';
 
+const FACTORY_RUN_HISTORY_LIMIT = 100;
+
 function parseTime(value?: string): Date | undefined {
   if (!value) return undefined;
   const parsed = new Date(value.includes('T') ? value : `${value.replace(' ', 'T')}Z`);
@@ -94,7 +96,9 @@ export default function RunHistoryPage(): JSX.Element {
   const loadRuns = useCallback(async (showLoading = true): Promise<FactoryRun[]> => {
     if (showLoading) setLoading(true);
     try {
-      const response = await apiFetch<{ items: FactoryRun[] }>('/v1/data-factory/runs?pipeline=silver_to_gold&limit=200');
+      const response = await apiFetch<{ items: FactoryRun[] }>(
+        `/v1/data-factory/runs?pipeline=silver_to_gold&limit=${FACTORY_RUN_HISTORY_LIMIT}`,
+      );
       const items = response.items ?? [];
       setRuns(items);
       setError(undefined);

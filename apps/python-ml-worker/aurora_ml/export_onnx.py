@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import os
 import shutil
 from typing import Any, Dict, List, Optional, Tuple
@@ -146,6 +147,25 @@ def compute_file_sha256(path: str) -> str:
         return hashlib.sha256(f.read()).hexdigest()
 
 
+def canonical_runtime_features(
+    row: Dict[str, Any], feature_order: List[str]
+) -> Dict[str, Optional[float]]:
+    """Project heterogeneous Gold values onto the numeric runtime contract."""
+    projected: Dict[str, Optional[float]] = {}
+    for feature in feature_order:
+        value = row.get(feature)
+        try:
+            numeric = float(value) if value is not None else None
+        except (TypeError, ValueError):
+            numeric = None
+        projected[feature] = (
+            numeric
+            if numeric is not None and math.isfinite(numeric)
+            else None
+        )
+    return projected
+
+
 class RuntimeExporter:
     """Exports registered PyTorch models to ONNX Runtime Packages and verifies parity."""
 
@@ -183,9 +203,20 @@ class RuntimeExporter:
         eval_dir = os.path.dirname(evaluation_run_manifest_path)
         threshold_path = os.path.join(eval_dir, "threshold.json")
         if os.path.exists(threshold_path):
-            threshold_sha = compute_file_sha256(threshold_path)
-            with open(threshold_path, "r", encoding="utf-8") as f:
-                th_data = json.load(f)
+            with open(threshold_path, "rb") as f:
+                evaluation_threshold_bytes = f.read()
+            evaluation_threshold_sha = hashlib.sha256(
+                evaluation_threshold_bytes
+            ).hexdigest()
+            expected_evaluation_threshold_sha = eval_data.get("threshold_sha256")
+            if (
+                expected_evaluation_threshold_sha
+                and evaluation_threshold_sha != expected_evaluation_threshold_sha
+            ):
+                raise OnnxExportError(
+                    "Evaluation threshold artifact does not match its manifest"
+                )
+            th_data = json.loads(evaluation_threshold_bytes)
             decision_threshold = float(
                 th_data.get(
                     "decision_threshold", eval_data.get("decision_threshold", 0.5)
@@ -193,10 +224,10 @@ class RuntimeExporter:
             )
         else:
             decision_threshold = float(eval_data.get("decision_threshold", 0.5))
-            threshold_bytes = json.dumps(
-                {"decision_threshold": decision_threshold}, sort_keys=True, indent=2
-            ).encode("utf-8")
-            threshold_sha = hashlib.sha256(threshold_bytes).hexdigest()
+        threshold_bytes = json.dumps(
+            {"decision_threshold": decision_threshold}, sort_keys=True, indent=2
+        ).encode("utf-8")
+        threshold_sha = hashlib.sha256(threshold_bytes).hexdigest()
 
         # 2. Rebuild PyTorch model on CPU
         device = torch.device("cpu")
@@ -293,7 +324,9 @@ class RuntimeExporter:
             fixture_cases.append(
                 {
                     "case_id": f"cand-case-{i + 1}",
-                    "raw_features": {k: r.get(k) for k in model_pkg.feature_order},
+                    "raw_features": canonical_runtime_features(
+                        r, model_pkg.feature_order
+                    ),
                     "standardized_features": raw_features_matrix[i].tolist(),
                     "expected_logit": float(ort_logits[i]),
                     "expected_score": float(ort_scores[i]),
@@ -342,13 +375,10 @@ class RuntimeExporter:
         # Copy preprocessing.json
         shutil.copyfile(prep_path, os.path.join(runtime_dir, "preprocessing.json"))
 
-        # Write threshold.json
-        with open(
-            os.path.join(runtime_dir, "threshold.json"), "w", encoding="utf-8"
-        ) as f:
-            json.dump(
-                {"decision_threshold": decision_threshold}, f, indent=2, sort_keys=True
-            )
+        # Runtime threshold is a strict projection of the richer evaluation
+        # artifact. Hash the exact bytes shipped to the Rust runtime.
+        with open(os.path.join(runtime_dir, "threshold.json"), "wb") as f:
+            f.write(threshold_bytes)
 
         # Write parity-fixture.json
         with open(os.path.join(runtime_dir, "parity-fixture.json"), "wb") as f:
@@ -425,9 +455,20 @@ class RuntimeExporter:
         eval_dir = os.path.dirname(evaluation_run_manifest_path)
         threshold_path = os.path.join(eval_dir, "threshold.json")
         if os.path.exists(threshold_path):
-            threshold_sha = compute_file_sha256(threshold_path)
-            with open(threshold_path, "r", encoding="utf-8") as f:
-                th_data = json.load(f)
+            with open(threshold_path, "rb") as f:
+                evaluation_threshold_bytes = f.read()
+            evaluation_threshold_sha = hashlib.sha256(
+                evaluation_threshold_bytes
+            ).hexdigest()
+            expected_evaluation_threshold_sha = eval_data.get("threshold_sha256")
+            if (
+                expected_evaluation_threshold_sha
+                and evaluation_threshold_sha != expected_evaluation_threshold_sha
+            ):
+                raise OnnxExportError(
+                    "Evaluation threshold artifact does not match its manifest"
+                )
+            th_data = json.loads(evaluation_threshold_bytes)
             decision_threshold = float(
                 th_data.get(
                     "decision_threshold", eval_data.get("decision_threshold", 0.05)
@@ -435,10 +476,10 @@ class RuntimeExporter:
             )
         else:
             decision_threshold = float(eval_data.get("decision_threshold", 0.05))
-            threshold_bytes = json.dumps(
-                {"decision_threshold": decision_threshold}, sort_keys=True, indent=2
-            ).encode("utf-8")
-            threshold_sha = hashlib.sha256(threshold_bytes).hexdigest()
+        threshold_bytes = json.dumps(
+            {"decision_threshold": decision_threshold}, sort_keys=True, indent=2
+        ).encode("utf-8")
+        threshold_sha = hashlib.sha256(threshold_bytes).hexdigest()
 
         # 2. Rebuild PyTorch Autoencoder on CPU
         device = torch.device("cpu")
@@ -533,7 +574,9 @@ class RuntimeExporter:
             fixture_cases.append(
                 {
                     "case_id": f"anom-case-{i + 1}",
-                    "raw_features": {k: r.get(k) for k in model_pkg.feature_order},
+                    "raw_features": canonical_runtime_features(
+                        r, model_pkg.feature_order
+                    ),
                     "standardized_features": raw_features_matrix[i].tolist(),
                     "expected_reconstruction": ort_recon[i].tolist(),
                     "expected_mse": float(ort_mse[i]),
@@ -581,12 +624,10 @@ class RuntimeExporter:
 
         shutil.copyfile(prep_path, os.path.join(runtime_dir, "preprocessing.json"))
 
-        with open(
-            os.path.join(runtime_dir, "threshold.json"), "w", encoding="utf-8"
-        ) as f:
-            json.dump(
-                {"decision_threshold": decision_threshold}, f, indent=2, sort_keys=True
-            )
+        # Runtime threshold is a strict projection of the richer evaluation
+        # artifact. Hash the exact bytes shipped to the Rust runtime.
+        with open(os.path.join(runtime_dir, "threshold.json"), "wb") as f:
+            f.write(threshold_bytes)
 
         with open(os.path.join(runtime_dir, "parity-fixture.json"), "wb") as f:
             f.write(fixture_bytes)

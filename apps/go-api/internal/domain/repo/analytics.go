@@ -12,6 +12,7 @@ type AnalyticsRepository interface {
 	Ping(context.Context) error
 	ListCandidates(context.Context, int, string, entity.PageRequest) (entity.Page[entity.Candidate], error)
 	GetCandidate(context.Context, string, string) (*entity.CandidateDetail, error)
+	SaveCandidateReview(context.Context, entity.CandidateReview) error
 	ListAnomalies(context.Context, int, string, bool, entity.PageRequest) (entity.Page[entity.Anomaly], error)
 	GetAnomaly(context.Context, string, string) (*entity.Anomaly, error)
 	ListTargets(context.Context, entity.TargetQuery) (entity.Page[entity.Target], error)
@@ -32,4 +33,8 @@ type TrainingLabelOverrideRepository interface {
 
 type TrainingReviewListRepository interface {
 	ListTrainingReviews(context.Context, int) ([]entity.TrainingReview, error)
+}
+
+type TrainingReviewQueueRepository interface {
+	ListTrainingReviewQueue(context.Context, []string, entity.PageRequest) (entity.Page[entity.TrainingReviewQueueItem], error)
 }

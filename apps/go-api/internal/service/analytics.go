@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/repo"
@@ -46,6 +47,31 @@ func (s *AnalyticsService) GetCandidate(ctx context.Context, predictionID string
 	// Bổ sung tầng tính toán vật lý và phân loại Habitable Zone trực tiếp
 	detail.Physics, detail.Habitability = physics.DeriveCandidate(detail.Candidate, detail.Evidence)
 	return detail, nil
+}
+
+func (s *AnalyticsService) ReviewCandidate(ctx context.Context, predictionID, snapshotID, decision, note string) (*entity.CandidateReview, error) {
+	decision = strings.ToUpper(strings.TrimSpace(decision))
+	if decision != "CONFIRMED" && decision != "REJECTED" && decision != "FOLLOW_UP" {
+		return nil, fmt.Errorf("scientific decision must be CONFIRMED, REJECTED or FOLLOW_UP")
+	}
+	note = strings.TrimSpace(note)
+	if len(note) > 2000 {
+		return nil, fmt.Errorf("review note must not exceed 2000 characters")
+	}
+	detail, err := s.repository.GetCandidate(ctx, predictionID, snapshotID)
+	if err != nil {
+		return nil, err
+	}
+	review := entity.CandidateReview{
+		SnapshotID: detail.Candidate.SnapshotID, PredictionID: detail.Candidate.PredictionID,
+		SourceProductID: detail.Candidate.SourceProductID, TICID: detail.Candidate.TICID,
+		Sector: detail.Candidate.Sector, Decision: decision, ReviewStatus: "REVIEWED",
+		Reviewer: "HUMAN_OPERATOR", Note: note,
+	}
+	if err := s.repository.SaveCandidateReview(ctx, review); err != nil {
+		return nil, err
+	}
+	return &review, nil
 }
 
 // ListAnomalies phân trang danh sách các dị thường trắc quang được phát hiện bởi mô hình Autoencoder

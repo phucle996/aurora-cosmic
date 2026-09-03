@@ -10,6 +10,7 @@ import {
   Microscope,
   Server,
   Sparkles,
+  Tags,
   Target,
   Workflow,
   Waves,
@@ -50,12 +51,11 @@ const dataFactoryItems = [
 
 const researchFactoryItems = [
   { path: '/research-factory/discovery', label: 'TESS Target Discovery', detail: 'Find research targets', icon: Target },
-  { path: '/research-factory/workbench', label: 'Observation Workbench', detail: 'LC, BLS, TPF + 3D physics', icon: Microscope },
-  { path: '/research-factory/candidates', label: 'Candidate Review', detail: 'Rank, vet and label evidence', icon: Sparkles },
-  { path: '/research-factory/history', label: 'Research History', detail: 'Gold → model → decision', icon: GitBranch },
+  { path: '/research-factory/candidates', label: 'Candidate Review', detail: 'Rank and adjudicate signals', icon: Sparkles },
 ];
 
 const aiFactoryItems = [
+  { path: '/ai-factory/labeling', label: 'Labeling Studio', detail: 'Human + AI evidence review', icon: Tags },
   { path: '/ai-factory/training', label: 'Training Lab', detail: 'Gold → trained model', icon: BrainCircuit },
   { path: '/ai-factory/evaluation', label: 'Model Evaluation', detail: 'Quality + parity checks', icon: Activity },
   { path: '/ai-factory/evidence', label: 'Evolution Evidence', detail: 'Data and model provenance', icon: GitBranch },
