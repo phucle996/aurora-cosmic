@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::event::{BronzeObjectReady, ProductKind, SilverObjectReady};
 
 /// Build a SilverObjectReady event struct.
+#[allow(clippy::too_many_arguments)]
 pub fn build_silver_event(
     event: &BronzeObjectReady,
     bucket: &str,

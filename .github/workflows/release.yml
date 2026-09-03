@@ -1,4 +1,6 @@
+# Release pipeline for all 7 AURORA services to GitHub Container Registry (GHCR).
 name: AURORA Sub-Project GHCR Release
+
 
 on:
   workflow_run:
