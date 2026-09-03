@@ -23,11 +23,11 @@ const (
 
 func newTrainingReadiness(snapshotIDs []string) *entity.TrainingReadiness {
 	readiness := &entity.TrainingReadiness{
-		SnapshotIDs:                               append([]string(nil), snapshotIDs...),
-		Tier:                                      "BLOCKED",
-		PolicyVersion:                             "candidate-cohort-readiness-v2",
-		ExperimentalMinimumPositiveTargets:        minimumExperimentalPositiveTargets,
-		ExperimentalMinimumNegativeTargets:        minimumExperimentalNegativeTargets,
+		SnapshotIDs:                        append([]string(nil), snapshotIDs...),
+		Tier:                               "BLOCKED",
+		PolicyVersion:                      "candidate-cohort-readiness-v2",
+		ExperimentalMinimumPositiveTargets: minimumExperimentalPositiveTargets,
+		ExperimentalMinimumNegativeTargets: minimumExperimentalNegativeTargets,
 		ProductionCandidateMinimumPositiveTargets: minimumProductionCandidatePositiveTargets,
 		ProductionCandidateMinimumNegativeTargets: minimumProductionCandidateNegativeTargets,
 		NegativeDiversityTarget:                   negativeDiversityTarget,

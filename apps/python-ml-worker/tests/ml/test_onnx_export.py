@@ -195,7 +195,9 @@ def test_candidate_onnx_export_and_python_parity():
             os.path.join(runtime_pkg_dir, "threshold.json"), "rb"
         ).read()
         assert json.loads(runtime_threshold) == {"decision_threshold": 0.45}
-        assert hashlib.sha256(runtime_threshold).hexdigest() == manifest.threshold_sha256
+        assert (
+            hashlib.sha256(runtime_threshold).hexdigest() == manifest.threshold_sha256
+        )
 
 
 def test_anomaly_onnx_export_and_python_parity():
@@ -340,4 +342,6 @@ def test_anomaly_onnx_export_and_python_parity():
             os.path.join(runtime_pkg_dir, "threshold.json"), "rb"
         ).read()
         assert json.loads(runtime_threshold) == {"decision_threshold": 0.08}
-        assert hashlib.sha256(runtime_threshold).hexdigest() == manifest.threshold_sha256
+        assert (
+            hashlib.sha256(runtime_threshold).hexdigest() == manifest.threshold_sha256
+        )

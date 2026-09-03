@@ -159,9 +159,7 @@ def canonical_runtime_features(
         except (TypeError, ValueError):
             numeric = None
         projected[feature] = (
-            numeric
-            if numeric is not None and math.isfinite(numeric)
-            else None
+            numeric if numeric is not None and math.isfinite(numeric) else None
         )
     return projected
 

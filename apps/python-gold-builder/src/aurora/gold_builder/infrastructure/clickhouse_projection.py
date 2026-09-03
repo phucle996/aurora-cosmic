@@ -146,7 +146,9 @@ class GoldClickHouseProjector:
             "ADD COLUMN IF NOT EXISTS review_reason String DEFAULT ''"
         )
 
-    def _project_training_cohort(self, snapshot_id: str, rows: list[dict[str, Any]]) -> dict[str, int]:
+    def _project_training_cohort(
+        self, snapshot_id: str, rows: list[dict[str, Any]]
+    ) -> dict[str, int]:
         labels = label_rows(snapshot_id, rows)
         self.clickhouse.command(
             "ALTER TABLE candidate_training_cohort_v1 DELETE WHERE snapshot_id = "
@@ -158,9 +160,18 @@ class GoldClickHouseProjector:
             for row in labels:
                 row["updated_at"] = indexed_at
             columns = [
-                "snapshot_id", "source_product_id", "tic_id", "sector",
-                "training_label", "confidence", "label_source", "review_status",
-                "train_eligible", "policy_version", "evidence_json", "updated_at",
+                "snapshot_id",
+                "source_product_id",
+                "tic_id",
+                "sector",
+                "training_label",
+                "confidence",
+                "label_source",
+                "review_status",
+                "train_eligible",
+                "policy_version",
+                "evidence_json",
+                "updated_at",
             ]
             self.clickhouse.insert(
                 "candidate_training_cohort_v1",
@@ -365,7 +376,9 @@ class GoldClickHouseProjector:
                 ]
         if target_rows:
             self._replace_targets(target_rows)
-        cohort_counts = self._project_training_cohort(result.snapshot_id, candidate_rows)
+        cohort_counts = self._project_training_cohort(
+            result.snapshot_id, candidate_rows
+        )
         lightcurve_sample_count = self._project_lightcurve_inputs(
             manifest, candidate_context
         )

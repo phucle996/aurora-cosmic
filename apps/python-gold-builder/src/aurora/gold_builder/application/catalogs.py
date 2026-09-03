@@ -491,7 +491,11 @@ def sync_catalogs_for_tics(
         if active_toi is not None:
             _, active_records = active_toi
             target_set = set(targets)
-            toi_rows = [record.to_dict() for record in active_records if record.tic_id in target_set]
+            toi_rows = [
+                record.to_dict()
+                for record in active_records
+                if record.tic_id in target_set
+            ]
             toi_provider = "Pinned shared NASA TOI snapshot"
             toi_source_uri = f"catalogs/current/toi.json#{active_toi[0]}"
         else:

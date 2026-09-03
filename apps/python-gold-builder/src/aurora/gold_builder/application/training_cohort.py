@@ -64,7 +64,9 @@ def label_rows(snapshot_id: str, rows: list[dict[str, Any]]) -> list[dict[str, A
                 "training_label": label.label,
                 "confidence": label.confidence,
                 "label_source": label.source,
-                "review_status": "AUTO_ACCEPTED" if label.train_eligible else "UNRESOLVED",
+                "review_status": "AUTO_ACCEPTED"
+                if label.train_eligible
+                else "UNRESOLVED",
                 "train_eligible": label.train_eligible,
                 "policy_version": COHORT_POLICY_VERSION,
                 "evidence_json": json.dumps(label.evidence, sort_keys=True),

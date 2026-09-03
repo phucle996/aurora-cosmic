@@ -48,9 +48,7 @@ def dispatchable_ready_batches(
     full: list[PendingBatch] = []
     partial: list[PendingBatch] = []
     for batch in ready_batches:
-        target_count = sum(
-            event.product_kind == "LIGHT_CURVE" for _, event in batch
-        )
+        target_count = sum(event.product_kind == "LIGHT_CURVE" for _, event in batch)
         if target_count <= 0:
             continue
         if target_count >= max_batch_records:

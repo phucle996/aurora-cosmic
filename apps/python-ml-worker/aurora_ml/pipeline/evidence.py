@@ -290,8 +290,10 @@ def compute_tpf_features_from_cube(
         # Validate candidate pairing compatibility
         sample_id = metadata.get("sample_id")
         lc_sample_id = lc_features.sample_id
-        if sample_id and lc_sample_id and not _samples_describe_same_target(
-            sample_id, lc_sample_id
+        if (
+            sample_id
+            and lc_sample_id
+            and not _samples_describe_same_target(sample_id, lc_sample_id)
         ):
             tpf_feature_status = "PAIRING_CONFLICT"
         else:
