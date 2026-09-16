@@ -38,12 +38,12 @@ All splits and evaluation cohorts enforce target-level grouping (`tic:<id>`). A 
 
 Gold Candidate datasets classify columns into 5 distinct roles:
 1. `IDENTITY`: `source_product_id`, `lineage_id`, `sample_id`, `tic_id`, `sector`, `silver_sha256`, `lc_feature_version`, `lc_feature_fingerprint`
-2. `MODEL_INPUT`: 32 scientific features (statistics, BLS parameters, spatial TPF evidence, TIC stellar parameters)
+2. `MODEL_INPUT`: 31 scientific features (statistics, BLS parameters, spatial TPF evidence, TIC stellar parameters; TPF presence is guaranteed by Gold's research-ready completeness contract)
 3. `VETTING_CONTEXT`: `toi_match_status`, `tce_match_status`
 4. `AUDIT`: `matched_toi_id`, `toi_period_error`, `matched_tce_id`, `label_policy_version`
 5. `SUPERVISION`: `training_label`
 
-Feature matrices passed to ML training algorithms MUST select ONLY columns classified as `MODEL_INPUT` in a frozen, deterministic order (32 columns). Columns tagged `IDENTITY`, `VETTING_CONTEXT`, `AUDIT`, or `SUPERVISION` are strictly excluded from model input features.
+Feature matrices passed to ML training algorithms MUST select ONLY columns classified as `MODEL_INPUT` in a frozen, deterministic order (31 columns). Columns tagged `IDENTITY`, `VETTING_CONTEXT`, `AUDIT`, or `SUPERVISION` are strictly excluded from model input features.
 
 ---
 

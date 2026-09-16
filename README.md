@@ -14,17 +14,17 @@
 
 ## 🐳 Container Images (GHCR)
 
-Latest release: **`v1.0.0-beta`** — published to [GitHub Container Registry](https://github.com/phucle996?tab=packages).
+Latest release: **`v1.0.0` (Production / GA)** — published to [GitHub Container Registry](https://github.com/phucle996?tab=packages).
 
 | Service | Image |
 |---|---|
-| Go Ingester | `ghcr.io/phucle996/aurora-cosmic/go-ingester:v1.0.0-beta` |
-| Rust Preprocessor | `ghcr.io/phucle996/aurora-cosmic/rust-preprocessor:v1.0.0-beta` |
+| Go Ingester | `ghcr.io/phucle996/aurora-go-ingester:latest` |
+| Rust Preprocessor | `ghcr.io/phucle996/aurora-rust-preprocessor:latest` |
 | Python Gold Builder | `ghcr.io/phucle996/aurora-gold-builder:latest` |
-| Python ML Worker | `ghcr.io/phucle996/aurora-cosmic/python-ml-worker:v1.0.0-beta` |
-| Rust Inference | `ghcr.io/phucle996/aurora-cosmic/rust-inference:v1.0.0-beta` |
-| Go API | `ghcr.io/phucle996/aurora-cosmic/go-api:v1.0.0-beta` |
-| Dashboard | `ghcr.io/phucle996/aurora-cosmic/dashboard:v1.0.0-beta` |
+| Python ML Worker | `ghcr.io/phucle996/aurora-python-ml-worker:latest` |
+| Rust Inference | `ghcr.io/phucle996/aurora-rust-inference:latest` |
+| Go API | `ghcr.io/phucle996/aurora-go-api:latest` |
+| Dashboard | `ghcr.io/phucle996/aurora-dashboard:latest` |
 
 ---
 
@@ -86,7 +86,7 @@ curl 'http://127.0.0.1:9090/api/v1/query?query=aurora_systemd_unit_active'
 * **Gold Builder**: Python >=3.12 (Polars, DuckDB)
 * **ML Worker**: Python >=3.12 (PyTorch, CUDA, ONNX Export)
 * **Inference Runtime**: Rust 1.89 (ONNX Runtime CPU / CUDA)
-* **API Gateway**: Go 1.26 (Chi / Gin, SSE, Astrophysics Engine)
+* **API Gateway**: Go 1.26 (Gin, SSE, Astrophysics Engine)
 * **Dashboard**: React 19, TypeScript, Vite, Tailwind CSS, Radix UI
 * **Data Plane**: MinIO (S3 compatible object storage)
 * **Analytics Store**: ClickHouse 24.3

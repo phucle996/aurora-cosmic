@@ -17,7 +17,23 @@ All platform and service configurations are strictly managed via environment var
 | **Go API** | `http://go-api:8080` | `http://localhost:8080` |
 | **Dashboard** | `http://dashboard:8501` | `http://localhost:8501` |
 | **ClickHouse HTTP** | `http://clickhouse:8123` | `http://localhost:8123` |
+| **Prometheus** | `http://prometheus:9090` | `http://localhost:9090` |
 | **Grafana (optional)** | `http://grafana:3000` | `http://localhost:3000` |
+
+### Subsystem Telemetry & Metrics Scrape Endpoints
+
+| Subsystem | Port | Endpoint | Purpose |
+| :--- | :--- | :--- | :--- |
+| **Go Ingester** | `8081` | `http://go-ingester:8081/metrics` | Ingestion throughput, rolling storage quota, checkpoints |
+| **Go Ingester (Debug)**| `8087` | `http://go-ingester:8087/debug/pprof` | Profiling and memory diagnostics |
+| **Rust Preprocessor** | `8082` | `http://rust-preprocessor:8082/metrics`| Rayon/Tokio concurrency, FITS parse latencies |
+| **Python ML Worker** | `8083` | `http://python-ml-worker:8083/metrics` | PyTorch training/eval loss, VRAM metrics |
+| **Rust Inference** | `8084` | `http://rust-inference:8084/metrics` | Batch prediction throughput, ONNX runtime parity |
+| **cAdvisor** | `8085` | `http://cadvisor:8080/metrics` | Host/container resource utilization |
+| **Go API Telemetry** | `8086` | `http://go-api:8086/metrics` | API requests/sec, SSE subscriber count, ClickHouse lag |
+| **Gold Builder** | `8088` | `http://gold-builder:8088/metrics` | Batch aggregation rates, catalog synchronization |
+| **NATS Exporter** | `7777` | `http://nats-exporter:7777/metrics` | JetStream message queues, consumer lag |
+| **ClickHouse Metrics**| `9363` | `http://clickhouse:9363/metrics` | Query latency, disk write volume |
 
 > ⚠️ **Rule:** Containers communicate using Docker service names (`minio`, `nats`, `go-api`), never `localhost`.
 
@@ -35,6 +51,7 @@ Each sub-project owns its `.env.example` in its application directory:
 
 * `apps/go-ingester/.env.example`
 * `apps/rust-preprocessor/.env.example`
+* `apps/python-gold-builder/.env.example`
 * `apps/python-ml-worker/.env.example`
 * `apps/rust-inference/.env.example`
 * `apps/go-api/.env.example`

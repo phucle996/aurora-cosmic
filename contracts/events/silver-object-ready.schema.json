@@ -1,0 +1,104 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://aurora.cosmic/contracts/events/silver-object-ready.schema.json",
+  "title": "SilverObjectReady",
+  "description": "Event emitted when a cleaned and normalized Parquet artifact has been durably stored and verified in MinIO Silver.",
+  "type": "object",
+  "required": [
+    "event_id",
+    "event_type",
+    "source_event_id",
+    "source_product_id",
+    "bucket",
+    "object_key",
+    "product_kind",
+    "schema_version",
+    "processor_version",
+    "processing_fingerprint",
+    "sector",
+    "size_bytes",
+    "sha256",
+    "occurred_at"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "description": "Unique identifier for this event emission."
+    },
+    "event_type": {
+      "type": "string",
+      "enum": ["silver.object.ready"],
+      "description": "Type discriminator for the event."
+    },
+    "source_event_id": {
+      "type": "string",
+      "description": "Upstream Bronze event ID that triggered this preprocessing flow."
+    },
+    "source_product_id": {
+      "type": "string",
+      "description": "Originating MAST product ID."
+    },
+    "sample_id": {
+      "type": ["string", "null"],
+      "description": "Logical target observation sample identity."
+    },
+    "bucket": {
+      "type": "string",
+      "description": "MinIO Silver bucket name."
+    },
+    "object_key": {
+      "type": "string",
+      "description": "Deterministic MinIO Silver object key."
+    },
+    "product_kind": {
+      "type": "string",
+      "enum": ["TARGET_PIXEL", "LIGHT_CURVE", "FFI"],
+      "description": "AURORA classified product kind."
+    },
+    "schema_version": {
+      "type": "string",
+      "description": "Schema contract version (e.g. silver-lightcurve-v1)."
+    },
+    "processor_version": {
+      "type": "string",
+      "description": "Algorithm version used for preprocessing."
+    },
+    "processing_fingerprint": {
+      "type": "string",
+      "description": "Deterministic fingerprint of the preprocessing configuration."
+    },
+    "sector": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "TESS observing sector number."
+    },
+    "tic_id": {
+      "type": ["integer", "null"],
+      "description": "TESS Input Catalog ID."
+    },
+    "camera": {
+      "type": ["integer", "null"],
+      "description": "TESS camera number (1-4)."
+    },
+    "ccd": {
+      "type": ["integer", "null"],
+      "description": "TESS CCD number (1-4)."
+    },
+    "size_bytes": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Verified Parquet object size in bytes."
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 checksum hex string of the Silver Parquet file."
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 timestamp when the Silver artifact was durably stored."
+    }
+  },
+  "additionalProperties": false
+}

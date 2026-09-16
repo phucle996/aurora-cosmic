@@ -17,7 +17,7 @@ This document describes the immutable ONNX runtime package layout, Opset 17 expo
 * **Opset**: Explicitly pinned to Opset `17`.
 * **Dynamic Batching**: Axis 0 is dynamic (`batch`), feature dimension is fixed.
 * **Candidate Graph (`candidate-deep-resmlp-v1`)**:
-  * Input: `features` (`[-1, 32]` of type `float32`).
+  * Input: `features` (`[-1, 31]` of type `float32`).
   * Output: `logits` (`[-1, 1]` of type `float32`).
   * Operations: Linear, LayerNorm, GELU, Squeeze-and-Excitation Attention, Residual Add, Dropout.
 * **Anomaly Graph (`anomaly-deep-autoencoder-v1`)**:

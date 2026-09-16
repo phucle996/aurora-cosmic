@@ -13,21 +13,29 @@ Deleting ClickHouse data or dropping analytical tables has ZERO impact on canoni
 
 ClickHouse stores query projections under the `aurora` database:
 
+### Scientific Feature & Discovery Projections
 - `aurora.gold_snapshots_v1`: Derived index registry (`snapshot_id`, `manifest_sha256`, `expected_row_count`, `indexed_row_count`, `indexed_at`, `index_status`).
 - `aurora.candidate_features_v1`: Analytical query table for exoplanet candidates (`gold-candidate-v1`).
+- `aurora.candidate_features_current_v1`: Stable query view alias over candidate features.
 - `aurora.anomaly_lightcurve_v1`: Analytical query table for light curve feature anomalies.
 - `aurora.anomaly_tpf_v1`: Analytical query table for Target Pixel File spatial evidence anomalies.
 - `aurora.anomaly_ffi_v1`: Analytical query table for Full Frame Image detector anomalies.
-- `aurora.planet_physics_v1`: Rebuildable deterministic physical estimates for
-  a stable transit-signal identity.
-- `aurora.habitability_assessments_v1`: Explainable physics assessment and a
-  separate nullable slot for a future validated ML assessment.
+- `aurora.planet_physics_v1`: Rebuildable deterministic physical estimates for a stable transit-signal identity.
+- `aurora.habitability_assessments_v1`: Explainable physics assessment and separate validated ML assessment.
 
-Candidate detail currently derives the versioned physics read model from the
-snapshot-isolated candidate evidence in the Go API. The two ClickHouse tables
-reserve the additive projection contract for a Gold materializer; persisted
-rows must be reproducible from the canonical MinIO snapshot and must match the
-same formula version.
+### Prediction Serving & Online Telemetry
+- `aurora.candidate_predictions`: High-throughput exoplanet candidate prediction scores projected from `rust-inference`.
+- `aurora.anomaly_predictions`: High-throughput anomaly reconstruction MSE predictions projected from `rust-inference`.
+- `aurora.targets`: Stellar target catalog cache (`tic_id`, coordinates, magnitude, disposition).
+- `aurora.lightcurves` & `aurora.lightcurve_samples_v1`: Exact visualization plot samples sourced from verified Silver LC Parquet.
+
+### Data Factory Pipeline History & Review Workflow
+- `aurora.pipeline_runs_v1`: Lifecycle and throughput execution facts recorded by `gold-builder`.
+- `aurora.pipeline_batches_v1`: Detailed batch-level metrics (input records, candidate rows, artifact count).
+- `aurora.pipeline_component_events_v1`: Individual hop component transition events.
+- `aurora.candidate_training_cohort_v1`: Reviewable labels and curated training supervisor cohort.
+- `aurora.candidate_scientific_reviews_v1`: Human-in-the-loop scientific review and adjudication log.
+- `aurora.lakehouse_objects`: Sub-millisecond S3 metadata lookup index across MinIO tiers.
 
 ---
 

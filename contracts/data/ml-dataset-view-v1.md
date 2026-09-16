@@ -18,9 +18,9 @@ Dataset view construction MUST NOT read:
 - ClickHouse analytical tables
 - Live MAST/NASA APIs
 
-## Frozen Model Input Features (32 Columns)
+## Frozen Model Input Features (31 Columns)
 
-Model training pipelines MUST consume exactly the following 32 `MODEL_INPUT` features in frozen alphabetical order:
+Model training pipelines MUST consume exactly the following 31 `MODEL_INPUT` features in frozen alphabetical order:
 
 | Index | Feature Column Name | Arrow Type | Units / Description |
 | :---: | :--- | :--- | :--- |
@@ -51,11 +51,10 @@ Model training pipelines MUST consume exactly the following 32 `MODEL_INPUT` fea
 | 25 | `tic_available` | `Boolean` | Flag indicating TIC target metadata is present |
 | 26 | `time_span` | `Float64` | Total time span of observation (days) |
 | 27 | `tmag` | `Float64` | TESS magnitude |
-| 28 | `tpf_evidence_available` | `Boolean` | Flag indicating paired TPF evidence is present |
-| 29 | `transit_deficit_center_offset_pixels` | `Float64` | Distance from transit deficit centroid to cutout center |
-| 30 | `transit_deficit_centroid_col` | `Float64` | Column coordinate of transit deficit centroid |
-| 31 | `transit_deficit_centroid_row` | `Float64` | Row coordinate of transit deficit centroid |
-| 32 | `transit_deficit_sum` | `Float64` | Total spatial positive transit deficit sum |
+| 28 | `transit_deficit_center_offset_pixels` | `Float64` | Distance from transit deficit centroid to cutout center |
+| 29 | `transit_deficit_centroid_col` | `Float64` | Column coordinate of transit deficit centroid |
+| 30 | `transit_deficit_centroid_row` | `Float64` | Row coordinate of transit deficit centroid |
+| 31 | `transit_deficit_sum` | `Float64` | Total spatial positive transit deficit sum |
 
 ## Strict Leakage Exclusion
 

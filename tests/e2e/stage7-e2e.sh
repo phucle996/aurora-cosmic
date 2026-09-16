@@ -8,7 +8,7 @@ echo "================================================================="
 # 1. Run Python ML worker inference planning tests
 echo "[1/4] Running Python ML worker inference planning test suite..."
 docker run --rm -v "$(pwd)/apps/python-ml-worker:/app" -w /app python:3.12-slim sh -c \
-  "pip install -q numpy scipy astropy pyarrow pytest pydantic urllib3 clickhouse-connect torch onnx onnxruntime && PYTHONPATH=. pytest tests/ml/test_inference_jobs.py -v"
+  "pip install -q --no-cache-dir pytest numpy && PYTHONPATH=. pytest tests/ml/test_inference_jobs.py -v"
 
 # 2. Run Rust inference engine prediction contracts & numerical parity
 echo "[2/4] Running Rust inference unit and prediction contract tests..."

@@ -76,7 +76,7 @@ The platform operates on a **rolling bounded storage model**:
 | **`python-gold-builder`** | Python 3.12, Polars/DuckDB | Build and maintain cumulative Gold analytical datasets, join TIC/TOI catalog metadata, index features into ClickHouse. |
 | **`python-ml-worker`** | Python 3.12, PyTorch/CUDA | Train light-curve classifiers & anomaly autoencoders, run Champion vs Challenger evaluation, export validated models to ONNX. |
 | **`rust-inference`** | Rust 1.89, ONNX Runtime | High-throughput batch inference (CPU/CUDA fallback), hot-swap model reloading from MinIO, consume prediction jobs from NATS. |
-| **`go-api`** | Go 1.26, Chi/Stdlib | REST & SSE API Gateway, exoplanet physics & habitability classification, telemetry and health monitoring. |
+| **`go-api`** | Go 1.26, Gin | REST & SSE API Gateway, exoplanet physics & habitability classification, telemetry and health monitoring. |
 | **`dashboard`** | React 19, Vite, Tailwind | Interactive visual analytics, light curve rendering, candidate vetting, model metrics, and system monitoring. |
 
 ---
