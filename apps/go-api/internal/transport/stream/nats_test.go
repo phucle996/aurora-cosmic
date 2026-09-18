@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
-	"go-api/internal/events"
+	"go-api/internal/provider"
 )
 
 func TestParseSubjectToWorkflow(t *testing.T) {
@@ -62,7 +62,7 @@ func TestParseSubjectToWorkflow(t *testing.T) {
 }
 
 func TestNATSStreamDispatchMessagePublishesToBroker(t *testing.T) {
-	broker := events.NewBroker()
+	broker := provider.NewSSEBroker()
 	sub := broker.Subscribe(context.Background(), "inference")
 	defer sub.Close()
 
@@ -97,7 +97,7 @@ func TestNATSStreamDispatchMessagePublishesToBroker(t *testing.T) {
 }
 
 func TestNATSStreamExtractsTrainingJobIDFromRequestedEvent(t *testing.T) {
-	broker := events.NewBroker()
+	broker := provider.NewSSEBroker()
 	sub := broker.Subscribe(context.Background(), "ml")
 	defer sub.Close()
 

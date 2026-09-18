@@ -15,7 +15,7 @@ import (
 	"go-api/infra/nats"
 	"go-api/infra/prometheus"
 	"go-api/internal/config"
-	"go-api/internal/observer"
+	"go-api/internal/provider"
 	"go-api/internal/transport/stream"
 )
 
@@ -30,7 +30,7 @@ type Infrastructure struct {
 
 type App struct {
 	Server   *http.Server
-	Observer *observer.Server
+	Observer *provider.MetricsServer
 	Stream   *stream.NATSStream
 	NATS     *nats.Dispatcher
 	Addr     string
@@ -64,9 +64,9 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 		return nil, fmt.Errorf("initialize module: %w", err)
 	}
 
-	metrics := observer.New()
+	metrics := provider.NewMetrics()
 	router := NewRouter(cfg, module, metrics)
-	observerServer, err := observer.Start(cfg.Metrics.Addr, metrics)
+	observerServer, err := provider.StartMetricsServer(cfg.Metrics.Addr, metrics)
 	if err != nil {
 		return nil, fmt.Errorf("start observer: %w", err)
 	}

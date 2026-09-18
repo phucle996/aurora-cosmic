@@ -3,14 +3,14 @@ package middleware
 import (
 	"time"
 
-	"go-api/internal/observer"
+	"go-api/internal/provider"
 
 	"github.com/gin-gonic/gin"
 )
 
 // Metrics records completed requests using Gin's route template. It must run
 // before the router dispatches so c.FullPath() is available after c.Next().
-func Metrics(metrics *observer.Metrics) gin.HandlerFunc {
+func Metrics(metrics *provider.Metrics) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if metrics == nil {
 			c.Next()

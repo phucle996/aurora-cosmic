@@ -1,4 +1,4 @@
-package events
+package provider
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 )
 
 func TestBrokerFiltersWorkflowAndClosesSubscription(t *testing.T) {
-	broker := NewBroker()
+	broker := NewSSEBroker()
 	ctx, cancel := context.WithCancel(context.Background())
 	subscription := broker.Subscribe(ctx, "preprocessing")
 	defer cancel()

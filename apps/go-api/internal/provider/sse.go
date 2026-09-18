@@ -1,4 +1,4 @@
-package events
+package provider
 
 import (
 	"context"
@@ -7,18 +7,22 @@ import (
 	"go-api/internal/domain/entity"
 )
 
-type Subscription struct {
+// SSESubscription đại diện cho một kết nối đăng ký lắng nghe sự kiện qua SSE
+type SSESubscription struct {
 	Events <-chan entity.WorkflowEvent
 	close  func()
 }
 
-func (s *Subscription) Close() {
+// Close đóng kênh đăng ký và giải phóng tài nguyên
+func (s *SSESubscription) Close() {
 	if s != nil && s.close != nil {
 		s.close()
 	}
 }
 
-type Broker struct {
+// SSEBroker là một In-Memory Event Broker thuần túy chịu trách nhiệm
+// multiplexing và broadcast các sự kiện tới các subscriber SSE.
+type SSEBroker struct {
 	mu          sync.Mutex
 	nextID      uint64
 	nextSubID   uint64
@@ -31,11 +35,22 @@ type subscriber struct {
 	channel  chan entity.WorkflowEvent
 }
 
-func NewBroker() *Broker {
-	return &Broker{subscribers: make(map[uint64]subscriber)}
+// Alias cho tính tương thích và thuận tiện khi sử dụng
+type Broker = SSEBroker
+type Subscription = SSESubscription
+
+// NewSSEBroker khởi tạo một thể hiện SSEBroker mới
+func NewSSEBroker() *SSEBroker {
+	return &SSEBroker{subscribers: make(map[uint64]subscriber)}
 }
 
-func (b *Broker) Publish(_ context.Context, event entity.WorkflowEvent) error {
+// NewBroker là alias của NewSSEBroker
+func NewBroker() *SSEBroker {
+	return NewSSEBroker()
+}
+
+// Publish phát một sự kiện tới các subscriber phù hợp
+func (b *SSEBroker) Publish(_ context.Context, event entity.WorkflowEvent) error {
 	if b == nil {
 		return nil
 	}
@@ -58,17 +73,17 @@ func (b *Broker) Publish(_ context.Context, event entity.WorkflowEvent) error {
 		select {
 		case sub.channel <- event:
 		default:
-			// SSE is an invalidation channel. A slow browser can safely miss an
-			// intermediate notification because it refetches authoritative state.
+			// SSE là kênh invalidation, subscriber chậm có thể bỏ qua thông báo trung gian
 		}
 	}
 	b.mu.Unlock()
 	return nil
 }
 
-func (b *Broker) Subscribe(ctx context.Context, workflow string, ticketIDs ...string) *Subscription {
+// Subscribe đăng ký lắng nghe sự kiện theo workflow và ticketID
+func (b *SSEBroker) Subscribe(ctx context.Context, workflow string, ticketIDs ...string) *SSESubscription {
 	if b == nil {
-		return &Subscription{Events: make(chan entity.WorkflowEvent)}
+		return &SSESubscription{Events: make(chan entity.WorkflowEvent)}
 	}
 	b.mu.Lock()
 	b.nextSubID++
@@ -93,12 +108,10 @@ func (b *Broker) Subscribe(ctx context.Context, workflow string, ticketIDs ...st
 		<-ctx.Done()
 		closeSubscription()
 	}()
-	return &Subscription{Events: channel, close: closeSubscription}
+	return &SSESubscription{Events: channel, close: closeSubscription}
 }
 
 func formatID(id uint64) string {
-	// IDs only need to be monotonic within one API process for Last-Event-ID
-	// debugging; event payloads remain authoritative and replay is not implied.
 	const digits = "0123456789"
 	if id == 0 {
 		return "0"

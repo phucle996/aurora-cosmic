@@ -7,14 +7,14 @@ import (
 	"strings"
 	"testing"
 
-	"go-api/internal/observer"
+	"go-api/internal/provider"
 
 	"github.com/gin-gonic/gin"
 )
 
 func TestMetricsMiddlewareUsesGinRouteTemplate(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	metrics := observer.New()
+	metrics := provider.NewMetrics()
 	engine := gin.New()
 	engine.Use(Metrics(metrics))
 	engine.GET("/models/:model_id", func(c *gin.Context) { c.Status(http.StatusNoContent) })

@@ -1,4 +1,4 @@
-package observer
+package provider
 
 import (
 	"io"
@@ -10,7 +10,7 @@ import (
 )
 
 func TestMetricsExposeBoundedHTTPSignals(t *testing.T) {
-	metrics := New()
+	metrics := NewMetrics()
 	metrics.RequestStarted()
 	metrics.ObserveRequest(http.MethodGet, "/api/v1/inference/jobs/:job_id/retry", http.StatusBadGateway, 25*time.Millisecond)
 	metrics.RequestFinished()
@@ -43,6 +43,6 @@ func TestMetricsExposeBoundedHTTPSignals(t *testing.T) {
 }
 
 func TestMetricsRejectInvalidStatusWithoutPanicking(t *testing.T) {
-	metrics := New()
+	metrics := NewMetrics()
 	metrics.ObserveRequest("", "", 0, 0)
 }

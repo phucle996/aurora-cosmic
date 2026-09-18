@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"go-api/internal/config"
-	"go-api/internal/observer"
+	"go-api/internal/provider"
 	"go-api/internal/transport/http/middleware"
 
 	"github.com/gin-gonic/gin"
@@ -15,7 +15,7 @@ type Router struct {
 	module *Module
 }
 
-func NewRouter(cfg *config.Config, module *Module, metrics ...*observer.Metrics) *Router {
+func NewRouter(cfg *config.Config, module *Module, metrics ...*provider.Metrics) *Router {
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
 	engine.Use(gin.Recovery())

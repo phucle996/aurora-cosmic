@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"go-api/internal/events"
+	"go-api/internal/provider"
 
 	"github.com/gin-gonic/gin"
 )
@@ -18,7 +18,7 @@ type ingestObservationPublisher interface {
 }
 
 type EventsHandler struct {
-	broker       *events.Broker
+	broker       *provider.SSEBroker
 	observations ingestObservationPublisher
 }
 
@@ -36,7 +36,7 @@ func observationSubject(workflow, action string) string {
 	}
 }
 
-func NewEventsHandler(broker *events.Broker, observations ...ingestObservationPublisher) *EventsHandler {
+func NewEventsHandler(broker *provider.SSEBroker, observations ...ingestObservationPublisher) *EventsHandler {
 	var publisher ingestObservationPublisher
 	if len(observations) > 0 {
 		publisher = observations[0]

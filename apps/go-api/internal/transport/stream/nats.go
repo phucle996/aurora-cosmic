@@ -13,14 +13,14 @@ import (
 	"github.com/nats-io/nats.go"
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/service"
-	"go-api/internal/events"
+	"go-api/internal/provider"
 )
 
 // NATSStream manages message subscriptions over NATS subjects and dispatches
 // incoming messages to domain services and the workflow event broker.
 type NATSStream struct {
 	natsURL           string
-	broker            *events.Broker
+	broker            *provider.SSEBroker
 	preprocessing     service.Preprocessing
 	ingest            service.Ingest
 	inference         service.Inference
@@ -44,7 +44,7 @@ type MessageHandler func(ctx context.Context, msg *nats.Msg) error
 // StreamConfig holds the dependencies and configuration for NATSStream.
 type StreamConfig struct {
 	NATSURL             string
-	Broker              *events.Broker
+	Broker              *provider.SSEBroker
 	Preprocessing       service.Preprocessing
 	Ingest              service.Ingest
 	Inference           service.Inference

@@ -12,7 +12,7 @@ import (
 	"go-api/internal/config"
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/service"
-	"go-api/internal/observer"
+	"go-api/internal/provider"
 	"go-api/internal/transport/http/handler"
 )
 
@@ -174,7 +174,7 @@ func newTestRouter() *app.Router {
 		PreprocessingHandler: handler.NewPreprocessingHandler(fakePreprocessing{}),
 		GoldControlHandler:   handler.NewGoldControlHandler(fakeGoldControl{}),
 		IngestHandler:        handler.NewIngestHandler(fakeIngest{}),
-	}, observer.New())
+	}, provider.NewMetrics())
 }
 
 func TestRouterEndpoints(t *testing.T) {

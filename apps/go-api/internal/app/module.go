@@ -3,7 +3,7 @@ package app
 import (
 	"fmt"
 
-	"go-api/internal/events"
+	"go-api/internal/provider"
 	"go-api/internal/repository"
 	"go-api/internal/service"
 	"go-api/internal/transport/http/handler"
@@ -44,15 +44,15 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	if analyticsRepo == nil {
 		return nil, fmt.Errorf("repository AnalyticsClickHouse is nil")
 	}
-	objectRepo := repository.NewObjectMinIO(infra.MinIO)
+	objectRepo := provider.NewObjectStorage(infra.MinIO)
 	if objectRepo == nil {
-		return nil, fmt.Errorf("repository ObjectMinIO is nil")
+		return nil, fmt.Errorf("provider ObjectStorage is nil")
 	}
-	predictionObjectRepo := repository.NewObjectMinIO(infra.PredictionMinIO)
+	predictionObjectRepo := provider.NewObjectStorage(infra.PredictionMinIO)
 	if predictionObjectRepo == nil {
-		return nil, fmt.Errorf("repository prediction ObjectMinIO is nil")
+		return nil, fmt.Errorf("provider prediction ObjectStorage is nil")
 	}
-	eventBroker := events.NewBroker()
+	eventBroker := provider.NewSSEBroker()
 	predictionProjectionRepo := repository.NewPredictionProjectionClickHouse(infra.ClickHouse)
 	predictionProjector := service.NewPredictionProjectorService(
 		predictionObjectRepo,
