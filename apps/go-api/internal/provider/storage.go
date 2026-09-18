@@ -17,8 +17,11 @@ type ObjectStorage struct {
 	client *minio.Client
 }
 
-// NewObjectStorage khởi tạo thể hiện ObjectStorage provider
+// NewObjectStorage khởi tạo thể hiện ObjectStorage provider. Fail-fast nếu client nil.
 func NewObjectStorage(client *minio.Client) repo.ObjectRepository {
+	if client == nil {
+		panic("provider: minio client cannot be nil")
+	}
 	return &ObjectStorage{client: client}
 }
 

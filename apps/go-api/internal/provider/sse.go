@@ -35,26 +35,16 @@ type subscriber struct {
 	channel  chan entity.WorkflowEvent
 }
 
-// Alias cho tính tương thích và thuận tiện khi sử dụng
-type Broker = SSEBroker
-type Subscription = SSESubscription
-
 // NewSSEBroker khởi tạo một thể hiện SSEBroker mới
 func NewSSEBroker() *SSEBroker {
 	return &SSEBroker{subscribers: make(map[uint64]subscriber)}
 }
 
-// NewBroker là alias của NewSSEBroker
-func NewBroker() *SSEBroker {
-	return NewSSEBroker()
-}
-
 // Publish phát một sự kiện tới các subscriber phù hợp
 func (b *SSEBroker) Publish(_ context.Context, event entity.WorkflowEvent) error {
-	if b == nil {
-		return nil
-	}
 	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	if event.ID == "" {
 		b.nextID++
 		event.ID = formatID(b.nextID)
@@ -76,15 +66,11 @@ func (b *SSEBroker) Publish(_ context.Context, event entity.WorkflowEvent) error
 			// SSE là kênh invalidation, subscriber chậm có thể bỏ qua thông báo trung gian
 		}
 	}
-	b.mu.Unlock()
 	return nil
 }
 
 // Subscribe đăng ký lắng nghe sự kiện theo workflow và ticketID
 func (b *SSEBroker) Subscribe(ctx context.Context, workflow string, ticketIDs ...string) *SSESubscription {
-	if b == nil {
-		return &SSESubscription{Events: make(chan entity.WorkflowEvent)}
-	}
 	b.mu.Lock()
 	b.nextSubID++
 	id := b.nextSubID

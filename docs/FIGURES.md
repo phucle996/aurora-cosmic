@@ -8,7 +8,6 @@ This document catalogues the official publication-grade figures for the **AURORA
 
 | Figure | Identifier | Scientific / Architectural Domain | Generator Script | Primary Data Source |
 |---|---|---|---|---|
-| **Fig 1** | `fig1_system_architecture.png` | End-to-End Medallion Lakehouse Architecture | `gen_fig1_architecture.py` | System Architecture Spec |
 | **Fig 2** | `fig2_preprocessing_lightcurve.png` | Signal Preprocessing & Detrending (Bronze $\to$ Silver) | `gen_fig2_preprocessing.py` | NASA TESS (TIC 25155310 / WASP-126 b) |
 | **Fig 3** | `fig3_bls_periodogram.png` | Box Least Squares (BLS) Ephemeris Search (Gold) | `gen_fig3_bls_periodogram.py` | Cleaned PDCSAP Flux |
 | **Fig 4** | `fig4_flux_distribution.png` | Statistical Flux Distribution & Outlier Detection | `gen_fig4_flux_distribution.py` | Cleaned PDCSAP Flux |
@@ -21,10 +20,6 @@ This document catalogues the official publication-grade figures for the **AURORA
 
 ## Figure Details
 
-### Figure 1: End-to-End System Architecture
-- **Description**: Visualizes the decoupled 3-tier Medallion architecture (Bronze MinIO raw FITS $\to$ Silver Rust Preprocessor Parquet $\to$ Gold Python Feature Builder with BLS), connected with ClickHouse columnar OLAP, Rust ONNX inference worker, Go API gateway, and the React scientific dashboard.
-- **Artifact**: `docs/fig1_system_architecture.png`
-- **Reproduce**: `uv run --with numpy,matplotlib python docs/gen_fig1_architecture.py`
 
 ### Figure 2: Lightcurve Preprocessing & Instrumental Calibration
 - **Description**: Demonstrates raw Simple Aperture Photometry (SAP) flux affected by spacecraft momentum dumps and thermal drift, calibrated to Pre-search Data Conditioning SAP (PDCSAP) flux with outlier rejection, revealing the periodic planetary transit dips of WASP-126 b ($\delta \approx 0.65\%$, $P \approx 3.2886$ d).

@@ -86,25 +86,14 @@ func NewMetrics() *Metrics {
 	return m
 }
 
-// New là alias thuận tiện cho NewMetrics
-func New() *Metrics {
-	return NewMetrics()
-}
-
 // Handler trả về http.Handler phục vụ định dạng Prometheus text format
 func (m *Metrics) Handler() http.Handler {
-	if m == nil || m.registry == nil {
-		return http.NotFoundHandler()
-	}
 	return promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{})
 }
 
 // ObserveRequest ghi nhận một HTTP request đã hoàn tất. Sử dụng status class (2xx, 4xx, 5xx)
 // thay cho status code cụ thể để giữ cardinality luôn ở mức thấp.
 func (m *Metrics) ObserveRequest(method, route string, status int, elapsed time.Duration) {
-	if m == nil {
-		return
-	}
 	if method == "" {
 		method = http.MethodGet
 	}
@@ -124,16 +113,12 @@ func (m *Metrics) ObserveRequest(method, route string, status int, elapsed time.
 
 // RequestStarted ghi nhận thêm 1 request đang xử lý (in-flight)
 func (m *Metrics) RequestStarted() {
-	if m != nil {
-		m.inflight.Inc()
-	}
+	m.inflight.Inc()
 }
 
 // RequestFinished giảm 1 request đang xử lý (in-flight)
 func (m *Metrics) RequestFinished() {
-	if m != nil {
-		m.inflight.Dec()
-	}
+	m.inflight.Dec()
 }
 
 // ============================================================================
@@ -145,9 +130,6 @@ func (m *Metrics) RequestFinished() {
 type MetricsServer struct {
 	httpServer *http.Server
 }
-
-// Server là alias cho MetricsServer
-type Server = MetricsServer
 
 // StartMetricsServer bind địa chỉ observer và khởi động HTTP server cho metrics
 func StartMetricsServer(addr string, metrics *Metrics) (*MetricsServer, error) {
@@ -182,11 +164,6 @@ func StartMetricsServer(addr string, metrics *Metrics) (*MetricsServer, error) {
 		}
 	}()
 	return s, nil
-}
-
-// Start là alias của StartMetricsServer
-func Start(addr string, metrics *Metrics) (*MetricsServer, error) {
-	return StartMetricsServer(addr, metrics)
 }
 
 // Shutdown dừng observer mà không làm gián đoạn active scrape

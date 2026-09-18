@@ -11,11 +11,12 @@ import (
 // Metrics records completed requests using Gin's route template. It must run
 // before the router dispatches so c.FullPath() is available after c.Next().
 func Metrics(metrics *provider.Metrics) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if metrics == nil {
+	if metrics == nil {
+		return func(c *gin.Context) {
 			c.Next()
-			return
 		}
+	}
+	return func(c *gin.Context) {
 		started := time.Now()
 		metrics.RequestStarted()
 		defer metrics.RequestFinished()
