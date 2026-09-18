@@ -499,6 +499,11 @@ function TicketRow({
   isActive: boolean;
   onSelect: () => void;
 }): JSX.Element {
+  const executedStages: Array<{ key: string; label: string }> = [];
+  if (ticket.hasIngest) executedStages.push({ key: 'ingest', label: 'Ingest' });
+  if (ticket.hasSilver) executedStages.push({ key: 'silver', label: 'Silver' });
+  if (ticket.hasGold) executedStages.push({ key: 'gold', label: 'Gold' });
+
   return (
     <tr
       onClick={onSelect}
@@ -518,14 +523,24 @@ function TicketRow({
           )}
         </div>
         <p className="mt-1 max-w-56 truncate font-mono text-[9px] text-muted-foreground" title={ticket.last_snapshot_id}>
-          {ticket.last_snapshot_id || (ticket.runs.length > 0 ? 'execution recorded' : 'fresh ticket')}
+          {ticket.last_snapshot_id || (ticket.runs.length > 0 ? `${ticket.runs.length} execution(s)` : 'fresh ticket')}
         </p>
       </td>
       <td className="p-3">
-        <div className="flex items-center gap-1.5">
-          <StageBadge label="01 Ingest" active={ticket.hasIngest} />
-          <StageBadge label="02 Silver" active={ticket.hasSilver} />
-          <StageBadge label="03 Gold" active={ticket.hasGold} />
+        <div className="flex flex-wrap items-center gap-1.5">
+          {executedStages.length === 0 ? (
+            <span className="font-mono text-[10px] text-muted-foreground/60">— No runs yet</span>
+          ) : (
+            executedStages.map((stg) => (
+              <span
+                key={stg.key}
+                className="inline-flex items-center gap-1 border border-primary/40 bg-primary/10 px-1.5 py-0.5 font-mono text-[8px] font-medium uppercase text-primary"
+              >
+                <span className="size-1 rounded-full bg-primary" />
+                {stg.label}
+              </span>
+            ))
+          )}
         </div>
       </td>
       <td className="p-3 font-mono text-[10px] uppercase text-muted-foreground">
@@ -546,20 +561,20 @@ function TicketRow({
   );
 }
 
-function StageBadge({ label, active }: { label: string; active: boolean }): JSX.Element {
-  if (active) {
-    return (
-      <span className="inline-flex items-center gap-1 border border-primary/40 bg-primary/10 px-1.5 py-0.5 font-mono text-[8px] font-medium uppercase text-primary">
-        <span className="size-1 rounded-full bg-primary" />
-        {label}
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center border border-border/40 bg-muted/20 px-1.5 py-0.5 font-mono text-[8px] uppercase text-muted-foreground/50">
-      {label}
-    </span>
-  );
+interface ExecutionItem {
+  id: string;
+  stageName: string;
+  layerSubtitle: string;
+  mode: string;
+  status: string;
+  startedAt?: string;
+  finishedAt?: string;
+  duration?: string;
+  snapshotId?: string;
+  error?: string;
+  actionUrl: string;
+  actionText: string;
+  summary?: string;
 }
 
 function RunInspector({
@@ -589,42 +604,105 @@ function RunInspector({
 
   const isAttached = activeTicket === ticket.ticket_id;
 
-  // Resolve Stage 01: Ingest
-  const ingestComp = detail?.components?.find((c) => {
-    const id = c.component_id.toUpperCase();
-    return id.includes('INGEST') || id.includes('DOWNLOAD') || id.includes('FITS');
-  });
-  const ingestRun = ticket.ingestRun;
-  const ingestExecuted = Boolean(ingestRun || ingestComp || ticket.hasIngest);
-  const ingestStatus = ingestRun ? ingestRun.status : ingestComp ? ingestComp.status : ingestExecuted ? 'completed' : 'NOT RUN';
-  const ingestMode = ingestRun?.mode ?? (ingestExecuted ? 'STREAM' : undefined);
-  const ingestStarted = ingestRun?.started_at ?? ingestComp?.occurred_at;
-  const ingestDuration = ingestRun ? elapsed(ingestRun.started_at, ingestRun.finished_at ?? ingestRun.updated_at) : undefined;
+  // Build actual historical executions that occurred for this ticket
+  const executionItems: ExecutionItem[] = useMemo(() => {
+    const items: ExecutionItem[] = [];
 
-  // Resolve Stage 02: Preprocessing (Silver)
-  const silverComp = detail?.components?.find((c) => {
-    const id = c.component_id.toUpperCase();
-    return id.includes('NORMALIZ') || id.includes('SILVER') || id.includes('CALIBRAT') || id.includes('PREPROCESS');
-  });
-  const silverRun = ticket.silverRun;
-  const silverExecuted = Boolean(silverRun || silverComp || ticket.hasSilver);
-  const silverStatus = silverRun ? silverRun.status : silverComp ? silverComp.status : silverExecuted ? 'completed' : 'NOT RUN';
-  const silverMode = silverRun?.mode ?? (silverExecuted ? 'STREAM' : undefined);
-  const silverStarted = silverRun?.started_at ?? silverComp?.occurred_at;
-  const silverDuration = silverRun ? elapsed(silverRun.started_at, silverRun.finished_at ?? silverRun.updated_at) : undefined;
+    // Runs recorded in ClickHouse for this ticket
+    for (let i = 0; i < ticket.runs.length; i++) {
+      const r = ticket.runs[i];
+      const p = r.pipeline.toLowerCase();
+      let stageName = 'Pipeline Execution';
+      let layerSubtitle = 'Data Factory Pipeline';
+      let actionUrl = '/data-factory/pipeline';
+      let actionText = 'Inspect in DAG';
 
-  // Resolve Stage 03: Data Enrichment (Gold)
-  const goldComp = detail?.components?.find((c) => {
-    const id = c.component_id.toUpperCase();
-    return id.includes('GOLD') || id.includes('ENRICH') || id.includes('SYNTHESIS') || id.includes('COMMIT');
-  });
-  const goldRun = ticket.goldRun;
-  const goldExecuted = Boolean(goldRun || goldComp || ticket.hasGold || detail?.run);
-  const goldStatus = goldRun ? goldRun.status : goldComp ? goldComp.status : detail?.run ? detail.run.status : goldExecuted ? 'completed' : 'NOT RUN';
-  const goldMode = goldRun?.mode ?? detail?.run?.mode ?? (goldExecuted ? 'STREAM' : undefined);
-  const goldStarted = goldRun?.started_at ?? goldComp?.occurred_at ?? detail?.run?.started_at;
-  const goldDuration = (goldRun ?? detail?.run) ? elapsed((goldRun ?? detail?.run)?.started_at, (goldRun ?? detail?.run)?.finished_at ?? (goldRun ?? detail?.run)?.updated_at) : undefined;
-  const goldSnapshot = goldRun?.last_snapshot_id || goldComp?.snapshot_id || detail?.run?.last_snapshot_id || ticket.last_snapshot_id;
+      if (p.includes('ingest')) {
+        stageName = 'Ingest';
+        layerSubtitle = 'Bronze Layer / Raw Data Ingest';
+        actionUrl = '/ingest';
+        actionText = 'Go to Ingest';
+      } else if (p.includes('preprocess') || p.includes('silver')) {
+        stageName = 'Preprocessing';
+        layerSubtitle = 'Silver Layer / Calibration & Detrending';
+        actionUrl = '/data-factory/preprocessing';
+        actionText = 'Go to Preprocess';
+      } else if (p.includes('gold') || p.includes('enrich') || p === 'silver_to_gold') {
+        stageName = 'Data Enrichment';
+        layerSubtitle = 'Gold Layer / Candidate Synthesis & Commit';
+        actionUrl = '/data-factory/enrichment';
+        actionText = 'Go to Enrichment';
+      }
+
+      let summary: string | undefined;
+      if (r.output_rows > 0) {
+        summary = `${r.output_rows.toLocaleString()} outputs · ${r.input_records.toLocaleString()} inputs`;
+      } else if (r.input_records > 0) {
+        summary = `${r.input_records.toLocaleString()} records processed`;
+      }
+
+      items.push({
+        id: `${r.pipeline}-${r.started_at}-${i}`,
+        stageName,
+        layerSubtitle,
+        mode: r.mode.toUpperCase(),
+        status: r.status,
+        startedAt: r.started_at,
+        finishedAt: r.finished_at,
+        duration: elapsed(r.started_at, r.finished_at ?? r.updated_at),
+        snapshotId: r.last_snapshot_id,
+        error: r.last_error,
+        actionUrl,
+        actionText,
+        summary,
+      });
+    }
+
+    // If detail.run is available and not already in items
+    if (detail?.run && !items.some((it) => it.startedAt === detail.run.started_at && it.stageName.toLowerCase().includes(detail.run.pipeline.toLowerCase()))) {
+      const r = detail.run;
+      const p = r.pipeline.toLowerCase();
+      let stageName = 'Data Enrichment';
+      let layerSubtitle = 'Gold Layer / Candidate Synthesis & Commit';
+      let actionUrl = '/data-factory/enrichment';
+      let actionText = 'Go to Enrichment';
+      if (p.includes('preprocess') || p.includes('silver')) {
+        stageName = 'Preprocessing';
+        layerSubtitle = 'Silver Layer / Calibration';
+        actionUrl = '/data-factory/preprocessing';
+        actionText = 'Go to Preprocess';
+      } else if (p.includes('ingest')) {
+        stageName = 'Ingest';
+        layerSubtitle = 'Bronze Layer / Ingestion';
+        actionUrl = '/ingest';
+        actionText = 'Go to Ingest';
+      }
+      items.push({
+        id: `detail-${r.pipeline}-${r.started_at}`,
+        stageName,
+        layerSubtitle,
+        mode: r.mode.toUpperCase(),
+        status: r.status,
+        startedAt: r.started_at,
+        finishedAt: r.finished_at,
+        duration: elapsed(r.started_at, r.finished_at ?? r.updated_at),
+        snapshotId: r.last_snapshot_id,
+        error: r.last_error,
+        actionUrl,
+        actionText,
+        summary: r.output_rows > 0 ? `${r.output_rows.toLocaleString()} outputs` : undefined,
+      });
+    }
+
+    // Sort by startedAt descending (latest run first)
+    items.sort((a, b) => {
+      const timeA = parseTime(a.startedAt)?.getTime() ?? 0;
+      const timeB = parseTime(b.startedAt)?.getTime() ?? 0;
+      return timeB - timeA;
+    });
+
+    return items;
+  }, [ticket.runs, detail]);
 
   const componentEvents = detail?.components ?? [];
 
@@ -698,60 +776,104 @@ function RunInspector({
           <LoadingState label="Loading stage run evidence…" />
         ) : (
           <>
-            <div>
-              <p className="font-mono text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                Stage Execution History
-              </p>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                Execution status, timing, and pipeline modes for this runner ticket.
-              </p>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-mono text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                  Stage Execution History
+                </p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Actual pipeline stage runs recorded for this ticket.
+                </p>
+              </div>
+              <Badge variant="outline" className="rounded-none font-mono text-[9px]">
+                {executionItems.length} run{executionItems.length === 1 ? '' : 's'}
+              </Badge>
             </div>
 
-            {/* Stage Timeline */}
-            <div className="space-y-3">
-              {/* Stage 01: Ingest */}
-              <StageHistoryCard
-                stageNumber="01"
-                stageName="Ingest"
-                layerSubtitle="Bronze Layer / Raw Data Ingestion"
-                executed={ingestExecuted}
-                status={ingestStatus}
-                mode={ingestMode}
-                startedAt={ingestStarted}
-                duration={ingestDuration}
-                actionUrl="/ingest"
-                actionText="Go to Ingest"
-              />
+            {/* If no runs have occurred for this ticket */}
+            {executionItems.length === 0 ? (
+              <div className="border border-dashed border-border/70 p-6 text-center">
+                <Clock3 className="mx-auto size-7 text-muted-foreground/40" />
+                <p className="mt-2 text-sm font-medium text-foreground">No execution history recorded</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  This runner ticket has not executed any pipeline stages yet.
+                </p>
+                <div className="mt-4 flex flex-wrap justify-center gap-2">
+                  <Button asChild size="sm" variant="outline" className="h-7 rounded-none font-mono text-[9px] uppercase">
+                    <Link to="/ingest">Launch Ingest</Link>
+                  </Button>
+                  <Button asChild size="sm" variant="outline" className="h-7 rounded-none font-mono text-[9px] uppercase">
+                    <Link to="/data-factory/preprocessing">Launch Preprocessing</Link>
+                  </Button>
+                  <Button asChild size="sm" variant="outline" className="h-7 rounded-none font-mono text-[9px] uppercase">
+                    <Link to="/data-factory/enrichment">Launch Enrichment</Link>
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {executionItems.map((item, index) => (
+                  <div
+                    key={item.id}
+                    className="border border-border/80 bg-card p-3 transition-colors hover:border-primary/40"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-start gap-2.5">
+                        <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center border border-primary/50 bg-primary/10 font-mono text-[10px] font-semibold text-primary">
+                          {String(index + 1).padStart(2, '0')}
+                        </span>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-xs font-semibold text-foreground">{item.stageName}</span>
+                            <Badge variant="outline" className="rounded-none font-mono text-[8px] uppercase">
+                              {item.mode}
+                            </Badge>
+                          </div>
+                          <p className="text-[10px] text-muted-foreground">{item.layerSubtitle}</p>
+                        </div>
+                      </div>
+                      <Badge
+                        variant={statusVariant(item.status)}
+                        className="shrink-0 rounded-none font-mono text-[8px] uppercase"
+                      >
+                        {item.status}
+                      </Badge>
+                    </div>
 
-              {/* Stage 02: Preprocessing */}
-              <StageHistoryCard
-                stageNumber="02"
-                stageName="Preprocessing"
-                layerSubtitle="Silver Layer / Lightcurve Calibration"
-                executed={silverExecuted}
-                status={silverStatus}
-                mode={silverMode}
-                startedAt={silverStarted}
-                duration={silverDuration}
-                actionUrl="/data-factory/preprocessing"
-                actionText="Go to Preprocess"
-              />
+                    {item.error ? (
+                      <div className="mt-2 border-l-2 border-destructive bg-destructive/10 px-2 py-1 text-[10px] text-destructive">
+                        {item.error}
+                      </div>
+                    ) : null}
 
-              {/* Stage 03: Data Enrichment */}
-              <StageHistoryCard
-                stageNumber="03"
-                stageName="Data Enrichment"
-                layerSubtitle="Gold Layer / Candidate Synthesis & Commit"
-                executed={goldExecuted}
-                status={goldStatus}
-                mode={goldMode}
-                startedAt={goldStarted}
-                duration={goldDuration}
-                snapshotId={goldSnapshot}
-                actionUrl="/data-factory/enrichment"
-                actionText="Go to Enrichment"
-              />
-            </div>
+                    <div className="mt-2.5 flex items-center justify-between border-t border-border/40 pt-2 text-[10px]">
+                      <div className="font-mono text-muted-foreground">
+                        <span>
+                          {displayTime(item.startedAt)}
+                          {item.duration ? ` · ${item.duration}` : ''}
+                        </span>
+                        {item.snapshotId ? (
+                          <p className="mt-0.5 truncate text-[9px] text-primary" title={item.snapshotId}>
+                            Snapshot: {item.snapshotId}
+                          </p>
+                        ) : item.summary ? (
+                          <p className="mt-0.5 text-[9px] text-muted-foreground">
+                            {item.summary}
+                          </p>
+                        ) : null}
+                      </div>
+                      <Link
+                        to={item.actionUrl}
+                        className="inline-flex shrink-0 items-center gap-1 font-mono text-[9px] uppercase text-primary hover:underline"
+                      >
+                        {item.actionText}
+                        <ExternalLink className="size-2.5" />
+                      </Link>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* Component Event Trace (if recorded) */}
             {componentEvents.length > 0 && (
@@ -786,98 +908,6 @@ function RunInspector({
         )}
       </CardContent>
     </Card>
-  );
-}
-
-function StageHistoryCard({
-  stageNumber,
-  stageName,
-  layerSubtitle,
-  executed,
-  status,
-  mode,
-  startedAt,
-  duration,
-  snapshotId,
-  actionUrl,
-  actionText,
-}: {
-  stageNumber: string;
-  stageName: string;
-  layerSubtitle: string;
-  executed: boolean;
-  status: string;
-  mode?: string;
-  startedAt?: string;
-  duration?: string;
-  snapshotId?: string;
-  actionUrl: string;
-  actionText: string;
-}): JSX.Element {
-  return (
-    <div
-      className={`border p-3 transition-colors ${
-        executed
-          ? 'border-border/80 bg-card'
-          : 'border-dashed border-border/50 bg-muted/10'
-      }`}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-start gap-2.5">
-          <span
-            className={`mt-0.5 flex size-5 shrink-0 items-center justify-center font-mono text-[10px] font-semibold ${
-              executed
-                ? 'border border-primary/50 bg-primary/10 text-primary'
-                : 'border border-border/60 bg-muted text-muted-foreground'
-            }`}
-          >
-            {stageNumber}
-          </span>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-xs font-semibold text-foreground">{stageName}</span>
-              {mode && (
-                <Badge variant="outline" className="rounded-none font-mono text-[8px] uppercase">
-                  {mode}
-                </Badge>
-              )}
-            </div>
-            <p className="text-[10px] text-muted-foreground">{layerSubtitle}</p>
-          </div>
-        </div>
-        <Badge
-          variant={executed ? statusVariant(status) : 'outline'}
-          className="shrink-0 rounded-none font-mono text-[8px] uppercase"
-        >
-          {executed ? status : 'Not executed yet'}
-        </Badge>
-      </div>
-
-      <div className="mt-2.5 flex items-center justify-between border-t border-border/40 pt-2 text-[10px]">
-        <div className="font-mono text-muted-foreground">
-          {executed ? (
-            <span>
-              {displayTime(startedAt)}
-              {duration ? ` · ${duration}` : ''}
-            </span>
-          ) : (
-            <span className="text-muted-foreground/60">Stage has not run under this ticket</span>
-          )}
-          {snapshotId && (
-            <p className="mt-0.5 truncate text-[9px] text-primary" title={snapshotId}>
-              Snapshot: {snapshotId}
-            </p>
-          )}
-        </div>
-        <Link
-          to={actionUrl}
-          className="inline-flex shrink-0 items-center gap-1 font-mono text-[9px] uppercase text-primary hover:underline"
-        >
-          {actionText}
-          <ExternalLink className="size-2.5" />
-        </Link>
-      </div>
-    </div>
   );
 }
 
