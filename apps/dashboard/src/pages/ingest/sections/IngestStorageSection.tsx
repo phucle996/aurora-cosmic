@@ -40,7 +40,7 @@ type IngestStatus = {
   observed: boolean;
   source: string;
   run_id?: string;
-  control_job_id?: string;
+  ticket_id?: string;
   status: string;
   error?: string;
   manifest_path?: string;
@@ -133,7 +133,7 @@ export default function IngestStorageSection(): JSX.Element {
         // The control job lives on the API/ingester, not in browser state.
         // Hydrate it from the authoritative status response so a page refresh
         // cannot expose a second Start button while a run is still active.
-        const controlJobID = nextStatus.control_job_id;
+        const controlJobID = nextStatus.ticket_id;
         if (controlJobID) {
           setControlJob((previous) => ({
             job_id: controlJobID,
@@ -167,7 +167,7 @@ export default function IngestStorageSection(): JSX.Element {
 
   useEffect(() => {
     void load(true);
-    const eventSource = new EventSource(`${apiBase}/v1/events?workflow=ingest`);
+    const eventSource = new EventSource(`${apiBase}/v1/events?topic=ingest`);
     eventSource.addEventListener('workflow', (event) => {
       try {
         const update = JSON.parse((event as MessageEvent<string>).data) as { payload?: IngestControlJob };
@@ -227,7 +227,7 @@ export default function IngestStorageSection(): JSX.Element {
     }
   }
 
-  const ingestIsRunning = controlJob?.status === 'running' || controlJob?.status === 'draining' || controlJob?.status === 'cancelling' || ((status?.status === 'running' || status?.status === 'draining') && Boolean(status.control_job_id));
+  const ingestIsRunning = controlJob?.status === 'running' || controlJob?.status === 'draining' || controlJob?.status === 'cancelling' || ((status?.status === 'running' || status?.status === 'draining') && Boolean(status.ticket_id));
 
   return <div className="space-y-6">
     <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">

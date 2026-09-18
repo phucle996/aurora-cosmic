@@ -22,14 +22,17 @@ type EventsHandler struct {
 	observations ingestObservationPublisher
 }
 
+type observationTarget struct {
+	registerSubject   string
+	unregisterSubject string
+	payload           []byte
+}
+
 func observationSubject(workflow, action string) string {
 	switch workflow {
 	case "ingest":
-		// Preserve the ingester's established observation contract.
 		return "aurora.v1.ingest.observe." + action
 	case "gold":
-		// Gold observation messages stay outside aurora.v1.gold.> so the
-		// AURORA_GOLD JetStream never retains browser presence events.
 		return "aurora.observe.gold." + action
 	default:
 		return ""
@@ -46,20 +49,85 @@ func NewEventsHandler(broker *provider.SSEBroker, observations ...ingestObservat
 
 func (h *EventsHandler) Stream(c *gin.Context) {
 	if h == nil || h.broker == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "event stream unavailable"})
+		c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "event stream unavailable"})
 		return
 	}
-	workflow := strings.TrimSpace(c.Query("workflow"))
-	ticketID := strings.TrimSpace(c.Query("ticket"))
-	registerSubject := observationSubject(workflow, "register")
-	unregisterSubject := observationSubject(workflow, "unregister")
-	if registerSubject != "" && ticketID != "" && h.observations != nil {
-		payload, _ := json.Marshal(gin.H{"ticket_id": ticketID})
-		_ = h.observations.PublishCore(c.Request.Context(), registerSubject, payload)
-		defer func() {
-			_ = h.observations.PublishCore(context.Background(), unregisterSubject, payload)
-		}()
+
+	// Parse topic query params. Sai thì trả lỗi và ngắt kết nối, không fallback.
+	var topics []string
+	rawTopics := c.QueryArray("topic")
+	if len(rawTopics) == 0 {
+		if single := strings.TrimSpace(c.Query("topic")); single != "" {
+			for _, part := range strings.Split(single, ",") {
+				if trimmed := strings.TrimSpace(part); trimmed != "" {
+					topics = append(topics, trimmed)
+				}
+			}
+		}
+	} else {
+		for _, raw := range rawTopics {
+			for _, part := range strings.Split(raw, ",") {
+				if trimmed := strings.TrimSpace(part); trimmed != "" {
+					topics = append(topics, trimmed)
+				}
+			}
+		}
 	}
+
+	if len(topics) == 0 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "topic query parameter is required"})
+		return
+	}
+
+	subscription, err := h.broker.Subscribe(c.Request.Context(), topics...)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	defer subscription.Close()
+
+	// Register ephemeral NATS presence for relevant namespaces (e.g. ingest, gold)
+	var targets []observationTarget
+	if h.observations != nil {
+		seen := make(map[string]struct{})
+		for _, t := range topics {
+			idx := strings.IndexByte(t, ':')
+			if idx == -1 {
+				continue
+			}
+			ns := t[:idx]
+			id := t[idx+1:]
+			if ns == "" || id == "" {
+				continue
+			}
+			if _, ok := seen[t]; ok {
+				continue
+			}
+			seen[t] = struct{}{}
+
+			regSub := observationSubject(ns, "register")
+			unregSub := observationSubject(ns, "unregister")
+			if regSub != "" {
+				payload, _ := json.Marshal(gin.H{"ticket_id": id, "id": id})
+				targets = append(targets, observationTarget{
+					registerSubject:   regSub,
+					unregisterSubject: unregSub,
+					payload:           payload,
+				})
+			}
+		}
+	}
+
+	for _, target := range targets {
+		_ = h.observations.PublishCore(c.Request.Context(), target.registerSubject, target.payload)
+	}
+	defer func() {
+		for _, target := range targets {
+			_ = h.observations.PublishCore(context.Background(), target.unregisterSubject, target.payload)
+		}
+	}()
+
+	// Prepare SSE response headers
 	c.Header("Content-Type", "text/event-stream; charset=utf-8")
 	c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
 	c.Header("Connection", "keep-alive")
@@ -67,12 +135,12 @@ func (h *EventsHandler) Stream(c *gin.Context) {
 	c.Status(http.StatusOK)
 	c.Writer.Flush()
 
-	subscription := h.broker.Subscribe(c.Request.Context(), workflow, ticketID)
-	defer subscription.Close()
 	fmt.Fprint(c.Writer, "event: ready\ndata: {\"status\":\"connected\"}\n\n")
 	c.Writer.Flush()
+
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
+
 	for {
 		select {
 		case <-c.Request.Context().Done():
@@ -81,32 +149,18 @@ func (h *EventsHandler) Stream(c *gin.Context) {
 			if !ok {
 				return
 			}
-			eventMap := gin.H{
-				"id":          event.ID,
-				"type":        event.Type,
-				"workflow":    event.Workflow,
-				"status":      event.Status,
-				"occurred_at": event.OccurredAt,
+			if event.Type == "" || len(event.Data) == 0 {
+				return
 			}
-			if event.JobID != "" {
-				eventMap["job_id"] = event.JobID
+			if event.ID != "" {
+				fmt.Fprintf(c.Writer, "id: %s\nevent: %s\ndata: %s\n\n", event.ID, event.Type, event.Data)
+			} else {
+				fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", event.Type, event.Data)
 			}
-			if event.TicketID != "" {
-				eventMap["ticket_id"] = event.TicketID
-			}
-			if len(event.Payload) > 0 {
-				eventMap["payload"] = json.RawMessage(event.Payload)
-			}
-			payload, err := json.Marshal(eventMap)
-			if err != nil {
-				continue
-			}
-			fmt.Fprintf(c.Writer, "id: %s\nevent: workflow\ndata: %s\n\n", event.ID, payload)
 			c.Writer.Flush()
 		case <-heartbeat.C:
-			if registerSubject != "" && ticketID != "" && h.observations != nil {
-				payload, _ := json.Marshal(gin.H{"ticket_id": ticketID})
-				_ = h.observations.PublishCore(c.Request.Context(), registerSubject, payload)
+			for _, target := range targets {
+				_ = h.observations.PublishCore(c.Request.Context(), target.registerSubject, target.payload)
 			}
 			fmt.Fprint(c.Writer, ": keep-alive\n\n")
 			c.Writer.Flush()

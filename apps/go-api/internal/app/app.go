@@ -16,7 +16,11 @@ import (
 	"go-api/infra/prometheus"
 	"go-api/internal/config"
 	"go-api/internal/provider"
+	"go-api/internal/transport/http/middleware"
+	"go-api/internal/transport/pubsub"
 	"go-api/internal/transport/stream"
+
+	"github.com/gin-gonic/gin"
 )
 
 type Infrastructure struct {
@@ -31,20 +35,32 @@ type Infrastructure struct {
 type App struct {
 	Server   *http.Server
 	Observer *provider.MetricsServer
-	Stream   *stream.NATSStream
+	PubSub   *pubsub.NATSPubSub
+	Stream   *stream.StreamConsumer
 	NATS     *nats.Dispatcher
 	Addr     string
 }
 
 // Start brings up transport consumers before the HTTP listener is exposed.
-// Runtime SSE depends on this Core NATS consumer; starting only the REST
-// server would leave the dashboard with an open but silent event stream.
+// Runtime SSE depends on Core NATS; starting only the REST server would leave
+// the dashboard with an open but silent event stream.
 func (a *App) Start(ctx context.Context) error {
-	if a == nil || a.Stream == nil {
-		return fmt.Errorf("NATS stream consumer is unavailable")
+	if a == nil {
+		return fmt.Errorf("app is nil")
 	}
-	if err := a.Stream.Start(ctx); err != nil {
-		return fmt.Errorf("start NATS stream consumer: %w", err)
+	if a.PubSub != nil {
+		if err := a.PubSub.Start(ctx); err != nil {
+			return fmt.Errorf("start NATS pubsub consumer: %w", err)
+		}
+		// Zero-overhead connection sharing: re-use the established NATS connection for JetStream
+		if a.Stream != nil && a.PubSub.Conn() != nil {
+			a.Stream.SetConn(a.PubSub.Conn())
+		}
+	}
+	if a.Stream != nil {
+		if err := a.Stream.Start(ctx); err != nil {
+			return fmt.Errorf("start NATS stream consumer: %w", err)
+		}
 	}
 	return nil
 }
@@ -87,6 +103,7 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 	return &App{
 		Server:   srv,
 		Observer: observerServer,
+		PubSub:   module.NATSPubSub,
 		Stream:   module.NATSStream,
 		NATS:     infra.NATS,
 		Addr:     addr,
@@ -101,6 +118,11 @@ func (a *App) Shutdown(ctx context.Context) error {
 	var shutdownErrs []error
 	if a.Stream != nil {
 		if err := a.Stream.Close(); err != nil {
+			shutdownErrs = append(shutdownErrs, err)
+		}
+	}
+	if a.PubSub != nil {
+		if err := a.PubSub.Close(); err != nil {
 			shutdownErrs = append(shutdownErrs, err)
 		}
 	}
@@ -121,3 +143,18 @@ func (a *App) Shutdown(ctx context.Context) error {
 	}
 	return errors.Join(shutdownErrs...)
 }
+
+// NewRouter constructs a Gin engine configured with global middleware and flat routes.
+func NewRouter(cfg *config.Config, module *Module, metrics ...*provider.Metrics) *gin.Engine {
+	gin.SetMode(gin.ReleaseMode)
+	engine := gin.New()
+	engine.Use(gin.Recovery())
+	engine.Use(middleware.CORS(cfg))
+	if len(metrics) > 0 && metrics[0] != nil {
+		engine.Use(middleware.Metrics(metrics[0]))
+	}
+
+	RegisterRoutes(engine, module)
+	return engine
+}
+

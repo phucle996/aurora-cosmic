@@ -1,10 +1,10 @@
 import type { JSX } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import type { StorageListing } from '@/features/datasets/types';
+import type { StorageListing } from '@/pages/datasets/types';
 import { ObjectBrowserTable } from './ObjectBrowserTable';
 import { SchemaCatalogCard } from './SchemaCatalogCard';
-import { silverFfiSchema, silverLightCurveSchema, silverTargetPixelSchema } from '@/features/datasets/types';
+import { silverFfiSchema, silverLightCurveSchema, silverTargetPixelSchema } from '@/pages/datasets/types';
 
 interface SilverLayerTabProps {
   silverData: StorageListing | null;

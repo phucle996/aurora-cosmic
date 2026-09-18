@@ -1,25 +1,35 @@
 package entity
 
 type Anomaly struct {
-	PredictionID      string
-	SourceProductID   string
-	TICID             int64
-	Sector            int
-	ReconstructionMSE float64
-	Threshold         float64
-	AboveThreshold    bool
-	ModelVersion      string
-	RegisteredModel   string
-	SnapshotID        string
-	ValidationID      string
-	RuntimePkgID      string
-	PredictedAt       string
+	PredictionID      string  `json:"prediction_id"`
+	SourceProductID   string  `json:"source_product_id"`
+	TICID             int64   `json:"tic_id"`
+	Sector            int     `json:"sector"`
+	ReconstructionMSE float64 `json:"reconstruction_mse"`
+	Threshold         float64 `json:"decision_threshold"`
+	AboveThreshold    bool    `json:"above_threshold"`
+	ModelVersion      string  `json:"model_version"`
+	RegisteredModel   string  `json:"registered_model_id"`
+	SnapshotID        string  `json:"gold_snapshot_id"`
+	ValidationID      string  `json:"runtime_validation_id"`
+	RuntimePkgID      string  `json:"runtime_package_id"`
+	PredictedAt       string  `json:"predicted_at"`
 }
 
 type AnomalyDetail struct {
-	Anomaly              Anomaly
-	ExplanationAvailable bool
-	Explanation          *AnomalyExplanation
+	Anomaly              Anomaly             `json:"anomaly"`
+	ExplanationAvailable bool                `json:"explanation_available"`
+	Explanation          *AnomalyExplanation `json:"explanation"`
+	SnapshotID           string              `json:"snapshot_id,omitempty"`
+}
+
+type AnomalyListResponse struct {
+	Task        string       `json:"task"`
+	Count       int          `json:"count"`
+	Anomalies   []Anomaly    `json:"anomalies"`
+	Page        PageMetadata `json:"page"`
+	SnapshotID  string       `json:"snapshot_id"`
+	OnlyFlagged bool         `json:"only_flagged"`
 }
 
 type AnomalyExplanation struct {

@@ -1,7 +1,6 @@
 import type { JSX } from 'react';
-
-import ModelWorkspace from '@/features/models/ModelWorkspace';
+import EvolutionEvidenceSection from './sections/EvolutionEvidenceSection';
 
 export default function EvolutionEvidencePage(): JSX.Element {
-  return <ModelWorkspace view="evidence" />;
+  return <EvolutionEvidenceSection />;
 }

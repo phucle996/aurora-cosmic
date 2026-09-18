@@ -10,7 +10,7 @@ import { BronzeLayerTab } from './components/BronzeLayerTab';
 import { GoldLayerTab } from './components/GoldLayerTab';
 import { LakehouseTierCards } from './components/LakehouseTierCards';
 import { SilverLayerTab } from './components/SilverLayerTab';
-import type { StorageListing } from '@/features/datasets/types';
+import type { StorageListing } from '@/pages/datasets/types';
 
 const PAGE_SIZE = 25;
 

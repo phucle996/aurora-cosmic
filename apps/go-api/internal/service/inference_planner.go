@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"go-api/internal/domain/entity"
-	"go-api/internal/domain/repo"
+	"go-api/internal/provider"
 	"go-api/internal/taxonomy"
 )
 
@@ -86,7 +86,7 @@ func (s *InferenceService) ReconcileChampionCoverage(ctx context.Context) (int, 
 func (s *InferenceService) resolveChampion(ctx context.Context) (resolvedChampion, bool, error) {
 	data, err := s.objects.GetObject(ctx, "models/candidate/champion.json")
 	if err != nil {
-		if errors.Is(err, repo.ErrObjectNotFound) {
+		if errors.Is(err, provider.ErrObjectNotFound) {
 			return resolvedChampion{}, false, nil
 		}
 		return resolvedChampion{}, false, fmt.Errorf("read candidate champion pointer: %w", err)
@@ -259,7 +259,7 @@ func (s *InferenceService) persistAndDispatchChampionJob(ctx context.Context, pl
 			return false, fmt.Errorf("INFERENCE_JOB_CONFLICT: %s", jobKey)
 		}
 		jobRaw = existing
-	} else if errors.Is(err, repo.ErrObjectNotFound) {
+	} else if errors.Is(err, provider.ErrObjectNotFound) {
 		if err := s.objects.PutObject(ctx, jobKey, jobRaw, "application/json"); err != nil {
 			return false, fmt.Errorf("persist inference job: %w", err)
 		}
@@ -276,7 +276,7 @@ func (s *InferenceService) persistAndDispatchChampionJob(ctx context.Context, pl
 				return false, nil
 			}
 		}
-	} else if !errors.Is(statusErr, repo.ErrObjectNotFound) {
+	} else if !errors.Is(statusErr, provider.ErrObjectNotFound) {
 		return false, fmt.Errorf("inspect inference status: %w", statusErr)
 	}
 

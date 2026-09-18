@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,9 +20,8 @@ type ingestHTTPStub struct{ started entity.IngestStartRequest }
 func (s *ingestHTTPStub) Status(context.Context) (*entity.IngestStatus, error) {
 	return &entity.IngestStatus{
 		Observed:          true,
-		Source:            "minio-checkpoint",
 		RunID:             "ingest-run-1",
-		ControlJobID:      "ingest-job-1",
+		TicketID:          "ingest-job-1",
 		Status:            "running",
 		CompletedProducts: 3,
 		TotalProducts:     10,
@@ -76,7 +76,7 @@ func TestIngestHTTPContractUsesSnakeCaseDTOs(t *testing.T) {
 	if err := json.Unmarshal(statusRecorder.Body.Bytes(), &status); err != nil {
 		t.Fatalf("decode status: %v", err)
 	}
-	if status["control_job_id"] != "ingest-job-1" || status["completed_products"] != float64(3) || status["CompletedProducts"] != nil {
+	if status["ticket_id"] != "ingest-job-1" || status["completed_products"] != float64(3) || status["CompletedProducts"] != nil {
 		t.Fatalf("status response does not match the dashboard contract: %s", statusRecorder.Body.String())
 	}
 
@@ -105,5 +105,46 @@ func TestIngestHTTPContractUsesSnakeCaseDTOs(t *testing.T) {
 	}
 	if !strings.Contains(startRecorder.Body.String(), `"job_id":"ingest-job-1"`) {
 		t.Fatalf("control response does not use snake_case: %s", startRecorder.Body.String())
+	}
+}
+
+type ingestHTTPErrorStub struct{}
+
+func (*ingestHTTPErrorStub) Status(context.Context) (*entity.IngestStatus, error) {
+	return nil, errors.New("unavailable")
+}
+
+func (*ingestHTTPErrorStub) Storage(context.Context, string, int, int) (*entity.StorageListing, error) {
+	return nil, errors.New("unavailable")
+}
+
+func (*ingestHTTPErrorStub) Start(context.Context, entity.IngestStartRequest) (*entity.IngestControlJob, error) {
+	return nil, entity.ErrIngestAlreadyRunning
+}
+
+func (*ingestHTTPErrorStub) Cancel(context.Context, string) (*entity.IngestControlJob, error) {
+	return nil, entity.ErrIngestJobNotFound
+}
+
+func TestIngestHTTPErrorMapping(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewIngestHandler(&ingestHTTPErrorStub{})
+	router := gin.New()
+	router.POST("/jobs", h.Start)
+	router.POST("/jobs/:job_id/cancel", h.Cancel)
+
+	startRecorder := httptest.NewRecorder()
+	startReq := httptest.NewRequest(http.MethodPost, "/jobs", strings.NewReader(`{"sector":1}`))
+	startReq.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(startRecorder, startReq)
+	if startRecorder.Code != http.StatusConflict {
+		t.Fatalf("expected 409 Conflict, got %d: %s", startRecorder.Code, startRecorder.Body.String())
+	}
+
+	cancelRecorder := httptest.NewRecorder()
+	cancelReq := httptest.NewRequest(http.MethodPost, "/jobs/not-found-id/cancel", nil)
+	router.ServeHTTP(cancelRecorder, cancelReq)
+	if cancelRecorder.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 NotFound, got %d: %s", cancelRecorder.Code, cancelRecorder.Body.String())
 	}
 }

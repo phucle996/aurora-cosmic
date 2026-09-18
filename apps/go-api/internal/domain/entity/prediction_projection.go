@@ -3,6 +3,7 @@ package entity
 type PredictionProjectionResult struct {
 	SourceEventID string
 	JobID         string
+	TicketID      string
 	OutputKey     string
 	ExpectedRows  int64
 	InsertedRows  int64

@@ -8,9 +8,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { apiFetch } from '@/lib/api';
-import { formatBytes, formatDate } from '@/features/datasets/types';
+import { formatBytes, formatDate } from '@/pages/datasets/types';
 
-import type { GoldSnapshotDetail } from '@/features/gold/types';
+import type { GoldSnapshotDetail } from '@/pages/gold-snapshot/types';
 
 function ShortHash({ value }: { value: string }): JSX.Element {
   return <span className="font-mono text-xs" title={value}>{value ? `${value.slice(0, 16)}…` : '—'}</span>;

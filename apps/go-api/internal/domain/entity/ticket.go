@@ -4,7 +4,6 @@ package entity
 type FactoryTicket struct {
 	TicketID    string `json:"ticket_id"`
 	CreatedAt   string `json:"created_at"`
-	Status      string `json:"status"`
 	Description string `json:"description,omitempty"`
 	UpdatedAt   string `json:"updated_at,omitempty"`
 }

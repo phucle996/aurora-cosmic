@@ -25,6 +25,7 @@ type StartRequest struct {
 
 type Command struct {
 	JobID        string
+	TicketID     string
 	ManifestPath string
 	Sector       int
 	Limit        int
@@ -42,6 +43,7 @@ type Command struct {
 
 type Job struct {
 	ID           string    `json:"job_id"`
+	TicketID     string    `json:"ticket_id,omitempty"`
 	Status       string    `json:"status"`
 	ManifestPath string    `json:"manifest_path,omitempty"`
 	Sector       int       `json:"sector,omitempty"`
@@ -104,16 +106,17 @@ func (m *JobManager) Start(request StartRequest) (*Job, error) {
 	now := time.Now().UTC()
 	jobCtx, cancel := context.WithCancel(m.parent)
 	drain := make(chan struct{})
-	jobID := strings.TrimSpace(request.TicketID)
-	if jobID == "" {
-		jobID = fmt.Sprintf("RUN-%s-%s", now.Format("20060102"), strings.ToUpper(uuid.NewString()[:4]))
-	}
+	ticketID := strings.TrimSpace(request.TicketID)
+	jobID := fmt.Sprintf("job-ingest-%s", strings.ToLower(uuid.NewString()[:8]))
+
 	command.JobID = jobID
+	command.TicketID = ticketID
 	command.Drain = drain
 	command.ReportRunning = func() { m.markRunning(command.JobID) }
 	m.active = &activeJob{
 		Job: Job{
 			ID:           command.JobID,
+			TicketID:     ticketID,
 			Status:       "planning",
 			ManifestPath: displayManifestPath(command),
 			Sector:       command.Sector,
@@ -139,7 +142,7 @@ func (m *JobManager) Current() *Job {
 func (m *JobManager) Cancel(id string) (*Job, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.active == nil || !matchesJob(id, m.active.ID) {
+	if m.active == nil || !matchesJob(id, m.active.ID, m.active.TicketID) {
 		return nil, ErrJobNotFound
 	}
 	if m.active.Status == "planning" {
@@ -249,8 +252,8 @@ func isActive(status string) bool {
 	return status == "planning" || status == "running" || status == "cancelling" || status == "draining"
 }
 
-func matchesJob(id, activeID string) bool {
-	return id == "" || id == "active" || id == "current" || id == activeID
+func matchesJob(id, activeID, activeTicketID string) bool {
+	return id == "" || id == "active" || id == "current" || id == activeID || (activeTicketID != "" && id == activeTicketID)
 }
 
 var (

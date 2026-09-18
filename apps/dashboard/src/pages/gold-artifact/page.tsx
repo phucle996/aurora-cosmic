@@ -9,9 +9,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { apiFetch } from '@/lib/api';
-import { formatBytes } from '@/features/datasets/types';
+import { formatBytes } from '@/pages/datasets/types';
 
-import type { GoldArtifactDetail } from '@/features/gold/types';
+import type { GoldArtifactDetail } from '@/pages/gold-snapshot/types';
 
 const pageSize = 25;
 

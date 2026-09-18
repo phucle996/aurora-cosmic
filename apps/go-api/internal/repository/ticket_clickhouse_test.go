@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"go-api/internal/domain/entity"
-	domainrepo "go-api/internal/domain/repo"
+	"go-api/internal/provider"
 )
 
 type factoryHistoryDecodeProbe struct {
@@ -51,28 +51,31 @@ func TestDecodeFactoryRowsKeepsNumericMetrics(t *testing.T) {
 	}
 }
 
-type commitObjectRepository struct {
+type commitObjectStorage struct {
 	objects map[string][]byte
 }
 
-func (r commitObjectRepository) Ping(context.Context) error { return nil }
-func (r commitObjectRepository) ListObjects(context.Context, string) ([]domainrepo.ObjectInfo, error) {
+func (r commitObjectStorage) Ping(context.Context) error { return nil }
+func (r commitObjectStorage) ListObjects(context.Context, string) ([]provider.ObjectInfo, error) {
 	return nil, nil
 }
-func (r commitObjectRepository) GetObject(_ context.Context, key string) ([]byte, error) {
+func (r commitObjectStorage) ListObjectsWithMetadata(context.Context, string) ([]provider.ObjectInfo, error) {
+	return nil, nil
+}
+func (r commitObjectStorage) GetObject(_ context.Context, key string) ([]byte, error) {
 	value, ok := r.objects[key]
 	if !ok {
-		return nil, domainrepo.ErrObjectNotFound
+		return nil, provider.ErrObjectNotFound
 	}
 	return value, nil
 }
-func (r commitObjectRepository) PutObject(context.Context, string, []byte, string) error { return nil }
-func (r commitObjectRepository) DeleteObject(context.Context, string) error              { return nil }
+func (r commitObjectStorage) PutObject(context.Context, string, []byte, string) error { return nil }
+func (r commitObjectStorage) DeleteObject(context.Context, string) error              { return nil }
 
 func TestGoldCommitEvidenceVerifiesImmutableChainWithoutRequiringCurrentActivation(t *testing.T) {
 	manifest := []byte(`{"snapshot_id":"snapshot-1","snapshot_fingerprint":"fingerprint-1","status":"COMMITTED","manifest_key":"gold/snapshots/snapshot-1/manifest.json","row_count":42,"artifacts":[{"sector":1,"object_key":"gold/snapshots/snapshot-1/data/candidate/part.parquet","row_count":42,"size_bytes":128,"content_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","parquet_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}`)
 	manifestSHA := fmt.Sprintf("%x", sha256.Sum256(manifest))
-	r := &FactoryHistoryClickHouse{objects: commitObjectRepository{objects: map[string][]byte{
+	r := &TicketClickHouse{objects: commitObjectStorage{objects: map[string][]byte{
 		"gold/snapshots/snapshot-1/manifest.json": manifest,
 		"gold/current/CANDIDATE.json":             []byte(`{"snapshot_id":"newer-snapshot"}`),
 	}}}

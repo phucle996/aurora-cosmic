@@ -1,6 +1,6 @@
 import type { JSX } from 'react';
 
-import CandidatesSection from '@/features/candidates/CandidatesSection';
+import CandidatesSection from './sections/CandidatesSection';
 
 export default function CandidateReviewPage(): JSX.Element {
   return (

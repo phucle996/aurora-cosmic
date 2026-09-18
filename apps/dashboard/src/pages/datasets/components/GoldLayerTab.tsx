@@ -5,7 +5,7 @@ import { Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { goldCandidateSchema, type StorageListing } from '@/features/datasets/types';
+import { goldCandidateSchema, type StorageListing } from '@/pages/datasets/types';
 import { ObjectBrowserTable } from './ObjectBrowserTable';
 import { SchemaCatalogCard } from './SchemaCatalogCard';
 

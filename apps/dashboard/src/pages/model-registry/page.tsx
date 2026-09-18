@@ -1,7 +1,6 @@
 import type { JSX } from 'react';
-
-import ModelWorkspace from '@/features/models/ModelWorkspace';
+import ModelRegistrySection from './sections/ModelRegistrySection';
 
 export default function ModelRegistryPage(): JSX.Element {
-  return <ModelWorkspace view="registry" />;
+  return <ModelRegistrySection />;
 }

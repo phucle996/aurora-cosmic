@@ -16,34 +16,40 @@ import (
 	"go-api/internal/transport/http/handler"
 )
 
-type fakeAnalytics struct{}
+type fakeCandidate struct{}
 
-func (fakeAnalytics) ListCandidates(context.Context, int, string, entity.PageRequest) (entity.Page[entity.Candidate], error) {
+func (fakeCandidate) ListCandidates(context.Context, entity.CandidateQuery) (entity.Page[entity.Candidate], error) {
 	return entity.Page[entity.Candidate]{Items: []entity.Candidate{}, Limit: 100}, nil
 }
-func (fakeAnalytics) GetCandidate(context.Context, string, string) (*entity.CandidateDetail, error) {
+func (fakeCandidate) GetCandidate(context.Context, string, string) (*entity.CandidateDetail, error) {
 	return &entity.CandidateDetail{}, nil
 }
-func (fakeAnalytics) ReviewCandidate(context.Context, string, string, string, string) (*entity.CandidateReview, error) {
+func (fakeCandidate) ReviewCandidate(context.Context, entity.CandidateReviewInput) (*entity.CandidateReview, error) {
 	return &entity.CandidateReview{
 		Decision:     "CONFIRMED",
 		ReviewStatus: "REVIEWED",
 		Reviewer:     "HUMAN_OPERATOR",
 	}, nil
 }
-func (fakeAnalytics) ListAnomalies(context.Context, int, string, bool, entity.PageRequest) (entity.Page[entity.Anomaly], error) {
+
+type fakeAnomaly struct{}
+
+func (fakeAnomaly) ListAnomalies(context.Context, int, string, bool, entity.PageRequest) (entity.Page[entity.Anomaly], error) {
 	return entity.Page[entity.Anomaly]{Items: []entity.Anomaly{}, Limit: 100}, nil
 }
-func (fakeAnalytics) GetAnomalyDetail(context.Context, string, string) (*entity.AnomalyDetail, error) {
+func (fakeAnomaly) GetAnomalyDetail(context.Context, string, string) (*entity.AnomalyDetail, error) {
 	return &entity.AnomalyDetail{}, nil
 }
-func (fakeAnalytics) ListTargets(context.Context, entity.TargetQuery) (entity.Page[entity.Target], error) {
+
+type fakeTarget struct{}
+
+func (fakeTarget) ListTargets(context.Context, entity.TargetQuery) (entity.Page[entity.Target], error) {
 	return entity.Page[entity.Target]{Items: []entity.Target{}, Limit: 100}, nil
 }
-func (fakeAnalytics) GetTarget(context.Context, int64, int, string) (*entity.TargetDetail, error) {
+func (fakeTarget) GetTarget(context.Context, int64, int, string) (*entity.TargetDetail, error) {
 	return &entity.TargetDetail{}, nil
 }
-func (fakeAnalytics) GetLightcurve(context.Context, int64, int, entity.PageRequest) (*entity.Lightcurve, error) {
+func (fakeTarget) GetLightcurve(context.Context, int64, int, entity.PageRequest) (*entity.Lightcurve, error) {
 	return &entity.Lightcurve{TICID: 101, Time: []float64{}, Flux: []float64{}}, nil
 }
 
@@ -146,7 +152,7 @@ func (fakeGoldControl) Artifact(_ context.Context, snapshotID, dataset string, s
 type fakeIngest struct{}
 
 func (fakeIngest) Status(context.Context) (*entity.IngestStatus, error) {
-	return &entity.IngestStatus{Observed: false, Source: "minio-checkpoint", Status: "not_observed"}, nil
+	return &entity.IngestStatus{Observed: false, Status: "not_observed"}, nil
 }
 
 func (fakeIngest) Storage(context.Context, string, int, int) (*entity.StorageListing, error) {
@@ -161,13 +167,17 @@ func (fakeIngest) Cancel(context.Context, string) (*entity.IngestControlJob, err
 	return &entity.IngestControlJob{JobID: "ingest-job-test", Status: "draining"}, nil
 }
 
-var _ service.Analytics = fakeAnalytics{}
+var _ service.Candidate = fakeCandidate{}
+var _ service.Anomaly = fakeAnomaly{}
+var _ service.Target = fakeTarget{}
 
-func newTestRouter() *app.Router {
+func newTestRouter() http.Handler {
 	return app.NewRouter(&config.Config{
 		CORSAllowedOrigin: "http://localhost:8501",
 	}, &app.Module{
-		AnalyticsHandler:     handler.NewAnalyticsHandler(fakeAnalytics{}),
+		TargetHandler:        handler.NewTargetHandler(fakeTarget{}),
+		CandidateHandler:     handler.NewCandidateHandler(fakeCandidate{}),
+		AnomalyHandler:       handler.NewAnomalyHandler(fakeAnomaly{}),
 		ModelsHandler:        handler.NewModelsHandler(fakeModels{}, fakeInference{}),
 		SystemHandler:        handler.NewSystemHandler(fakeReadiness{}),
 		MonitoringHandler:    handler.NewMonitoringHandler(fakeMonitoring{}),

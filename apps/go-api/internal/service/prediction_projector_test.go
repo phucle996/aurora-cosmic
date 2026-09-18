@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"go-api/internal/domain/entity"
-	"go-api/internal/domain/repo"
+	"go-api/internal/provider"
 )
 
 type projectionObjects struct {
@@ -16,19 +16,22 @@ type projectionObjects struct {
 }
 
 func (o *projectionObjects) Ping(context.Context) error { return nil }
-func (o *projectionObjects) ListObjects(_ context.Context, prefix string) ([]repo.ObjectInfo, error) {
-	items := make([]repo.ObjectInfo, 0)
+func (o *projectionObjects) ListObjects(_ context.Context, prefix string) ([]provider.ObjectInfo, error) {
+	items := make([]provider.ObjectInfo, 0)
 	for key := range o.values {
 		if len(key) >= len(prefix) && key[:len(prefix)] == prefix {
-			items = append(items, repo.ObjectInfo{Key: key})
+			items = append(items, provider.ObjectInfo{Key: key})
 		}
 	}
 	return items, nil
 }
+func (o *projectionObjects) ListObjectsWithMetadata(ctx context.Context, prefix string) ([]provider.ObjectInfo, error) {
+	return o.ListObjects(ctx, prefix)
+}
 func (o *projectionObjects) GetObject(_ context.Context, key string) ([]byte, error) {
 	value, found := o.values[key]
 	if !found {
-		return nil, repo.ErrObjectNotFound
+		return nil, provider.ErrObjectNotFound
 	}
 	return value, nil
 }

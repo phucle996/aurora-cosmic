@@ -1,7 +1,7 @@
 import type { JSX } from 'react';
 import { GitBranch, Network } from 'lucide-react';
 
-import { RunnerTicketBar } from '@/features/factory-history/components/RunnerTicketBar';
+import { RunnerTicketBar } from '@/components/RunnerTicketBar';
 import { LineageExplorerConsole } from './components/LineageExplorerConsole';
 
 export default function LineageExplorerPage(): JSX.Element {

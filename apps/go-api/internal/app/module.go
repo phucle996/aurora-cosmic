@@ -7,20 +7,24 @@ import (
 	"go-api/internal/repository"
 	"go-api/internal/service"
 	"go-api/internal/transport/http/handler"
+	"go-api/internal/transport/pubsub"
 	"go-api/internal/transport/stream"
 )
 
 type Module struct {
-	AnalyticsHandler      *handler.AnalyticsHandler
+	TargetHandler         *handler.TargetHandler
+	CandidateHandler      *handler.CandidateHandler
+	AnomalyHandler        *handler.AnomalyHandler
 	ModelsHandler         *handler.ModelsHandler
 	SystemHandler         *handler.SystemHandler
 	MonitoringHandler     *handler.MonitoringHandler
 	PreprocessingHandler  *handler.PreprocessingHandler
 	GoldControlHandler    *handler.GoldControlHandler
-	FactoryHistoryHandler *handler.FactoryHistoryHandler
+	TicketHandler         *handler.TicketHandler
 	IngestHandler         *handler.IngestHandler
 	EventsHandler         *handler.EventsHandler
-	NATSStream            *stream.NATSStream
+	NATSPubSub            *pubsub.NATSPubSub
+	NATSStream            *stream.StreamConsumer
 }
 
 func NewModule(infra Infrastructure) (*Module, error) {
@@ -60,9 +64,17 @@ func NewModule(infra Infrastructure) (*Module, error) {
 		infra.PredictionMinIO.Bucket,
 	)
 
-	analyticsService := service.NewAnalyticsService(analyticsRepo, predictionObjectRepo)
-	if analyticsService == nil {
-		return nil, fmt.Errorf("service AnalyticsService is nil")
+	targetService := service.NewTargetService(analyticsRepo, analyticsRepo)
+	if targetService == nil {
+		return nil, fmt.Errorf("service TargetService is nil")
+	}
+	candidateService := service.NewCandidateService(analyticsRepo)
+	if candidateService == nil {
+		return nil, fmt.Errorf("service CandidateService is nil")
+	}
+	anomalyService := service.NewAnomalyService(analyticsRepo, predictionObjectRepo)
+	if anomalyService == nil {
+		return nil, fmt.Errorf("service AnomalyService is nil")
 	}
 	modelsService := service.NewModelsService(objectRepo, infra.NATS, analyticsRepo)
 	if modelsService == nil {
@@ -72,7 +84,7 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	if inferenceService == nil {
 		return nil, fmt.Errorf("service InferenceService is nil")
 	}
-	readinessService := service.NewReadinessService(infra.MinIO, analyticsRepo, infra.NATS)
+	readinessService := service.NewReadinessService(objectRepo, analyticsRepo, infra.NATS)
 	if readinessService == nil {
 		return nil, fmt.Errorf("service ReadinessService is nil")
 	}
@@ -88,35 +100,38 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	if goldControlService == nil {
 		return nil, fmt.Errorf("service GoldControlService is nil")
 	}
-	factoryHistoryRepository := repository.NewFactoryHistoryClickHouse(infra.ClickHouse, objectRepo)
-	factoryHistoryService := service.NewFactoryHistoryService(factoryHistoryRepository)
-	catalogRepo := repository.NewCatalogClickHouse(infra.ClickHouse)
-	ingestService := service.NewIngestServiceWithCatalogAndEvents(objectRepo, catalogRepo, infra.Prometheus, infra.MinIO.Bucket, infra.Ingester, eventBroker)
+	ticketRepository := repository.NewTicketClickHouse(infra.ClickHouse, objectRepo)
+	ticketService := service.NewTicketService(ticketRepository)
+	ingestService := service.NewIngestService(objectRepo, infra.Prometheus, infra.MinIO.Bucket, infra.Ingester, eventBroker)
 	if ingestService == nil {
 		return nil, fmt.Errorf("service IngestService is nil")
 	}
 
-	natsStream := stream.NewNATSStream(stream.StreamConfig{
+	natsPubSub := pubsub.New(pubsub.Config{
+		NATSURL:           infra.NATS.URL,
+		Broker:            eventBroker,
+		Preprocessing:     preprocessingService,
+		ChampionInference: inferenceService,
+	})
+
+	natsStream := stream.New(stream.Config{
 		NATSURL:             infra.NATS.URL,
-		Broker:              eventBroker,
-		Preprocessing:       preprocessingService,
-		Ingest:              ingestService,
-		Inference:           inferenceService,
-		Models:              modelsService,
-		ChampionInference:   inferenceService,
 		PredictionProjector: predictionProjector,
 	})
 
 	return &Module{
-		AnalyticsHandler:      handler.NewAnalyticsHandler(analyticsService),
+		TargetHandler:         handler.NewTargetHandler(targetService),
+		CandidateHandler:      handler.NewCandidateHandler(candidateService),
+		AnomalyHandler:        handler.NewAnomalyHandler(anomalyService),
 		ModelsHandler:         handler.NewModelsHandler(modelsService, inferenceService),
 		SystemHandler:         handler.NewSystemHandler(readinessService),
 		MonitoringHandler:     handler.NewMonitoringHandler(monitoringService),
 		PreprocessingHandler:  handler.NewPreprocessingHandler(preprocessingService),
 		GoldControlHandler:    handler.NewGoldControlHandler(goldControlService),
-		FactoryHistoryHandler: handler.NewFactoryHistoryHandler(factoryHistoryService),
+		TicketHandler:         handler.NewTicketHandler(ticketService),
 		IngestHandler:         handler.NewIngestHandler(ingestService),
 		EventsHandler:         handler.NewEventsHandler(eventBroker, infra.NATS),
+		NATSPubSub:            natsPubSub,
 		NATSStream:            natsStream,
 	}, nil
 }

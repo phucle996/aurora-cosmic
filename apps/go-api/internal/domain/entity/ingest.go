@@ -1,6 +1,14 @@
 package entity
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+var (
+	ErrIngestAlreadyRunning = errors.New("an ingest job is already running")
+	ErrIngestJobNotFound    = errors.New("ingest job not found")
+)
 
 type IngestProduct struct {
 	ID        string
@@ -51,9 +59,8 @@ type IngestManifestProgress struct {
 
 type IngestStatus struct {
 	Observed          bool
-	Source            string
 	RunID             string
-	ControlJobID      string
+	TicketID          string
 	Status            string
 	Error             string
 	ManifestPath      string
@@ -67,8 +74,8 @@ type IngestStatus struct {
 	CompletedBytes    int64
 	ProductsPerSecond float64
 	BytesPerSecond    float64
-	QueueDepth        float64
-	InflightProducts  float64
+	QueueDepth        int
+	InflightProducts  int
 	ObservedAt        time.Time
 	Products          []IngestProduct
 	ProductsTruncated bool
@@ -89,6 +96,7 @@ type IngestStartRequest struct {
 
 type IngestControlJob struct {
 	JobID        string
+	TicketID     string
 	Status       string
 	ManifestPath string
 	Sector       int

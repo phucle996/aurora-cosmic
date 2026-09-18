@@ -116,7 +116,6 @@ ORDER BY (snapshot_id);
 CREATE TABLE IF NOT EXISTS aurora.factory_tickets_v1 (
     ticket_id LowCardinality(String),
     created_at DateTime64(3, 'UTC') DEFAULT now64(),
-    status LowCardinality(String) DEFAULT 'ACTIVE',
     description String DEFAULT '',
     updated_at DateTime64(3, 'UTC') DEFAULT now64()
 )

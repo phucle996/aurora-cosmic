@@ -1,7 +1,6 @@
 import type { JSX } from 'react';
-
-import ModelWorkspace from '@/features/models/ModelWorkspace';
+import TrainingLabSection from './sections/TrainingLabSection';
 
 export default function TrainingLabPage(): JSX.Element {
-  return <ModelWorkspace view="training" />;
+  return <TrainingLabSection />;
 }

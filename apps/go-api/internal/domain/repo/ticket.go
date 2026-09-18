@@ -6,7 +6,7 @@ import (
 	"go-api/internal/domain/entity"
 )
 
-type FactoryHistoryRepository interface {
+type TicketRepository interface {
 	ListRuns(context.Context, string, int) ([]entity.FactoryRun, error)
 	GetRun(context.Context, string) (*entity.FactoryRunDetail, error)
 	ListTickets(ctx context.Context, limit int) ([]entity.FactoryTicket, error)

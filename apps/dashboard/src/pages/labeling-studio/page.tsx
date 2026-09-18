@@ -1,7 +1,6 @@
 import type { JSX } from 'react';
-
-import ModelWorkspace from '@/features/models/ModelWorkspace';
+import LabelingStudioSection from './sections/LabelingStudioSection';
 
 export default function LabelingStudioPage(): JSX.Element {
-  return <ModelWorkspace view="labeling" />;
+  return <LabelingStudioSection />;
 }

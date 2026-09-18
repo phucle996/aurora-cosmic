@@ -3,6 +3,7 @@ package minio
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,8 +12,17 @@ import (
 
 	minioSDK "github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
-	"go-api/internal/domain/repo"
 )
+
+var ErrObjectNotFound = errors.New("object not found")
+
+type ObjectInfo struct {
+	Key          string
+	Size         int64
+	ETag         string
+	LastModified time.Time
+	UserMetadata map[string]string
+}
 
 type Client struct {
 	Endpoint string
@@ -66,26 +76,26 @@ func (c *Client) GetObject(ctx context.Context, key string) ([]byte, error) {
 	if err != nil {
 		response := minioSDK.ToErrorResponse(err)
 		if response.Code == "NoSuchKey" || response.Code == "NoSuchObject" {
-			return nil, fmt.Errorf("%w: %s", repo.ErrObjectNotFound, key)
+			return nil, fmt.Errorf("%w: %s", ErrObjectNotFound, key)
 		}
 		return nil, fmt.Errorf("MinIO read object %s: %w", key, err)
 	}
 	return data, nil
 }
 
-func (c *Client) ListObjects(ctx context.Context, prefix string) ([]repo.ObjectInfo, error) {
+func (c *Client) ListObjects(ctx context.Context, prefix string) ([]ObjectInfo, error) {
 	return c.listObjects(ctx, prefix, false)
 }
 
-func (c *Client) ListObjectsWithMetadata(ctx context.Context, prefix string) ([]repo.ObjectInfo, error) {
+func (c *Client) ListObjectsWithMetadata(ctx context.Context, prefix string) ([]ObjectInfo, error) {
 	return c.listObjects(ctx, prefix, true)
 }
 
-func (c *Client) listObjects(ctx context.Context, prefix string, withMetadata bool) ([]repo.ObjectInfo, error) {
+func (c *Client) listObjects(ctx context.Context, prefix string, withMetadata bool) ([]ObjectInfo, error) {
 	if c.client == nil {
 		return nil, fmt.Errorf("MinIO client is unavailable")
 	}
-	objects := make([]repo.ObjectInfo, 0)
+	objects := make([]ObjectInfo, 0)
 	for object := range c.client.ListObjects(ctx, c.Bucket, minioSDK.ListObjectsOptions{Prefix: prefix, Recursive: true, WithMetadata: withMetadata}) {
 		if object.Err != nil {
 			return nil, fmt.Errorf("MinIO list objects with prefix %q: %w", prefix, object.Err)
@@ -101,7 +111,7 @@ func (c *Client) listObjects(ctx context.Context, prefix string, withMetadata bo
 		for key, value := range object.UserMetadata {
 			metadata[strings.TrimPrefix(strings.ToLower(key), "x-amz-meta-")] = value
 		}
-		objects = append(objects, repo.ObjectInfo{Key: object.Key, Size: object.Size, ETag: object.ETag, LastModified: object.LastModified, UserMetadata: metadata})
+		objects = append(objects, ObjectInfo{Key: object.Key, Size: object.Size, ETag: object.ETag, LastModified: object.LastModified, UserMetadata: metadata})
 	}
 	return objects, nil
 }

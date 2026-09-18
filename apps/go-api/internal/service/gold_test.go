@@ -10,7 +10,7 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 	"go-api/internal/domain/entity"
-	"go-api/internal/domain/repo"
+	"go-api/internal/provider"
 )
 
 type testGoldRow struct {
@@ -20,22 +20,25 @@ type testGoldRow struct {
 
 type memoryGoldObjects struct{ data map[string][]byte }
 
-type recordingGoldPublisher struct{ events []entity.WorkflowEvent }
+type recordingGoldPublisher struct{ events []provider.Event }
 
-func (p *recordingGoldPublisher) Publish(_ context.Context, event entity.WorkflowEvent) error {
+func (p *recordingGoldPublisher) Publish(_ context.Context, _ string, event provider.Event) error {
 	p.events = append(p.events, event)
 	return nil
 }
 
 func (m *memoryGoldObjects) Ping(context.Context) error { return nil }
-func (m *memoryGoldObjects) ListObjects(_ context.Context, prefix string) ([]repo.ObjectInfo, error) {
-	objects := make([]repo.ObjectInfo, 0)
+func (m *memoryGoldObjects) ListObjects(_ context.Context, prefix string) ([]provider.ObjectInfo, error) {
+	objects := make([]provider.ObjectInfo, 0)
 	for key := range m.data {
 		if strings.HasPrefix(key, prefix) {
-			objects = append(objects, repo.ObjectInfo{Key: key})
+			objects = append(objects, provider.ObjectInfo{Key: key})
 		}
 	}
 	return objects, nil
+}
+func (m *memoryGoldObjects) ListObjectsWithMetadata(_ context.Context, prefix string) ([]provider.ObjectInfo, error) {
+	return m.ListObjects(context.Background(), prefix)
 }
 
 func TestGoldLineageOnlyMarksCommittedManifestInputsExtracted(t *testing.T) {
@@ -98,7 +101,7 @@ func TestGoldLineageDoesNotTreatLegacyPartialSnapshotAsExtracted(t *testing.T) {
 func (m *memoryGoldObjects) GetObject(_ context.Context, key string) ([]byte, error) {
 	value, ok := m.data[key]
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", repo.ErrObjectNotFound, key)
+		return nil, fmt.Errorf("%w: %s", provider.ErrObjectNotFound, key)
 	}
 	return value, nil
 }
@@ -127,8 +130,15 @@ func TestGoldControlStartsAndPausesDurably(t *testing.T) {
 	if err != nil || started.Control.Mode != "STREAM" || started.Control.CommandID == "" {
 		t.Fatalf("expected durable stream control, got %#v err=%v", started, err)
 	}
-	if len(publisher.events) != 1 || publisher.events[0].TicketID != "gold-observer-test" || publisher.events[0].JobID != started.Control.CommandID {
+	if len(publisher.events) != 1 || publisher.events[0].Topic != "gold:gold-observer-test" {
 		t.Fatalf("expected ticket-scoped start event, got %#v", publisher.events)
+	}
+	var eventData map[string]any
+	if err := json.Unmarshal(publisher.events[0].Data, &eventData); err != nil {
+		t.Fatalf("unmarshal event data: %v", err)
+	}
+	if eventData["job_id"] != started.Control.CommandID || eventData["ticket_id"] != "gold-observer-test" {
+		t.Fatalf("unexpected event data: %#v", eventData)
 	}
 
 	stopped, err := service.Stop(context.Background())

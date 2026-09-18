@@ -12,6 +12,7 @@ import (
 
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/repo"
+	"go-api/internal/provider"
 
 	"github.com/parquet-go/parquet-go"
 )
@@ -37,21 +38,21 @@ type fakePreprocessingObjects struct {
 }
 
 func (f fakePreprocessingObjects) Ping(context.Context) error { return nil }
-func (f fakePreprocessingObjects) ListObjects(_ context.Context, prefix string) ([]repo.ObjectInfo, error) {
+func (f fakePreprocessingObjects) ListObjects(_ context.Context, prefix string) ([]provider.ObjectInfo, error) {
 	return f.listObjects(prefix, false)
 }
-func (f fakePreprocessingObjects) ListObjectsWithMetadata(_ context.Context, prefix string) ([]repo.ObjectInfo, error) {
+func (f fakePreprocessingObjects) ListObjectsWithMetadata(_ context.Context, prefix string) ([]provider.ObjectInfo, error) {
 	return f.listObjects(prefix, true)
 }
-func (f fakePreprocessingObjects) listObjects(prefix string, withMetadata bool) ([]repo.ObjectInfo, error) {
-	objects := make([]repo.ObjectInfo, 0)
+func (f fakePreprocessingObjects) listObjects(prefix string, withMetadata bool) ([]provider.ObjectInfo, error) {
+	objects := make([]provider.ObjectInfo, 0)
 	for key, data := range f.data {
 		if strings.HasPrefix(key, prefix) {
 			var metadata map[string]string
 			if withMetadata {
 				metadata = f.metadata[key]
 			}
-			objects = append(objects, repo.ObjectInfo{Key: key, Size: int64(len(data)), LastModified: time.Now().UTC(), UserMetadata: metadata})
+			objects = append(objects, provider.ObjectInfo{Key: key, Size: int64(len(data)), LastModified: time.Now().UTC(), UserMetadata: metadata})
 		}
 	}
 	return objects, nil
@@ -59,7 +60,7 @@ func (f fakePreprocessingObjects) listObjects(prefix string, withMetadata bool) 
 func (f fakePreprocessingObjects) GetObject(_ context.Context, key string) ([]byte, error) {
 	data, ok := f.data[key]
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", repo.ErrObjectNotFound, key)
+		return nil, fmt.Errorf("%w: %s", provider.ErrObjectNotFound, key)
 	}
 	return data, nil
 }

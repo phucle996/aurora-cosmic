@@ -16,13 +16,13 @@ import { useSearchParams } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import type { GoldControlOverview } from '@/features/enrichment/types';
-import { RunnerTicketBar } from '@/features/factory-history/components/RunnerTicketBar';
-import { useRunnerTicket } from '@/features/factory-history/session';
-import type { FactoryRunDetail } from '@/features/factory-history/types';
-import { HopDetailDrawer } from '@/features/preprocessing/components/HopDetailDrawer';
-import { PipelineDagCanvas, type DagConnection } from '@/features/preprocessing/components/PipelineDagCanvas';
-import { normalizePreprocessingGraph, type Hop, type HopStatus, type PreprocessingGraph } from '@/features/preprocessing/types';
+import type { GoldControlOverview } from '@/pages/enrichment/types';
+import { RunnerTicketBar } from '@/components/RunnerTicketBar';
+import { useRunnerTicket } from '@/lib/session';
+import type { FactoryRunDetail } from '@/types/ticket';
+import { HopDetailDrawer } from './components/HopDetailDrawer';
+import { PipelineDagCanvas, type DagConnection } from './components/PipelineDagCanvas';
+import { normalizePreprocessingGraph, type Hop, type HopStatus, type PreprocessingGraph } from './types';
 import { apiBase, apiFetch } from '@/lib/api';
 
 const dagConnections: DagConnection[] = [
@@ -175,8 +175,8 @@ export default function PipelineDagPage(): JSX.Element {
         if (selectedRunID) void loadRun(selectedRunID, false);
       }, 350);
     };
-    const preprocessingEvents = new EventSource(`${apiBase}/v1/events?workflow=preprocessing&ticket=${encodeURIComponent(activeTicket)}`);
-    const goldEvents = new EventSource(`${apiBase}/v1/events?workflow=gold&ticket=${encodeURIComponent(activeTicket)}`);
+    const preprocessingEvents = new EventSource(`${apiBase}/v1/events?topic=${encodeURIComponent(`preprocessing:${activeTicket}`)}&topic=preprocessing`);
+    const goldEvents = new EventSource(`${apiBase}/v1/events?topic=${encodeURIComponent(`gold:${activeTicket}`)}&topic=gold`);
     preprocessingEvents.addEventListener('workflow', scheduleRefresh);
     goldEvents.addEventListener('workflow', scheduleRefresh);
     return () => {

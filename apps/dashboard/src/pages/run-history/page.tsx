@@ -18,8 +18,8 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { useRunnerTicket } from '@/features/factory-history/session';
-import type { FactoryComponentEvent, FactoryRun, FactoryRunDetail } from '@/features/factory-history/types';
+import { useRunnerTicket } from '@/lib/session';
+import type { FactoryRun, FactoryRunDetail } from '@/types/ticket';
 import { apiBase, apiFetch } from '@/lib/api';
 
 
@@ -167,7 +167,7 @@ export default function RunHistoryPage(): JSX.Element {
 
       const primaryRun = goldRun ?? silverRun ?? ingestRun ?? ticketRuns[0];
 
-      let overallStatus = chTicket?.status.toLowerCase() ?? 'idle';
+      let overallStatus = 'idle';
       if (ticketRuns.some((r) => ['running', 'draining', 'catalog_syncing'].includes(normalizedStatus(r.status)))) {
         overallStatus = 'running';
       } else if (ticketRuns.some((r) => ['failed', 'error'].includes(normalizedStatus(r.status)))) {
@@ -241,7 +241,7 @@ export default function RunHistoryPage(): JSX.Element {
         if (selectedRunID) void loadDetail(selectedRunID, false);
       }, 350);
     };
-    const events = new EventSource(`${apiBase}/v1/events?workflow=gold`);
+    const events = new EventSource(`${apiBase}/v1/events?topic=gold`);
     events.addEventListener('workflow', scheduleRefresh);
     return () => {
       events.close();
@@ -539,22 +539,9 @@ function RunInspector({
   activeTicket: string;
   onAttachTicket: (ticket: string) => void;
 }): JSX.Element {
-  if (!ticket) {
-    return (
-      <Card className="rounded-none border-border/80 shadow-none">
-        <CardContent className="flex min-h-[500px] flex-col items-center justify-center gap-2 p-8 text-center">
-          <GitBranch className="size-7 text-muted-foreground/50" />
-          <p className="text-sm font-medium">Select a runner ticket to inspect</p>
-          <p className="text-xs text-muted-foreground">Stage execution history will load here.</p>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const isAttached = activeTicket === ticket.ticket_id;
-
   // Build actual historical executions that occurred for this ticket
   const executionItems: ExecutionItem[] = useMemo(() => {
+    if (!ticket) return [];
     const items: ExecutionItem[] = [];
 
     // Runs recorded in ClickHouse for this ticket
@@ -599,7 +586,21 @@ function RunInspector({
     });
 
     return items;
-  }, [ticket.runs, detail]);
+  }, [ticket, detail]);
+
+  if (!ticket) {
+    return (
+      <Card className="rounded-none border-border/80 shadow-none">
+        <CardContent className="flex min-h-[500px] flex-col items-center justify-center gap-2 p-8 text-center">
+          <GitBranch className="size-7 text-muted-foreground/50" />
+          <p className="text-sm font-medium">Select a runner ticket to inspect</p>
+          <p className="text-xs text-muted-foreground">Stage execution history will load here.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const isAttached = activeTicket === ticket.ticket_id;
 
   const componentEvents = detail?.components ?? [];
 

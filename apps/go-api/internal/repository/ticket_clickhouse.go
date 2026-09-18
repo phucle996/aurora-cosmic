@@ -14,17 +14,18 @@ import (
 	"go-api/infra/clickhouse"
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/repo"
+	"go-api/internal/provider"
 )
 
 var factoryRunID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
-type FactoryHistoryClickHouse struct {
+type TicketClickHouse struct {
 	client  *clickhouse.Client
-	objects repo.ObjectRepository
+	objects provider.ObjectStorage
 }
 
-func NewFactoryHistoryClickHouse(client *clickhouse.Client, objects repo.ObjectRepository) repo.FactoryHistoryRepository {
-	return &FactoryHistoryClickHouse{client: client, objects: objects}
+func NewTicketClickHouse(client *clickhouse.Client, objects provider.ObjectStorage) repo.TicketRepository {
+	return &TicketClickHouse{client: client, objects: objects}
 }
 
 func decodeFactoryRows[T any](payload []byte) ([]T, error) {
@@ -192,7 +193,7 @@ type goldProjectionMarker struct {
 	Status                string           `json:"status"`
 }
 
-func (r *FactoryHistoryClickHouse) loadGoldProjectionEvidence(ctx context.Context, batches []entity.FactoryBatch) (*entity.GoldProjectionEvidence, error) {
+func (r *TicketClickHouse) loadGoldProjectionEvidence(ctx context.Context, batches []entity.FactoryBatch) (*entity.GoldProjectionEvidence, error) {
 	completed := make([]entity.FactoryBatch, 0, len(batches))
 	snapshotLiterals := make([]string, 0, len(batches))
 	for _, batch := range batches {
@@ -291,7 +292,7 @@ func (r *FactoryHistoryClickHouse) loadGoldProjectionEvidence(ctx context.Contex
 	return evidence, nil
 }
 
-func (r *FactoryHistoryClickHouse) loadGoldMaterializationEvidence(ctx context.Context, batches []entity.FactoryBatch) *entity.GoldMaterializationEvidence {
+func (r *TicketClickHouse) loadGoldMaterializationEvidence(ctx context.Context, batches []entity.FactoryBatch) *entity.GoldMaterializationEvidence {
 	evidence := &entity.GoldMaterializationEvidence{Artifacts: []entity.GoldArtifactEvidence{}, Issues: []string{}}
 	for _, batch := range batches {
 		evidence.BatchCount++
@@ -366,7 +367,7 @@ func (r *FactoryHistoryClickHouse) loadGoldMaterializationEvidence(ctx context.C
 	return evidence
 }
 
-func (r *FactoryHistoryClickHouse) loadGoldCommitEvidence(
+func (r *TicketClickHouse) loadGoldCommitEvidence(
 	ctx context.Context,
 	batches []entity.FactoryBatch,
 	materialization *entity.GoldMaterializationEvidence,
@@ -475,7 +476,7 @@ func (r *FactoryHistoryClickHouse) loadGoldCommitEvidence(
 	return evidence
 }
 
-func (r *FactoryHistoryClickHouse) loadScientificEvidence(ctx context.Context, batches []entity.FactoryBatch) (*entity.FactoryScientificEvidence, error) {
+func (r *TicketClickHouse) loadScientificEvidence(ctx context.Context, batches []entity.FactoryBatch) (*entity.FactoryScientificEvidence, error) {
 	snapshotSet := make(map[string]struct{})
 	for _, batch := range batches {
 		if snapshotID := strings.TrimSpace(batch.SnapshotID); snapshotID != "" {
@@ -619,7 +620,7 @@ func factoryRunColumns() string {
 		toString(max(runs.updated_at)) AS updated_at`
 }
 
-func (r *FactoryHistoryClickHouse) ListRuns(ctx context.Context, pipeline string, limit int) ([]entity.FactoryRun, error) {
+func (r *TicketClickHouse) ListRuns(ctx context.Context, pipeline string, limit int) ([]entity.FactoryRun, error) {
 	if r == nil || r.client == nil {
 		return nil, fmt.Errorf("factory history client is unavailable")
 	}
@@ -646,7 +647,7 @@ func (r *FactoryHistoryClickHouse) ListRuns(ctx context.Context, pipeline string
 	return decodeFactoryRows[entity.FactoryRun](payload)
 }
 
-func (r *FactoryHistoryClickHouse) GetRun(ctx context.Context, runID string) (*entity.FactoryRunDetail, error) {
+func (r *TicketClickHouse) GetRun(ctx context.Context, runID string) (*entity.FactoryRunDetail, error) {
 	if r == nil || r.client == nil {
 		return nil, fmt.Errorf("factory history client is unavailable")
 	}
@@ -719,7 +720,7 @@ func (r *FactoryHistoryClickHouse) GetRun(ctx context.Context, runID string) (*e
 	return &entity.FactoryRunDetail{Run: *selected, Batches: batches, Components: components, ScientificEvidence: scientificEvidence}, nil
 }
 
-func (r *FactoryHistoryClickHouse) ListTickets(ctx context.Context, limit int) ([]entity.FactoryTicket, error) {
+func (r *TicketClickHouse) ListTickets(ctx context.Context, limit int) ([]entity.FactoryTicket, error) {
 	if r == nil || r.client == nil {
 		return nil, fmt.Errorf("factory history client is unavailable")
 	}
@@ -727,12 +728,11 @@ func (r *FactoryHistoryClickHouse) ListTickets(ctx context.Context, limit int) (
 		limit = 100
 	}
 	query := fmt.Sprintf(`WITH all_tickets AS (
-		SELECT ticket_id, status, created_at, description, updated_at FROM factory_tickets_v1
+		SELECT ticket_id, created_at, description, updated_at FROM factory_tickets_v1
 		UNION ALL
-		SELECT run_id AS ticket_id, status, started_at AS created_at, '' AS description, updated_at FROM pipeline_runs_v1
+		SELECT run_id AS ticket_id, started_at AS created_at, '' AS description, updated_at FROM pipeline_runs_v1
 	)
 	SELECT all_tickets.ticket_id,
-		argMax(all_tickets.status, all_tickets.updated_at) AS status,
 		toString(min(all_tickets.created_at)) AS created_at,
 		argMax(all_tickets.description, all_tickets.updated_at) AS description,
 		toString(max(all_tickets.updated_at)) AS updated_at
@@ -748,7 +748,7 @@ func (r *FactoryHistoryClickHouse) ListTickets(ctx context.Context, limit int) (
 	return decodeFactoryRows[entity.FactoryTicket](payload)
 }
 
-func (r *FactoryHistoryClickHouse) CreateTicket(ctx context.Context, ticketID string, description string) (*entity.FactoryTicket, error) {
+func (r *TicketClickHouse) CreateTicket(ctx context.Context, ticketID string, description string) (*entity.FactoryTicket, error) {
 	if r == nil || r.client == nil {
 		return nil, fmt.Errorf("factory history client is unavailable")
 	}
@@ -769,7 +769,7 @@ func (r *FactoryHistoryClickHouse) CreateTicket(ctx context.Context, ticketID st
 	nowStr := time.Now().UTC().Format("2006-01-02 15:04:05.000")
 
 	query := fmt.Sprintf(
-		"INSERT INTO factory_tickets_v1 (ticket_id, created_at, status, description, updated_at) VALUES ('%s', '%s', 'ACTIVE', '%s', '%s')",
+		"INSERT INTO factory_tickets_v1 (ticket_id, created_at, description, updated_at) VALUES ('%s', '%s', '%s', '%s')",
 		escapedID, nowStr, escapedDesc, nowStr,
 	)
 	if err := r.client.Exec(ctx, query); err != nil {
@@ -779,7 +779,6 @@ func (r *FactoryHistoryClickHouse) CreateTicket(ctx context.Context, ticketID st
 	return &entity.FactoryTicket{
 		TicketID:    ticketID,
 		CreatedAt:   nowStr,
-		Status:      "ACTIVE",
 		Description: description,
 		UpdatedAt:   nowStr,
 	}, nil

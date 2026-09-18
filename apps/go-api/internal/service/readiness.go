@@ -7,10 +7,11 @@ import (
 
 	"go-api/internal/domain/repo"
 	domainService "go-api/internal/domain/service"
+	"go-api/internal/provider"
 )
 
 type ReadinessService struct {
-	minio     repo.ObjectRepository
+	minio     provider.ObjectStorage
 	analytics repo.AnalyticsRepository
 	nats      dependencyPinger
 }
@@ -19,7 +20,7 @@ type dependencyPinger interface {
 	Ping(context.Context) error
 }
 
-func NewReadinessService(minio repo.ObjectRepository, analytics repo.AnalyticsRepository, nats dependencyPinger) domainService.Readiness {
+func NewReadinessService(minio provider.ObjectStorage, analytics repo.AnalyticsRepository, nats dependencyPinger) domainService.Readiness {
 	return &ReadinessService{minio: minio, analytics: analytics, nats: nats}
 }
 

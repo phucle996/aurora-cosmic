@@ -7,17 +7,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
-
 	"time"
 
-	"github.com/google/uuid"
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/repo"
 	domainService "go-api/internal/domain/service"
+	"go-api/internal/provider"
 	"go-api/internal/taxonomy"
 )
+
+var ticketIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 // ============================================================================
 // MODELS SERVICE (Dịch vụ quản lý mô hình học máy - Model Registry)
@@ -28,14 +30,14 @@ import (
 // 3. Xác định trạng thái của mô hình: Champion (đang phục vụ chính), Validated (hợp lệ), hoặc Invalid (lỗi băm/parity).
 // 4. Phát lệnh huấn luyện mô hình mới tới GPU ML Worker qua NATS JetStream.
 type ModelsService struct {
-	objects    repo.ObjectRepository    // Repository tương tác với MinIO S3
+	objects    provider.ObjectStorage   // Storage tương tác với MinIO S3
 	dispatcher repo.InferenceDispatcher // Dispatcher phát event sang NATS JetStream
-	analytics  repo.TrainingReadinessRepository
+	training   repo.TrainingRepository
 }
 
 // NewModelsService khởi tạo thể hiện của ModelsService
-func NewModelsService(objects repo.ObjectRepository, dispatcher repo.InferenceDispatcher, analytics repo.TrainingReadinessRepository) domainService.Models {
-	return &ModelsService{objects: objects, dispatcher: dispatcher, analytics: analytics}
+func NewModelsService(objects provider.ObjectStorage, dispatcher repo.InferenceDispatcher, training repo.TrainingRepository) domainService.Models {
+	return &ModelsService{objects: objects, dispatcher: dispatcher, training: training}
 }
 
 func (s *ModelsService) TrainingReadiness(ctx context.Context, snapshotIDs []string) (*entity.TrainingReadiness, error) {
@@ -48,10 +50,10 @@ func (s *ModelsService) TrainingReadiness(ctx context.Context, snapshotIDs []str
 			return nil, err
 		}
 	}
-	if s.analytics == nil {
+	if s.training == nil {
 		return nil, fmt.Errorf("training readiness analytics is unavailable")
 	}
-	return s.analytics.TrainingReadiness(ctx, normalized)
+	return s.training.TrainingReadiness(ctx, normalized)
 }
 
 func (s *ModelsService) OverrideTrainingLabel(ctx context.Context, value entity.TrainingLabelOverride) error {
@@ -74,22 +76,20 @@ func (s *ModelsService) OverrideTrainingLabel(ctx context.Context, value entity.
 	if err := s.requireCommittedGoldSnapshot(ctx, value.SnapshotID); err != nil {
 		return err
 	}
-	overrides, ok := s.analytics.(repo.TrainingLabelOverrideRepository)
-	if !ok {
+	if s.training == nil {
 		return fmt.Errorf("training label review repository is unavailable")
 	}
-	return overrides.OverrideTrainingLabel(ctx, value)
+	return s.training.OverrideTrainingLabel(ctx, value)
 }
 
 func (s *ModelsService) ListTrainingReviews(ctx context.Context, limit int) ([]entity.TrainingReview, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	reviews, ok := s.analytics.(repo.TrainingReviewListRepository)
-	if !ok {
+	if s.training == nil {
 		return nil, fmt.Errorf("training review repository is unavailable")
 	}
-	return reviews.ListTrainingReviews(ctx, limit)
+	return s.training.ListTrainingReviews(ctx, limit)
 }
 
 func (s *ModelsService) ListTrainingReviewQueue(ctx context.Context, snapshotIDs []string, page entity.PageRequest) (entity.Page[entity.TrainingReviewQueueItem], error) {
@@ -103,11 +103,10 @@ func (s *ModelsService) ListTrainingReviewQueue(ctx context.Context, snapshotIDs
 	if page.Offset < 0 {
 		return entity.Page[entity.TrainingReviewQueueItem]{}, invalidModelRequest("review queue offset must be non-negative")
 	}
-	queue, ok := s.analytics.(repo.TrainingReviewQueueRepository)
-	if !ok {
+	if s.training == nil {
 		return entity.Page[entity.TrainingReviewQueueItem]{}, fmt.Errorf("training review queue repository is unavailable")
 	}
-	return queue.ListTrainingReviewQueue(ctx, normalized, page)
+	return s.training.ListTrainingReviewQueue(ctx, normalized, page)
 }
 
 // ============================================================================
@@ -333,7 +332,7 @@ func (s *ModelsService) GetModelEvaluation(ctx context.Context, runtimePackageID
 		}
 	}
 	if selected == nil || selected.EvaluationRunID == "" {
-		return nil, repo.ErrObjectNotFound
+		return nil, provider.ErrObjectNotFound
 	}
 	_, taskDir, ok := normalizeModelTask(selected.Task)
 	if !ok {
@@ -471,6 +470,13 @@ func (s *ModelsService) StartTrainingJob(ctx context.Context, req entity.Trainin
 	jobID := fmt.Sprintf("train-%d", time.Now().UnixNano()/1e6)
 	createdAt := time.Now().UTC().Format(time.RFC3339)
 
+	req.TicketID = strings.TrimSpace(req.TicketID)
+	if req.TicketID == "" {
+		req.TicketID = fmt.Sprintf("RUN-%s-%04d", time.Now().UTC().Format("20060102"), time.Now().UnixNano()%10000)
+	} else if len(req.TicketID) > 128 || !ticketIDPattern.MatchString(req.TicketID) {
+		return nil, invalidModelRequest("invalid ticket_id format: expected alphanumeric, hyphen or underscore up to 128 chars")
+	}
+
 	if req.TrainingMode == "" {
 		req.TrainingMode = "fine_tune"
 	}
@@ -502,6 +508,7 @@ func (s *ModelsService) StartTrainingJob(ctx context.Context, req entity.Trainin
 	}
 	payload, err := json.Marshal(map[string]any{
 		"training_job_id":   jobID,
+		"ticket_id":         req.TicketID,
 		"task":              req.Task,
 		"gold_snapshot_id":  req.GoldSnapshotID,
 		"gold_snapshot_ids": req.GoldSnapshotIDs,
@@ -530,6 +537,7 @@ func (s *ModelsService) StartTrainingJob(ctx context.Context, req entity.Trainin
 
 	return &entity.TrainingJobResult{
 		JobID:           jobID,
+		TicketID:        req.TicketID,
 		Task:            req.Task,
 		GoldSnapshotID:  req.GoldSnapshotID,
 		GoldSnapshotIDs: req.GoldSnapshotIDs,
@@ -554,10 +562,11 @@ func (s *ModelsService) SetModelDeployment(ctx context.Context, modelID string, 
 	if !ok {
 		return nil, invalidModelRequest("unsupported model task %q", task)
 	}
+	ticketID = strings.TrimSpace(ticketID)
 	if ticketID == "" {
-		ticketID = uuid.NewString()
-	} else if _, err := uuid.Parse(ticketID); err != nil {
-		return nil, invalidModelRequest("ticket_id must be a UUID")
+		ticketID = fmt.Sprintf("RUN-%s-%04d", time.Now().UTC().Format("20060102"), time.Now().UnixNano()%10000)
+	} else if len(ticketID) > 128 || !ticketIDPattern.MatchString(ticketID) {
+		return nil, invalidModelRequest("invalid ticket_id format: expected alphanumeric, hyphen or underscore up to 128 chars")
 	}
 	result := &entity.ModelDeploymentResult{TicketID: ticketID, RuntimePackageID: modelID, Active: active}
 
@@ -763,7 +772,7 @@ func (s *ModelsService) requireCommittedGoldSnapshot(ctx context.Context, snapsh
 	}
 	data, err := s.objects.GetObject(ctx, "gold/snapshots/"+snapshotID+"/manifest.json")
 	if err != nil {
-		if errors.Is(err, repo.ErrObjectNotFound) {
+		if errors.Is(err, provider.ErrObjectNotFound) {
 			return invalidModelRequest("Gold snapshot %s was not found", snapshotID)
 		}
 		return fmt.Errorf("read Gold snapshot %s: %w", snapshotID, err)

@@ -14,7 +14,9 @@ import (
 
 type IngestHandler struct{ ingest service.Ingest }
 
-func NewIngestHandler(ingest service.Ingest) *IngestHandler { return &IngestHandler{ingest: ingest} }
+func NewIngestHandler(ingest service.Ingest) *IngestHandler {
+	return &IngestHandler{ingest: ingest}
+}
 
 func (h *IngestHandler) Status(c *gin.Context) {
 	status, err := h.ingest.Status(c.Request.Context())
@@ -33,14 +35,66 @@ func (h *IngestHandler) Status(c *gin.Context) {
 		}
 		productsLimit = parsed
 	}
-	if productsLimit > 0 && len(status.Products) > productsLimit {
-		response := *status
-		response.Products = append([]entity.IngestProduct(nil), status.Products[:productsLimit]...)
-		response.ProductsTruncated = true
-		c.JSON(http.StatusOK, ingestStatusResponseFromEntity(response))
-		return
+
+	products := status.Products
+	truncated := status.ProductsTruncated
+	if productsLimit > 0 && len(products) > productsLimit {
+		products = products[:productsLimit]
+		truncated = true
 	}
-	c.JSON(http.StatusOK, ingestStatusResponseFromEntity(*status))
+
+	productList := make([]gin.H, len(products))
+	for i, p := range products {
+		item := gin.H{
+			"id":                  p.ID,
+			"kind":                p.Kind,
+			"object_key":          p.ObjectKey,
+			"state":               p.State,
+			"size_bytes":          p.SizeBytes,
+			"expected_size_bytes": p.Expected,
+			"attempts":            p.Attempts,
+			"updated_at":          p.UpdatedAt,
+		}
+		if p.LastError != "" {
+			item["last_error"] = p.LastError
+		}
+		productList[i] = item
+	}
+
+	resp := gin.H{
+		"observed":            status.Observed,
+		"run_id":              status.RunID,
+		"ticket_id":           status.TicketID,
+		"status":              status.Status,
+		"manifest_path":       status.ManifestPath,
+		"started_at":          status.StartedAt,
+		"updated_at":          status.UpdatedAt,
+		"total_products":      status.TotalProducts,
+		"completed_products":  status.CompletedProducts,
+		"downloading":         status.Downloading,
+		"failed_products":     status.FailedProducts,
+		"expected_bytes":      status.ExpectedBytes,
+		"completed_bytes":     status.CompletedBytes,
+		"products_per_second": status.ProductsPerSecond,
+		"bytes_per_second":    status.BytesPerSecond,
+		"queue_depth":         status.QueueDepth,
+		"inflight_products":   status.InflightProducts,
+		"observed_at":         status.ObservedAt,
+		"products":            productList,
+		"products_truncated":  truncated,
+		"product_kinds":       status.ProductKinds,
+	}
+	if status.Error != "" {
+		resp["error"] = status.Error
+	}
+	if status.CatalogProgress != nil {
+		resp["catalog_progress"] = status.CatalogProgress
+	}
+	if status.ManifestProgress != nil {
+		resp["manifest_progress"] = status.ManifestProgress
+	}
+
+	c.JSON(http.StatusOK, resp)
 }
 
 func (h *IngestHandler) Storage(c *gin.Context) {
@@ -67,56 +121,107 @@ func (h *IngestHandler) Storage(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "storage listing unavailable"})
 		return
 	}
-	c.JSON(http.StatusOK, storageListingResponseFromEntity(*listing))
+
+	objects := make([]gin.H, len(listing.Objects))
+	for i, obj := range listing.Objects {
+		o := gin.H{
+			"key":           obj.Key,
+			"size_bytes":    obj.SizeBytes,
+			"last_modified": obj.LastModified,
+		}
+		if obj.ETag != "" {
+			o["etag"] = obj.ETag
+		}
+		objects[i] = o
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"bucket":      listing.Bucket,
+		"prefix":      listing.Prefix,
+		"page":        listing.Page,
+		"page_size":   listing.PageSize,
+		"total":       listing.Total,
+		"total_bytes": listing.TotalBytes,
+		"truncated":   listing.Truncated,
+		"objects":     objects,
+	})
 }
 
 func (h *IngestHandler) Start(c *gin.Context) {
-	var request ingestStartRequestDTO
-	if err := c.ShouldBindJSON(&request); err != nil {
+	var req struct {
+		TicketID     string `json:"ticket_id"`
+		ManifestPath string `json:"manifest_path"`
+		Sector       int    `json:"sector"`
+		Limit        int    `json:"limit"`
+		Concurrency  int    `json:"concurrency"`
+		Resume       bool   `json:"resume"`
+		Fresh        bool   `json:"fresh"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid ingest start request"})
 		return
 	}
-	if request.ManifestPath == "" && request.Sector <= 0 {
+	if req.ManifestPath == "" && req.Sector <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "sector or manifest_path is required"})
 		return
 	}
-	job, err := h.ingest.Start(c.Request.Context(), request.toEntity())
+	job, err := h.ingest.Start(c.Request.Context(), entity.IngestStartRequest{
+		TicketID:     req.TicketID,
+		ManifestPath: req.ManifestPath,
+		Sector:       req.Sector,
+		Limit:        req.Limit,
+		Concurrency:  req.Concurrency,
+		Resume:       req.Resume,
+		Fresh:        req.Fresh,
+	})
 	if err != nil {
-		var statusError interface{ HTTPStatusCode() int }
-		if errors.As(err, &statusError) {
-			status := statusError.HTTPStatusCode()
-			if status == http.StatusConflict {
-				c.JSON(http.StatusConflict, gin.H{"error": "an ingest job is already running"})
-				return
-			}
-			if status >= http.StatusBadRequest && status < http.StatusInternalServerError {
-				c.JSON(status, gin.H{"error": "invalid ingest control request"})
-				return
-			}
+		if errors.Is(err, entity.ErrIngestAlreadyRunning) || strings.Contains(err.Error(), "already running") {
+			c.JSON(http.StatusConflict, gin.H{"error": "an ingest job is already running"})
+			return
 		}
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ingester control unavailable"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusAccepted, ingestControlJobResponseFromEntity(*job))
+
+	resp := gin.H{
+		"job_id":        job.JobID,
+		"ticket_id":     job.TicketID,
+		"status":        job.Status,
+		"manifest_path": job.ManifestPath,
+		"sector":        job.Sector,
+		"concurrency":   job.Concurrency,
+		"started_at":    job.StartedAt,
+		"updated_at":    job.UpdatedAt,
+	}
+	if job.Error != "" {
+		resp["error"] = job.Error
+	}
+	c.JSON(http.StatusAccepted, resp)
 }
 
 func (h *IngestHandler) Cancel(c *gin.Context) {
 	job, err := h.ingest.Cancel(c.Request.Context(), strings.TrimSpace(c.Param("job_id")))
 	if err != nil {
-		var statusError interface{ HTTPStatusCode() int }
-		if errors.As(err, &statusError) {
-			status := statusError.HTTPStatusCode()
-			if status == http.StatusNotFound {
-				c.JSON(http.StatusNotFound, gin.H{"error": "ingest job not found"})
-				return
-			}
-			if status >= http.StatusBadRequest && status < http.StatusInternalServerError {
-				c.JSON(status, gin.H{"error": "invalid ingest control request"})
-				return
-			}
+		if errors.Is(err, entity.ErrIngestJobNotFound) || strings.Contains(err.Error(), "not found") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "ingest job not found"})
+			return
 		}
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ingester control unavailable"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusAccepted, ingestControlJobResponseFromEntity(*job))
+
+	resp := gin.H{
+		"job_id":        job.JobID,
+		"ticket_id":     job.TicketID,
+		"status":        job.Status,
+		"manifest_path": job.ManifestPath,
+		"sector":        job.Sector,
+		"concurrency":   job.Concurrency,
+		"started_at":    job.StartedAt,
+		"updated_at":    job.UpdatedAt,
+	}
+	if job.Error != "" {
+		resp["error"] = job.Error
+	}
+	c.JSON(http.StatusAccepted, resp)
 }

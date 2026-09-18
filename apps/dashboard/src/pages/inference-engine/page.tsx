@@ -1,7 +1,6 @@
 import type { JSX } from 'react';
-
-import ModelWorkspace from '@/features/models/ModelWorkspace';
+import InferenceEngineSection from './sections/InferenceEngineSection';
 
 export default function InferenceEnginePage(): JSX.Element {
-  return <ModelWorkspace view="inference" />;
+  return <InferenceEngineSection />;
 }

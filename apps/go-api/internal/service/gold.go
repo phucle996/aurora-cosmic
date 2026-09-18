@@ -13,8 +13,8 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 	"go-api/internal/domain/entity"
-	"go-api/internal/domain/repo"
 	domainService "go-api/internal/domain/service"
+	"go-api/internal/provider"
 
 	"github.com/google/uuid"
 )
@@ -31,11 +31,11 @@ const (
 )
 
 type GoldControlService struct {
-	objects   repo.ObjectRepository
-	publisher repo.EventPublisher
+	objects   provider.ObjectStorage
+	publisher provider.EventPublisher
 }
 
-func NewGoldControlService(objects repo.ObjectRepository, publisher repo.EventPublisher) domainService.GoldControl {
+func NewGoldControlService(objects provider.ObjectStorage, publisher provider.EventPublisher) domainService.GoldControl {
 	return &GoldControlService{objects: objects, publisher: publisher}
 }
 
@@ -64,7 +64,7 @@ func (s *GoldControlService) Query(ctx context.Context) (*entity.GoldControlOver
 			return nil, fmt.Errorf("decode Gold runtime status: %w", err)
 		}
 		overview.Runtime = &runtime
-	} else if err != nil && !errors.Is(err, repo.ErrObjectNotFound) {
+	} else if err != nil && !errors.Is(err, provider.ErrObjectNotFound) {
 		return nil, fmt.Errorf("read Gold runtime status: %w", err)
 	}
 	return overview, nil
@@ -248,7 +248,7 @@ func (s *GoldControlService) Snapshot(ctx context.Context, snapshotID string) (*
 	}
 	data, err := s.objects.GetObject(ctx, "gold/snapshots/"+snapshotID+"/manifest.json")
 	if err != nil {
-		if errors.Is(err, repo.ErrObjectNotFound) {
+		if errors.Is(err, provider.ErrObjectNotFound) {
 			return nil, fmt.Errorf("Gold snapshot %s was not found", snapshotID)
 		}
 		return nil, fmt.Errorf("read Gold snapshot manifest: %w", err)
@@ -280,7 +280,7 @@ func (s *GoldControlService) ListSnapshots(ctx context.Context, limit int) ([]en
 	if err != nil {
 		return nil, fmt.Errorf("list Gold manifests: %w", err)
 	}
-	manifests := make([]repo.ObjectInfo, 0, len(objects))
+	manifests := make([]provider.ObjectInfo, 0, len(objects))
 	for _, object := range objects {
 		if strings.HasPrefix(object.Key, "gold/snapshots/gold-v1-") && strings.HasSuffix(object.Key, "/manifest.json") {
 			manifests = append(manifests, object)
@@ -496,7 +496,7 @@ func parquetPreviewValue(value parquet.Value) any {
 func (s *GoldControlService) readControl(ctx context.Context) (entity.GoldControlState, error) {
 	data, err := s.objects.GetObject(ctx, goldControlKey)
 	if err != nil {
-		if errors.Is(err, repo.ErrObjectNotFound) {
+		if errors.Is(err, provider.ErrObjectNotFound) {
 			return defaultGoldControl(), nil
 		}
 		return entity.GoldControlState{}, fmt.Errorf("read Gold control: %w", err)
@@ -531,15 +531,26 @@ func (s *GoldControlService) writeControl(ctx context.Context, control entity.Go
 
 func (s *GoldControlService) publishAndQuery(ctx context.Context, control entity.GoldControlState, status, ticketID string) (*entity.GoldControlOverview, error) {
 	if s.publisher != nil {
-		payload, _ := json.Marshal(control)
-		_ = s.publisher.Publish(ctx, entity.WorkflowEvent{
-			Type:       "workflow",
-			Workflow:   "gold",
-			Status:     status,
-			JobID:      control.CommandID,
-			TicketID:   ticketID,
-			OccurredAt: control.UpdatedAt,
-			Payload:    payload,
+		topic := "gold"
+		if ticketID != "" {
+			topic = "gold:" + ticketID
+		} else if control.CommandID != "" {
+			topic = "gold:" + control.CommandID
+		}
+		data, _ := json.Marshal(map[string]any{
+			"type":        "workflow",
+			"topic":       topic,
+			"workflow":    "gold",
+			"status":      status,
+			"job_id":      control.CommandID,
+			"ticket_id":   ticketID,
+			"occurred_at": control.UpdatedAt,
+			"payload":     control,
+		})
+		_ = s.publisher.Publish(ctx, topic, provider.Event{
+			Type:  "workflow",
+			Topic: topic,
+			Data:  data,
 		})
 	}
 	return s.Query(ctx)

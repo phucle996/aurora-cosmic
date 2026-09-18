@@ -1,7 +1,6 @@
 import type { JSX } from 'react';
-
-import ModelWorkspace from '@/features/models/ModelWorkspace';
+import ModelEvaluationSection from './sections/ModelEvaluationSection';
 
 export default function ModelEvaluationPage(): JSX.Element {
-  return <ModelWorkspace view="evaluation" />;
+  return <ModelEvaluationSection />;
 }

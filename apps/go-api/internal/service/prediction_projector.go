@@ -16,6 +16,7 @@ import (
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/repo"
 	domainService "go-api/internal/domain/service"
+	"go-api/internal/provider"
 )
 
 const (
@@ -24,7 +25,7 @@ const (
 )
 
 type PredictionProjectorService struct {
-	objects        repo.ObjectRepository
+	objects        provider.ObjectStorage
 	predictions    repo.PredictionProjectionRepository
 	expectedBucket string
 }
@@ -36,6 +37,7 @@ type inferenceCompletionEvent struct {
 	OccurredAt       string `json:"occurred_at"`
 	Task             string `json:"task"`
 	JobID            string `json:"job_id"`
+	TicketID         string `json:"ticket_id,omitempty"`
 	GoldSnapshotID   string `json:"gold_snapshot_id"`
 	RuntimePackageID string `json:"runtime_package_id"`
 	OutputBucket     string `json:"output_bucket"`
@@ -49,6 +51,7 @@ type predictionEnvelope struct {
 	SchemaVersion    int    `json:"schema_version"`
 	Task             string `json:"task"`
 	JobID            string `json:"job_id"`
+	TicketID         string `json:"ticket_id,omitempty"`
 	GoldSnapshotID   string `json:"gold_snapshot_id"`
 	RuntimePackageID string `json:"runtime_package_id"`
 }
@@ -87,6 +90,7 @@ type anomalyPredictionRecord struct {
 type projectionJobManifest struct {
 	SchemaVersion  int    `json:"schema_version"`
 	JobID          string `json:"job_id"`
+	TicketID       string `json:"ticket_id,omitempty"`
 	Task           string `json:"task"`
 	ModelVersion   string `json:"model_version"`
 	GoldSnapshotID string `json:"gold_snapshot_id"`
@@ -94,7 +98,7 @@ type projectionJobManifest struct {
 }
 
 func NewPredictionProjectorService(
-	objects repo.ObjectRepository,
+	objects provider.ObjectStorage,
 	predictions repo.PredictionProjectionRepository,
 	expectedBucket string,
 ) domainService.PredictionProjector {
@@ -216,8 +220,20 @@ func (s *PredictionProjectorService) projectObject(
 		return entity.PredictionProjectionResult{}, err
 	}
 
+	ticketID := ""
+	if event != nil && strings.TrimSpace(event.TicketID) != "" {
+		ticketID = strings.TrimSpace(event.TicketID)
+	} else if strings.TrimSpace(envelope.TicketID) != "" {
+		ticketID = strings.TrimSpace(envelope.TicketID)
+	} else if strings.TrimSpace(manifest.TicketID) != "" {
+		ticketID = strings.TrimSpace(manifest.TicketID)
+	} else if strings.TrimSpace(envelope.JobID) != "" {
+		ticketID = strings.TrimSpace(envelope.JobID)
+	}
+
 	result := entity.PredictionProjectionResult{
 		JobID:        envelope.JobID,
+		TicketID:     ticketID,
 		OutputKey:    key,
 		ExpectedRows: int64(len(lines)),
 	}

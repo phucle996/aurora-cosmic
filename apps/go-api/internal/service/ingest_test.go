@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"go-api/internal/domain/entity"
-	"go-api/internal/domain/repo"
+	"go-api/internal/provider"
 )
 
 type fakeIngestObjects struct{ objects map[string][]byte }
@@ -17,11 +17,14 @@ func (f fakeIngestObjects) Ping(context.Context) error { return nil }
 func (f fakeIngestObjects) GetObject(_ context.Context, key string) ([]byte, error) {
 	return f.objects[key], nil
 }
-func (f fakeIngestObjects) ListObjects(_ context.Context, prefix string) ([]repo.ObjectInfo, error) {
-	return []repo.ObjectInfo{
+func (f fakeIngestObjects) ListObjects(_ context.Context, prefix string) ([]provider.ObjectInfo, error) {
+	return []provider.ObjectInfo{
 		{Key: prefix + "new.fits", Size: 42, LastModified: time.Now().UTC()},
 		{Key: prefix + "old.fits", Size: 20, LastModified: time.Now().UTC().Add(-time.Hour)},
 	}, nil
+}
+func (f fakeIngestObjects) ListObjectsWithMetadata(ctx context.Context, prefix string) ([]provider.ObjectInfo, error) {
+	return f.ListObjects(ctx, prefix)
 }
 func (f fakeIngestObjects) PutObject(_ context.Context, key string, data []byte, _ string) error {
 	if f.objects != nil {
@@ -73,7 +76,7 @@ func TestIngestCancelDoesNotFabricateStateOrRewriteCheckpoint(t *testing.T) {
 		"checkpoints/ingestion/current.json":    []byte(`{"active_run_id":"run-1"}`),
 		"checkpoints/ingestion/runs/run-1.json": checkpoint,
 	}}
-	service := NewIngestServiceWithEvents(objects, nil, "aurora", failingIngestController{}, nil)
+	service := NewIngestService(objects, nil, "aurora", failingIngestController{}, nil)
 	if _, err := service.Cancel(context.Background(), "run-1"); err == nil {
 		t.Fatal("cancel succeeded even though the ingester rejected it")
 	}
@@ -85,7 +88,7 @@ func TestIngestCancelDoesNotFabricateStateOrRewriteCheckpoint(t *testing.T) {
 func TestIngestCancelPreservesActiveDownloadsWhileDraining(t *testing.T) {
 	now := time.Now().UTC()
 	controller := fakeRuntimeIngestController{job: &entity.IngestControlJob{JobID: "ingest-job-drain", Status: "draining", UpdatedAt: now}}
-	svc := NewIngestServiceWithEvents(fakeIngestObjects{}, nil, "aurora", controller, nil).(*IngestService)
+	svc := NewIngestService(fakeIngestObjects{}, nil, "aurora", controller, nil).(*IngestService)
 	svc.runtime = &entity.IngestStatus{Status: "running", Downloading: 2, InflightProducts: 2}
 
 	job, err := svc.Cancel(context.Background(), "ingest-job-drain")
@@ -102,7 +105,7 @@ func TestIngestStatusReadsCheckpointAndTelemetry(t *testing.T) {
 		"checkpoints/ingestion/current.json":    []byte(`{"active_run_id":"run-1"}`),
 		"checkpoints/ingestion/runs/run-1.json": []byte(`{"run_id":"run-1","status":"RUNNING","manifest_path":"manifest.json","products":{"a":{"product_kind":"LIGHTCURVE","object_key":"bronze/a","expected_size_bytes":100,"size_bytes":50,"state":"DOWNLOADING","attempts":1,"updated_at":"2026-08-09T00:00:00Z"},"b":{"product_kind":"TPF","object_key":"bronze/b","expected_size_bytes":200,"size_bytes":200,"state":"PUBLISHED","updated_at":"2026-08-09T00:00:01Z"}}}`),
 	}}
-	status, err := NewIngestService(objects, fakeIngestPrometheus{}, "aurora").Status(context.Background())
+	status, err := NewIngestService(objects, fakeIngestPrometheus{}, "aurora", nil, nil).Status(context.Background())
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
@@ -112,7 +115,7 @@ func TestIngestStatusReadsCheckpointAndTelemetry(t *testing.T) {
 }
 
 func TestIngestStorageCapsAndSortsListing(t *testing.T) {
-	listing, err := NewIngestService(fakeIngestObjects{}, nil, "aurora").Storage(context.Background(), "bronze/", 1, 1)
+	listing, err := NewIngestService(fakeIngestObjects{}, nil, "aurora", nil, nil).Storage(context.Background(), "bronze/", 1, 1)
 	if err != nil {
 		t.Fatalf("storage: %v", err)
 	}
@@ -127,11 +130,11 @@ func TestIngestStatusPrefersFreshRuntimeJobOverOlderCheckpoint(t *testing.T) {
 		"checkpoints/ingestion/runs/old-run.json": []byte(`{"run_id":"old-run","status":"COMPLETED","manifest_path":"remote:tess/sector=42/limit=10","started_at":"2026-08-09T00:00:00Z","updated_at":"2026-08-09T00:01:00Z","products":{"old":{"product_kind":"LIGHTCURVE","state":"PUBLISHED","size_bytes":100,"updated_at":"2026-08-09T00:01:00Z"}}}`),
 	}}
 	controller := fakeRuntimeIngestController{job: &entity.IngestControlJob{JobID: "ingest-job-live", Status: "running", ManifestPath: "remote:tess/sector=42/limit=all", StartedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}}
-	status, err := NewIngestServiceWithEvents(objects, nil, "aurora", controller, nil).Status(context.Background())
+	status, err := NewIngestService(objects, nil, "aurora", controller, nil).Status(context.Background())
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	if status.Source != "api-runtime" || status.Status != "running" || status.ControlJobID != "ingest-job-live" || status.TotalProducts != 0 {
+	if status.Status != "running" || status.TicketID != "ingest-job-live" || status.TotalProducts != 0 {
 		t.Fatalf("expected fresh runtime state, got %#v", status)
 	}
 }
@@ -145,7 +148,7 @@ func TestIngestStatusReportsPlanningFromActiveControlRun(t *testing.T) {
 	}}
 	now := time.Now().UTC()
 	controller := fakeRuntimeIngestController{job: &entity.IngestControlJob{JobID: "ingest-job-planning", Status: "running", StartedAt: now, UpdatedAt: now}}
-	status, err := NewIngestServiceWithEvents(objects, nil, "aurora", controller, nil).Status(context.Background())
+	status, err := NewIngestService(objects, nil, "aurora", controller, nil).Status(context.Background())
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
@@ -165,11 +168,11 @@ func TestIngestStatusUsesTerminalControlStateOverCheckpoint(t *testing.T) {
 		StartedAt: time.Date(2026, 8, 9, 11, 0, 0, 0, time.UTC),
 		UpdatedAt: time.Date(2026, 8, 9, 12, 1, 0, 0, time.UTC),
 	}}
-	status, err := NewIngestServiceWithEvents(objects, fakeIngestPrometheus{}, "aurora", controller, nil).Status(context.Background())
+	status, err := NewIngestService(objects, fakeIngestPrometheus{}, "aurora", controller, nil).Status(context.Background())
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	if status.Status != "canceled" || status.ControlJobID != "ingest-job-canceled" || status.QueueDepth != 0 || status.BytesPerSecond != 0 {
+	if status.Status != "canceled" || status.TicketID != "ingest-job-canceled" || status.QueueDepth != 0 || status.BytesPerSecond != 0 {
 		t.Fatalf("expected terminal control state and zero live rates, got %#v", status)
 	}
 }

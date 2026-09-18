@@ -12,13 +12,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type FactoryHistoryHandler struct{ history service.FactoryHistory }
+type TicketHandler struct{ history service.Ticket }
 
-func NewFactoryHistoryHandler(history service.FactoryHistory) *FactoryHistoryHandler {
-	return &FactoryHistoryHandler{history: history}
+func NewTicketHandler(history service.Ticket) *TicketHandler {
+	return &TicketHandler{history: history}
 }
 
-func (h *FactoryHistoryHandler) List(c *gin.Context) {
+func (h *TicketHandler) List(c *gin.Context) {
 	limit := 50
 	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
@@ -36,8 +36,13 @@ func (h *FactoryHistoryHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": runs})
 }
 
-func (h *FactoryHistoryHandler) Detail(c *gin.Context) {
-	detail, err := h.history.GetRun(c.Request.Context(), strings.TrimSpace(c.Param("run_id")))
+func (h *TicketHandler) Detail(c *gin.Context) {
+	runID := strings.TrimSpace(c.Param("run_id"))
+	if runID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "run_id is required"})
+		return
+	}
+	detail, err := h.history.GetRun(c.Request.Context(), runID)
 	if errors.Is(err, repo.ErrNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "run was not found"})
 		return
@@ -49,13 +54,15 @@ func (h *FactoryHistoryHandler) Detail(c *gin.Context) {
 	c.JSON(http.StatusOK, detail)
 }
 
-func (h *FactoryHistoryHandler) ListTickets(c *gin.Context) {
+func (h *TicketHandler) ListTickets(c *gin.Context) {
 	limit := 100
 	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
-		if err == nil && parsed >= 1 && parsed <= 200 {
-			limit = parsed
+		if err != nil || parsed < 1 || parsed > 200 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "limit must be between 1 and 200"})
+			return
 		}
+		limit = parsed
 	}
 	tickets, err := h.history.ListTickets(c.Request.Context(), limit)
 	if err != nil {
@@ -70,11 +77,11 @@ type createTicketRequest struct {
 	Description string `json:"description"`
 }
 
-func (h *FactoryHistoryHandler) CreateTicket(c *gin.Context) {
+func (h *TicketHandler) CreateTicket(c *gin.Context) {
 	var req createTicketRequest
 	_ = c.ShouldBindJSON(&req)
 
-	ticket, err := h.history.CreateTicket(c.Request.Context(), req.TicketID, req.Description)
+	ticket, err := h.history.CreateTicket(c.Request.Context(), strings.TrimSpace(req.TicketID), strings.TrimSpace(req.Description))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

@@ -17,6 +17,7 @@ import (
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/repo"
 	domainService "go-api/internal/domain/service"
+	"go-api/internal/provider"
 
 	"github.com/google/uuid"
 	"github.com/parquet-go/parquet-go"
@@ -109,8 +110,8 @@ var preprocessingMetrics = []preprocessingMetric{
 type PreprocessingService struct {
 	prometheus         repo.PrometheusQuerier          // Truy vấn metrics telemetry từ Prometheus
 	dispatcher         repo.WorkflowDispatcher         // Gửi lệnh điều khiển (start/stop) tới Rust Preprocessor
-	publisher          repo.EventPublisher             // Phát sự kiện workflow
-	objects            repo.ObjectRepository           // Đọc checkpoint từ MinIO S3
+	publisher          provider.EventPublisher         // Phát sự kiện workflow
+	objects            provider.ObjectStorage          // Đọc checkpoint từ MinIO S3
 	eventObserver      repo.SilverEventStreamObserver  // Đọc metadata AURORA_SILVER mà không consume event
 	bronzeObserver     repo.BronzeConsumerObserver     // Đọc trạng thái ACK của durable Bronze consumer
 	runtimeMu          sync.RWMutex                    // Khóa đồng bộ dữ liệu runtime trong RAM
@@ -148,12 +149,12 @@ func NewPreprocessingService(prometheus repo.PrometheusQuerier, dispatchers ...r
 }
 
 // NewPreprocessingServiceWithEvents khởi tạo PreprocessingService có EventPublisher
-func NewPreprocessingServiceWithEvents(prometheus repo.PrometheusQuerier, dispatcher repo.WorkflowDispatcher, publisher repo.EventPublisher) domainService.Preprocessing {
+func NewPreprocessingServiceWithEvents(prometheus repo.PrometheusQuerier, dispatcher repo.WorkflowDispatcher, publisher provider.EventPublisher) domainService.Preprocessing {
 	return &PreprocessingService{prometheus: prometheus, dispatcher: dispatcher, publisher: publisher, eventObserver: silverEventObserver(dispatcher), bronzeObserver: bronzeConsumerObserver(dispatcher)}
 }
 
 // NewPreprocessingServiceWithEventsAndObjects khởi tạo PreprocessingService đầy đủ chức năng
-func NewPreprocessingServiceWithEventsAndObjects(prometheus repo.PrometheusQuerier, dispatcher repo.WorkflowDispatcher, publisher repo.EventPublisher, objects repo.ObjectRepository) domainService.Preprocessing {
+func NewPreprocessingServiceWithEventsAndObjects(prometheus repo.PrometheusQuerier, dispatcher repo.WorkflowDispatcher, publisher provider.EventPublisher, objects provider.ObjectStorage) domainService.Preprocessing {
 	return &PreprocessingService{prometheus: prometheus, dispatcher: dispatcher, publisher: publisher, objects: objects, eventObserver: silverEventObserver(dispatcher), bronzeObserver: bronzeConsumerObserver(dispatcher)}
 }
 
@@ -245,14 +246,24 @@ func (s *PreprocessingService) Start(ctx context.Context, request entity.Preproc
 	s.runtimeMu.Unlock()
 
 	if s.publisher != nil {
-		payload, _ := json.Marshal(job)
-		_ = s.publisher.Publish(ctx, entity.WorkflowEvent{
-			Type:       "workflow",
-			Workflow:   "preprocessing",
-			Status:     job.Status,
-			JobID:      job.JobID,
-			OccurredAt: job.UpdatedAt,
-			Payload:    payload,
+		topic := "preprocessing"
+		if job.JobID != "" {
+			topic = "preprocessing:" + job.JobID
+		}
+		data, _ := json.Marshal(map[string]any{
+			"type":        "workflow",
+			"topic":       topic,
+			"workflow":    "preprocessing",
+			"status":      job.Status,
+			"job_id":      job.JobID,
+			"ticket_id":   job.JobID,
+			"occurred_at": job.UpdatedAt,
+			"payload":     job,
+		})
+		_ = s.publisher.Publish(ctx, topic, provider.Event{
+			Type:  "workflow",
+			Topic: topic,
+			Data:  data,
 		})
 	}
 	return job, nil
@@ -394,14 +405,24 @@ func (s *PreprocessingService) Stop(ctx context.Context, jobID string) (*entity.
 	}
 
 	if s.publisher != nil {
-		payload, _ := json.Marshal(&job)
-		_ = s.publisher.Publish(ctx, entity.WorkflowEvent{
-			Type:       "workflow",
-			Workflow:   "preprocessing",
-			Status:     job.Status,
-			JobID:      job.JobID,
-			OccurredAt: job.UpdatedAt,
-			Payload:    payload,
+		topic := "preprocessing"
+		if job.JobID != "" {
+			topic = "preprocessing:" + job.JobID
+		}
+		data, _ := json.Marshal(map[string]any{
+			"type":        "workflow",
+			"topic":       topic,
+			"workflow":    "preprocessing",
+			"status":      job.Status,
+			"job_id":      job.JobID,
+			"ticket_id":   job.JobID,
+			"occurred_at": job.UpdatedAt,
+			"payload":     &job,
+		})
+		_ = s.publisher.Publish(ctx, topic, provider.Event{
+			Type:  "workflow",
+			Topic: topic,
+			Data:  data,
 		})
 	}
 	return &job, nil
@@ -603,14 +624,24 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 
 	// 6. Phát sự kiện SSE khi hoàn tất tác vụ batch
 	if stateChangedJob != nil && s.publisher != nil {
-		payload, _ := json.Marshal(stateChangedJob)
-		_ = s.publisher.Publish(ctx, entity.WorkflowEvent{
-			Type:       "workflow",
-			Workflow:   "preprocessing",
-			Status:     stateChangedJob.Status,
-			JobID:      stateChangedJob.JobID,
-			OccurredAt: stateChangedJob.UpdatedAt,
-			Payload:    payload,
+		topic := "preprocessing"
+		if stateChangedJob.JobID != "" {
+			topic = "preprocessing:" + stateChangedJob.JobID
+		}
+		data, _ := json.Marshal(map[string]any{
+			"type":        "workflow",
+			"topic":       topic,
+			"workflow":    "preprocessing",
+			"status":      stateChangedJob.Status,
+			"job_id":      stateChangedJob.JobID,
+			"ticket_id":   stateChangedJob.JobID,
+			"occurred_at": stateChangedJob.UpdatedAt,
+			"payload":     stateChangedJob,
+		})
+		_ = s.publisher.Publish(ctx, topic, provider.Event{
+			Type:  "workflow",
+			Topic: topic,
+			Data:  data,
 		})
 	}
 
@@ -1119,19 +1150,36 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 	s.runtimeMu.Unlock()
 
 	if s.publisher != nil && (checkpointInventoryRead || bronzeInventoryRead || silverInventoryRead) {
-		payload, _ := json.Marshal(map[string]any{"science_counts_observed": scienceCountsObserved, "silver_objects": silverTotal})
-		_ = s.publisher.Publish(ctx, entity.WorkflowEvent{
-			Type: "workflow", Workflow: "preprocessing", Status: "evidence_refreshed",
-			JobID: jobID, OccurredAt: observedAt, Payload: payload,
+		topic := "preprocessing"
+		if jobID != "" {
+			topic = "preprocessing:" + jobID
+		}
+		data, _ := json.Marshal(map[string]any{
+			"type":        "workflow",
+			"topic":       topic,
+			"workflow":    "preprocessing",
+			"status":      "evidence_refreshed",
+			"job_id":      jobID,
+			"ticket_id":   jobID,
+			"occurred_at": observedAt,
+			"payload": map[string]any{
+				"science_counts_observed": scienceCountsObserved,
+				"silver_objects":          silverTotal,
+			},
+		})
+		_ = s.publisher.Publish(ctx, topic, provider.Event{
+			Type:  "workflow",
+			Topic: topic,
+			Data:  data,
 		})
 	}
 }
 
-func listObjectsWithMetadata(ctx context.Context, objects repo.ObjectRepository, prefix string) ([]repo.ObjectInfo, error) {
-	if metadataObjects, ok := objects.(repo.ObjectMetadataRepository); ok {
-		return metadataObjects.ListObjectsWithMetadata(ctx, prefix)
+func listObjectsWithMetadata(ctx context.Context, objects provider.ObjectStorage, prefix string) ([]provider.ObjectInfo, error) {
+	if objects == nil {
+		return nil, nil
 	}
-	return objects.ListObjects(ctx, prefix)
+	return objects.ListObjectsWithMetadata(ctx, prefix)
 }
 
 func metadataInt64(metadata map[string]string, key string) int64 {
@@ -1174,7 +1222,7 @@ type lightCurveScatterRow struct {
 	Flux float32 `parquet:"flux"`
 }
 
-func (s *PreprocessingService) lightCurveScatterPPM(ctx context.Context, object repo.ObjectInfo) (float64, bool) {
+func (s *PreprocessingService) lightCurveScatterPPM(ctx context.Context, object provider.ObjectInfo) (float64, bool) {
 	if object.Size <= 0 || object.Size > maxScatterBackfillObjectBytes {
 		return 0, false
 	}

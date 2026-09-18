@@ -1,7 +1,6 @@
 import type { JSX } from 'react';
-
-import ModelWorkspace from '@/features/models/ModelWorkspace';
+import ModelDetailSection from './sections/ModelDetailSection';
 
 export default function ModelDetailPage(): JSX.Element {
-  return <ModelWorkspace view="detail" />;
+  return <ModelDetailSection />;
 }

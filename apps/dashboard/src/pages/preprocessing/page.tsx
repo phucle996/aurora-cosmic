@@ -20,9 +20,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Progress } from '@/components/ui/progress';
 import { apiBase, apiFetch } from '@/lib/api';
 
-import { normalizePreprocessingGraph, type PreprocessingGraph, type PreprocessingJob } from '@/features/preprocessing/types';
-import { RunnerTicketBar } from '@/features/factory-history/components/RunnerTicketBar';
-import { useRunnerTicket } from '@/features/factory-history/session';
+import { normalizePreprocessingGraph, type PreprocessingGraph, type PreprocessingJob } from '@/pages/pipeline-dag/types';
+import { RunnerTicketBar } from '@/components/RunnerTicketBar';
+import { useRunnerTicket } from '@/lib/session';
 
 const PREPROCESSING_SETTINGS_KEY = 'aurora.preprocessing.configure.v1';
 const DEFAULT_PREPROCESSING_SETTINGS = { mode: 'stream' as const, workerCount: 4 };
@@ -127,7 +127,7 @@ export default function PreprocessingPage(): JSX.Element {
     };
 
     loadGraph();
-    const eventSource = new EventSource(`${apiBase}/v1/events?workflow=preprocessing&ticket=${encodeURIComponent(activeTicket)}`);
+    const eventSource = new EventSource(`${apiBase}/v1/events?topic=${encodeURIComponent(`preprocessing:${activeTicket}`)}&topic=preprocessing`);
     eventSource.addEventListener('workflow', (event) => {
       const message = event as MessageEvent<string>;
       try {

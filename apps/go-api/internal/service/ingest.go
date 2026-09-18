@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/repo"
 	domainService "go-api/internal/domain/service"
+	"go-api/internal/provider"
 )
 
 // ============================================================================
@@ -23,21 +25,22 @@ import (
 // 3. Quản lý danh sách đối tượng lưu trữ trong vùng đệm MinIO Bronze (~50 GiB).
 type storageCacheEntry struct {
 	cachedAt   time.Time
-	objects    []repo.ObjectInfo
+	objects    []provider.ObjectInfo
 	totalBytes int64
 }
 
 type IngestService struct {
-	objects      repo.ObjectRepository           // Repository đọc ghi MinIO S3
-	catalog      repo.LakehouseCatalogRepository // Repository ClickHouse Lakehouse Catalog (Sub-ms lookup)
-	prometheus   repo.PrometheusQuerier          // Truy vấn metrics tốc độ throughput từ Prometheus
-	bucket       string                          // Tên bucket MinIO (mặc định: "aurora")
-	controller   repo.IngestController           // Controller điều khiển Go Ingester worker
-	publisher    repo.EventPublisher             // Publisher phát sự kiện lifecycle workflow
-	runtimeMu    sync.RWMutex                    // Khóa đồng bộ trạng thái runtime trong bộ nhớ
-	runtimeJob   *entity.IngestControlJob        // Thông tin job điều khiển đang chạy
-	runtime      *entity.IngestStatus            // Snapshot trạng thái thu thập gần nhất
-	storageCache map[string]*storageCacheEntry   // Bộ đệm cache danh sách MinIO theo prefix (TTL 10s)
+	objects      provider.ObjectStorage        // Storage đọc ghi MinIO S3
+	prometheus   repo.PrometheusQuerier        // Truy vấn metrics tốc độ throughput từ Prometheus
+	bucket       string                        // Tên bucket MinIO (mặc định: "aurora")
+	controller   repo.IngestController         // Controller điều khiển Go Ingester worker
+	publisher    provider.EventPublisher       // Publisher phát sự kiện lifecycle workflow
+	runtimeMu    sync.RWMutex                  // Khóa đồng bộ trạng thái runtime trong bộ nhớ
+	runtimeJob   *entity.IngestControlJob      // Thông tin job điều khiển đang chạy
+	runtime      *entity.IngestStatus          // Snapshot trạng thái thu thập gần nhất
+	cachedRunID  string                        // ID đợt thu thập đã parse và lưu bộ nhớ đệm
+	cachedStatus *entity.IngestStatus          // Trạng thái đã parse sẵn của checkpoint MinIO
+	storageCache map[string]*storageCacheEntry // Bộ đệm cache danh sách MinIO theo prefix (TTL 10s)
 }
 
 // ============================================================================
@@ -87,33 +90,40 @@ func applyPlanningStatus(status *entity.IngestStatus, controlJob *entity.IngestC
 	}
 }
 
-// NewIngestService khởi tạo thể hiện của IngestService
-func NewIngestService(objects repo.ObjectRepository, prometheus repo.PrometheusQuerier, bucket string, controllers ...repo.IngestController) domainService.Ingest {
-	var controller repo.IngestController
-	if len(controllers) > 0 {
-		controller = controllers[0]
+func (s *IngestService) attachPlanningProgress(ctx context.Context, status *entity.IngestStatus, controlJob *entity.IngestControlJob) {
+	if status == nil || controlJob == nil || !strings.EqualFold(controlJob.Status, "running") {
+		return
 	}
-	return &IngestService{objects: objects, prometheus: prometheus, bucket: bucket, controller: controller, storageCache: make(map[string]*storageCacheEntry)}
+	if payload, catalogErr := s.objects.GetObject(ctx, "control/ingest/catalog-status.json"); catalogErr == nil {
+		var catalogProgress entity.IngestCatalogProgress
+		if json.Unmarshal(payload, &catalogProgress) == nil && catalogProgress.State != "" {
+			status.CatalogProgress = &catalogProgress
+		}
+	}
+	if payload, manifestErr := s.objects.GetObject(ctx, "control/ingest/manifest-status.json"); manifestErr == nil {
+		var manifestProgress entity.IngestManifestProgress
+		if json.Unmarshal(payload, &manifestProgress) == nil && manifestProgress.State != "" {
+			status.ManifestProgress = &manifestProgress
+		}
+	}
 }
 
-// NewIngestServiceWithEvents khởi tạo thể hiện IngestService có kèm EventPublisher
-func NewIngestServiceWithEvents(objects repo.ObjectRepository, prometheus repo.PrometheusQuerier, bucket string, controller repo.IngestController, publisher repo.EventPublisher) domainService.Ingest {
-	return &IngestService{objects: objects, prometheus: prometheus, bucket: bucket, controller: controller, publisher: publisher, storageCache: make(map[string]*storageCacheEntry)}
-}
-
-// NewIngestServiceWithCatalogAndEvents khởi tạo thể hiện IngestService tích hợp ClickHouse Catalog
-func NewIngestServiceWithCatalogAndEvents(objects repo.ObjectRepository, catalog repo.LakehouseCatalogRepository, prometheus repo.PrometheusQuerier, bucket string, controller repo.IngestController, publisher repo.EventPublisher) domainService.Ingest {
-	svc := &IngestService{
+// NewIngestService khởi tạo thể hiện duy nhất của IngestService
+func NewIngestService(
+	objects provider.ObjectStorage,
+	prometheus repo.PrometheusQuerier,
+	bucket string,
+	controller repo.IngestController,
+	publisher provider.EventPublisher,
+) domainService.Ingest {
+	return &IngestService{
 		objects:      objects,
-		catalog:      catalog,
 		prometheus:   prometheus,
 		bucket:       bucket,
 		controller:   controller,
 		publisher:    publisher,
 		storageCache: make(map[string]*storageCacheEntry),
 	}
-	go svc.runPeriodicCatalogSync()
-	return svc
 }
 
 // ============================================================================
@@ -122,42 +132,58 @@ func NewIngestServiceWithCatalogAndEvents(objects repo.ObjectRepository, catalog
 // Start gửi lệnh khởi động một đợt thu thập dữ liệu mới tới Go Ingester
 // và phát sự kiện workflow vào event bus.
 func (s *IngestService) Start(ctx context.Context, request entity.IngestStartRequest) (*entity.IngestControlJob, error) {
-	if s.controller == nil {
-		return nil, fmt.Errorf("ingester control is unavailable")
-	}
-
 	// 1. Gọi controller để kích hoạt Ingester worker
 	job, err := s.controller.Start(ctx, request)
 	if err != nil {
+		if strings.Contains(err.Error(), "409") || strings.Contains(err.Error(), "already running") {
+			return nil, entity.ErrIngestAlreadyRunning
+		}
 		return nil, err
 	}
+	if job == nil || job.JobID == "" {
+		return nil, fmt.Errorf("ingester controller returned invalid job")
+	}
 
-	// 2. Phát sự kiện workflow (nếu có publisher)
+	// 2. Phát sự kiện workflow (sai thì fail, không fallback)
+	topic := "ingest"
+	if job.TicketID != "" {
+		topic = "ingest:" + job.TicketID
+	}
+	data, err := json.Marshal(map[string]any{
+		"job_id":      job.JobID,
+		"ticket_id":   job.TicketID,
+		"status":      strings.ToLower(job.Status),
+		"occurred_at": job.UpdatedAt,
+		"payload":     job,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal ingest start event: %w", err)
+	}
 	if s.publisher != nil {
-		payload, _ := json.Marshal(job)
-		_ = s.publisher.Publish(ctx, entity.WorkflowEvent{
-			Type:       "workflow",
-			Workflow:   "ingest",
-			Status:     job.Status,
-			JobID:      job.JobID,
-			OccurredAt: job.UpdatedAt,
-			Payload:    payload,
-		})
+		if err := s.publisher.Publish(ctx, topic, provider.Event{
+			Type:  "workflow",
+			Topic: topic,
+			Data:  data,
+		}); err != nil {
+			return nil, fmt.Errorf("publish ingest start event: %w", err)
+		}
 	}
 
 	// 3. Cập nhật trạng thái runtime trong bộ nhớ
 	s.runtimeMu.Lock()
 	s.runtimeJob = job
+	s.cachedRunID = ""
+	s.cachedStatus = nil
 	s.runtime = &entity.IngestStatus{
-		Observed:     true,
-		Source:       "api-runtime",
-		ControlJobID: job.JobID,
+		Observed:     false,
+		TicketID:     job.TicketID,
 		Status:       strings.ToLower(job.Status),
 		ManifestPath: job.ManifestPath,
 		StartedAt:    job.StartedAt,
 		UpdatedAt:    job.UpdatedAt,
 		ObservedAt:   time.Now().UTC(),
 		Products:     []entity.IngestProduct{},
+		ProductKinds: make(map[string]entity.IngestKindSummary),
 	}
 	s.runtimeMu.Unlock()
 
@@ -181,34 +207,44 @@ func (s *IngestService) Cancel(ctx context.Context, jobID string) (*entity.Inges
 		s.runtimeMu.RUnlock()
 	}
 
-	if s.controller == nil {
-		return nil, fmt.Errorf("ingester control is unavailable")
-	}
 	job, err := s.controller.Cancel(ctx, jobID)
 	if err != nil {
+		if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "not found") {
+			return nil, entity.ErrIngestJobNotFound
+		}
 		return nil, fmt.Errorf("cancel ingestion job %s: %w", jobID, err)
 	}
-	if job == nil {
+	if job == nil || job.JobID == "" {
 		return nil, fmt.Errorf("ingester returned no cancellation state for job %s", jobID)
 	}
 
-	// The ingester exclusively owns its durable checkpoint.  The API publishes
-	// the acknowledged control result, but never fabricates or overwrites state.
-
+	topic := "ingest"
+	if job.TicketID != "" {
+		topic = "ingest:" + job.TicketID
+	}
+	data, err := json.Marshal(map[string]any{
+		"job_id":      job.JobID,
+		"ticket_id":   job.TicketID,
+		"status":      strings.ToLower(job.Status),
+		"occurred_at": job.UpdatedAt,
+		"payload":     job,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal ingest cancel event: %w", err)
+	}
 	if s.publisher != nil {
-		payload, _ := json.Marshal(job)
-		_ = s.publisher.Publish(ctx, entity.WorkflowEvent{
-			Type:       "workflow",
-			Workflow:   "ingest",
-			Status:     job.Status,
-			JobID:      job.JobID,
-			OccurredAt: job.UpdatedAt,
-			Payload:    payload,
-		})
+		if err := s.publisher.Publish(ctx, topic, provider.Event{
+			Type:  "workflow",
+			Topic: topic,
+			Data:  data,
+		}); err != nil {
+			return nil, fmt.Errorf("publish ingest cancel event: %w", err)
+		}
 	}
 
 	s.runtimeMu.Lock()
 	s.runtimeJob = job
+	s.cachedStatus = nil
 	if s.runtime != nil {
 		s.runtime.Status = strings.ToLower(job.Status)
 		s.runtime.UpdatedAt = job.UpdatedAt
@@ -227,44 +263,20 @@ func (s *IngestService) Cancel(ctx context.Context, jobID string) (*entity.Inges
 // 2. File checkpoint bền vững trong MinIO (`checkpoints/ingestion/current.json`).
 // 3. Prometheus metrics tốc độ tải (throughput pts/s, bytes/s, hàng đợi).
 func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error) {
-	if s.objects == nil {
-		return nil, fmt.Errorf("MinIO ingestion checkpoint is unavailable")
-	}
-	var catalogProgress entity.IngestCatalogProgress
-	if payload, catalogErr := s.objects.GetObject(ctx, "control/ingest/catalog-status.json"); catalogErr == nil {
-		if json.Unmarshal(payload, &catalogProgress) != nil {
-			catalogProgress = entity.IngestCatalogProgress{}
-		}
-	}
-	var manifestProgress entity.IngestManifestProgress
-	if payload, manifestErr := s.objects.GetObject(ctx, "control/ingest/manifest-status.json"); manifestErr == nil {
-		if json.Unmarshal(payload, &manifestProgress) != nil {
-			manifestProgress = entity.IngestManifestProgress{}
-		}
-	}
-	attachPlanningProgress := func(status *entity.IngestStatus) {
-		if status == nil {
-			return
-		}
-		if catalogProgress.State != "" {
-			status.CatalogProgress = &catalogProgress
-		}
-		if manifestProgress.State != "" {
-			status.ManifestProgress = &manifestProgress
-		}
-	}
-
 	var controlJob *entity.IngestControlJob
 	if runtimeController, ok := s.controller.(repo.IngestRuntimeController); ok {
 		if current, currentErr := runtimeController.Current(ctx); currentErr == nil && current != nil && current.Status != "not_observed" {
 			controlJob = current
 			s.runtimeMu.Lock()
 			s.runtimeJob = current
+			ticketID := current.TicketID
+			if ticketID == "" {
+				ticketID = current.JobID
+			}
 			if s.runtime == nil || current.StartedAt.After(s.runtime.StartedAt) {
 				s.runtime = &entity.IngestStatus{
-					Observed:     true,
-					Source:       "ingester-control",
-					ControlJobID: current.JobID,
+					Observed:     false,
+					TicketID:     ticketID,
 					Status:       strings.ToLower(current.Status),
 					Error:        current.Error,
 					ManifestPath: current.ManifestPath,
@@ -272,6 +284,7 @@ func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error
 					UpdatedAt:    current.UpdatedAt,
 					ObservedAt:   time.Now().UTC(),
 					Products:     []entity.IngestProduct{},
+					ProductKinds: make(map[string]entity.IngestKindSummary),
 				}
 			} else {
 				s.runtime.Status = strings.ToLower(current.Status)
@@ -283,20 +296,19 @@ func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error
 		}
 	}
 
-	// 1. Đọc con trỏ checkpoint hiện tại từ MinIO: checkpoints/ingestion/current.json
+	// 1. Kiểm tra cache đối tượng checkpoint từ MinIO: checkpoints/ingestion/current.json
 	data, err := s.objects.GetObject(ctx, "checkpoints/ingestion/current.json")
 	if err != nil {
 		s.runtimeMu.RLock()
 		if s.runtime != nil {
 			cached := *s.runtime
-			cached.Products = append([]entity.IngestProduct(nil), s.runtime.Products...)
 			s.runtimeMu.RUnlock()
-			attachPlanningProgress(&cached)
+			s.attachPlanningProgress(ctx, &cached, controlJob)
 			applyPlanningStatus(&cached, controlJob)
 			return &cached, nil
 		}
 		s.runtimeMu.RUnlock()
-		status := &entity.IngestStatus{Observed: false, Source: "minio-checkpoint", Status: "not_observed", ObservedAt: time.Now().UTC()}
+		status := &entity.IngestStatus{Observed: false, Status: "not_observed", ObservedAt: time.Now().UTC()}
 		return status, nil
 	}
 
@@ -308,117 +320,148 @@ func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error
 		return nil, fmt.Errorf("decode ingestion checkpoint pointer: %w", err)
 	}
 
-	// 3. Đọc chi tiết checkpoint đợt thu thập: checkpoints/ingestion/runs/<run_id>.json
-	data, err = s.objects.GetObject(ctx, "checkpoints/ingestion/runs/"+pointer.ActiveRunID+".json")
-	if err != nil {
-		return nil, fmt.Errorf("load ingestion run %s: %w", pointer.ActiveRunID, err)
-	}
-
-	var checkpoint ingestionCheckpoint
-	if err := json.Unmarshal(data, &checkpoint); err != nil {
-		return nil, fmt.Errorf("decode ingestion run %s: %w", pointer.ActiveRunID, err)
-	}
-
-	// 4. Tổng hợp các thông số sản phẩm tải về (bytes, số file thành công/thất bại)
-	status := &entity.IngestStatus{
-		Observed:     true,
-		Source:       "minio-checkpoint",
-		RunID:        checkpoint.RunID,
-		Status:       strings.ToLower(checkpoint.Status),
-		ManifestPath: checkpoint.ManifestPath,
-		StartedAt:    checkpoint.StartedAt,
-		UpdatedAt:    checkpoint.UpdatedAt,
-		ObservedAt:   time.Now().UTC(),
-		Products:     make([]entity.IngestProduct, 0, len(checkpoint.Products)),
-		ProductKinds: make(map[string]entity.IngestKindSummary),
-	}
-	if controlJob != nil {
-		status.ControlJobID = controlJob.JobID
-	}
-
-	usingRuntimeState := false
 	s.runtimeMu.RLock()
-	if s.runtime != nil && controlJob != nil && s.runtime.StartedAt.After(checkpoint.UpdatedAt) {
-		usingRuntimeState = true
+	cachedStatus := s.cachedStatus
+	cachedRunID := s.cachedRunID
+	runtimeSnapshot := s.runtime
+	s.runtimeMu.RUnlock()
+
+	var status *entity.IngestStatus
+	usingRuntimeState := false
+
+	// Tối ưu overhead: Tái sử dụng checkpoint đã parse nếu run đã hoàn thành
+	if cachedStatus != nil && cachedRunID == pointer.ActiveRunID &&
+		(cachedStatus.Status == "completed" || cachedStatus.Status == "published" || cachedStatus.Status == "stopped") {
+		cloned := *cachedStatus
+		cloned.ObservedAt = time.Now().UTC()
+		status = &cloned
+	} else {
+		// 3. Đọc chi tiết checkpoint đợt thu thập: checkpoints/ingestion/runs/<run_id>.json
+		data, err = s.objects.GetObject(ctx, "checkpoints/ingestion/runs/"+pointer.ActiveRunID+".json")
+		if err != nil {
+			return nil, fmt.Errorf("load ingestion run %s: %w", pointer.ActiveRunID, err)
+		}
+
+		var checkpoint ingestionCheckpoint
+		if err := json.Unmarshal(data, &checkpoint); err != nil {
+			return nil, fmt.Errorf("decode ingestion run %s: %w", pointer.ActiveRunID, err)
+		}
+
+		// 4. Tổng hợp các thông số sản phẩm tải về (bytes, số file thành công/thất bại)
 		status = &entity.IngestStatus{
 			Observed:     true,
-			Source:       "api-runtime",
-			ControlJobID: s.runtime.ControlJobID,
-			Status:       s.runtime.Status,
-			Error:        s.runtime.Error,
-			ManifestPath: s.runtime.ManifestPath,
-			StartedAt:    s.runtime.StartedAt,
-			UpdatedAt:    s.runtime.UpdatedAt,
+			RunID:        checkpoint.RunID,
+			Status:       strings.ToLower(checkpoint.Status),
+			ManifestPath: checkpoint.ManifestPath,
+			StartedAt:    checkpoint.StartedAt,
+			UpdatedAt:    checkpoint.UpdatedAt,
 			ObservedAt:   time.Now().UTC(),
-			Products:     []entity.IngestProduct{},
+			Products:     make([]entity.IngestProduct, 0, len(checkpoint.Products)),
+			ProductKinds: make(map[string]entity.IngestKindSummary),
 		}
-	}
-	s.runtimeMu.RUnlock()
-	attachPlanningProgress(status)
-
-	if !usingRuntimeState {
-		for id, product := range checkpoint.Products {
-			kind := string(product.ProductKind)
-			kindSummary := status.ProductKinds[kind]
-			kindSummary.Planned++
-			status.TotalProducts++
-			status.ExpectedBytes += product.ExpectedSizeBytes
-			status.CompletedBytes += product.SizeBytes
-			switch strings.ToUpper(product.State) {
-			case "STORED", "PUBLISHED":
-				status.CompletedProducts++
-				kindSummary.Completed++
-			case "DOWNLOADING":
-				status.Downloading++
-				kindSummary.Downloading++
-			case "FAILED":
-				status.FailedProducts++
-				kindSummary.Failed++
+		if controlJob != nil {
+			if controlJob.TicketID != "" {
+				status.TicketID = controlJob.TicketID
+			} else if controlJob.JobID != "" {
+				status.TicketID = controlJob.JobID
 			}
-			status.ProductKinds[kind] = kindSummary
-			status.Products = append(status.Products, entity.IngestProduct{
-				ID:        id,
-				Kind:      string(product.ProductKind),
-				ObjectKey: product.ObjectKey,
-				State:     strings.ToLower(product.State),
-				SizeBytes: product.SizeBytes,
-				Expected:  product.ExpectedSizeBytes,
-				Attempts:  product.Attempts,
-				LastError: product.LastError,
-				UpdatedAt: product.UpdatedAt,
-			})
 		}
-		sort.Slice(status.Products, func(i, j int) bool { return status.Products[i].UpdatedAt.After(status.Products[j].UpdatedAt) })
+
+		if runtimeSnapshot != nil && controlJob != nil && runtimeSnapshot.StartedAt.After(checkpoint.UpdatedAt) {
+			usingRuntimeState = true
+			status = &entity.IngestStatus{
+				Observed:     true,
+				TicketID:     runtimeSnapshot.TicketID,
+				Status:       runtimeSnapshot.Status,
+				Error:        runtimeSnapshot.Error,
+				ManifestPath: runtimeSnapshot.ManifestPath,
+				StartedAt:    runtimeSnapshot.StartedAt,
+				UpdatedAt:    runtimeSnapshot.UpdatedAt,
+				ObservedAt:   time.Now().UTC(),
+				Products:     []entity.IngestProduct{},
+				ProductKinds: make(map[string]entity.IngestKindSummary),
+			}
+		}
+
+		if !usingRuntimeState {
+			for id, product := range checkpoint.Products {
+				kind := string(product.ProductKind)
+				kindSummary := status.ProductKinds[kind]
+				kindSummary.Planned++
+				status.TotalProducts++
+				expectedSize := product.ExpectedSizeBytes
+				if expectedSize <= 0 && (strings.EqualFold(product.State, "STORED") || strings.EqualFold(product.State, "PUBLISHED")) {
+					expectedSize = product.SizeBytes
+				}
+				status.ExpectedBytes += expectedSize
+				status.CompletedBytes += product.SizeBytes
+				switch strings.ToUpper(product.State) {
+				case "STORED", "PUBLISHED":
+					status.CompletedProducts++
+					kindSummary.Completed++
+				case "DOWNLOADING":
+					status.Downloading++
+					kindSummary.Downloading++
+				case "FAILED":
+					status.FailedProducts++
+					kindSummary.Failed++
+				}
+				status.ProductKinds[kind] = kindSummary
+				status.Products = append(status.Products, entity.IngestProduct{
+					ID:        id,
+					Kind:      string(product.ProductKind),
+					ObjectKey: product.ObjectKey,
+					State:     strings.ToLower(product.State),
+					SizeBytes: product.SizeBytes,
+					Expected:  expectedSize,
+					Attempts:  product.Attempts,
+					LastError: product.LastError,
+					UpdatedAt: product.UpdatedAt,
+				})
+			}
+			if (status.Status == "completed" || status.Status == "published") && status.ExpectedBytes <= 0 {
+				status.ExpectedBytes = status.CompletedBytes
+			}
+			sort.Slice(status.Products, func(i, j int) bool { return status.Products[i].UpdatedAt.After(status.Products[j].UpdatedAt) })
+
+			s.runtimeMu.Lock()
+			s.cachedRunID = pointer.ActiveRunID
+			s.cachedStatus = status
+			s.runtimeMu.Unlock()
+		}
 	}
 
 	// Đảm bảo trạng thái hủy bỏ (Cancel) từ control plane được ưu tiên hiển thị ngay
 	if controlJob != nil {
-		status.ControlJobID = controlJob.JobID
+		if controlJob.TicketID != "" {
+			status.TicketID = controlJob.TicketID
+		} else if controlJob.JobID != "" && status.TicketID == "" {
+			status.TicketID = controlJob.JobID
+		}
 		status.Status = strings.ToLower(controlJob.Status)
 		status.Error = controlJob.Error
 		if controlJob.UpdatedAt.After(status.UpdatedAt) {
 			status.UpdatedAt = controlJob.UpdatedAt
 		}
-	} else if status.Status == "running" && s.controller != nil && !checkpoint.UpdatedAt.IsZero() && time.Since(checkpoint.UpdatedAt) > 20*time.Second {
+	} else if status.Status == "running" && !status.UpdatedAt.IsZero() && time.Since(status.UpdatedAt) > 20*time.Second {
 		// Nếu checkpoint ghi là running nhưng controller thực tế không có job nào đang chạy
 		// và checkpoint đã ngưng cập nhật quá 20 giây, đánh dấu tiến trình đã dừng
 		status.Status = "stopped"
 		status.Downloading = 0
 	}
+
+	// Chỉ đọc planning khi job đang running
+	s.attachPlanningProgress(ctx, status, controlJob)
 	applyPlanningStatus(status, controlJob)
 	if status.Status != "planning" {
-		// Planner documents are retained for audit, but must not make an idle or
-		// completed run appear to have an active planning phase.
 		status.CatalogProgress = nil
 		status.ManifestProgress = nil
 	}
 
-	// Planning has no download workers yet, therefore its authoritative
-	// telemetry is the durable catalog/manifest protocol. Avoid holding the
-	// ticket-driven status endpoint on Prometheus while MAST is being queried.
+	// Prometheus metrics chỉ truy vấn khi status là running hoặc draining
 	if s.prometheus != nil && (status.Status == "running" || status.Status == "draining") {
 		end := time.Now().UTC()
-		start := end.Add(-5 * time.Minute)
+		start := end.Add(-2 * time.Minute)
 		queries := map[string]string{
 			"products": "sum(rate(aurora_ingester_products_total{status=\"success\"}[2m]))",
 			"bytes":    "rate(aurora_ingester_bytes_processed_total[2m])",
@@ -445,14 +488,19 @@ func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error
 		wg.Wait()
 		status.ProductsPerSecond = values["products"]
 		status.BytesPerSecond = values["bytes"]
-		status.QueueDepth = values["queue"]
-		status.InflightProducts = values["inflight"]
+		status.QueueDepth = int(math.Round(values["queue"]))
+		status.InflightProducts = int(math.Round(values["inflight"]))
 	}
 	// Prometheus is scrape-based and can lag the durable checkpoint by one or
 	// more intervals. A product marked DOWNLOADING is authoritative evidence of
 	// an active worker, so never report fewer active workers than the checkpoint.
-	if checkpointInflight := float64(status.Downloading); checkpointInflight > status.InflightProducts {
-		status.InflightProducts = checkpointInflight
+	if status.Downloading > status.InflightProducts {
+		status.InflightProducts = status.Downloading
+	}
+	if status.Status == "completed" || status.Status == "published" || status.Status == "stopped" {
+		status.Downloading = 0
+		status.InflightProducts = 0
+		status.QueueDepth = 0
 	}
 
 	s.runtimeMu.Lock()
@@ -484,19 +532,10 @@ func (s *IngestService) Storage(ctx context.Context, prefix string, page, limit 
 		page = 1
 	}
 
-	// MinIO is the authoritative S3 inventory.  The short cache bounds a full
-	// listing cost while preserving the exact object count users operate on.
-	if s.objects == nil {
-		return nil, fmt.Errorf("MinIO storage is unavailable")
-	}
-
-	var allObjects []repo.ObjectInfo
+	var allObjects []provider.ObjectInfo
 	var totalBytes int64
 
 	s.runtimeMu.Lock()
-	if s.storageCache == nil {
-		s.storageCache = make(map[string]*storageCacheEntry)
-	}
 	cached, ok := s.storageCache[prefix]
 	if ok && time.Since(cached.cachedAt) < 15*time.Second {
 		allObjects = cached.objects
@@ -569,85 +608,3 @@ func isProcessableBronzeFITS(key string) bool {
 		strings.HasSuffix(key, ".fits.gz") || strings.HasSuffix(key, ".fit.gz")
 }
 
-// syncMinIOToCatalog tự động quét và nạp siêu dữ liệu từ MinIO vào ClickHouse Catalog
-func (s *IngestService) syncMinIOToCatalog() {
-	if s.catalog == nil || s.objects == nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	_ = s.catalog.EnsureSchema(ctx)
-
-	for _, tier := range []string{"bronze/", "silver/", "gold/"} {
-		objs, err := s.objects.ListObjects(ctx, tier)
-		if err != nil || len(objs) == 0 {
-			continue
-		}
-
-		batch := make([]repo.CatalogObject, 0, 500)
-		for _, o := range objs {
-			tierName := "bronze"
-			if strings.HasPrefix(o.Key, "silver/") {
-				tierName = "silver"
-			} else if strings.HasPrefix(o.Key, "gold/") {
-				tierName = "gold"
-			}
-
-			// Unknown paths must never be attributed to a real observing sector.
-			var sector int32
-			var ticID int64 = 0
-			if idx := strings.Index(o.Key, "tic="); idx != -1 {
-				end := strings.IndexAny(o.Key[idx+4:], "/._-")
-				if end != -1 {
-					var val int64
-					fmt.Sscanf(o.Key[idx+4:idx+4+end], "%d", &val)
-					ticID = val
-				}
-			}
-			if idx := strings.Index(o.Key, "sector="); idx != -1 {
-				end := strings.IndexAny(o.Key[idx+7:], "/._-")
-				if end != -1 {
-					var val int32
-					fmt.Sscanf(o.Key[idx+7:idx+7+end], "%d", &val)
-					sector = val
-				}
-			}
-
-			cleanEtag := strings.Trim(o.ETag, "\"")
-			batch = append(batch, repo.CatalogObject{
-				Tier:         tierName,
-				ObjectKey:    o.Key,
-				SizeBytes:    o.Size,
-				ETag:         cleanEtag,
-				Sector:       sector,
-				TICID:        ticID,
-				ProductType:  "lakehouse_file",
-				LastModified: o.LastModified,
-			})
-
-			if len(batch) >= 500 {
-				_ = s.catalog.UpsertObjects(ctx, batch)
-				batch = batch[:0]
-			}
-		}
-		if len(batch) > 0 {
-			_ = s.catalog.UpsertObjects(ctx, batch)
-		}
-	}
-}
-
-// runPeriodicCatalogSync runs syncMinIOToCatalog immediately on startup, then
-// every 2 minutes so the Datasets page always reflects the current lakehouse state.
-func (s *IngestService) runPeriodicCatalogSync() {
-	const interval = 2 * time.Minute
-	s.syncMinIOToCatalog()
-	for range time.Tick(interval) {
-		s.syncMinIOToCatalog()
-		// Invalidate the MinIO fallback cache so the next Storage() call
-		// re-reads from ClickHouse (or fresh MinIO list) instead of stale data.
-		s.runtimeMu.Lock()
-		s.storageCache = make(map[string]*storageCacheEntry)
-		s.runtimeMu.Unlock()
-	}
-}

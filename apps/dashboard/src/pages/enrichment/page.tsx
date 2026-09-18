@@ -21,10 +21,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
-import type { GoldControlOverview, GoldLiveEvent, GoldWorkerTelemetry } from '@/features/enrichment/types';
-import { RunnerTicketBar } from '@/features/factory-history/components/RunnerTicketBar';
-import { useRunnerTicket } from '@/features/factory-history/session';
-import type { FactoryRunDetail } from '@/features/factory-history/types';
+import type { GoldControlOverview, GoldLiveEvent, GoldWorkerTelemetry } from './types';
+import { RunnerTicketBar } from '@/components/RunnerTicketBar';
+import { useRunnerTicket } from '@/lib/session';
+import type { FactoryRunDetail } from '@/types/ticket';
 import { apiBase, apiFetch } from '@/lib/api';
 
 const CONFIG_KEY = 'aurora.gold.console.config.v1';
@@ -174,7 +174,7 @@ export default function EnrichmentPage(): JSX.Element {
 
   useEffect(() => {
     void loadOverview();
-    const stream = new EventSource(`${apiBase}/v1/events?workflow=gold&ticket=${encodeURIComponent(activeTicket)}`);
+    const stream = new EventSource(`${apiBase}/v1/events?topic=${encodeURIComponent(`gold:${activeTicket}`)}&topic=gold`);
     stream.onopen = () => setConnection('live');
     stream.onerror = () => setConnection('reconnecting');
     stream.addEventListener('ready', () => setConnection('live'));

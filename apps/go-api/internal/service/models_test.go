@@ -11,25 +11,29 @@ import (
 
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/repo"
+	"go-api/internal/provider"
 	"go-api/internal/taxonomy"
 )
 
 type memoryModelObjects struct{ objects map[string][]byte }
 
 func (m *memoryModelObjects) Ping(context.Context) error { return nil }
-func (m *memoryModelObjects) ListObjects(_ context.Context, prefix string) ([]repo.ObjectInfo, error) {
-	items := make([]repo.ObjectInfo, 0)
+func (m *memoryModelObjects) ListObjects(_ context.Context, prefix string) ([]provider.ObjectInfo, error) {
+	items := make([]provider.ObjectInfo, 0)
 	for key := range m.objects {
 		if len(key) >= len(prefix) && key[:len(prefix)] == prefix {
-			items = append(items, repo.ObjectInfo{Key: key})
+			items = append(items, provider.ObjectInfo{Key: key})
 		}
 	}
 	return items, nil
 }
+func (m *memoryModelObjects) ListObjectsWithMetadata(ctx context.Context, prefix string) ([]provider.ObjectInfo, error) {
+	return m.ListObjects(ctx, prefix)
+}
 func (m *memoryModelObjects) GetObject(_ context.Context, key string) ([]byte, error) {
 	data, ok := m.objects[key]
 	if !ok {
-		return nil, repo.ErrObjectNotFound
+		return nil, provider.ErrObjectNotFound
 	}
 	return data, nil
 }
@@ -55,6 +59,15 @@ type readyTrainingAnalytics struct{}
 func (readyTrainingAnalytics) TrainingReadiness(_ context.Context, snapshotIDs []string) (*entity.TrainingReadiness, error) {
 	return &entity.TrainingReadiness{Ready: true, SnapshotIDs: snapshotIDs, PositiveTargets: 2, NegativeTargets: 2}, nil
 }
+func (readyTrainingAnalytics) OverrideTrainingLabel(context.Context, entity.TrainingLabelOverride) error {
+	return nil
+}
+func (readyTrainingAnalytics) ListTrainingReviews(context.Context, int) ([]entity.TrainingReview, error) {
+	return nil, nil
+}
+func (readyTrainingAnalytics) ListTrainingReviewQueue(context.Context, []string, entity.PageRequest) (entity.Page[entity.TrainingReviewQueueItem], error) {
+	return entity.Page[entity.TrainingReviewQueueItem]{}, nil
+}
 
 type blockedTrainingAnalytics struct{}
 
@@ -65,6 +78,15 @@ func (blockedTrainingAnalytics) TrainingReadiness(context.Context, []string) (*e
 		NegativeTargets: 0,
 		Blocker:         "Candidate training requires independently labelled positive and negative TIC targets",
 	}, nil
+}
+func (blockedTrainingAnalytics) OverrideTrainingLabel(context.Context, entity.TrainingLabelOverride) error {
+	return nil
+}
+func (blockedTrainingAnalytics) ListTrainingReviews(context.Context, int) ([]entity.TrainingReview, error) {
+	return nil, nil
+}
+func (blockedTrainingAnalytics) ListTrainingReviewQueue(context.Context, []string, entity.PageRequest) (entity.Page[entity.TrainingReviewQueueItem], error) {
+	return entity.Page[entity.TrainingReviewQueueItem]{}, nil
 }
 
 func (d *recordingDispatcher) Dispatch(context.Context, string, []byte) error {
@@ -254,8 +276,8 @@ func TestTrainingRejectsCandidateGoldWithoutTwoLabelClasses(t *testing.T) {
 	}
 }
 
-var _ repo.ObjectRepository = (*memoryModelObjects)(nil)
+var _ provider.ObjectStorage = (*memoryModelObjects)(nil)
 var _ repo.InferenceDispatcher = (*recordingDispatcher)(nil)
 var _ repo.ModelPromotionBus = (*recordingDispatcher)(nil)
-var _ repo.TrainingReadinessRepository = readyTrainingAnalytics{}
-var _ repo.TrainingReadinessRepository = blockedTrainingAnalytics{}
+var _ repo.TrainingRepository = readyTrainingAnalytics{}
+var _ repo.TrainingRepository = blockedTrainingAnalytics{}

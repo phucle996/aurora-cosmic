@@ -138,6 +138,7 @@ type InferenceJob struct {
 	Producer                string
 }
 type TrainingJobSpec struct {
+	TicketID        string
 	Task            string
 	GoldSnapshotID  string
 	GoldSnapshotIDs []string
@@ -153,6 +154,7 @@ type TrainingJobSpec struct {
 }
 
 type TrainingJobResult struct {
+	TicketID        string
 	JobID           string
 	Task            string
 	GoldSnapshotID  string

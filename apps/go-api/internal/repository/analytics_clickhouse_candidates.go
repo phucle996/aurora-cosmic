@@ -35,21 +35,21 @@ func (r *AnalyticsClickHouse) ensureCandidateReviewSchema(ctx context.Context) e
 	return err
 }
 
-func (r *AnalyticsClickHouse) ListCandidates(ctx context.Context, sector int, snapshotID string, page entity.PageRequest) (entity.Page[entity.Candidate], error) {
-	query := "SELECT prediction_id, source_product_id, tic_id, sector, raw_logit, candidate_score, decision_threshold, above_threshold, model_version, registered_model_id, gold_snapshot_id, runtime_validation_id, runtime_package_id, predicted_at FROM candidate_predictions"
+func (r *AnalyticsClickHouse) ListCandidates(ctx context.Context, query entity.CandidateQuery) (entity.Page[entity.Candidate], error) {
+	rawQuery := "SELECT prediction_id, source_product_id, tic_id, sector, raw_logit, candidate_score, decision_threshold, above_threshold, model_version, registered_model_id, gold_snapshot_id, runtime_validation_id, runtime_package_id, predicted_at FROM candidate_predictions"
 	conditions := make([]string, 0, 2)
-	if sector > 0 {
-		conditions = append(conditions, fmt.Sprintf("sector = %d", sector))
+	if query.Sector > 0 {
+		conditions = append(conditions, fmt.Sprintf("sector = %d", query.Sector))
 	}
-	if snapshotID != "" {
-		conditions = append(conditions, fmt.Sprintf("gold_snapshot_id = '%s'", escapeSQL(snapshotID)))
+	if query.SnapshotID != "" {
+		conditions = append(conditions, fmt.Sprintf("gold_snapshot_id = '%s'", escapeSQL(query.SnapshotID)))
 	}
 	if len(conditions) > 0 {
-		query += " WHERE " + strings.Join(conditions, " AND ")
+		rawQuery += " WHERE " + strings.Join(conditions, " AND ")
 	}
-	query += fmt.Sprintf(" ORDER BY candidate_score DESC LIMIT %d OFFSET %d FORMAT JSON", page.Limit, page.Offset)
+	rawQuery += fmt.Sprintf(" ORDER BY candidate_score DESC LIMIT %d OFFSET %d FORMAT JSON", query.Page.Limit, query.Page.Offset)
 
-	body, err := r.client.Query(ctx, query)
+	body, err := r.client.Query(ctx, rawQuery)
 	if err != nil {
 		return entity.Page[entity.Candidate]{}, err
 	}
@@ -97,9 +97,9 @@ func (r *AnalyticsClickHouse) ListCandidates(ctx context.Context, sector int, sn
 	return entity.Page[entity.Candidate]{
 		Items:   items,
 		Count:   len(items),
-		Limit:   page.Limit,
-		Offset:  page.Offset,
-		HasMore: len(items) == page.Limit,
+		Limit:   query.Page.Limit,
+		Offset:  query.Page.Offset,
+		HasMore: len(items) == query.Page.Limit,
 	}, nil
 }
 
@@ -238,15 +238,58 @@ func (r *AnalyticsClickHouse) GetCandidate(ctx context.Context, predictionID str
 	}, nil
 }
 
-func (r *AnalyticsClickHouse) SaveCandidateReview(ctx context.Context, review entity.CandidateReview) error {
+func (r *AnalyticsClickHouse) SaveCandidateReview(ctx context.Context, input entity.CandidateReviewInput) (*entity.CandidateReview, error) {
 	if err := r.ensureCandidateReviewSchema(ctx); err != nil {
-		return err
+		return nil, err
 	}
-	query := fmt.Sprintf(`INSERT INTO candidate_scientific_reviews_v1
+
+	escapedPrediction := escapeSQL(input.PredictionID)
+	escapedSnapshot := escapeSQL(input.SnapshotID)
+	query := fmt.Sprintf(`SELECT source_product_id, tic_id, sector
+		FROM candidate_predictions
+		WHERE prediction_id = '%s' AND gold_snapshot_id = '%s'
+		LIMIT 1 FORMAT JSON`, escapedPrediction, escapedSnapshot)
+
+	body, err := r.client.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	var response struct {
+		Data []struct {
+			SourceProductID string `json:"source_product_id"`
+			TICID           any    `json:"tic_id"`
+			Sector          int    `json:"sector"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("parse candidate authority for review: %w", err)
+	}
+	if len(response.Data) == 0 {
+		return nil, fmt.Errorf("candidate %s not found", input.PredictionID)
+	}
+	cand := response.Data[0]
+
+	review := entity.CandidateReview{
+		SnapshotID:      input.SnapshotID,
+		PredictionID:    input.PredictionID,
+		SourceProductID: cand.SourceProductID,
+		TICID:           toInt64(cand.TICID),
+		Sector:          cand.Sector,
+		Decision:        input.Decision,
+		ReviewStatus:    input.ReviewStatus,
+		Reviewer:        input.Reviewer,
+		Note:            input.Note,
+	}
+
+	insertQuery := fmt.Sprintf(`INSERT INTO candidate_scientific_reviews_v1
 		(snapshot_id, prediction_id, source_product_id, tic_id, sector, scientific_decision, review_status, reviewer, review_note, updated_at)
 		VALUES ('%s','%s','%s',%d,%d,'%s','%s','%s','%s',now64(3))`,
-		escapeSQL(review.SnapshotID), escapeSQL(review.PredictionID), escapeSQL(review.SourceProductID),
+		escapedSnapshot, escapedPrediction, escapeSQL(review.SourceProductID),
 		review.TICID, review.Sector, escapeSQL(review.Decision), escapeSQL(review.ReviewStatus),
 		escapeSQL(review.Reviewer), escapeSQL(review.Note))
-	return r.client.Exec(ctx, query)
+
+	if err := r.client.Exec(ctx, insertQuery); err != nil {
+		return nil, err
+	}
+	return &review, nil
 }

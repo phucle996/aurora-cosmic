@@ -1,88 +1,53 @@
 package app
 
 import (
-	"net/http"
-
-	"go-api/internal/config"
-	"go-api/internal/provider"
-	"go-api/internal/transport/http/middleware"
-
 	"github.com/gin-gonic/gin"
 )
 
-type Router struct {
-	engine *gin.Engine
-	module *Module
-}
+// RegisterRoutes registers all application HTTP endpoints directly using flat paths.
+func RegisterRoutes(engine *gin.Engine, module *Module) {
+	engine.GET("/healthz", module.SystemHandler.Healthz)
+	engine.GET("/readyz", module.SystemHandler.Readyz)
 
-func NewRouter(cfg *config.Config, module *Module, metrics ...*provider.Metrics) *Router {
-	gin.SetMode(gin.ReleaseMode)
-	engine := gin.New()
-	engine.Use(gin.Recovery())
-	engine.Use(middleware.CORS(cfg))
-	if len(metrics) > 0 {
-		engine.Use(middleware.Metrics(metrics[0]))
+	engine.GET("/api/v1/system", module.SystemHandler.System)
+	engine.GET("/api/v1/monitoring", module.MonitoringHandler.Query)
+	engine.GET("/api/v1/preprocessing/graph", module.PreprocessingHandler.Query)
+	if module.TicketHandler != nil {
+		engine.GET("/api/v1/data-factory/runs", module.TicketHandler.List)
+		engine.GET("/api/v1/data-factory/runs/:run_id", module.TicketHandler.Detail)
+		engine.GET("/api/v1/data-factory/tickets", module.TicketHandler.ListTickets)
+		engine.POST("/api/v1/data-factory/tickets", module.TicketHandler.CreateTicket)
 	}
-
-	r := &Router{engine: engine, module: module}
-	r.registerRoutes()
-	return r
-}
-
-func (r *Router) registerRoutes() {
-	r.engine.GET("/healthz", r.module.SystemHandler.Healthz)
-	r.engine.GET("/readyz", r.module.SystemHandler.Readyz)
-
-	api := r.engine.Group("/api/v1")
-	{
-		api.GET("/system", r.module.SystemHandler.System)
-		api.GET("/monitoring", r.module.MonitoringHandler.Query)
-		api.GET("/preprocessing/graph", r.module.PreprocessingHandler.Query)
-		if r.module.FactoryHistoryHandler != nil {
-			api.GET("/data-factory/runs", r.module.FactoryHistoryHandler.List)
-			api.GET("/data-factory/runs/:run_id", r.module.FactoryHistoryHandler.Detail)
-			api.GET("/data-factory/tickets", r.module.FactoryHistoryHandler.ListTickets)
-			api.POST("/data-factory/tickets", r.module.FactoryHistoryHandler.CreateTicket)
-		}
-		api.POST("/preprocessing/jobs", r.module.PreprocessingHandler.Start)
-		api.POST("/preprocessing/jobs/:job_id/stop", r.module.PreprocessingHandler.Stop)
-		api.GET("/gold/control", r.module.GoldControlHandler.Query)
-		api.POST("/gold/control/start", r.module.GoldControlHandler.Start)
-		api.POST("/gold/control/stop", r.module.GoldControlHandler.Stop)
-		api.POST("/gold/lineage/resolve", r.module.GoldControlHandler.ResolveLineage)
-		api.GET("/gold/snapshots", r.module.GoldControlHandler.ListSnapshots)
-		api.GET("/gold/snapshots/:snapshot_id", r.module.GoldControlHandler.Snapshot)
-		api.GET("/gold/snapshots/:snapshot_id/artifacts/:dataset/:sector", r.module.GoldControlHandler.Artifact)
-		if r.module.EventsHandler != nil {
-			api.GET("/events", r.module.EventsHandler.Stream)
-		}
-		api.GET("/ingest/status", r.module.IngestHandler.Status)
-		api.GET("/storage", r.module.IngestHandler.Storage)
-		api.POST("/ingest/jobs", r.module.IngestHandler.Start)
-		api.POST("/ingest/jobs/:job_id/cancel", r.module.IngestHandler.Cancel)
-		api.GET("/targets", r.module.AnalyticsHandler.ListTargets)
-		api.GET("/targets/:tic_id", r.module.AnalyticsHandler.GetTarget)
-		api.GET("/candidates", r.module.AnalyticsHandler.ListCandidates)
-		api.GET("/candidates/:prediction_id", r.module.AnalyticsHandler.GetCandidate)
-		api.PUT("/candidates/:prediction_id/review", r.module.AnalyticsHandler.ReviewCandidate)
-		api.GET("/lightcurves", r.module.AnalyticsHandler.GetLightcurve)
-		api.GET("/models", r.module.ModelsHandler.ListModels)
-		api.GET("/models/:runtime_package_id/evaluation", r.module.ModelsHandler.GetModelEvaluation)
-		api.GET("/models/training-readiness", r.module.ModelsHandler.TrainingReadiness)
-		api.GET("/models/training-cohort/reviews", r.module.ModelsHandler.ListTrainingReviews)
-		api.GET("/models/training-cohort/review-queue", r.module.ModelsHandler.ListTrainingReviewQueue)
-		api.POST("/models/training-cohort/labels", r.module.ModelsHandler.OverrideTrainingLabel)
-		api.POST("/models/train", r.module.ModelsHandler.StartTraining)
-		api.POST("/models/deploy", r.module.ModelsHandler.DeployModel)
-		api.GET("/inference/jobs", r.module.ModelsHandler.ListInferenceJobs)
-		api.POST("/inference/jobs/:job_id/retry", r.module.ModelsHandler.RetryInferenceJob)
+	engine.POST("/api/v1/preprocessing/jobs", module.PreprocessingHandler.Start)
+	engine.POST("/api/v1/preprocessing/jobs/:job_id/stop", module.PreprocessingHandler.Stop)
+	engine.GET("/api/v1/gold/control", module.GoldControlHandler.Query)
+	engine.POST("/api/v1/gold/control/start", module.GoldControlHandler.Start)
+	engine.POST("/api/v1/gold/control/stop", module.GoldControlHandler.Stop)
+	engine.POST("/api/v1/gold/lineage/resolve", module.GoldControlHandler.ResolveLineage)
+	engine.GET("/api/v1/gold/snapshots", module.GoldControlHandler.ListSnapshots)
+	engine.GET("/api/v1/gold/snapshots/:snapshot_id", module.GoldControlHandler.Snapshot)
+	engine.GET("/api/v1/gold/snapshots/:snapshot_id/artifacts/:dataset/:sector", module.GoldControlHandler.Artifact)
+	if module.EventsHandler != nil {
+		engine.GET("/api/v1/events", module.EventsHandler.Stream)
 	}
-}
-
-func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	r.engine.ServeHTTP(w, req)
-}
-
-func (r *Router) Engine() *gin.Engine {
-	return r.engine
+	engine.GET("/api/v1/ingest/status", module.IngestHandler.Status)
+	engine.GET("/api/v1/storage", module.IngestHandler.Storage)
+	engine.POST("/api/v1/ingest/jobs", module.IngestHandler.Start)
+	engine.POST("/api/v1/ingest/jobs/:job_id/cancel", module.IngestHandler.Cancel)
+	engine.GET("/api/v1/targets", module.TargetHandler.ListTargets)
+	engine.GET("/api/v1/targets/:tic_id", module.TargetHandler.GetTarget)
+	engine.GET("/api/v1/candidates", module.CandidateHandler.ListCandidates)
+	engine.GET("/api/v1/candidates/:prediction_id", module.CandidateHandler.GetCandidate)
+	engine.PUT("/api/v1/candidates/:prediction_id/review", module.CandidateHandler.ReviewCandidate)
+	engine.GET("/api/v1/lightcurves", module.TargetHandler.GetLightcurve)
+	engine.GET("/api/v1/models", module.ModelsHandler.ListModels)
+	engine.GET("/api/v1/models/:runtime_package_id/evaluation", module.ModelsHandler.GetModelEvaluation)
+	engine.GET("/api/v1/models/training-readiness", module.ModelsHandler.TrainingReadiness)
+	engine.GET("/api/v1/models/training-cohort/reviews", module.ModelsHandler.ListTrainingReviews)
+	engine.GET("/api/v1/models/training-cohort/review-queue", module.ModelsHandler.ListTrainingReviewQueue)
+	engine.POST("/api/v1/models/training-cohort/labels", module.ModelsHandler.OverrideTrainingLabel)
+	engine.POST("/api/v1/models/train", module.ModelsHandler.StartTraining)
+	engine.POST("/api/v1/models/deploy", module.ModelsHandler.DeployModel)
+	engine.GET("/api/v1/inference/jobs", module.ModelsHandler.ListInferenceJobs)
+	engine.POST("/api/v1/inference/jobs/:job_id/retry", module.ModelsHandler.RetryInferenceJob)
 }

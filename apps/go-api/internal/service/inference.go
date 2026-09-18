@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/repo"
+	"go-api/internal/provider"
 	"go-api/internal/taxonomy"
 )
 
@@ -23,18 +24,18 @@ import (
 // 2. Kiểm tra trạng thái hoàn thành (Completed) hay đang chờ (Planned) qua output files.
 // 3. Cho phép kích hoạt chạy lại (Retry / Re-dispatch) một Inference Job qua NATS.
 type InferenceService struct {
-	objects        repo.ObjectRepository    // Repository tương tác trực tiếp với MinIO S3
-	results        repo.ObjectRepository    // Prediction/status bucket (may differ from the manifest bucket)
+	objects        provider.ObjectStorage   // Storage tương tác trực tiếp với MinIO S3
+	results        provider.ObjectStorage   // Prediction/status bucket (may differ from the manifest bucket)
 	dispatcher     repo.InferenceDispatcher // Dispatcher gửi event kích hoạt job qua NATS JetStream
 	manifestBucket string
 }
 
 // NewInferenceService khởi tạo thể hiện của InferenceService
-func NewInferenceService(objects repo.ObjectRepository, dispatcher repo.InferenceDispatcher) *InferenceService {
+func NewInferenceService(objects provider.ObjectStorage, dispatcher repo.InferenceDispatcher) *InferenceService {
 	return NewInferenceServiceWithResults(objects, objects, dispatcher, "aurora")
 }
 
-func NewInferenceServiceWithResults(objects, results repo.ObjectRepository, dispatcher repo.InferenceDispatcher, manifestBucket string) *InferenceService {
+func NewInferenceServiceWithResults(objects, results provider.ObjectStorage, dispatcher repo.InferenceDispatcher, manifestBucket string) *InferenceService {
 	if results == nil {
 		results = objects
 	}

@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"go-api/internal/domain/entity"
-	"go-api/internal/domain/repo"
 	"go-api/internal/domain/service"
+	"go-api/internal/provider"
 	"go-api/internal/taxonomy"
 	"go-api/internal/transport/http/dto"
 
@@ -23,7 +23,7 @@ type ModelsHandler struct {
 func (h *ModelsHandler) GetModelEvaluation(c *gin.Context) {
 	evaluation, err := h.models.GetModelEvaluation(c.Request.Context(), strings.TrimSpace(c.Param("runtime_package_id")))
 	if err != nil {
-		if errors.Is(err, repo.ErrObjectNotFound) {
+		if errors.Is(err, provider.ErrObjectNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "model evaluation evidence was not found"})
 			return
 		}
@@ -211,6 +211,7 @@ func (h *ModelsHandler) StartTraining(c *gin.Context) {
 	}
 
 	spec := entity.TrainingJobSpec{
+		TicketID:        strings.TrimSpace(req.TicketID),
 		Task:            req.Task,
 		GoldSnapshotID:  req.GoldSnapshotID,
 		GoldSnapshotIDs: req.GoldSnapshotIDs,
@@ -236,6 +237,7 @@ func (h *ModelsHandler) StartTraining(c *gin.Context) {
 
 	c.JSON(http.StatusAccepted, dto.TrainingJobResponse{
 		JobID:           result.JobID,
+		TicketID:        result.TicketID,
 		Task:            result.Task,
 		GoldSnapshotID:  result.GoldSnapshotID,
 		GoldSnapshotIDs: result.GoldSnapshotIDs,

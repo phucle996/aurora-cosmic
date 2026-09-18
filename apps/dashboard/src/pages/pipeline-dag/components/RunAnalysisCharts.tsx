@@ -20,7 +20,7 @@ import {
 } from 'recharts';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import type { FactoryRun, FactoryRunDetail } from '@/features/factory-history/types';
+import type { FactoryRun, FactoryRunDetail } from '@/types/ticket';
 
 const colors = {
   primary: '#159dcc',

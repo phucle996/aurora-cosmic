@@ -2,6 +2,7 @@ package dto
 
 // TrainingJobRequest đại diện cho payload yêu cầu huấn luyện mô hình gửi từ Dashboard
 type TrainingJobRequest struct {
+	TicketID        string   `json:"ticket_id,omitempty"`
 	Task            string   `json:"task"`
 	GoldSnapshotID  string   `json:"gold_snapshot_id,omitempty"`
 	GoldSnapshotIDs []string `json:"gold_snapshot_ids,omitempty"` // Danh sách các Gold Snapshots gộp lại để train thành 1 model duy nhất
@@ -17,6 +18,7 @@ type TrainingJobRequest struct {
 
 // TrainingJobResponse đại diện cho dữ liệu phản hồi sau khi xếp hàng huấn luyện thành công
 type TrainingJobResponse struct {
+	TicketID        string   `json:"ticket_id,omitempty"`
 	JobID           string   `json:"job_id"`
 	Task            string   `json:"task"`
 	GoldSnapshotID  string   `json:"gold_snapshot_id"`

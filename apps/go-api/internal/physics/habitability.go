@@ -45,11 +45,13 @@ func DeriveCandidate(candidate entity.Candidate, evidence entity.CandidateEviden
 		ModelVersion:            modelVersion,
 		BondAlbedoAssumption:    bondAlbedo,
 		HZClassification:        "unknown",
-		ConservativeHZInnerFlux: 1.06, // Ranh giới trong vùng bảo thủ (Inner Conservative HZ)
-		ConservativeHZOuterFlux: 0.36, // Ranh giới ngoài vùng bảo thủ (Outer Conservative HZ)
-		OptimisticHZInnerFlux:   1.78, // Ranh giới trong vùng lạc quan (Inner Optimistic HZ)
-		OptimisticHZOuterFlux:   0.32, // Ranh giới ngoài vùng lạc quan (Outer Optimistic HZ)
-		Warnings:                []string{},
+		HZFluxBoundaries: entity.HZFluxBoundaries{
+			ConservativeInner: 1.06, // Ranh giới trong vùng bảo thủ (Inner Conservative HZ)
+			ConservativeOuter: 0.36, // Ranh giới ngoài vùng bảo thủ (Outer Conservative HZ)
+			OptimisticInner:   1.78, // Ranh giới trong vùng lạc quan (Inner Optimistic HZ)
+			OptimisticOuter:   0.32, // Ranh giới ngoài vùng lạc quan (Outer Optimistic HZ)
+		},
+		Warnings: []string{},
 	}
 
 	available := 0.0

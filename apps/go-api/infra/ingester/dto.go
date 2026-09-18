@@ -33,6 +33,7 @@ func controlStartRequestFromEntity(request entity.IngestStartRequest) controlSta
 // controlJobDTO is the response contract of go-ingester's control plane.
 type controlJobDTO struct {
 	JobID        string    `json:"job_id"`
+	TicketID     string    `json:"ticket_id"`
 	Status       string    `json:"status"`
 	ManifestPath string    `json:"manifest_path"`
 	Sector       int       `json:"sector"`
@@ -45,6 +46,7 @@ type controlJobDTO struct {
 func (dto controlJobDTO) toEntity() entity.IngestControlJob {
 	return entity.IngestControlJob{
 		JobID:        dto.JobID,
+		TicketID:     dto.TicketID,
 		Status:       dto.Status,
 		ManifestPath: dto.ManifestPath,
 		Sector:       dto.Sector,
