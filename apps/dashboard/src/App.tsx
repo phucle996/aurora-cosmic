@@ -55,8 +55,13 @@ export default function App(): JSX.Element {
                     <Route path="/data-factory/preprocessing" element={<PreprocessingPage />} />
                     <Route path="/data-factory/enrichment" element={<EnrichmentPage />} />
                     <Route path="/data-factory/pipeline" element={<PipelineDagPage />} />
+                    <Route path="/data-factory/dag" element={<Navigate to="/data-factory/pipeline" replace />} />
                     <Route path="/data-factory/lineage" element={<LineageExplorerPage />} />
-                    <Route path="/data-factory/history" element={<RunHistoryPage />} />
+                    <Route path="/ticket" element={<RunHistoryPage />} />
+                    <Route path="/tickets" element={<Navigate to="/ticket" replace />} />
+                    <Route path="/data-factory/history" element={<Navigate to="/ticket" replace />} />
+                    <Route path="/data-factory/tickets" element={<Navigate to="/ticket" replace />} />
+                    <Route path="/data-factory/runs" element={<Navigate to="/ticket" replace />} />
                     <Route path="/research-factory" element={<ResearchOverviewPage />} />
                     <Route path="/research-factory/discovery" element={<TargetDiscoveryPage />} />
                     <Route path="/research-factory/workbench" element={<Navigate to="/research-factory/discovery" replace />} />

@@ -9,6 +9,7 @@ import (
 // controlStartRequestDTO is the wire contract owned by the ingester control client.
 // The domain command remains independent of HTTP and JSON naming.
 type controlStartRequestDTO struct {
+	TicketID     string `json:"ticket_id,omitempty"`
 	ManifestPath string `json:"manifest_path"`
 	Sector       int    `json:"sector"`
 	Limit        int    `json:"limit"`
@@ -19,6 +20,7 @@ type controlStartRequestDTO struct {
 
 func controlStartRequestFromEntity(request entity.IngestStartRequest) controlStartRequestDTO {
 	return controlStartRequestDTO{
+		TicketID:     request.TicketID,
 		ManifestPath: request.ManifestPath,
 		Sector:       request.Sector,
 		Limit:        request.Limit,

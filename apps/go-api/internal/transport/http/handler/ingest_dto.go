@@ -8,6 +8,7 @@ import (
 
 // ingestStartRequestDTO is the public HTTP request contract for an ingest run.
 type ingestStartRequestDTO struct {
+	TicketID     string `json:"ticket_id,omitempty"`
 	ManifestPath string `json:"manifest_path"`
 	Sector       int    `json:"sector"`
 	Limit        int    `json:"limit"`
@@ -18,6 +19,7 @@ type ingestStartRequestDTO struct {
 
 func (dto ingestStartRequestDTO) toEntity() entity.IngestStartRequest {
 	return entity.IngestStartRequest{
+		TicketID:     dto.TicketID,
 		ManifestPath: dto.ManifestPath,
 		Sector:       dto.Sector,
 		Limit:        dto.Limit,

@@ -145,16 +145,21 @@ LEFT JOIN (
 		}
 		var countResponse struct {
 			Data []struct {
-				Total string `json:"total"`
+				Total any `json:"total"`
 			} `json:"data"`
 		}
 		if err := json.Unmarshal(countBody, &countResponse); err != nil {
 			return entity.Page[entity.Target]{}, fmt.Errorf("parse target count: %w", err)
 		}
 		if len(countResponse.Data) > 0 {
-			total, err = strconv.Atoi(countResponse.Data[0].Total)
-			if err != nil {
-				return entity.Page[entity.Target]{}, fmt.Errorf("parse target count value: %w", err)
+			switch val := countResponse.Data[0].Total.(type) {
+			case float64:
+				total = int(val)
+			case string:
+				total, err = strconv.Atoi(val)
+				if err != nil {
+					return entity.Page[entity.Target]{}, fmt.Errorf("parse target count value: %w", err)
+				}
 			}
 		}
 	}

@@ -1,10 +1,8 @@
 [Unit]
-Description=AURORA Rust preprocessor (native dev)
-Requires=aurora-infra.service
-After=aurora-infra.service
-PartOf=aurora-dev.target
-# fitsio-sys needs the host CFITSIO development package. Until it is
-# installed, leave this unit skipped instead of rebuilding/restarting forever.
+Description=AURORA Rust preprocessor (native)
+Requires=aurora-nats.service aurora-minio-init.service
+After=aurora-nats.service aurora-minio-init.service
+PartOf=aurora.target
 ConditionPathExists=%h/.local/lib/pkgconfig/cfitsio.pc
 
 [Service]
@@ -16,11 +14,7 @@ Environment=MINIO_ENDPOINT=http://127.0.0.1:9000
 Environment=NATS_URL=nats://127.0.0.1:4222
 Environment=PKG_CONFIG_PATH=%h/.local/lib/pkgconfig
 Environment=LD_LIBRARY_PATH=%h/.local/lib
-# TPF FITS can exceed the host's /tmp tmpfs capacity. Keep transient
-# Parquet chunks on the SSD-backed user cache instead.
 Environment=AURORA_PREPROCESS_TMP_DIR=%h/.cache/aurora-preprocessor
-# Bound Target Pixel File processing to small cadence chunks. This prevents a
-# multi-GB FITS cube from being decoded into RAM at once.
 Environment=AURORA_TPF_NORMALIZATION=chunk-temporal-median
 Environment=AURORA_TPF_CHUNK_CADENCES=256
 Environment=AURORA_LARGE_STAGING_THRESHOLD_BYTES=1073741824
@@ -29,6 +23,8 @@ ExecStart=%h/.local/bin/cargo run
 Restart=on-failure
 RestartSec=3
 KillSignal=SIGINT
+SuccessExitStatus=0 1 2 130 143 SIGINT SIGTERM
+TimeoutStopSec=5
 
 [Install]
-WantedBy=aurora-dev.target
+WantedBy=aurora.target

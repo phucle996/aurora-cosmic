@@ -1,6 +1,6 @@
 [Unit]
 Description=AURORA systemd user-service Prometheus exporter
-PartOf=aurora-dev.target
+PartOf=aurora.target
 
 [Service]
 Type=simple
@@ -12,4 +12,4 @@ RestartSec=3
 KillSignal=SIGINT
 
 [Install]
-WantedBy=aurora-dev.target
+WantedBy=aurora.target

@@ -1,0 +1,16 @@
+[Unit]
+Description=AURORA MinIO Object Storage (native)
+PartOf=aurora.target
+
+[Service]
+Type=simple
+Environment=MINIO_ROOT_USER=minioadmin
+Environment=MINIO_ROOT_PASSWORD=minioadmin
+Environment=MINIO_PROMETHEUS_AUTH_TYPE=public
+ExecStart=%h/.local/bin/minio server %h/.local/share/aurora/minio-data --address :9000 --console-address :9001
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGINT
+
+[Install]
+WantedBy=aurora.target

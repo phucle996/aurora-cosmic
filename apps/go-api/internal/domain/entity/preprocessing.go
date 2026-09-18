@@ -3,6 +3,7 @@ package entity
 import "time"
 
 type PreprocessingStartRequest struct {
+	TicketID    string `json:"ticket_id,omitempty"`
 	Mode        string `json:"mode"`
 	WorkerCount int    `json:"worker_count"`
 	IngestRunID string `json:"ingest_run_id"`

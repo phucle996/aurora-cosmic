@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 )
 
 type StartRequest struct {
+	TicketID     string `json:"ticket_id,omitempty"`
 	ManifestPath string `json:"manifest_path"`
 	Sector       int    `json:"sector"`
 	Limit        int    `json:"limit"`
@@ -102,7 +104,11 @@ func (m *JobManager) Start(request StartRequest) (*Job, error) {
 	now := time.Now().UTC()
 	jobCtx, cancel := context.WithCancel(m.parent)
 	drain := make(chan struct{})
-	command.JobID = "ingest-job-" + uuid.NewString()[:8]
+	jobID := strings.TrimSpace(request.TicketID)
+	if jobID == "" {
+		jobID = fmt.Sprintf("RUN-%s-%s", now.Format("20060102"), strings.ToUpper(uuid.NewString()[:4]))
+	}
+	command.JobID = jobID
 	command.Drain = drain
 	command.ReportRunning = func() { m.markRunning(command.JobID) }
 	m.active = &activeJob{

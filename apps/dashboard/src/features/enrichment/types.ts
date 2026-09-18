@@ -56,6 +56,8 @@ export type GoldWorkerTelemetry = {
   input_count: number;
   snapshot_id?: string;
   detail?: string;
+  step_index?: number;
+  step_name?: string;
   updated_at: string;
 };
 

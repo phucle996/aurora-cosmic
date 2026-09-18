@@ -99,12 +99,16 @@ func (s *GoldControlService) Start(ctx context.Context, request entity.GoldContr
 	if len(ticketID) > 128 {
 		return nil, fmt.Errorf("ticket_id must not exceed 128 characters")
 	}
+	commandID := ticketID
+	if commandID == "" {
+		commandID = fmt.Sprintf("RUN-%s-%s", time.Now().UTC().Format("20060102"), strings.ToUpper(uuid.NewString()[:4]))
+	}
 	control := entity.GoldControlState{
 		SchemaVersion:    1,
 		Mode:             mode,
 		MaxBatchRecords:  maxBatchRecords,
 		IdleFlushSeconds: float64(idleFlush),
-		CommandID:        "gold-control-" + uuid.NewString()[:8],
+		CommandID:        commandID,
 		UpdatedAt:        time.Now().UTC(),
 		RequestedBy:      "dashboard",
 	}

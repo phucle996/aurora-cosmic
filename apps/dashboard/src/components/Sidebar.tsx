@@ -12,6 +12,7 @@ import {
   Sparkles,
   Tags,
   Target,
+  Ticket,
   Workflow,
   Waves,
 } from 'lucide-react';
@@ -45,7 +46,7 @@ const dataFactoryItems = [
   { path: '/data-factory/preprocessing', label: 'Preprocessing', detail: 'Run Bronze → Silver', icon: Workflow },
   { path: '/data-factory/enrichment', label: 'Data Enrichment', detail: 'Silver → Gold', icon: Waves },
   { path: '/data-factory/pipeline', label: 'Pipeline DAG', detail: 'Bronze → Gold footprint', icon: Factory },
-  { path: '/data-factory/history', label: 'Run History', detail: 'Durable batch + stream ledger', icon: Clock3 },
+  { path: '/ticket', label: 'Tickets', detail: 'Ticket list & status', icon: Ticket },
   { path: '/data-factory/lineage', label: 'Lineage Explorer', detail: 'Artifact provenance', icon: GitBranch },
 ];
 

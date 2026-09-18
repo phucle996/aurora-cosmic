@@ -78,6 +78,7 @@ type IngestStatus struct {
 }
 
 type IngestStartRequest struct {
+	TicketID     string
 	ManifestPath string
 	Sector       int
 	Limit        int

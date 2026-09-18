@@ -7,6 +7,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import type { GoldControlOverview } from '@/features/enrichment/types';
+import { RunnerTicketBar } from '@/features/factory-history/components/RunnerTicketBar';
+import { useRunnerTicket } from '@/features/factory-history/session';
 import type { FactoryRun, FactoryRunDetail } from '@/features/factory-history/types';
 import { HopDetailDrawer } from '@/features/preprocessing/components/HopDetailDrawer';
 import { PipelineDagCanvas, type DagConnection } from '@/features/preprocessing/components/PipelineDagCanvas';
@@ -73,7 +75,7 @@ function catalogSyncStatus(value?: string): HopStatus {
 function time(value?: string): string {
   if (!value) return '—';
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('vi-VN');
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('en-US');
 }
 
 function duration(start?: string, end?: string): string {
@@ -87,6 +89,7 @@ function duration(start?: string, end?: string): string {
 }
 
 export default function PipelineDagPage(): JSX.Element {
+  const { activeTicket } = useRunnerTicket();
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedRunID = searchParams.get('run_id') ?? '';
   const [graph, setGraph] = useState<PreprocessingGraph>();
@@ -108,12 +111,12 @@ export default function PipelineDagPage(): JSX.Element {
       const [nextGraph, nextGoldControl, nextRuns] = await Promise.all([
         apiFetch<PreprocessingGraph>('/v1/preprocessing/graph'),
         apiFetch<GoldControlOverview>('/v1/gold/control'),
-        apiFetch<{ items: FactoryRun[] | null }>('/v1/data-factory/runs?pipeline=silver_to_gold&limit=100'),
+        apiFetch<{ items: FactoryRun[] | null }>('/v1/data-factory/runs?limit=100'),
       ]);
       setGraph(normalizePreprocessingGraph(nextGraph));
       setGoldControl(nextGoldControl);
       setRuns(nextRuns.items ?? []);
-      const liveRunID = nextGoldControl.runtime?.command_id || nextGoldControl.control?.command_id;
+      const liveRunID = nextGoldControl.runtime?.command_id || nextGoldControl.control?.command_id || activeTicket;
       const committedSnapshotID = nextGoldControl.runtime?.last_snapshot_id ?? '';
       if (liveRunID && committedSnapshotID) {
         const evidenceKey = `${liveRunID}:${committedSnapshotID}`;
@@ -136,11 +139,11 @@ export default function PipelineDagPage(): JSX.Element {
       }
       setError(undefined);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Không tải được Data Factory footprint');
+      setError(cause instanceof Error ? cause.message : 'Failed to load Data Factory footprint');
     } finally {
       if (showLoading) setLoading(false);
     }
-  }, []);
+  }, [activeTicket]);
 
   const loadRun = useCallback(async (runID: string, showLoading = true): Promise<void> => {
     if (!runID) {
@@ -156,7 +159,7 @@ export default function PipelineDagPage(): JSX.Element {
       setError(undefined);
     } catch (cause) {
       setHistoricalRun(undefined);
-      setError(cause instanceof Error ? cause.message : 'Không tải được lịch sử run');
+      setError(cause instanceof Error ? cause.message : 'Failed to load run history');
     } finally {
       if (showLoading) setHistoryLoading(false);
     }
@@ -179,8 +182,8 @@ export default function PipelineDagPage(): JSX.Element {
         if (selectedRunID) void loadRun(selectedRunID, false);
       }, 350);
     };
-    const preprocessingEvents = new EventSource(`${apiBase}/v1/events?workflow=preprocessing`);
-    const goldEvents = new EventSource(`${apiBase}/v1/events?workflow=gold`);
+    const preprocessingEvents = new EventSource(`${apiBase}/v1/events?workflow=preprocessing&ticket=${encodeURIComponent(activeTicket)}`);
+    const goldEvents = new EventSource(`${apiBase}/v1/events?workflow=gold&ticket=${encodeURIComponent(activeTicket)}`);
     preprocessingEvents.addEventListener('workflow', scheduleRefresh);
     goldEvents.addEventListener('workflow', scheduleRefresh);
     return () => {
@@ -188,7 +191,7 @@ export default function PipelineDagPage(): JSX.Element {
       goldEvents.close();
       if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
     };
-  }, [loadOverview, loadRun, selectedRunID]);
+  }, [loadOverview, loadRun, selectedRunID, activeTicket]);
 
   const selectRun = (runID: string): void => {
     const next = new URLSearchParams(searchParams);
@@ -269,7 +272,7 @@ export default function PipelineDagPage(): JSX.Element {
       return evidencedPhaseStatus(id, directEvidence || coarseFeatureEvidence, runStatus);
     };
     const goldCommitStatus = historicalRun ? evidencedPhaseStatus('gold-commit', commitEvidence, runStatus) : goldTotal > 0 ? 'completed' : runStatus;
-    const historicalScope = 'Bronze→Silver không thuộc run được chọn; node được giữ để đọc quan hệ phụ thuộc.';
+    const historicalScope = 'Bronze→Silver was not part of this ticket execution; retained for topology reference.';
     const readiness = goldControl?.runtime?.readiness;
     const catalog = goldControl?.runtime?.catalog_sync;
     const actions = new Set((goldControl?.runtime?.workers ?? []).filter((worker) => worker.lifecycle !== 'KILLED').map((worker) => worker.action));
@@ -360,9 +363,9 @@ export default function PipelineDagPage(): JSX.Element {
       <Card className="rounded-none border-border/80 shadow-none">
         <CardHeader className="border-b border-border/70 pb-4">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-            <div className="min-w-0"><p className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-primary"><Factory className="size-3.5" />Data Factory analysis workspace</p><CardTitle className="mt-1 text-xl">Pipeline DAG</CardTitle><CardDescription className="mt-1">Nạp live pipeline hoặc một durable run để phân tích dependency, phase và record flow.</CardDescription></div>
+            <div className="min-w-0"><p className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-primary"><Factory className="size-3.5" />Data Factory analysis workspace</p><CardTitle className="mt-1 text-xl">Pipeline DAG</CardTitle><CardDescription className="mt-1">Load live pipeline or a runner ticket to analyze dependencies, execution phases, and data flow.</CardDescription></div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <label><span className="sr-only">Pipeline run</span><select aria-label="Pipeline run" className="h-9 w-full rounded-none border border-input bg-background px-3 font-mono text-[10px] uppercase outline-none focus:border-ring sm:w-[400px]" value={selectedRunID} onChange={(event) => selectRun(event.target.value)}><option value="">LIVE NOW · CURRENT PIPELINE</option>{runs.map((item) => <option key={item.run_id} value={item.run_id}>{item.run_id.slice(-12)} · {time(item.started_at)} · {item.mode} · {item.status} · {item.completed_batches} batches</option>)}</select></label>
+              <label><span className="sr-only">Pipeline run</span><select aria-label="Pipeline run" className="h-9 w-full rounded-none border border-input bg-background px-3 font-mono text-[10px] uppercase outline-none focus:border-ring sm:w-[400px]" value={selectedRunID} onChange={(event) => selectRun(event.target.value)}><option value="">LIVE RUN · {activeTicket}</option>{runs.map((item) => <option key={item.run_id} value={item.run_id}>{item.run_id.slice(-12)} · {time(item.started_at)} · {item.mode} · {item.status} · {item.completed_batches} batches</option>)}</select></label>
               <Button variant="outline" size="sm" onClick={() => void refresh()} disabled={loading || historyLoading} className="h-9 rounded-none font-mono text-[9px] uppercase"><RefreshCw className={`size-3.5 ${loading || historyLoading ? 'animate-spin' : ''}`} />Reload evidence</Button>
             </div>
           </div>
@@ -370,10 +373,12 @@ export default function PipelineDagPage(): JSX.Element {
         <CardContent className="grid gap-px bg-border/60 p-0 sm:grid-cols-2 xl:grid-cols-5">{summary.map(([label, value, detail]) => <SummaryCell key={label} label={label} value={value} detail={detail} />)}</CardContent>
       </Card>
 
+      <RunnerTicketBar />
+
       {selectedRunID ? <div className="flex flex-wrap items-center gap-2 border border-primary/30 bg-primary/5 px-3 py-2 text-xs"><History className="size-3.5 text-primary" /><span>Historical analysis</span><span className="font-mono text-primary">{selectedRunID}</span><span className="text-muted-foreground">· G01–G09 only · Bronze→Silver belongs to a different run scope</span></div> : null}
       {error ? <div className="flex items-center gap-2 border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"><AlertCircle className="size-4" />{error}</div> : null}
 
-      {loading && !graph ? <div className="flex items-center justify-center gap-2 border border-dashed border-border/70 py-24 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />Đang tải pipeline contracts…</div> : historyLoading && selectedRunID && !historicalRun ? <div className="flex items-center justify-center gap-2 border border-dashed border-border/70 py-24 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />Đang nạp durable run…</div> : selectedRunID && !historicalRun ? <div className="flex items-center justify-center border border-dashed border-destructive/40 py-24 text-sm text-destructive">Không thể nạp evidence cho run đã chọn; DAG live không được dùng thay thế.</div> : (
+      {loading && !graph ? <div className="flex items-center justify-center gap-2 border border-dashed border-border/70 py-24 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />Loading pipeline topology contracts…</div> : historyLoading && selectedRunID && !historicalRun ? <div className="flex items-center justify-center gap-2 border border-dashed border-border/70 py-24 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />Loading runner ticket data…</div> : selectedRunID && !historicalRun ? <div className="flex items-center justify-center border border-dashed border-destructive/40 py-24 text-sm text-destructive">Unable to load evidence for selected ticket; live DAG is not used as fallback.</div> : (
         <PipelineDagCanvas hops={hops} layout="branched" connections={visibleConnections} onSelectHop={setSelectedHopID} onPortalContainerChange={setDrawerPortal} />
       )}
 
@@ -390,9 +395,9 @@ function SummaryCell({ label, value, detail }: { label: string; value: string; d
 function PhaseLedger({ detail }: { detail: FactoryRunDetail }): JSX.Element {
   return (
     <Card className="rounded-none border-border/80 shadow-none">
-      <CardHeader className="border-b border-border/70 pb-3"><div className="flex items-end justify-between"><div><CardTitle className="flex items-center gap-2 text-sm"><GitBranch className="size-4 text-primary" />Phase history ledger</CardTitle><CardDescription>Chuỗi component events theo timestamp của run đã chọn.</CardDescription></div><span className="font-mono text-[10px] text-muted-foreground">{detail.components.length} events</span></div></CardHeader>
+      <CardHeader className="border-b border-border/70 pb-3"><div className="flex items-end justify-between"><div><CardTitle className="flex items-center gap-2 text-sm"><GitBranch className="size-4 text-primary" />Phase history ledger</CardTitle><CardDescription>Chronological sequence of component phase events for the selected runner ticket.</CardDescription></div><span className="font-mono text-[10px] text-muted-foreground">{detail.components.length} events</span></div></CardHeader>
       <CardContent className="p-0">
-        {detail.components.length === 0 ? <div className="p-8 text-center text-xs text-muted-foreground">Run chưa ghi component phase event.</div> : <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-sm"><thead className="border-b bg-muted/30 text-left font-mono text-[9px] uppercase text-muted-foreground"><tr><th className="p-3">Occurred</th><th className="p-3">Phase</th><th className="p-3">State</th><th className="p-3 text-right">Input</th><th className="p-3 text-right">Output</th><th className="p-3 text-right">Indexed</th><th className="p-3">Evidence</th></tr></thead><tbody>{detail.components.map((event, index) => <tr key={`${event.component_id}-${event.occurred_at}-${index}`} className="border-b border-border/60 last:border-0"><td className="p-3 font-mono text-[10px] text-muted-foreground"><Clock3 className="mr-1 inline size-3" />{time(event.occurred_at)}</td><td className="p-3 font-mono text-xs">{event.component_id}</td><td className="p-3"><Badge variant={/FAILED|ERROR/.test(event.status) ? 'destructive' : /COMPLETED/.test(event.status) ? 'default' : 'secondary'} className="rounded-none font-mono text-[9px]">{event.status}</Badge></td><td className="p-3 text-right tabular-nums">{event.input_records.toLocaleString()}</td><td className="p-3 text-right tabular-nums">{event.output_rows.toLocaleString()}</td><td className="p-3 text-right tabular-nums">{event.indexed_rows.toLocaleString()}</td><td className="max-w-64 truncate p-3 font-mono text-[10px] text-muted-foreground" title={event.error || event.snapshot_id}>{event.error || event.snapshot_id || '—'}</td></tr>)}</tbody></table></div>}
+        {detail.components.length === 0 ? <div className="p-8 text-center text-xs text-muted-foreground">No component phase events recorded for this runner ticket.</div> : <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-sm"><thead className="border-b bg-muted/30 text-left font-mono text-[9px] uppercase text-muted-foreground"><tr><th className="p-3">Occurred</th><th className="p-3">Phase</th><th className="p-3">State</th><th className="p-3 text-right">Input</th><th className="p-3 text-right">Output</th><th className="p-3 text-right">Indexed</th><th className="p-3">Evidence</th></tr></thead><tbody>{detail.components.map((event, index) => <tr key={`${event.component_id}-${event.occurred_at}-${index}`} className="border-b border-border/60 last:border-0"><td className="p-3 font-mono text-[10px] text-muted-foreground"><Clock3 className="mr-1 inline size-3" />{time(event.occurred_at)}</td><td className="p-3 font-mono text-xs">{event.component_id}</td><td className="p-3"><Badge variant={/FAILED|ERROR/.test(event.status) ? 'destructive' : /COMPLETED/.test(event.status) ? 'default' : 'secondary'} className="rounded-none font-mono text-[9px]">{event.status}</Badge></td><td className="p-3 text-right tabular-nums">{event.input_records.toLocaleString()}</td><td className="p-3 text-right tabular-nums">{event.output_rows.toLocaleString()}</td><td className="p-3 text-right tabular-nums">{event.indexed_rows.toLocaleString()}</td><td className="max-w-64 truncate p-3 font-mono text-[10px] text-muted-foreground" title={event.error || event.snapshot_id}>{event.error || event.snapshot_id || '—'}</td></tr>)}</tbody></table></div>}
       </CardContent>
     </Card>
   );

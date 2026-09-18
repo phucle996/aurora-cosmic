@@ -1,0 +1,13 @@
+[Unit]
+Description=AURORA MinIO Bucket Initializer
+Requires=aurora-minio.service
+After=aurora-minio.service
+PartOf=aurora.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/Desktop/aurora-cosmic/infra/minio/setup-minio.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=aurora.target

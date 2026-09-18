@@ -1,0 +1,19 @@
+[Unit]
+Description=AURORA native development application stack (100% systemd)
+Wants=aurora-minio.service
+Wants=aurora-minio-init.service
+Wants=aurora-nats.service
+Wants=aurora-clickhouse.service
+Wants=aurora-clickhouse-init.service
+Wants=aurora-prometheus.service
+Wants=aurora-systemd-exporter.service
+Wants=aurora-go-ingester.service
+Wants=aurora-rust-preprocessor.service
+Wants=aurora-python-ml-worker.service
+Wants=aurora-gold-builder.service
+Wants=aurora-rust-inference.service
+Wants=aurora-go-api.service
+Wants=aurora-dashboard.service
+
+[Install]
+WantedBy=default.target

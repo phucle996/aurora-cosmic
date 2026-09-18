@@ -1,0 +1,13 @@
+[Unit]
+Description=AURORA ClickHouse Database Initializer
+Requires=aurora-clickhouse.service
+After=aurora-clickhouse.service
+PartOf=aurora.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/Desktop/aurora-cosmic/infra/clickhouse/setup-clickhouse.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=aurora.target

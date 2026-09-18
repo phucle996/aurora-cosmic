@@ -1,8 +1,8 @@
 [Unit]
-Description=AURORA Rust inference (native dev)
-Requires=aurora-infra.service
-After=aurora-infra.service
-PartOf=aurora-dev.target
+Description=AURORA Rust inference (native)
+Requires=aurora-nats.service aurora-minio-init.service
+After=aurora-nats.service aurora-minio-init.service
+PartOf=aurora.target
 
 [Service]
 Type=simple
@@ -16,6 +16,8 @@ ExecStart=%h/.local/bin/cargo run
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGINT
+SuccessExitStatus=0 1 2 130 143 SIGINT SIGTERM
+TimeoutStopSec=5
 
 [Install]
-WantedBy=aurora-dev.target
+WantedBy=aurora.target

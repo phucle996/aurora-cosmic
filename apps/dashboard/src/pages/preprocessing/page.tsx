@@ -21,6 +21,8 @@ import { Progress } from '@/components/ui/progress';
 import { apiBase, apiFetch } from '@/lib/api';
 
 import { normalizePreprocessingGraph, type PreprocessingGraph, type PreprocessingJob } from '@/features/preprocessing/types';
+import { RunnerTicketBar } from '@/features/factory-history/components/RunnerTicketBar';
+import { useRunnerTicket } from '@/features/factory-history/session';
 
 const PREPROCESSING_SETTINGS_KEY = 'aurora.preprocessing.configure.v1';
 const DEFAULT_PREPROCESSING_SETTINGS = { mode: 'stream' as const, workerCount: 4 };
@@ -57,7 +59,7 @@ function formatBytes(value: number): string {
 function formatDate(value?: string): string {
   if (!value) return '—';
   const date = new Date(value);
-  return Number.isNaN(date.valueOf()) ? value : date.toLocaleString();
+  return Number.isNaN(date.valueOf()) ? value : date.toLocaleString('en-US');
 }
 
 function statusVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {
@@ -70,7 +72,7 @@ function statusVariant(status: string): 'default' | 'secondary' | 'destructive' 
 function Stat({ icon: Icon, label, value, detail }: { icon: typeof Gauge; label: string; value: string; detail: string }): JSX.Element {
   return (
     <div className="min-w-0 border border-border/70 bg-background/45 p-3.5">
-      <div className="flex items-center gap-2 text-[10px] font-medium uppercase tracking-[0.13em] text-muted-foreground">
+      <div className="flex items-center gap-2 text-[10px] font-medium uppercase tracking-[0.13em] text-primary">
         <Icon className="size-4 text-primary" />
         {label}
       </div>
@@ -81,6 +83,7 @@ function Stat({ icon: Icon, label, value, detail }: { icon: typeof Gauge; label:
 }
 
 export default function PreprocessingPage(): JSX.Element {
+  const { activeTicket } = useRunnerTicket();
   // Operational state for the Bronze → Silver worker.
   const [initialSettings] = useState(loadPreprocessingSettings);
   const [graph, setGraph] = useState<PreprocessingGraph | null>(null);
@@ -124,7 +127,7 @@ export default function PreprocessingPage(): JSX.Element {
     };
 
     loadGraph();
-    const eventSource = new EventSource(`${apiBase}/v1/events?workflow=preprocessing`);
+    const eventSource = new EventSource(`${apiBase}/v1/events?workflow=preprocessing&ticket=${encodeURIComponent(activeTicket)}`);
     eventSource.addEventListener('workflow', (event) => {
       const message = event as MessageEvent<string>;
       try {
@@ -133,8 +136,6 @@ export default function PreprocessingPage(): JSX.Element {
       } catch {
         // Fallback on graph polling
       }
-      // NATS can emit several stage events per file. SSE is only an
-      // invalidation signal, so coalesce refetches to keep the UI light.
       if (refreshTimer.current === null) {
         refreshTimer.current = window.setTimeout(() => {
           refreshTimer.current = null;
@@ -150,7 +151,7 @@ export default function PreprocessingPage(): JSX.Element {
       if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current);
       eventSource.close();
     };
-  }, []);
+  }, [activeTicket]);
 
   const activeRun = graph?.run ?? preprocessingJob;
   const isRunning = activeRun?.status === 'running' || activeRun?.status === 'accepted';
@@ -162,11 +163,11 @@ export default function PreprocessingPage(): JSX.Element {
     try {
       const job = await apiFetch<PreprocessingJob>('/v1/preprocessing/jobs', {
         method: 'POST',
-        body: JSON.stringify({ mode: startMode, worker_count: workerCount }),
+        body: JSON.stringify({ mode: startMode, worker_count: workerCount, ticket_id: activeTicket }),
       });
       setPreprocessingJob(job);
     } catch (error) {
-      setObservationError(error instanceof Error ? error.message : 'Không thể khởi động preprocessing');
+      setObservationError(error instanceof Error ? error.message : 'Failed to start preprocessing run');
     } finally {
       setStartBusy(false);
     }
@@ -186,7 +187,7 @@ export default function PreprocessingPage(): JSX.Element {
       setPreprocessingJob(job);
       setGraph((curr) => (curr ? { ...curr, run: job } : curr));
     } catch (error) {
-      setObservationError(error instanceof Error ? error.message : 'Không thể dừng preprocessing');
+      setObservationError(error instanceof Error ? error.message : 'Failed to stop preprocessing run');
     } finally {
       setStopBusy(false);
     }
@@ -199,6 +200,7 @@ export default function PreprocessingPage(): JSX.Element {
   const completedItems = graph?.progress?.checkpoint_completed ?? 0;
   const totalItems = graph?.progress?.checkpoint_total || graph?.progress?.bronze_total || 0;
   const completionPercent = totalItems > 0 ? Math.min(100, completedItems / totalItems * 100) : 0;
+
   return (
     <div className="space-y-5 pb-6">
       <section className="relative overflow-hidden border border-border/70 bg-card px-4 py-5 shadow-sm sm:px-6">
@@ -206,61 +208,63 @@ export default function PreprocessingPage(): JSX.Element {
         <div className="relative">
           <div className="mb-3 flex items-center gap-2 font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-primary">
             <Workflow className="size-4" aria-hidden="true" />
-            Observatory / photometry preparation node
+            Observatory / Photometry Preparation Node
           </div>
           <h2 className="font-heading text-2xl font-semibold tracking-tight md:text-3xl">Bronze to Silver Preprocessing</h2>
           <p className="mt-2 text-sm leading-6 text-muted-foreground xl:whitespace-nowrap">
-            Chuẩn hoá Bronze FITS thành Silver Parquet bằng Rust workers, với checkpoint bền vững, lineage và telemetry thời gian thực.
+            Normalize Bronze FITS into Silver Parquet using high-performance Rust workers with durable checkpoints, lineage tracking, and real-time telemetry.
           </p>
         </div>
       </section>
 
+      <RunnerTicketBar />
+
       {observationError && (
         <div className="flex items-start gap-3 border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
           <AlertCircle className="mt-0.5 size-4 shrink-0" />
-          <div><p className="font-medium">Observation link interrupted</p><p className="mt-0.5 text-xs">{observationError}</p></div>
+          <div><p className="font-medium">Observation Link Interrupted</p><p className="mt-0.5 text-xs">{observationError}</p></div>
         </div>
       )}
 
       <section aria-label="Preprocessing summary" className="grid gap-px overflow-hidden border border-border/70 bg-border/70 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat icon={FileInput} label="Bronze inventory" value={bronzeInventoryReady ? `${(graph?.progress?.bronze_pending ?? 0).toLocaleString()} pending` : 'Scanning'} detail={`${(graph?.progress?.bronze_total ?? 0).toLocaleString()} FITS · ${formatBytes(graph?.progress?.bronze_bytes ?? 0)}`} />
-        <Stat icon={FileOutput} label="Silver materialized" value={`${(graph?.progress?.silver_total ?? 0).toLocaleString()} Parquet`} detail={formatBytes(graph?.progress?.silver_bytes ?? 0)} />
-        <Stat icon={Zap} label="Runtime throughput" value={`${(graph?.runtime?.throughput ?? 0).toFixed(2)} files/s`} detail={`${graph?.runtime?.completed ?? 0} completed · ${graph?.runtime?.failed ?? 0} failed`} />
-        <Stat icon={Cpu} label="Rust worker pool" value={`${graph?.runtime?.actual_workers ?? 0} / ${desiredWorkers}`} detail={`${graph?.runtime?.processing ?? 0} processing now`} />
+        <Stat icon={FileInput} label="Bronze Inventory" value={bronzeInventoryReady ? `${(graph?.progress?.bronze_pending ?? 0).toLocaleString()} pending` : 'Scanning'} detail={`${(graph?.progress?.bronze_total ?? 0).toLocaleString()} FITS · ${formatBytes(graph?.progress?.bronze_bytes ?? 0)}`} />
+        <Stat icon={FileOutput} label="Silver Materialized" value={`${(graph?.progress?.silver_total ?? 0).toLocaleString()} Parquet`} detail={formatBytes(graph?.progress?.silver_bytes ?? 0)} />
+        <Stat icon={Zap} label="Runtime Throughput" value={`${(graph?.runtime?.throughput ?? 0).toFixed(2)} files/s`} detail={`${graph?.runtime?.completed ?? 0} completed · ${graph?.runtime?.failed ?? 0} failed`} />
+        <Stat icon={Cpu} label="Rust Worker Pool" value={`${graph?.runtime?.actual_workers ?? 0} / ${desiredWorkers}`} detail={`${graph?.runtime?.processing ?? 0} processing now`} />
       </section>
 
       <section className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(19rem,0.7fr)]">
         <Card className="min-w-0 rounded-none border-border/80 shadow-none">
           <CardHeader className="border-b border-border/60 pb-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div><p className="font-mono text-[10px] uppercase tracking-[0.14em] text-primary">Live preparation / runtime telemetry</p><CardTitle className="mt-1 text-lg">Silver preparation sequence</CardTitle><CardDescription>Theo dõi tiến trình chuẩn hóa và trạng thái worker của run hiện tại.</CardDescription></div>
+              <div><p className="font-mono text-[10px] uppercase tracking-[0.14em] text-primary">Live Preparation / Runtime Telemetry</p><CardTitle className="mt-1 text-lg">Silver Preparation Sequence</CardTitle><CardDescription>Track normalization progress and worker lifecycle for the active run.</CardDescription></div>
               {activeStatus && <Badge variant={statusVariant(activeStatus)} className="w-fit rounded-none font-mono">{activeStatus}</Badge>}
             </div>
           </CardHeader>
           <CardContent className="space-y-5 p-4 sm:p-5">
             <div className="border border-primary/25 bg-primary/[0.035] p-4 sm:p-5">
               <div className="mb-3 flex items-end justify-between gap-4">
-                <div><p className="text-xs font-medium text-muted-foreground">Checkpoint completion</p><p className="mt-1 font-mono text-3xl font-semibold tracking-tight tabular-nums sm:text-4xl">{completionPercent.toFixed(completionPercent > 0 && completionPercent < 1 ? 1 : 0)}<span className="text-lg text-muted-foreground">%</span></p></div>
+                <div><p className="text-xs font-medium text-muted-foreground">Checkpoint Completion</p><p className="mt-1 font-mono text-3xl font-semibold tracking-tight tabular-nums sm:text-4xl">{completionPercent.toFixed(completionPercent > 0 && completionPercent < 1 ? 1 : 0)}<span className="text-lg text-muted-foreground">%</span></p></div>
                 <p className="text-right font-mono text-xs text-muted-foreground">{completedItems.toLocaleString()} committed<br />{totalItems.toLocaleString()} observed</p>
               </div>
               <Progress value={completionPercent} className="h-2" />
             </div>
 
             <div className="grid gap-px border border-border/70 bg-border/70 sm:grid-cols-[1fr_auto_1fr_auto_1fr] sm:items-stretch">
-              <div className="bg-background/70 p-3"><p className="font-mono text-[10px] uppercase tracking-[0.12em] text-primary">01 / source</p><p className="mt-1 text-sm font-medium">Bronze FITS</p><p className="mt-1 font-mono text-[10px] text-muted-foreground">{(graph?.progress?.bronze_total ?? 0).toLocaleString()} objects · {formatBytes(graph?.progress?.bronze_bytes ?? 0)}</p></div>
+              <div className="bg-background/70 p-3"><p className="font-mono text-[10px] uppercase tracking-[0.12em] text-primary">01 / Source</p><p className="mt-1 text-sm font-medium">Bronze FITS</p><p className="mt-1 font-mono text-[10px] text-muted-foreground">{(graph?.progress?.bronze_total ?? 0).toLocaleString()} objects · {formatBytes(graph?.progress?.bronze_bytes ?? 0)}</p></div>
               <div className="hidden bg-background/70 px-2 text-primary sm:flex sm:items-center">→</div>
-              <div className="bg-background/70 p-3"><p className="font-mono text-[10px] uppercase tracking-[0.12em] text-primary">02 / transform</p><p className="mt-1 text-sm font-medium">Decode · mask · normalize</p><p className="mt-1 font-mono text-[10px] text-muted-foreground">{graph?.runtime?.processing ?? 0} active · {(graph?.progress?.items_to_process ?? 0).toLocaleString()} queued</p></div>
+              <div className="bg-background/70 p-3"><p className="font-mono text-[10px] uppercase tracking-[0.12em] text-primary">02 / Transform</p><p className="mt-1 text-sm font-medium">Decode · mask · normalize</p><p className="mt-1 font-mono text-[10px] text-muted-foreground">{graph?.runtime?.processing ?? 0} active · {(graph?.progress?.items_to_process ?? 0).toLocaleString()} queued</p></div>
               <div className="hidden bg-background/70 px-2 text-primary sm:flex sm:items-center">→</div>
-              <div className="bg-background/70 p-3"><p className="font-mono text-[10px] uppercase tracking-[0.12em] text-primary">03 / materialize</p><p className="mt-1 text-sm font-medium">Silver Parquet</p><p className="mt-1 font-mono text-[10px] text-muted-foreground">{(graph?.progress?.silver_total ?? 0).toLocaleString()} objects · {formatBytes(graph?.progress?.silver_bytes ?? 0)}</p></div>
+              <div className="bg-background/70 p-3"><p className="font-mono text-[10px] uppercase tracking-[0.12em] text-primary">03 / Materialize</p><p className="mt-1 text-sm font-medium">Silver Parquet</p><p className="mt-1 font-mono text-[10px] text-muted-foreground">{(graph?.progress?.silver_total ?? 0).toLocaleString()} objects · {formatBytes(graph?.progress?.silver_bytes ?? 0)}</p></div>
             </div>
 
             <div>
               <div className="mb-3 flex items-center justify-between gap-3">
-                <div><p className="text-sm font-medium">Worker field array</p><p className="text-xs text-muted-foreground">Chỉ hiển thị worker đã bắt đầu hoặc đang xử lý dữ liệu trong run.</p></div>
+                <div><p className="text-sm font-medium">Worker Field Array</p><p className="text-xs text-muted-foreground">Displays workers active or currently processing data in the active run.</p></div>
                 <span className="font-mono text-xs text-muted-foreground">{runtimeWorkers.length} spawned</span>
               </div>
               {runtimeWorkers.length === 0 ? (
-                <div className="border border-dashed border-border/70 px-3 py-5 text-center text-xs text-muted-foreground">Chưa có worker preprocessing nào được quan sát.</div>
+                <div className="border border-dashed border-border/70 px-3 py-5 text-center text-xs text-muted-foreground">No active preprocessing workers observed.</div>
               ) : (
                 <div className="space-y-2">
                   {runtimeWorkers.map((worker) => {
@@ -286,13 +290,13 @@ export default function PreprocessingPage(): JSX.Element {
         </Card>
 
         <Card className="h-fit rounded-none border-border/80 shadow-none">
-          <CardHeader className="border-b border-border/60 pb-4"><p className="font-mono text-[10px] uppercase tracking-[0.14em] text-primary">Control protocol / new run</p><CardTitle className="mt-1 text-lg">Configure preparation</CardTitle><CardDescription>Chọn delivery mode và kích thước Rust worker pool.</CardDescription></CardHeader>
+          <CardHeader className="border-b border-border/60 pb-4"><p className="font-mono text-[10px] uppercase tracking-[0.14em] text-primary">Control Protocol / New Run</p><CardTitle className="mt-1 text-lg">Configure Preparation</CardTitle><CardDescription>Select processing mode and Rust worker pool concurrency.</CardDescription></CardHeader>
           <CardContent className="space-y-5 p-4 sm:p-5">
-            <label htmlFor="preprocessing-mode" className="block space-y-2 text-xs font-medium text-muted-foreground"><span className="flex items-center justify-between"><span>Processing mode</span><span className="font-mono text-[10px] font-normal">CONTINUOUS / BACKLOG</span></span><select id="preprocessing-mode" value={startMode} onChange={(event) => setStartMode(event.target.value as 'stream' | 'batch')} disabled={isRunning} className="h-10 w-full rounded-none border border-input bg-background px-3 font-mono text-xs text-foreground outline-none focus:border-ring focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"><option value="stream">CONTINUOUS · process new inputs</option><option value="batch">BACKLOG · process available inputs</option></select></label>
-            <label htmlFor="preprocessing-workers" className="block space-y-2 text-xs font-medium text-muted-foreground"><span className="flex items-center justify-between"><span>Rust workers</span><span className="font-mono text-[10px] font-normal">01—64</span></span><input id="preprocessing-workers" type="number" min={1} max={64} value={workerCount} onChange={(event) => setWorkerCount(Math.max(1, Math.min(64, Number(event.target.value) || 1)))} disabled={isRunning} className="h-10 w-full rounded-none border border-input bg-background px-3 font-mono text-sm text-foreground outline-none focus:border-ring focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50" /></label>
-            <div className="border-y border-border/60 py-3 text-xs text-muted-foreground"><p className="font-mono text-[10px] uppercase tracking-[0.12em] text-primary">Execution contract</p><p className="mt-1.5 leading-5">Checkpoint-backed processing. Silver chỉ materialize sau quality mask, finite filtering và lineage commit.</p></div>
-            {isRunning ? <Button onClick={stopPreprocessing} disabled={stopBusy} variant="destructive" className="w-full rounded-none gap-2"><Square className="size-3.5 fill-current" />{stopBusy ? 'Đang dừng…' : 'Dừng preprocessing run'}</Button> : <Button onClick={startPreprocessing} disabled={startBusy} className="w-full rounded-none gap-2"><Play className="size-3.5 fill-current" />{startBusy ? 'Đang khởi tạo…' : 'Launch preprocessing run'}</Button>}
-            <div className="space-y-2 border-t border-border/60 pt-4 text-xs"><div className="flex items-center justify-between gap-3"><span className="text-muted-foreground">Control job</span><span className="min-w-0 truncate font-mono text-foreground" title={activeRun?.job_id}>{activeRun?.job_id || '—'}</span></div><div className="flex items-center justify-between gap-3"><span className="text-muted-foreground">State</span>{activeStatus ? <Badge variant={statusVariant(activeStatus)} className="rounded-none font-mono text-[10px]">{activeStatus}</Badge> : <span className="font-mono text-muted-foreground">—</span>}</div><div className="flex items-center justify-between gap-3"><span className="text-muted-foreground">Mode</span><span className="font-mono uppercase text-foreground">{activeRun?.mode || startMode}</span></div><div className="flex items-center justify-between gap-3"><span className="text-muted-foreground">Last signal</span><span className="font-mono text-[10px] text-foreground">{formatDate(activeRun?.updated_at || graph?.observed_at)}</span></div></div>
+            <label htmlFor="preprocessing-mode" className="block space-y-2 text-xs font-medium text-muted-foreground"><span className="flex items-center justify-between"><span>Processing Mode</span><span className="font-mono text-[10px] font-normal">CONTINUOUS / BACKLOG</span></span><select id="preprocessing-mode" value={startMode} onChange={(event) => setStartMode(event.target.value as 'stream' | 'batch')} disabled={isRunning} className="h-10 w-full rounded-none border border-input bg-background px-3 font-mono text-xs text-foreground outline-none focus:border-ring focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"><option value="stream">CONTINUOUS · process new inputs</option><option value="batch">BACKLOG · process available inputs</option></select></label>
+            <label htmlFor="preprocessing-workers" className="block space-y-2 text-xs font-medium text-muted-foreground"><span className="flex items-center justify-between"><span>Rust Workers</span><span className="font-mono text-[10px] font-normal">01—64</span></span><input id="preprocessing-workers" type="number" min={1} max={64} value={workerCount} onChange={(event) => setWorkerCount(Math.max(1, Math.min(64, Number(event.target.value) || 1)))} disabled={isRunning} className="h-10 w-full rounded-none border border-input bg-background px-3 font-mono text-sm text-foreground outline-none focus:border-ring focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50" /></label>
+            <div className="border-y border-border/60 py-3 text-xs text-muted-foreground"><p className="font-mono text-[10px] uppercase tracking-[0.12em] text-primary">Execution Contract</p><p className="mt-1.5 leading-5">Checkpoint-backed processing. Silver objects materialize only after quality masking, finite filtering, and lineage commit.</p></div>
+            {isRunning ? <Button onClick={stopPreprocessing} disabled={stopBusy} variant="destructive" className="w-full rounded-none gap-2"><Square className="size-3.5 fill-current" />{stopBusy ? 'Stopping…' : 'Stop Preprocessing Run'}</Button> : <Button onClick={startPreprocessing} disabled={startBusy} className="w-full rounded-none gap-2"><Play className="size-3.5 fill-current" />{startBusy ? 'Starting…' : 'Launch Preprocessing Run'}</Button>}
+            <div className="space-y-2 border-t border-border/60 pt-4 text-xs"><div className="flex items-center justify-between gap-3"><span className="text-muted-foreground">Runner Ticket</span><span className="min-w-0 truncate font-mono text-muted-foreground" title={activeTicket}>{activeTicket}</span></div><div className="flex items-center justify-between gap-3"><span className="text-muted-foreground">Control Job</span><span className="min-w-0 truncate font-mono text-foreground" title={activeRun?.job_id}>{activeRun?.job_id || '—'}</span></div><div className="flex items-center justify-between gap-3"><span className="text-muted-foreground">State</span>{activeStatus ? <Badge variant={statusVariant(activeStatus)} className="rounded-none font-mono text-[10px]">{activeStatus}</Badge> : <span className="font-mono text-muted-foreground">—</span>}</div><div className="flex items-center justify-between gap-3"><span className="text-muted-foreground">Mode</span><span className="font-mono uppercase text-foreground">{activeRun?.mode || startMode}</span></div><div className="flex items-center justify-between gap-3"><span className="text-muted-foreground">Last Signal</span><span className="font-mono text-[10px] text-foreground">{formatDate(activeRun?.updated_at || graph?.observed_at)}</span></div></div>
           </CardContent>
         </Card>
       </section>

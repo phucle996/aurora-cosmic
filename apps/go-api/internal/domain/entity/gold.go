@@ -58,6 +58,8 @@ type GoldWorkerStatus struct {
 	InputCount int    `json:"input_count"`
 	SnapshotID string `json:"snapshot_id,omitempty"`
 	Detail     string `json:"detail,omitempty"`
+	StepIndex  int    `json:"step_index"`
+	StepName   string `json:"step_name,omitempty"`
 	UpdatedAt  string `json:"updated_at"`
 }
 

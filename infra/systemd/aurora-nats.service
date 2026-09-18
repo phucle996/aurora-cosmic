@@ -1,0 +1,13 @@
+[Unit]
+Description=AURORA NATS JetStream Message Broker (native)
+PartOf=aurora.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/nats-server -c %h/Desktop/aurora-cosmic/infra/nats/nats.conf -sd %h/.local/share/aurora/nats-data
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGINT
+
+[Install]
+WantedBy=aurora.target

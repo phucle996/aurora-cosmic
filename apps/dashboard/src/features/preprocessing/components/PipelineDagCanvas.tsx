@@ -303,7 +303,7 @@ export function PipelineDagCanvas({
         <div>
           <CardTitle className="text-sm font-semibold">Data footprint dependency graph</CardTitle>
           <CardDescription className="text-xs">
-            LC, BLS, TPF và catalog được tách thành các nhánh phụ thuộc; các nhánh chỉ hội tụ khi candidate evidence được lắp ráp.
+            LC, BLS, TPF, and stellar catalogs branch as independent processing tracks, converging only when candidate evidence is synthesized.
           </CardDescription>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -316,9 +316,9 @@ export function PipelineDagCanvas({
             <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-full bg-emerald-500" /> Completed / running</span>
             <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-full bg-muted-foreground/40" /> Outside scope / standby</span>
           </>}
-          <Button variant="outline" size="sm" className="h-8 rounded-none gap-1.5 font-mono text-[9px] uppercase" onClick={() => void toggleFullscreen()} title={fullscreen ? 'Thoát toàn màn hình' : 'Mở toàn màn hình'}>
+          <Button variant="outline" size="sm" className="h-8 rounded-none gap-1.5 font-mono text-[9px] uppercase" onClick={() => void toggleFullscreen()} title={fullscreen ? 'Exit full screen' : 'Enter full screen'}>
             {fullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
-            {fullscreen ? 'Thoát full screen' : 'Full screen'}
+            {fullscreen ? 'Exit full screen' : 'Full screen'}
           </Button>
         </div>
       </CardHeader>

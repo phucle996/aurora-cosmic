@@ -197,8 +197,12 @@ func (s *PreprocessingService) Start(ctx context.Context, request entity.Preproc
 	}
 
 	// 2. Tạo đối tượng job điều khiển mới
+	jobID := strings.TrimSpace(request.TicketID)
+	if jobID == "" {
+		jobID = fmt.Sprintf("RUN-%s-%s", time.Now().UTC().Format("20060102"), strings.ToUpper(uuid.NewString()[:4]))
+	}
 	job := &entity.PreprocessingControlJob{
-		JobID:       "preprocess-job-" + uuid.NewString()[:8],
+		JobID:       jobID,
 		Status:      "accepted",
 		Mode:        request.Mode,
 		WorkerCount: request.WorkerCount,

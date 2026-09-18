@@ -20,9 +20,6 @@ func (s *FactoryHistoryService) ListRuns(ctx context.Context, pipeline string, l
 	if s == nil || s.repository == nil {
 		return nil, fmt.Errorf("factory history is unavailable")
 	}
-	if pipeline != "" && pipeline != "silver_to_gold" {
-		return nil, fmt.Errorf("unsupported pipeline %q", pipeline)
-	}
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}

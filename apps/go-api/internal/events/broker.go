@@ -48,7 +48,11 @@ func (b *Broker) Publish(_ context.Context, event entity.WorkflowEvent) error {
 		if sub.workflow != "" && sub.workflow != event.Workflow {
 			continue
 		}
-		if sub.ticketID != "" && sub.ticketID != event.TicketID {
+		eventTicket := event.TicketID
+		if eventTicket == "" {
+			eventTicket = event.JobID
+		}
+		if sub.ticketID != "" && eventTicket != "" && sub.ticketID != eventTicket {
 			continue
 		}
 		select {

@@ -1,0 +1,13 @@
+[Unit]
+Description=AURORA ClickHouse OLAP Database (native)
+PartOf=aurora.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/clickhouse server --config-file=%h/Desktop/aurora-cosmic/infra/clickhouse/config.xml
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGINT
+
+[Install]
+WantedBy=aurora.target

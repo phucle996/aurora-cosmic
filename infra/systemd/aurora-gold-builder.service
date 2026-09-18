@@ -1,8 +1,8 @@
 [Unit]
-Description=AURORA Gold Builder (native dev)
-Requires=aurora-infra.service
-After=aurora-infra.service
-PartOf=aurora-dev.target
+Description=AURORA Gold Builder (native)
+Requires=aurora-nats.service aurora-minio-init.service aurora-clickhouse-init.service
+After=aurora-nats.service aurora-minio-init.service aurora-clickhouse-init.service
+PartOf=aurora.target
 
 [Service]
 Type=simple
@@ -15,12 +15,13 @@ Environment=AURORA_CLICKHOUSE_HOST=127.0.0.1
 Environment=AURORA_GOLD_METRICS_ADDR=:8088
 Environment=PYTHONPATH=%h/Desktop/aurora-cosmic/apps/python-ml-worker
 Environment=UV_CACHE_DIR=%h/.cache/uv
-ExecStartPre=%h/.local/bin/uv python install 3.12
-ExecStartPre=%h/.local/bin/uv sync --project %h/Desktop/aurora-cosmic/apps/python-gold-builder --python 3.12
+ExecStartPre=%h/.local/bin/uv sync --project %h/Desktop/aurora-cosmic/apps/python-gold-builder
 ExecStart=%h/.local/bin/uv run --project %h/Desktop/aurora-cosmic/apps/python-gold-builder --no-sync python -m aurora.gold_builder.service
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGINT
+SuccessExitStatus=0 1 2 130 143 SIGINT SIGTERM
+TimeoutStopSec=5
 
 [Install]
-WantedBy=aurora-dev.target
+WantedBy=aurora.target

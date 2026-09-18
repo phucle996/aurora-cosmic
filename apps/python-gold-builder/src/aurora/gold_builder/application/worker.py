@@ -225,6 +225,8 @@ async def run_worker(config: Config, metrics: Metrics) -> None:
             input_count: int = 0,
             snapshot_id: str = "",
             detail: str = "",
+            step_index: int = 0,
+            step_name: str = "IDLE",
         ) -> None:
             previous = worker_states.get(worker_id)
             state: dict[str, object] = {
@@ -236,6 +238,8 @@ async def run_worker(config: Config, metrics: Metrics) -> None:
                 "input_count": input_count,
                 "snapshot_id": snapshot_id,
                 "detail": detail,
+                "step_index": step_index,
+                "step_name": step_name,
             }
             comparable = {
                 key: value for key, value in state.items() if key != "updated_at"
@@ -441,6 +445,8 @@ async def run_worker(config: Config, metrics: Metrics) -> None:
                 lifecycle="SPAWNED",
                 action="WAITING_FOR_BATCH",
                 detail="Worker slot spawned and waiting for an eligible LC/TPF batch",
+                step_index=0,
+                step_name="IDLE",
             )
             try:
                 while True:
@@ -452,6 +458,8 @@ async def run_worker(config: Config, metrics: Metrics) -> None:
                         batch_ref=batch_ref,
                         input_count=len(batch),
                         detail="Claimed a durable Silver batch from the runtime queue",
+                        step_index=1,
+                        step_name="INTAKE",
                     )
                     await run_claimed_batch(worker_id, batch, batch_ref)
             finally:
@@ -460,6 +468,8 @@ async def run_worker(config: Config, metrics: Metrics) -> None:
                     lifecycle="KILLED",
                     action="CANCELLED",
                     detail="Worker task exited and no longer accepts batches",
+                    step_index=0,
+                    step_name="IDLE",
                 )
 
         async def run_claimed_batch(
@@ -488,6 +498,8 @@ async def run_worker(config: Config, metrics: Metrics) -> None:
                         batch_ref=batch_ref,
                         input_count=len(batch),
                         detail="Batch retained; operator control is paused",
+                        step_index=1,
+                        step_name="INTAKE",
                     )
                     await asyncio.sleep(1)
                 active_builds += 1
@@ -499,11 +511,23 @@ async def run_worker(config: Config, metrics: Metrics) -> None:
                 batch_control = await control_state()
                 await set_worker_state(
                     worker_id,
+                    action="VERIFYING_PAIRING",
+                    control=batch_control,
+                    batch_ref=batch_ref,
+                    input_count=len(batch),
+                    detail="Validating multimodal LC and TPF context alignment",
+                    step_index=2,
+                    step_name="PAIRING",
+                )
+                await set_worker_state(
+                    worker_id,
                     action="SYNCING_CATALOGS",
                     control=batch_control,
                     batch_ref=batch_ref,
                     input_count=len(batch),
                     detail="Resolving immutable TIC and TOI evidence for this batch",
+                    step_index=3,
+                    step_name="CATALOG",
                 )
                 started_at = datetime.now(timezone.utc)
                 tic_ids = sorted(
@@ -554,6 +578,8 @@ async def run_worker(config: Config, metrics: Metrics) -> None:
                     batch_ref=batch_ref,
                     input_count=len(batch),
                     detail="Writing Gold Parquet artifacts and projecting rows to ClickHouse",
+                    step_index=4,
+                    step_name="MATERIALIZE",
                 )
                 (
                     result,
@@ -574,6 +600,8 @@ async def run_worker(config: Config, metrics: Metrics) -> None:
                     input_count=len(batch),
                     snapshot_id=result.snapshot_id,
                     detail="Recording durable run history and publishing the committed snapshot",
+                    step_index=5,
+                    step_name="COMMIT",
                 )
                 await asyncio.to_thread(
                     history.record_batch,
@@ -626,6 +654,8 @@ async def run_worker(config: Config, metrics: Metrics) -> None:
                     input_count=len(batch),
                     snapshot_id=result.snapshot_id,
                     detail=f"Committed {indexed_rows} indexed Gold rows",
+                    step_index=5,
+                    step_name="COMMIT",
                 )
             except CatalogSyncError as exc:
                 attempt_status = "deferred"
@@ -643,6 +673,8 @@ async def run_worker(config: Config, metrics: Metrics) -> None:
                     batch_ref=batch_ref,
                     input_count=len(batch),
                     detail=str(exc),
+                    step_index=3,
+                    step_name="CATALOG",
                 )
                 if batch_control is not None and batch_control.command_id:
                     await asyncio.to_thread(
@@ -678,6 +710,8 @@ async def run_worker(config: Config, metrics: Metrics) -> None:
                     batch_ref=batch_ref,
                     input_count=len(batch),
                     detail=last_error,
+                    step_index=4,
+                    step_name="MATERIALIZE",
                 )
                 if batch_control is not None and batch_control.command_id:
                     await asyncio.to_thread(
@@ -725,6 +759,8 @@ async def run_worker(config: Config, metrics: Metrics) -> None:
                             if current_control.mode == "PAUSED"
                             else "Waiting for an eligible LC/TPF batch"
                         ),
+                        step_index=0,
+                        step_name="IDLE",
                     )
                     await report_status(
                         current_control, observed_runtime_state(current_control)
@@ -788,6 +824,8 @@ async def run_worker(config: Config, metrics: Metrics) -> None:
                             if control.mode == "PAUSED"
                             else "Waiting for an eligible LC/TPF batch"
                         ),
+                        step_index=0,
+                        step_name="IDLE",
                     )
                 if control.mode == "PAUSED":
                     # A human freeze stops intake immediately.  The process
