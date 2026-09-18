@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type JSX, type ReactNode } from 'react';
 import {
   AlertCircle,
-  Box,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -11,6 +10,8 @@ import {
   FileCheck2,
   FileClock,
   Fingerprint,
+  GitBranch,
+  Layers,
   LoaderCircle,
   RefreshCw,
   Search,
@@ -139,7 +140,7 @@ function formatBytes(bytes?: number): string {
 function formatDate(value?: string): string {
   if (!value) return '—';
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('vi-VN');
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('en-US');
 }
 
 function short(value?: string, length = 12): string {
@@ -296,7 +297,7 @@ export function LineageExplorerConsole(): JSX.Element {
       setRecords([]);
       setInventory({ bronze: 0, silver: 0, lineage: 0 });
       setSelectedIdentity(undefined);
-      setError(cause instanceof Error ? cause.message : 'Không tải được lineage evidence');
+      setError(cause instanceof Error ? cause.message : 'Failed to load lineage evidence');
     } finally {
       setLoading(false);
     }
@@ -342,37 +343,37 @@ export function LineageExplorerConsole(): JSX.Element {
           <AlertCircle className="mt-0.5 size-4 shrink-0" />
           <div>
             <p className="font-medium">Lineage observation incomplete</p>
-            <p className="mt-0.5 text-xs">{error ?? `Bronze→Silver evidence vẫn khả dụng; Gold resolver: ${goldError}`}</p>
+            <p className="mt-0.5 text-xs">{error ?? `Bronze→Silver evidence remains available; Gold resolver: ${goldError}`}</p>
           </div>
         </div>
       )}
 
-      <section className="grid border border-border/70 bg-card sm:grid-cols-2 xl:grid-cols-4">
-        {[
-          { label: 'Bronze inventory', value: inventory.bronze, detail: `${kindConfig.shortLabel} source objects`, icon: Database },
-          { label: 'Silver inventory', value: inventory.silver, detail: 'Parquet artifacts in prefix', icon: Box },
-          { label: 'Durable lineage', value: inventory.lineage, detail: 'Immutable commit records', icon: Fingerprint },
-          { label: 'Gold / loaded page', value: observedGold, detail: `${observedGold}/${records.length} manifest-resolved`, icon: ShieldCheck },
-        ].map((metric, index) => {
-          const borders = [
-            '',
-            'border-t border-border/60 sm:border-l sm:border-t-0',
-            'border-t border-border/60 xl:border-l xl:border-t-0',
-            'border-t border-border/60 sm:border-l xl:border-t-0',
-          ][index];
-          return (
-            <div key={metric.label} className={`p-4 ${borders}`}>
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="font-mono text-[9px] uppercase tracking-[0.15em] text-muted-foreground">{metric.label}</p>
-                  <p className="mt-1.5 font-mono text-xl font-semibold tabular-nums text-foreground">{metric.value.toLocaleString()}</p>
-                  <p className="mt-1 text-[11px] text-muted-foreground">{metric.detail}</p>
-                </div>
-                <metric.icon className="size-4 text-primary" />
-              </div>
-            </div>
-          );
-        })}
+      {/* Top 4 KPI Stat Strip */}
+      <section aria-label="Lineage summary" className="grid gap-px overflow-hidden border border-border/70 bg-border/70 sm:grid-cols-2 xl:grid-cols-4">
+        <Stat
+          icon={Database}
+          label="Bronze Inventory"
+          value={`${inventory.bronze.toLocaleString()} objects`}
+          detail={`${kindConfig.shortLabel} raw source files in storage`}
+        />
+        <Stat
+          icon={Layers}
+          label="Silver Inventory"
+          value={`${inventory.silver.toLocaleString()} artifacts`}
+          detail="Parquet segments in silver prefix"
+        />
+        <Stat
+          icon={GitBranch}
+          label="Durable Lineage"
+          value={`${inventory.lineage.toLocaleString()} commits`}
+          detail="Immutable SHA-256 provenance proofs"
+        />
+        <Stat
+          icon={ShieldCheck}
+          label="Gold Resolution"
+          value={`${observedGold} / ${records.length}`}
+          detail={`${records.length > 0 ? Math.round((observedGold / records.length) * 100) : 0}% of loaded page manifest-ready`}
+        />
       </section>
 
       <section className="border border-border/70 bg-card">
@@ -381,7 +382,7 @@ export function LineageExplorerConsole(): JSX.Element {
             <p className="font-mono text-[9px] uppercase tracking-[0.15em] text-primary">Evidence coverage / loaded page</p>
             <h3 className="mt-1 text-sm font-semibold">Identity-resolved provenance</h3>
             <p className="mt-1 text-xs text-muted-foreground">
-              {records.length === 0 ? 'Chưa có sample trong trang này.' : `${observedLineage}/${records.length} products có lineage commit khớp source identity và processor version.`}
+              {records.length === 0 ? 'No products observed on this page.' : `${observedLineage}/${records.length} products have lineage commits matching source identity and processor version.`}
             </p>
           </div>
           <div className="grid min-w-0 flex-1 gap-1 sm:grid-cols-4 xl:max-w-2xl">
@@ -418,7 +419,7 @@ export function LineageExplorerConsole(): JSX.Element {
               <Input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Lọc TIC, source, object key, lineage ID..."
+                placeholder="Search TIC, source, object key, lineage ID…"
                 className="h-8 rounded-none pl-8 text-xs"
               />
             </div>
@@ -446,7 +447,7 @@ export function LineageExplorerConsole(): JSX.Element {
               {label}
             </button>
           ))}
-          <span className="ml-auto self-center text-[10px] text-muted-foreground">Search lọc trên trang đang tải</span>
+          <span className="ml-auto self-center text-[10px] text-muted-foreground">Filters apply to current loaded page</span>
         </div>
       </section>
 
@@ -476,7 +477,7 @@ export function LineageExplorerConsole(): JSX.Element {
                 {loading && records.length === 0 ? (
                   <TableRow><TableCell colSpan={5} className="h-40 text-center"><LoaderCircle className="mx-auto size-5 animate-spin text-primary" /><p className="mt-2 text-xs text-muted-foreground">Joining persisted evidence…</p></TableCell></TableRow>
                 ) : filteredRecords.length === 0 ? (
-                  <TableRow><TableCell colSpan={5} className="h-40 text-center text-sm text-muted-foreground">Không có product khớp bộ lọc trong trang hiện tại.</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={5} className="h-40 text-center text-sm text-muted-foreground">No products match the selected filters on this page.</TableCell></TableRow>
                 ) : filteredRecords.map((record) => {
                   const stage = recordStage(record);
                   const active = selected?.identity === record.identity;
@@ -521,7 +522,7 @@ export function LineageExplorerConsole(): JSX.Element {
                   value={pageSize}
                   onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }}
                   className="h-8 rounded-none border border-border bg-background px-2 font-mono text-[10px]"
-                  aria-label="Số object mỗi trang"
+                  aria-label="Objects per page"
                 >
                   <option value={10}>10 / page</option><option value={25}>25 / page</option><option value={50}>50 / page</option>
                 </select>
@@ -546,7 +547,7 @@ export function LineageExplorerConsole(): JSX.Element {
           </CardHeader>
           <CardContent className="space-y-2 p-4">
             {!selected ? (
-              <div className="py-20 text-center text-sm text-muted-foreground">Chọn một product để inspect evidence.</div>
+              <div className="py-20 text-center text-sm text-muted-foreground">Select a product from the matrix to inspect provenance evidence.</div>
             ) : (
               <>
                 <EvidenceStep index="01" title="NASA MAST source identity" status="observed from Bronze key" tone="observed">
@@ -583,7 +584,7 @@ export function LineageExplorerConsole(): JSX.Element {
                         <span className="col-span-2">ETag <strong className="break-all text-foreground">{cleanETag(selected.silver.etag)}</strong></span>
                       </div>
                     </>
-                  ) : <p className="text-xs leading-5 text-muted-foreground">Không có Silver object nào mang cùng MAST source identity trong prefix đang quan sát.</p>}
+                  ) : <p className="text-xs leading-5 text-muted-foreground">No Silver object with matching MAST source identity found in observed prefix.</p>}
                 </EvidenceStep>
 
                 <div className="ml-2 h-3 border-l border-dashed border-primary/40" />
@@ -603,7 +604,7 @@ export function LineageExplorerConsole(): JSX.Element {
                   ) : (
                     <div className="flex items-start gap-2 text-xs leading-5 text-muted-foreground">
                       <FileClock className="mt-0.5 size-3.5 shrink-0" />
-                      <p>{selected.silver ? 'Silver object tồn tại nhưng chưa tìm thấy lineage commit tương ứng; đây là trạng thái cần điều tra.' : 'Lineage chỉ được commit sau khi Silver artifact đã durable và được xác minh.'}</p>
+                      <p>{selected.silver ? 'Silver artifact exists but no matching lineage commit was found; investigate pipeline commit stage.' : 'Lineage is committed only after the Silver artifact is verified durable.'}</p>
                     </div>
                   )}
                 </EvidenceStep>
@@ -618,18 +619,45 @@ export function LineageExplorerConsole(): JSX.Element {
                       </div>
                       <div className="flex flex-wrap gap-1">{selected.gold.datasets?.map((dataset) => <Badge key={dataset} variant="outline" className="rounded-none font-mono text-[8px]">{dataset}</Badge>)}</div>
                     </div>
-                  ) : <p className="text-xs leading-5 text-muted-foreground">Chưa có immutable Gold manifest `COMMITTED` thuộc contract research-ready ghi nhận input này.</p>}
+                  ) : <p className="text-xs leading-5 text-muted-foreground">No committed immutable Gold manifest currently records this input.</p>}
                 </EvidenceStep>
 
                 <div className="mt-3 flex items-center gap-2 border border-border/60 bg-muted/15 p-3 text-[10px] leading-4 text-muted-foreground">
                   <CircleDot className="size-3.5 shrink-0 text-primary" />
-                  ETag là object identity từ storage; UI không gọi nó là SHA-256. Hash khoa học chỉ được công nhận khi có lineage record durable.
+                  ETag represents storage object identity. Scientific provenance hashes require a verified durable lineage commit.
                 </div>
               </>
             )}
           </CardContent>
         </Card>
       </div>
+    </div>
+  );
+}
+
+function Stat({
+  icon: Icon,
+  label,
+  value,
+  detail,
+}: {
+  icon: typeof Database;
+  label: string;
+  value: string;
+  detail: string;
+}): JSX.Element {
+  return (
+    <div className="min-w-0 border border-border/70 bg-background/45 p-3.5">
+      <div className="flex items-center gap-2 text-[10px] font-medium uppercase tracking-[0.13em] text-primary">
+        <Icon className="size-4 text-primary" />
+        {label}
+      </div>
+      <p className="mt-2 truncate font-mono text-lg font-semibold tabular-nums text-foreground sm:text-xl">
+        {value}
+      </p>
+      <p className="mt-1 truncate text-[11px] text-muted-foreground" title={detail}>
+        {detail}
+      </p>
     </div>
   );
 }
