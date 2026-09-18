@@ -6,7 +6,6 @@ import {
   ArrowRight,
   CheckCircle2,
   Clock3,
-  ExternalLink,
   GitBranch,
   Layers,
   LoaderCircle,
@@ -23,7 +22,6 @@ import { useRunnerTicket } from '@/features/factory-history/session';
 import type { FactoryComponentEvent, FactoryRun, FactoryRunDetail } from '@/features/factory-history/types';
 import { apiBase, apiFetch } from '@/lib/api';
 
-type StatusFilter = 'all' | 'active' | 'completed' | 'attention' | 'stopped';
 
 const FACTORY_RUN_HISTORY_LIMIT = 100;
 
@@ -78,14 +76,6 @@ function statusVariant(status: string): 'default' | 'secondary' | 'destructive' 
   return 'outline';
 }
 
-function statusMatches(ticket: TicketRecord, filter: StatusFilter): boolean {
-  const status = normalizedStatus(ticket.status);
-  if (filter === 'all') return true;
-  if (filter === 'active') return ['running', 'draining', 'catalog_syncing', 'active'].includes(status);
-  if (filter === 'completed') return status === 'completed';
-  if (filter === 'attention') return status === 'failed' || status === 'error' || Boolean(ticket.last_error);
-  return ['stopped', 'frozen', 'canceled', 'cancelled', 'idle'].includes(status);
-}
 
 export default function RunHistoryPage(): JSX.Element {
   const { activeTicket, setActiveTicket, createNewTicket, recentTickets } = useRunnerTicket();
@@ -94,8 +84,6 @@ export default function RunHistoryPage(): JSX.Element {
   const [runs, setRuns] = useState<FactoryRun[]>([]);
   const [detail, setDetail] = useState<FactoryRunDetail>();
   const [query, setQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  const [modeFilter, setModeFilter] = useState('all');
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -266,13 +254,11 @@ export default function RunHistoryPage(): JSX.Element {
 
   const filteredTickets = useMemo(() => {
     const needle = query.trim().toLowerCase();
+    if (!needle) return ticketRecords;
     return ticketRecords.filter((t) => {
-      if (!statusMatches(t, statusFilter)) return false;
-      if (modeFilter !== 'all' && t.mode.toLowerCase() !== modeFilter) return false;
-      if (!needle) return true;
-      return [t.ticket_id, t.last_snapshot_id, t.status, t.mode].some((v) => v?.toLowerCase().includes(needle));
+      return [t.ticket_id, t.last_snapshot_id, t.started_at].some((v) => v?.toLowerCase().includes(needle));
     });
-  }, [ticketRecords, query, statusFilter, modeFilter]);
+  }, [ticketRecords, query]);
 
   const selectedTicket = ticketRecords.find((t) => t.ticket_id === selectedRunID) ?? (selectedRunID ? {
     ticket_id: selectedRunID,
@@ -387,43 +373,15 @@ export default function RunHistoryPage(): JSX.Element {
                 {filteredTickets.length} / {ticketRecords.length} tickets
               </span>
             </div>
-            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_150px_140px]">
-              <label className="relative">
-                <span className="sr-only">Search ticket</span>
-                <Search className="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
-                <input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search ticket ID or snapshot…"
-                  className="h-9 w-full rounded-none border border-input bg-background pl-8 pr-3 text-xs outline-none focus:border-ring"
-                />
-              </label>
-              <label>
-                <span className="sr-only">Run status</span>
-                <select
-                  value={statusFilter}
-                  onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
-                  className="h-9 w-full rounded-none border border-input bg-background px-2 font-mono text-[10px] uppercase outline-none focus:border-ring"
-                >
-                  <option value="all">All states</option>
-                  <option value="active">Active / Running</option>
-                  <option value="completed">Completed</option>
-                  <option value="attention">Attention</option>
-                  <option value="stopped">Stopped / Idle</option>
-                </select>
-              </label>
-              <label>
-                <span className="sr-only">Run mode</span>
-                <select
-                  value={modeFilter}
-                  onChange={(event) => setModeFilter(event.target.value)}
-                  className="h-9 w-full rounded-none border border-input bg-background px-2 font-mono text-[10px] uppercase outline-none focus:border-ring"
-                >
-                  <option value="all">All modes</option>
-                  <option value="stream">Stream</option>
-                  <option value="batch">Batch</option>
-                </select>
-              </label>
+            <div className="relative">
+              <span className="sr-only">Search ticket</span>
+              <Search className="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search ticket ID or snapshot…"
+                className="h-9 w-full rounded-none border border-input bg-background pl-8 pr-3 text-xs outline-none focus:border-ring"
+              />
             </div>
           </CardHeader>
           <CardContent className="p-0">
@@ -437,14 +395,11 @@ export default function RunHistoryPage(): JSX.Element {
               </div>
             ) : (
               <div className="max-h-[620px] overflow-auto">
-                <table className="w-full min-w-[780px] text-sm">
+                <table className="w-full text-sm">
                   <thead className="sticky top-0 z-10 border-b bg-card text-left font-mono text-[9px] uppercase tracking-[0.1em] text-muted-foreground">
                     <tr>
                       <th className="p-3 pl-4">Runner Ticket</th>
-                      <th className="p-3">Stages Executed</th>
-                      <th className="p-3">Mode</th>
-                      <th className="p-3">Status</th>
-                      <th className="p-3 text-right">Started / Duration</th>
+                      <th className="p-3 text-right">Created At</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -501,10 +456,7 @@ function TicketRow({
   isActive: boolean;
   onSelect: () => void;
 }): JSX.Element {
-  const executedStages: Array<{ key: string; label: string }> = [];
-  if (ticket.hasIngest) executedStages.push({ key: 'ingest', label: 'Ingest' });
-  if (ticket.hasSilver) executedStages.push({ key: 'silver', label: 'Silver' });
-  if (ticket.hasGold) executedStages.push({ key: 'gold', label: 'Gold' });
+  const createdAt = ticket.started_at ?? ticket.updated_at;
 
   return (
     <tr
@@ -528,36 +480,8 @@ function TicketRow({
           {ticket.last_snapshot_id || (ticket.runs.length > 0 ? `${ticket.runs.length} execution(s)` : 'fresh ticket')}
         </p>
       </td>
-      <td className="p-3">
-        <div className="flex flex-wrap items-center gap-1.5">
-          {executedStages.length === 0 ? (
-            <span className="font-mono text-[10px] text-muted-foreground/60">— No runs yet</span>
-          ) : (
-            executedStages.map((stg) => (
-              <span
-                key={stg.key}
-                className="inline-flex items-center gap-1 border border-primary/40 bg-primary/10 px-1.5 py-0.5 font-mono text-[8px] font-medium uppercase text-primary"
-              >
-                <span className="size-1 rounded-full bg-primary" />
-                {stg.label}
-              </span>
-            ))
-          )}
-        </div>
-      </td>
-      <td className="p-3 font-mono text-[10px] uppercase text-muted-foreground">
-        {ticket.mode}
-      </td>
-      <td className="p-3">
-        <Badge variant={statusVariant(ticket.status)} className="rounded-none font-mono text-[9px] uppercase">
-          {ticket.status}
-        </Badge>
-      </td>
       <td className="p-3 text-right">
-        <p className="text-xs">{displayTime(ticket.started_at)}</p>
-        <p className="mt-0.5 font-mono text-[9px] text-muted-foreground">
-          {ticket.started_at ? elapsed(ticket.started_at, ticket.finished_at ?? ticket.updated_at) : '—'}
-        </p>
+        <p className="font-mono text-xs text-foreground">{createdAt ? displayTime(createdAt) : '—'}</p>
       </td>
     </tr>
   );
