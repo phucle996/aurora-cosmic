@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
-import type { FactoryRun } from './types';
+import type { FactoryRun, FactoryTicket } from './types';
 
 export const ACTIVE_TICKET_STORAGE_KEY = 'aurora.data-factory.active-ticket';
 export const RECENT_TICKETS_STORAGE_KEY = 'aurora.data-factory.recent-tickets';
@@ -15,12 +15,9 @@ export function getStoredActiveTicket(): string {
   try {
     const saved = window.localStorage.getItem(ACTIVE_TICKET_STORAGE_KEY);
     if (saved && saved.trim()) return saved.trim();
-    const fresh = generateRunnerTicket();
-    window.localStorage.setItem(ACTIVE_TICKET_STORAGE_KEY, fresh);
-    recordRecentTicket(fresh);
-    return fresh;
+    return 'RUN-20260918-8Q5I';
   } catch {
-    return generateRunnerTicket();
+    return 'RUN-20260918-8Q5I';
   }
 }
 
@@ -63,33 +60,59 @@ export function setStoredActiveTicket(ticket: string): void {
 export function useRunnerTicket(): {
   activeTicket: string;
   setActiveTicket: (ticket: string) => void;
-  createNewTicket: () => string;
+  createNewTicket: (description?: string) => string;
+  tickets: FactoryTicket[];
+  loadTickets: () => Promise<FactoryTicket[]>;
   recentTickets: string[];
   historicalRuns: FactoryRun[];
   loading: boolean;
 } {
   const [activeTicket, setActiveTicketState] = useState<string>(getStoredActiveTicket);
+  const [tickets, setTickets] = useState<FactoryTicket[]>([]);
   const [recentTickets, setRecentTickets] = useState<string[]>(getStoredRecentTickets);
   const [historicalRuns, setHistoricalRuns] = useState<FactoryRun[]>([]);
   const [loading, setLoading] = useState(false);
 
+  const loadTickets = useCallback(async (): Promise<FactoryTicket[]> => {
+    try {
+      const response = await apiFetch<{ items: FactoryTicket[] }>('/v1/data-factory/tickets?limit=100');
+      const items = response.items ?? [];
+      setTickets(items);
+      if (items.length > 0) {
+        const ticketIDs = items.map((t) => t.ticket_id);
+        setRecentTickets(ticketIDs);
+      }
+      return items;
+    } catch {
+      return [];
+    }
+  }, []);
+
   const fetchHistorical = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await apiFetch<{ items: FactoryRun[] }>('/v1/data-factory/runs?limit=50');
-      const items = response.items ?? [];
-      setHistoricalRuns(items);
-      const merged = new Set<string>(getStoredRecentTickets());
-      for (const item of items) {
-        if (item.run_id) merged.add(item.run_id);
+      const [runsRes, ticketsRes] = await Promise.allSettled([
+        apiFetch<{ items: FactoryRun[] }>('/v1/data-factory/runs?limit=50'),
+        loadTickets(),
+      ]);
+      if (runsRes.status === 'fulfilled') {
+        setHistoricalRuns(runsRes.value.items ?? []);
       }
-      setRecentTickets([...merged]);
+      if (ticketsRes.status === 'fulfilled' && ticketsRes.value.length > 0) {
+        // If current active ticket is default and we have real tickets in ClickHouse
+        const firstTicket = ticketsRes.value[0]?.ticket_id;
+        const currentActive = getStoredActiveTicket();
+        if ((!currentActive || currentActive === 'RUN-20260918-8Q5I') && firstTicket) {
+          setStoredActiveTicket(firstTicket);
+          setActiveTicketState(firstTicket);
+        }
+      }
     } catch {
       // Historical API unavailable
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loadTickets]);
 
   useEffect(() => {
     void fetchHistorical();
@@ -110,11 +133,22 @@ export function useRunnerTicket(): {
     setRecentTickets(getStoredRecentTickets());
   }, []);
 
-  const createNewTicket = useCallback(() => {
+  const createNewTicket = useCallback((description = ''): string => {
     const fresh = generateRunnerTicket();
     setStoredActiveTicket(fresh);
     setActiveTicketState(fresh);
-    setRecentTickets(getStoredRecentTickets());
+    setRecentTickets(recordRecentTicket(fresh));
+
+    // Persist immediately to ClickHouse database
+    void apiFetch<FactoryTicket>('/v1/data-factory/tickets', {
+      method: 'POST',
+      body: JSON.stringify({ ticket_id: fresh, description }),
+    }).then((created) => {
+      setTickets((prev) => [created, ...prev.filter((t) => t.ticket_id !== fresh)]);
+    }).catch(() => {
+      // Fallback retained in local state
+    });
+
     return fresh;
   }, []);
 
@@ -122,6 +156,8 @@ export function useRunnerTicket(): {
     activeTicket,
     setActiveTicket,
     createNewTicket,
+    tickets,
+    loadTickets,
     recentTickets,
     historicalRuns,
     loading,

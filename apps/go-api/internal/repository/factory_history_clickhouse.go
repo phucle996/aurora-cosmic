@@ -2,12 +2,14 @@ package repository
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"go-api/infra/clickhouse"
 	"go-api/internal/domain/entity"
@@ -715,4 +717,70 @@ func (r *FactoryHistoryClickHouse) GetRun(ctx context.Context, runID string) (*e
 	scientificEvidence.GoldProjection = projection
 	scientificEvidence.GoldCommit = r.loadGoldCommitEvidence(ctx, batches, materialization, projection)
 	return &entity.FactoryRunDetail{Run: *selected, Batches: batches, Components: components, ScientificEvidence: scientificEvidence}, nil
+}
+
+func (r *FactoryHistoryClickHouse) ListTickets(ctx context.Context, limit int) ([]entity.FactoryTicket, error) {
+	if r == nil || r.client == nil {
+		return nil, fmt.Errorf("factory history client is unavailable")
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	query := fmt.Sprintf(`WITH all_tickets AS (
+		SELECT ticket_id, status, created_at, description, updated_at FROM factory_tickets_v1
+		UNION ALL
+		SELECT run_id AS ticket_id, status, started_at AS created_at, '' AS description, updated_at FROM pipeline_runs_v1
+	)
+	SELECT all_tickets.ticket_id,
+		argMax(all_tickets.status, all_tickets.updated_at) AS status,
+		toString(min(all_tickets.created_at)) AS created_at,
+		argMax(all_tickets.description, all_tickets.updated_at) AS description,
+		toString(max(all_tickets.updated_at)) AS updated_at
+	FROM all_tickets
+	GROUP BY all_tickets.ticket_id
+	ORDER BY created_at DESC
+	LIMIT %d FORMAT JSON`, limit)
+
+	payload, err := r.client.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query factory tickets: %w", err)
+	}
+	return decodeFactoryRows[entity.FactoryTicket](payload)
+}
+
+func (r *FactoryHistoryClickHouse) CreateTicket(ctx context.Context, ticketID string, description string) (*entity.FactoryTicket, error) {
+	if r == nil || r.client == nil {
+		return nil, fmt.Errorf("factory history client is unavailable")
+	}
+	ticketID = strings.TrimSpace(ticketID)
+	if ticketID == "" {
+		b := make([]byte, 2)
+		if _, err := rand.Read(b); err != nil {
+			return nil, fmt.Errorf("generate ticket ID: %w", err)
+		}
+		ticketID = fmt.Sprintf("RUN-%s-%X", time.Now().UTC().Format("20060102"), b)
+	}
+	if !factoryRunID.MatchString(ticketID) {
+		return nil, fmt.Errorf("invalid ticket_id format")
+	}
+
+	escapedID := strings.ReplaceAll(ticketID, "'", "''")
+	escapedDesc := strings.ReplaceAll(description, "'", "''")
+	nowStr := time.Now().UTC().Format("2006-01-02 15:04:05.000")
+
+	query := fmt.Sprintf(
+		"INSERT INTO factory_tickets_v1 (ticket_id, created_at, status, description, updated_at) VALUES ('%s', '%s', 'ACTIVE', '%s', '%s')",
+		escapedID, nowStr, escapedDesc, nowStr,
+	)
+	if err := r.client.Exec(ctx, query); err != nil {
+		return nil, fmt.Errorf("insert factory ticket: %w", err)
+	}
+
+	return &entity.FactoryTicket{
+		TicketID:    ticketID,
+		CreatedAt:   nowStr,
+		Status:      "ACTIVE",
+		Description: description,
+		UpdatedAt:   nowStr,
+	}, nil
 }

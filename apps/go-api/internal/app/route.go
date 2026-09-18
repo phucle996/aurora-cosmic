@@ -41,6 +41,8 @@ func (r *Router) registerRoutes() {
 		if r.module.FactoryHistoryHandler != nil {
 			api.GET("/data-factory/runs", r.module.FactoryHistoryHandler.List)
 			api.GET("/data-factory/runs/:run_id", r.module.FactoryHistoryHandler.Detail)
+			api.GET("/data-factory/tickets", r.module.FactoryHistoryHandler.ListTickets)
+			api.POST("/data-factory/tickets", r.module.FactoryHistoryHandler.CreateTicket)
 		}
 		api.POST("/preprocessing/jobs", r.module.PreprocessingHandler.Start)
 		api.POST("/preprocessing/jobs/:job_id/stop", r.module.PreprocessingHandler.Stop)

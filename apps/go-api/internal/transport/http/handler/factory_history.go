@@ -48,3 +48,36 @@ func (h *FactoryHistoryHandler) Detail(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, detail)
 }
+
+func (h *FactoryHistoryHandler) ListTickets(c *gin.Context) {
+	limit := 100
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err == nil && parsed >= 1 && parsed <= 200 {
+			limit = parsed
+		}
+	}
+	tickets, err := h.history.ListTickets(c.Request.Context(), limit)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": tickets})
+}
+
+type createTicketRequest struct {
+	TicketID    string `json:"ticket_id"`
+	Description string `json:"description"`
+}
+
+func (h *FactoryHistoryHandler) CreateTicket(c *gin.Context) {
+	var req createTicketRequest
+	_ = c.ShouldBindJSON(&req)
+
+	ticket, err := h.history.CreateTicket(c.Request.Context(), req.TicketID, req.Description)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, ticket)
+}

@@ -1,5 +1,14 @@
 package entity
 
+// FactoryTicket is a first-class ticket entity persisted in ClickHouse.
+type FactoryTicket struct {
+	TicketID    string `json:"ticket_id"`
+	CreatedAt   string `json:"created_at"`
+	Status      string `json:"status"`
+	Description string `json:"description,omitempty"`
+	UpdatedAt   string `json:"updated_at,omitempty"`
+}
+
 // FactoryRun is an observed, durable operational run. It is never generated
 // from dashboard state; Gold Builder writes it only after seeing control/runtime.
 type FactoryRun struct {

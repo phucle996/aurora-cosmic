@@ -78,7 +78,7 @@ function statusVariant(status: string): 'default' | 'secondary' | 'destructive' 
 
 
 export default function RunHistoryPage(): JSX.Element {
-  const { activeTicket, setActiveTicket, createNewTicket, recentTickets } = useRunnerTicket();
+  const { activeTicket, setActiveTicket, createNewTicket, tickets, loadTickets } = useRunnerTicket();
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedRunID = searchParams.get('run_id') ?? '';
   const [runs, setRuns] = useState<FactoryRun[]>([]);
@@ -131,7 +131,7 @@ export default function RunHistoryPage(): JSX.Element {
     }
   }, []);
 
-  // Aggregate runs and recentTickets into distinct Runner Tickets
+  // Aggregate ClickHouse tickets and observed stage runs
   const ticketRecords = useMemo<TicketRecord[]>(() => {
     const map = new Map<string, FactoryRun[]>();
     for (const run of runs) {
@@ -143,8 +143,8 @@ export default function RunHistoryPage(): JSX.Element {
 
     const allTicketIds = new Set<string>();
     if (activeTicket) allTicketIds.add(activeTicket);
-    for (const t of recentTickets) {
-      if (t) allTicketIds.add(t);
+    for (const t of tickets) {
+      if (t.ticket_id) allTicketIds.add(t.ticket_id);
     }
     for (const runId of map.keys()) {
       allTicketIds.add(runId);
@@ -153,6 +153,7 @@ export default function RunHistoryPage(): JSX.Element {
     const records: TicketRecord[] = [];
     for (const tid of allTicketIds) {
       const ticketRuns = map.get(tid) ?? [];
+      const chTicket = tickets.find((t) => t.ticket_id === tid);
       
       const ingestRun = ticketRuns.find((r) => r.pipeline.toLowerCase().includes('ingest') || r.pipeline.toLowerCase().includes('bronze'));
       const goldRun = ticketRuns.find((r) => 
@@ -166,7 +167,7 @@ export default function RunHistoryPage(): JSX.Element {
 
       const primaryRun = goldRun ?? silverRun ?? ingestRun ?? ticketRuns[0];
 
-      let overallStatus = 'idle';
+      let overallStatus = chTicket?.status.toLowerCase() ?? 'idle';
       if (ticketRuns.some((r) => ['running', 'draining', 'catalog_syncing'].includes(normalizedStatus(r.status)))) {
         overallStatus = 'running';
       } else if (ticketRuns.some((r) => ['failed', 'error'].includes(normalizedStatus(r.status)))) {
@@ -178,8 +179,8 @@ export default function RunHistoryPage(): JSX.Element {
       }
 
       const overallMode = primaryRun?.mode || 'STREAM';
-      const startedAt = ticketRuns.map((r) => r.started_at).filter(Boolean).sort()[0] ?? primaryRun?.started_at;
-      const updatedAt = ticketRuns.map((r) => r.updated_at).filter(Boolean).sort().reverse()[0] ?? primaryRun?.updated_at;
+      const startedAt = chTicket?.created_at ?? ticketRuns.map((r) => r.started_at).filter(Boolean).sort()[0] ?? primaryRun?.started_at;
+      const updatedAt = chTicket?.updated_at ?? ticketRuns.map((r) => r.updated_at).filter(Boolean).sort().reverse()[0] ?? primaryRun?.updated_at;
       const finishedAt = primaryRun?.finished_at;
 
       records.push({
@@ -205,17 +206,18 @@ export default function RunHistoryPage(): JSX.Element {
     records.sort((a, b) => {
       if (a.ticket_id === activeTicket) return -1;
       if (b.ticket_id === activeTicket) return 1;
-      const timeA = parseTime(a.updated_at ?? a.started_at)?.getTime() ?? 0;
-      const timeB = parseTime(b.updated_at ?? b.started_at)?.getTime() ?? 0;
+      const timeA = parseTime(a.started_at ?? a.updated_at)?.getTime() ?? 0;
+      const timeB = parseTime(b.started_at ?? b.updated_at)?.getTime() ?? 0;
       return timeB - timeA;
     });
 
     return records;
-  }, [runs, recentTickets, activeTicket]);
+  }, [runs, tickets, activeTicket]);
 
   useEffect(() => {
     void (async () => {
       const items = await loadRuns();
+      void loadTickets();
       if (!selectedRunID) {
         if (activeTicket) {
           selectRun(activeTicket, true);
@@ -224,7 +226,7 @@ export default function RunHistoryPage(): JSX.Element {
         }
       }
     })();
-  }, [loadRuns, selectRun, selectedRunID, activeTicket]);
+  }, [loadRuns, loadTickets, selectRun, selectedRunID, activeTicket]);
 
   useEffect(() => {
     void loadDetail(selectedRunID);
@@ -235,6 +237,7 @@ export default function RunHistoryPage(): JSX.Element {
       if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
       refreshTimer.current = window.setTimeout(() => {
         void loadRuns(false);
+        void loadTickets();
         if (selectedRunID) void loadDetail(selectedRunID, false);
       }, 350);
     };
@@ -244,11 +247,12 @@ export default function RunHistoryPage(): JSX.Element {
       events.close();
       if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
     };
-  }, [loadDetail, loadRuns, selectedRunID]);
+  }, [loadDetail, loadRuns, loadTickets, selectedRunID]);
 
   const handleCreateNew = () => {
     const created = createNewTicket();
     selectRun(created, false);
+    void loadTickets();
     void loadRuns(false);
   };
 

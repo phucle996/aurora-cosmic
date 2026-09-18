@@ -112,6 +112,17 @@ ENGINE = MergeTree()
 PRIMARY KEY (snapshot_id)
 ORDER BY (snapshot_id);
 
+-- First-class Runner Tickets catalog. Persists user and system initiated tickets.
+CREATE TABLE IF NOT EXISTS aurora.factory_tickets_v1 (
+    ticket_id LowCardinality(String),
+    created_at DateTime64(3, 'UTC') DEFAULT now64(),
+    status LowCardinality(String) DEFAULT 'ACTIVE',
+    description String DEFAULT '',
+    updated_at DateTime64(3, 'UTC') DEFAULT now64()
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (ticket_id);
+
 -- Durable Data Factory operational history. Gold Builder writes observed
 -- lifecycle and batch facts; the dashboard never derives historical runs.
 CREATE TABLE IF NOT EXISTS aurora.pipeline_runs_v1 (

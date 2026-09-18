@@ -36,3 +36,21 @@ func (s *FactoryHistoryService) GetRun(ctx context.Context, runID string) (*enti
 	}
 	return s.repository.GetRun(ctx, runID)
 }
+
+func (s *FactoryHistoryService) ListTickets(ctx context.Context, limit int) ([]entity.FactoryTicket, error) {
+	if s == nil || s.repository == nil {
+		return nil, fmt.Errorf("factory history is unavailable")
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	return s.repository.ListTickets(ctx, limit)
+}
+
+func (s *FactoryHistoryService) CreateTicket(ctx context.Context, ticketID string, description string) (*entity.FactoryTicket, error) {
+	if s == nil || s.repository == nil {
+		return nil, fmt.Errorf("factory history is unavailable")
+	}
+	ticketID = strings.TrimSpace(ticketID)
+	return s.repository.CreateTicket(ctx, ticketID, strings.TrimSpace(description))
+}

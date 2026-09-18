@@ -1,4 +1,12 @@
 // Shared durable-run contracts consumed by history and pipeline pages.
+export type FactoryTicket = {
+  ticket_id: string;
+  created_at: string;
+  status: string;
+  description?: string;
+  updated_at?: string;
+};
+
 export type FactoryRun = {
   pipeline: string;
   run_id: string;
