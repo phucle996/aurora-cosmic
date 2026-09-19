@@ -3,7 +3,6 @@ import { apiFetch } from '@/lib/api';
 import type { FactoryRun, FactoryTicket } from '@/types/ticket';
 
 export const ACTIVE_TICKET_STORAGE_KEY = 'aurora.data-factory.active-ticket';
-export const RECENT_TICKETS_STORAGE_KEY = 'aurora.data-factory.recent-tickets';
 
 export function generateRunnerTicket(): string {
   const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
@@ -14,34 +13,9 @@ export function generateRunnerTicket(): string {
 export function getStoredActiveTicket(): string {
   try {
     const saved = window.localStorage.getItem(ACTIVE_TICKET_STORAGE_KEY);
-    if (saved && saved.trim()) return saved.trim();
-    return 'RUN-20260918-8Q5I';
+    return saved && saved.trim() ? saved.trim() : '';
   } catch {
-    return 'RUN-20260918-8Q5I';
-  }
-}
-
-export function recordRecentTicket(ticket: string): string[] {
-  if (!ticket || !ticket.trim()) return [];
-  const normalized = ticket.trim();
-  try {
-    const recents = getStoredRecentTickets();
-    const updated = [normalized, ...recents.filter((t) => t !== normalized)].slice(0, 20);
-    window.localStorage.setItem(RECENT_TICKETS_STORAGE_KEY, JSON.stringify(updated));
-    return updated;
-  } catch {
-    return [normalized];
-  }
-}
-
-export function getStoredRecentTickets(): string[] {
-  try {
-    const raw = window.localStorage.getItem(RECENT_TICKETS_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as string[];
-    return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
-  } catch {
-    return [];
+    return '';
   }
 }
 
@@ -50,14 +24,13 @@ export function setStoredActiveTicket(ticket: string): void {
   if (!normalized) return;
   try {
     window.localStorage.setItem(ACTIVE_TICKET_STORAGE_KEY, normalized);
-    recordRecentTicket(normalized);
     window.dispatchEvent(new CustomEvent('aurora:ticket-change', { detail: normalized }));
   } catch {
     // LocalStorage failure
   }
 }
 
-// Module-level deduplication and cache for the ticket catalog
+// Module-level deduplication and cache for the ticket catalog from ClickHouse API
 let cachedTickets: FactoryTicket[] | null = null;
 let ticketsInFlight: Promise<FactoryTicket[]> | null = null;
 const listeners = new Set<() => void>();
@@ -80,10 +53,13 @@ export async function fetchTicketCatalog(force = false): Promise<FactoryTicket[]
       const items = response.items ?? [];
       cachedTickets = items;
       if (items.length > 0) {
-        const firstTicket = items[0]?.ticket_id;
         const currentActive = getStoredActiveTicket();
-        if ((!currentActive || currentActive === 'RUN-20260918-8Q5I') && firstTicket) {
-          setStoredActiveTicket(firstTicket);
+        const exists = items.some((t) => t.ticket_id === currentActive);
+        if (!currentActive || !exists) {
+          const firstTicket = items[0]?.ticket_id;
+          if (firstTicket) {
+            setStoredActiveTicket(firstTicket);
+          }
         }
       }
       notifyListeners();
@@ -110,14 +86,6 @@ export function useRunnerTicket(): {
 } {
   const [activeTicket, setActiveTicketState] = useState<string>(getStoredActiveTicket);
   const [tickets, setTickets] = useState<FactoryTicket[]>(() => cachedTickets ?? []);
-  const [recentTickets, setRecentTickets] = useState<string[]>(() => {
-    const stored = getStoredRecentTickets();
-    if (cachedTickets && cachedTickets.length > 0) {
-      const ids = cachedTickets.map((t) => t.ticket_id);
-      return Array.from(new Set([...ids, ...stored]));
-    }
-    return stored;
-  });
   const [loading, setLoading] = useState(cachedTickets === null);
 
   const loadTickets = useCallback(async (): Promise<FactoryTicket[]> => {
@@ -133,8 +101,16 @@ export function useRunnerTicket(): {
     const handleSync = () => {
       const current = cachedTickets ?? [];
       setTickets(current);
-      const ids = current.map((t) => t.ticket_id);
-      setRecentTickets(Array.from(new Set([...ids, ...getStoredRecentTickets()])));
+      const currentActive = getStoredActiveTicket();
+      if (current.length > 0 && (!currentActive || !current.some((t) => t.ticket_id === currentActive))) {
+        const fallback = current[0]?.ticket_id;
+        if (fallback) {
+          setStoredActiveTicket(fallback);
+          setActiveTicketState(fallback);
+        }
+      } else if (currentActive) {
+        setActiveTicketState(currentActive);
+      }
       setLoading(false);
     };
 
@@ -150,7 +126,6 @@ export function useRunnerTicket(): {
       const custom = event as CustomEvent<string>;
       if (custom.detail) {
         setActiveTicketState(custom.detail);
-        handleSync();
       }
     };
 
@@ -164,15 +139,12 @@ export function useRunnerTicket(): {
   const setActiveTicket = useCallback((ticket: string) => {
     setStoredActiveTicket(ticket);
     setActiveTicketState(ticket);
-    const ids = (cachedTickets ?? []).map((t) => t.ticket_id);
-    setRecentTickets(Array.from(new Set([...ids, ...getStoredRecentTickets()])));
   }, []);
 
   const createNewTicket = useCallback((description = ''): string => {
     const fresh = generateRunnerTicket();
     setStoredActiveTicket(fresh);
     setActiveTicketState(fresh);
-    recordRecentTicket(fresh);
 
     void apiFetch<FactoryTicket>('/v1/data-factory/tickets', {
       method: 'POST',
@@ -195,7 +167,7 @@ export function useRunnerTicket(): {
     createNewTicket,
     tickets,
     loadTickets,
-    recentTickets,
+    recentTickets: tickets.map((t) => t.ticket_id),
     historicalRuns: [],
     loading,
   };

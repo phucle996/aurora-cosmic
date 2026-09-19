@@ -106,7 +106,7 @@ func TestPreprocessingQueryReportsRunningFromLiveMetrics(t *testing.T) {
 		"queue_depth":      3,
 		"products_total":   1,
 		"errors_total":     0,
-	}})
+	}}, nil, nil, nil)
 	graph, err := svc.Query(context.Background())
 	if err != nil {
 		t.Fatalf("query preprocessing: %v", err)
@@ -120,7 +120,7 @@ func TestPreprocessingQueryReportsRunningFromLiveMetrics(t *testing.T) {
 }
 
 func TestPreprocessingQueryKeepsNoDataGray(t *testing.T) {
-	svc := NewPreprocessingService(fakePreprocessingPrometheus{values: map[string]float64{}})
+	svc := NewPreprocessingService(fakePreprocessingPrometheus{values: map[string]float64{}}, nil, nil, nil)
 	graph, err := svc.Query(context.Background())
 	if err != nil {
 		t.Fatalf("query preprocessing: %v", err)
@@ -131,7 +131,7 @@ func TestPreprocessingQueryKeepsNoDataGray(t *testing.T) {
 }
 
 func TestPreprocessingQueryStillReturnsControlStateWhenPrometheusFails(t *testing.T) {
-	svc := NewPreprocessingService(fakePreprocessingPrometheus{err: errors.New("down")})
+	svc := NewPreprocessingService(fakePreprocessingPrometheus{err: errors.New("down")}, nil, nil, nil)
 	graph, err := svc.Query(context.Background())
 	if err != nil || graph.Status != "not_observed" {
 		t.Fatalf("expected an empty runtime graph, got graph=%#v err=%v", graph, err)
@@ -139,7 +139,7 @@ func TestPreprocessingQueryStillReturnsControlStateWhenPrometheusFails(t *testin
 }
 
 func TestPreprocessingCompletedControlStateRequiresDurableChartEvidence(t *testing.T) {
-	svc := NewPreprocessingService(fakePreprocessingPrometheus{}).(*PreprocessingService)
+	svc := NewPreprocessingService(fakePreprocessingPrometheus{}, nil, nil, nil).(*PreprocessingService)
 	svc.runtimeJob = &entity.PreprocessingControlJob{JobID: "preprocess-run", Status: "completed"}
 
 	graph, err := svc.Query(context.Background())
@@ -192,7 +192,7 @@ func TestPreprocessingCountsActualUnprocessedBronzeFITS(t *testing.T) {
 			"bronze-object-key": "bronze/tess/lightcurve/complete.fits", "bronze-sha256": "bronze-hash", "silver-sha256": "silver-hash", "schema-version": "silver-lightcurve-v1", "parquet-encode-duration-ms": "12.5", "input-points": "100", "output-points": "90", "quality-removed": "6", "invalid-removed": "2", "nonfinite-removed": "1", "nonpositive-time-removed": "1", "outlier-removed": "2", "sigma-clip-4-5-removed": "1", "sigma-clip-ge-5-removed": "1", "sigma-clip-level": "4", "normalized-scatter-before-clip-ppm": "1200", "normalized-scatter-after-clip-ppm": "800",
 		},
 	}}
-	svc := NewPreprocessingServiceWithEventsAndObjects(fakePreprocessingPrometheus{}, nil, nil, objects).(*PreprocessingService)
+	svc := NewPreprocessingService(fakePreprocessingPrometheus{}, nil, nil, objects).(*PreprocessingService)
 	svc.observeSilverFunc = func(context.Context) (repo.SilverEventStreamSnapshot, error) {
 		return repo.SilverEventStreamSnapshot{
 			Messages: 3, Bytes: 900, Consumers: 1,
@@ -299,7 +299,7 @@ func TestPreprocessingExposesDurableTPFNormalizationDiagnostics(t *testing.T) {
 			"tpf-boundary-jump-p95-ppm": "75", "tpf-chunk-count": "4",
 		}},
 	}
-	svc := NewPreprocessingServiceWithEventsAndObjects(fakePreprocessingPrometheus{}, nil, nil, objects).(*PreprocessingService)
+	svc := NewPreprocessingService(fakePreprocessingPrometheus{}, nil, nil, objects).(*PreprocessingService)
 	svc.refreshCheckpointProgress(context.Background())
 	graph, err := svc.Query(context.Background())
 	if err != nil {
@@ -326,7 +326,7 @@ func TestPreprocessingExposesLegacyTPFIntegrityWithoutInventingDiagnostics(t *te
 			"input-cadences": "18300", "output-cadences": "18120", "finite-pixel-fraction": "1",
 		}},
 	}
-	svc := NewPreprocessingServiceWithEventsAndObjects(fakePreprocessingPrometheus{}, nil, nil, objects).(*PreprocessingService)
+	svc := NewPreprocessingService(fakePreprocessingPrometheus{}, nil, nil, objects).(*PreprocessingService)
 	svc.refreshCheckpointProgress(context.Background())
 	graph, err := svc.Query(context.Background())
 	if err != nil {
@@ -349,7 +349,7 @@ func TestPreprocessingKeepsSilverFailuresOutOfParquetEncodeEvidence(t *testing.T
 			"updated_at":"2026-09-02T00:00:00Z"
 		}`),
 	}}
-	svc := NewPreprocessingServiceWithEventsAndObjects(fakePreprocessingPrometheus{}, nil, nil, objects).(*PreprocessingService)
+	svc := NewPreprocessingService(fakePreprocessingPrometheus{}, nil, nil, objects).(*PreprocessingService)
 	svc.refreshCheckpointProgress(context.Background())
 	graph, err := svc.Query(context.Background())
 	if err != nil {
@@ -365,7 +365,7 @@ func TestPreprocessingKeepsSilverFailuresOutOfParquetEncodeEvidence(t *testing.T
 }
 
 func TestPreprocessingRuntimeEventsDriveWorkerSnapshot(t *testing.T) {
-	svc := NewPreprocessingService(fakePreprocessingPrometheus{}).(*PreprocessingService)
+	svc := NewPreprocessingService(fakePreprocessingPrometheus{}, nil, nil, nil).(*PreprocessingService)
 	now := time.Now().UTC()
 	svc.ObserveRuntime(entity.PreprocessingRuntimeEvent{Event: "worker_spawned", WorkerID: "preprocess-01", OccurredAt: now})
 	svc.ObserveRuntime(entity.PreprocessingRuntimeEvent{Event: "file_started", WorkerID: "preprocess-01", ProductKind: "lightcurve", ObjectKey: "bronze/example.fits", Stage: "scientific_transform", OccurredAt: now})

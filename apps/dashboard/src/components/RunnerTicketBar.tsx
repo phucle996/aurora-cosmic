@@ -1,6 +1,5 @@
 import type { JSX } from 'react';
 import { Plus, Ticket } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useRunnerTicket } from '@/lib/runner-ticket';
 
@@ -15,7 +14,7 @@ export function RunnerTicketBar({
   onTicketChange,
   allowCreate = false,
 }: RunnerTicketBarProps): JSX.Element {
-  const { activeTicket, setActiveTicket, createNewTicket, recentTickets } = useRunnerTicket();
+  const { activeTicket, setActiveTicket, createNewTicket, tickets } = useRunnerTicket();
 
   const handleSelect = (ticket: string) => {
     setActiveTicket(ticket);
@@ -39,10 +38,6 @@ export function RunnerTicketBar({
               <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">
                 Runner Ticket
               </span>
-              <Badge variant="outline" className="h-4 rounded-none border-emerald-500/40 bg-emerald-500/10 px-1 font-mono text-[9px] text-emerald-400">
-                <span className="mr-1 inline-block size-1.5 animate-pulse rounded-full bg-emerald-400" />
-                ACTIVE
-              </Badge>
             </div>
             <p className="truncate text-xs text-muted-foreground">
               Controls unified data flow and lineage across Ingest, Preprocessing, and Enrichment.
@@ -58,14 +53,17 @@ export function RunnerTicketBar({
               className="h-8 rounded-none border border-input bg-background px-2.5 font-mono text-xs font-medium text-foreground outline-none focus:border-ring"
               title="Select runner ticket"
             >
-              <option value={activeTicket}>{activeTicket}</option>
-              {recentTickets
-                .filter((t) => t !== activeTicket)
-                .map((ticket) => (
-                  <option key={ticket} value={ticket}>
-                    {ticket}
+              {tickets.length > 0 ? (
+                tickets.map((t) => (
+                  <option key={t.ticket_id} value={t.ticket_id}>
+                    {t.ticket_id} {t.description ? `(${t.description})` : ''}
                   </option>
-                ))}
+                ))
+              ) : activeTicket ? (
+                <option value={activeTicket}>{activeTicket}</option>
+              ) : (
+                <option value="">No tickets available</option>
+              )}
             </select>
           </div>
 

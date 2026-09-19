@@ -26,11 +26,11 @@ export default function LakehousePage(): JSX.Element {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [cursorHistory, setCursorHistory] = useState<Record<number, string>>({ 1: '' });
+  const [searchQuery, setSearchQuery] = useState('');
   const inFlightRef = useRef<Set<string>>(new Set());
 
-  const loadTier = useCallback(async (tierPrefix: string, cursor = '', _targetPage = 1) => {
-    const query = `/v1/storage?prefix=${encodeURIComponent(tierPrefix)}&limit=${PAGE_SIZE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+  const loadTier = useCallback(async (tierPrefix: string, targetPage = 1, search = '') => {
+    const query = `/v1/lakehouse/objects?prefix=${encodeURIComponent(tierPrefix)}&page=${targetPage}&limit=${PAGE_SIZE}${search ? `&search=${encodeURIComponent(search)}` : ''}`;
     if (inFlightRef.current.has(query)) {
       return;
     }
@@ -53,14 +53,14 @@ export default function LakehousePage(): JSX.Element {
 
   // Only load the initial active tab (gold) on mount; do not eagerly fetch all 3 tiers.
   useEffect(() => {
-    void loadTier('gold/', '', 1);
+    void loadTier('gold/', 1, '');
   }, [loadTier]);
 
   const handleTabChange = (tab: string) => {
     const nextTab = tab as 'bronze' | 'silver' | 'gold';
     setActiveTab(nextTab);
     setPage(1);
-    setCursorHistory({ 1: '' });
+    setSearchQuery('');
     const prefix = `${nextTab}/`;
     setCurrentPrefix(prefix);
 
@@ -71,27 +71,30 @@ export default function LakehousePage(): JSX.Element {
       (nextTab === 'gold' && goldData !== null);
 
     if (!alreadyLoaded) {
-      void loadTier(prefix, '', 1);
+      void loadTier(prefix, 1, '');
     }
   };
 
-  const handleSearchOrFilter = (targetPrefix: string) => {
+  const handleSearchOrFilter = (target: string) => {
+    const trimmed = target.trim();
+    let nextPrefix = `${activeTab}/`;
+    let nextSearch = '';
+
+    if (trimmed.includes('/')) {
+      nextPrefix = trimmed;
+    } else if (trimmed !== '') {
+      nextSearch = trimmed;
+    }
+
     setPage(1);
-    setCursorHistory({ 1: '' });
-    setCurrentPrefix(targetPrefix);
-    void loadTier(targetPrefix, '', 1);
+    setCurrentPrefix(nextPrefix);
+    setSearchQuery(nextSearch);
+    void loadTier(nextPrefix, 1, nextSearch);
   };
 
   const handlePageChange = (newPage: number) => {
-    let nextCursor = '';
-    if (newPage > page) {
-      nextCursor = activeListing?.next_cursor ?? '';
-      setCursorHistory((prev) => ({ ...prev, [newPage]: nextCursor }));
-    } else {
-      nextCursor = cursorHistory[newPage] ?? '';
-    }
     setPage(newPage);
-    void loadTier(currentPrefix, nextCursor, newPage);
+    void loadTier(currentPrefix, newPage, searchQuery);
   };
 
   const activeListing = useMemo(() => {
@@ -101,6 +104,9 @@ export default function LakehousePage(): JSX.Element {
   }, [activeTab, bronzeData, silverData, goldData]);
 
   const totalPages = useMemo(() => {
+    if (activeListing?.total_pages && activeListing.total_pages > 0) {
+      return activeListing.total_pages;
+    }
     const total = activeListing?.total;
     if (total === undefined || total <= 0) return 1;
     return Math.max(1, Math.ceil(total / PAGE_SIZE));

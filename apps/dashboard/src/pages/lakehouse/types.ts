@@ -15,8 +15,9 @@ export type StorageListing = {
   page?: number;
   page_size?: number;
   total?: number;
+  total_pages?: number;
   total_bytes?: number;
-  truncated: boolean;
+  truncated?: boolean;
   objects: StorageObject[];
 };
 
@@ -261,3 +262,52 @@ export const goldCandidateSchema: SchemaCatalog = {
   allFieldsNullable: true,
   note: 'Parquet v4 defines columns as nullable at the physical layer for schema evolution; producers enforce identity and status constraints. Candidate Gold records feed model inference and downstream vetting.',
 };
+
+export type StorageParquetColumn = {
+  name: string;
+  path: string;
+  type: string;
+  nullable: boolean;
+  repeated: boolean;
+};
+
+export type StorageParquetPreview = {
+  columns: StorageParquetColumn[];
+  rows: Record<string, unknown>[];
+  total_rows: number;
+  matched_rows: number;
+  offset: number;
+  limit: number;
+};
+
+export type StorageFITSHeaderCard = {
+  keyword: string;
+  value: string;
+  comment: string;
+};
+
+export type StorageFITSHDU = {
+  index: number;
+  name: string;
+  type: string;
+  cards: StorageFITSHeaderCard[];
+  summary: Record<string, string>;
+};
+
+export type StorageFITSPreview = {
+  hdus: StorageFITSHDU[];
+};
+
+export type StoragePreviewResponse = {
+  key: string;
+  format: 'parquet' | 'fits' | 'json' | 'text' | 'binary';
+  size_bytes: number;
+  content_sha256: string;
+  last_modified: string;
+  parquet?: StorageParquetPreview;
+  fits?: StorageFITSPreview;
+  json_content?: unknown;
+  text_content?: string;
+  error?: string;
+};
+

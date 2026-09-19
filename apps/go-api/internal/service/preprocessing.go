@@ -141,23 +141,14 @@ type silverCheckpointEvidence struct {
 	Attempts      int64
 }
 
-// NewPreprocessingService khởi tạo PreprocessingService cơ bản
-func NewPreprocessingService(prometheus repo.PrometheusQuerier, natsClients ...*nats.Client) domainService.Preprocessing {
-	var natsClient *nats.Client
-	if len(natsClients) > 0 {
-		natsClient = natsClients[0]
+// NewPreprocessingService khởi tạo PreprocessingService
+func NewPreprocessingService(prometheus repo.PrometheusQuerier, natsClient *nats.Client, publisher provider.EventPublisher, objects provider.ObjectStorage) domainService.Preprocessing {
+	return &PreprocessingService{
+		prometheus: prometheus,
+		nats:       natsClient,
+		publisher:  publisher,
+		objects:    objects,
 	}
-	return &PreprocessingService{prometheus: prometheus, nats: natsClient}
-}
-
-// NewPreprocessingServiceWithEvents khởi tạo PreprocessingService có EventPublisher
-func NewPreprocessingServiceWithEvents(prometheus repo.PrometheusQuerier, natsClient *nats.Client, publisher provider.EventPublisher) domainService.Preprocessing {
-	return &PreprocessingService{prometheus: prometheus, nats: natsClient, publisher: publisher}
-}
-
-// NewPreprocessingServiceWithEventsAndObjects khởi tạo PreprocessingService đầy đủ chức năng
-func NewPreprocessingServiceWithEventsAndObjects(prometheus repo.PrometheusQuerier, natsClient *nats.Client, publisher provider.EventPublisher, objects provider.ObjectStorage) domainService.Preprocessing {
-	return &PreprocessingService{prometheus: prometheus, nats: natsClient, publisher: publisher, objects: objects}
 }
 
 func (s *PreprocessingService) observeSilverEventStream(ctx context.Context) (repo.SilverEventStreamSnapshot, error) {
@@ -229,10 +220,6 @@ func optionalTime(value *time.Time) time.Time {
 // ============================================================================
 // Start gửi lệnh khởi động chế độ tiền xử lý (Stream hoặc Batch) tới Rust Preprocessor.
 func (s *PreprocessingService) Start(ctx context.Context, request entity.PreprocessingStartRequest) (*entity.PreprocessingControlJob, error) {
-	if s.nats == nil {
-		return nil, fmt.Errorf("preprocessing control is unavailable")
-	}
-
 	// 1. Kiểm tra xem đã có job nào đang chạy chưa
 	s.runtimeMu.RLock()
 	if s.runtimeJob != nil && (s.runtimeJob.Status == "running" || s.runtimeJob.Status == "accepted" || s.runtimeJob.Status == "cancelling") {
@@ -241,17 +228,6 @@ func (s *PreprocessingService) Start(ctx context.Context, request entity.Preproc
 		return nil, fmt.Errorf("preprocessing job %s is still active", activeJobID)
 	}
 	s.runtimeMu.RUnlock()
-
-	request.Mode = strings.ToLower(strings.TrimSpace(request.Mode))
-	if request.Mode == "" {
-		request.Mode = "stream"
-	}
-	if request.Mode != "stream" && request.Mode != "batch" {
-		return nil, fmt.Errorf("preprocessing mode must be stream or batch")
-	}
-	if strings.TrimSpace(request.IngestRunID) != "" || strings.TrimSpace(request.Prefix) != "" {
-		return nil, fmt.Errorf("preprocessing scoping by ingest_run_id or prefix is not supported by the Bronze event contract")
-	}
 
 	// 2. Tạo đối tượng job điều khiển mới
 	jobID := strings.TrimSpace(request.TicketID)
@@ -413,11 +389,6 @@ func (s *PreprocessingService) ObserveRuntime(event entity.PreprocessingRuntimeE
 // ============================================================================
 // Stop gửi lệnh dừng an toàn tới Rust Preprocessor worker.
 func (s *PreprocessingService) Stop(ctx context.Context, jobID string) (*entity.PreprocessingControlJob, error) {
-	jobID = strings.TrimSpace(jobID)
-	if s.nats == nil || jobID == "" {
-		return nil, fmt.Errorf("preprocessing control is unavailable")
-	}
-
 	s.runtimeMu.Lock()
 	if s.runtimeJob != nil && s.runtimeJob.JobID != jobID {
 		s.runtimeMu.Unlock()
@@ -529,10 +500,14 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 						if runtimeJob != nil && runtimeJob.JobID == checkpoint.RunID && runtimeJob.Status == "cancelling" && durableStatus == "running" {
 							// Giữ nguyên trạng thái cancelling trong RAM trong khi worker đang drain
 						} else {
-							runtimeJob = &entity.PreprocessingControlJob{
-								JobID:       checkpoint.RunID,
-								Status:      durableStatus,
-								Mode:        strings.ToLower(checkpoint.Mode),
+								cpMode := strings.ToLower(strings.TrimSpace(checkpoint.Mode))
+								if cpMode == "continuous" {
+									cpMode = "stream"
+								}
+								runtimeJob = &entity.PreprocessingControlJob{
+									JobID:       checkpoint.RunID,
+									Status:      durableStatus,
+									Mode:        cpMode,
 								IngestRunID: checkpoint.IngestRunID,
 								Prefix:      checkpoint.Prefix,
 								WorkerCount: checkpoint.WorkerCount,

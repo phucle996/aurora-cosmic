@@ -4,7 +4,6 @@ import { useSearchParams } from 'react-router-dom';
 
 import { apiFetch } from '@/lib/api';
 
-import { FleetNavigator } from './sections/FleetNavigator';
 import { MonitoringHero } from './sections/MonitoringHero';
 import { TelemetryGrid } from './sections/TelemetryGrid';
 import { TelemetryHeader } from './sections/TelemetryHeader';
@@ -92,21 +91,17 @@ export default function MonitoringPage(): JSX.Element {
     <div className="space-y-5 pb-6">
       <MonitoringHero />
 
-      <FleetNavigator
-        activeTab={activeComponent}
-        selectedStatus={selected?.status}
-        componentStatuses={componentStatuses}
-        onSelectComponent={(componentId) => updateQuery('component', componentId)}
-      />
-
       <TelemetryHeader
+        activeComponent={activeComponent}
         groupName={displayedMeta.group}
         componentName={selected?.name ?? componentMeta.label}
         containerName={selected?.container}
         status={selected?.status}
+        componentStatuses={componentStatuses}
         activeRangeId={activeRange.id}
         autoRefresh={autoRefresh}
         loading={loading}
+        onSelectComponent={(componentId) => updateQuery('component', componentId)}
         onRangeChange={(rangeId) => updateQuery('range', rangeId)}
         onAutoRefreshChange={setAutoRefresh}
         onRefresh={() => void load()}

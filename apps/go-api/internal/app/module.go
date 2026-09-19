@@ -22,6 +22,7 @@ type Module struct {
 	GoldControlHandler    *handler.GoldControlHandler
 	TicketHandler         *handler.TicketHandler
 	IngestHandler         *handler.IngestHandler
+	LakehouseHandler      *handler.LakehouseHandler
 	EventsHandler         *handler.EventsHandler
 	NATSPubSub            *pubsub.NATSPubSub
 	NATSStream            *stream.StreamConsumer
@@ -93,7 +94,7 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	if monitoringService == nil {
 		return nil, fmt.Errorf("service MonitoringService is nil")
 	}
-	preprocessingService := service.NewPreprocessingServiceWithEventsAndObjects(prometheusQuerier, infra.NATS, eventBroker, objectRepo)
+	preprocessingService := service.NewPreprocessingService(prometheusQuerier, infra.NATS, eventBroker, objectRepo)
 	if preprocessingService == nil {
 		return nil, fmt.Errorf("service PreprocessingService is nil")
 	}
@@ -106,6 +107,10 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	ingestService := service.NewIngestService(objectRepo, infra.MinIO.Bucket, infra.NATS, eventBroker)
 	if ingestService == nil {
 		return nil, fmt.Errorf("service IngestService is nil")
+	}
+	lakehouseService := service.NewLakehouseService(objectRepo, infra.MinIO.Bucket)
+	if lakehouseService == nil {
+		return nil, fmt.Errorf("service LakehouseService is nil")
 	}
 
 	natsPubSub := pubsub.New(pubsub.Config{
@@ -131,6 +136,7 @@ func NewModule(infra Infrastructure) (*Module, error) {
 		GoldControlHandler:    handler.NewGoldControlHandler(goldControlService),
 		TicketHandler:         handler.NewTicketHandler(ticketService),
 		IngestHandler:         handler.NewIngestHandler(ingestService),
+		LakehouseHandler:      handler.NewLakehouseHandler(lakehouseService),
 		EventsHandler:         handler.NewEventsHandler(eventBroker, infra.NATS),
 		NATSPubSub:            natsPubSub,
 		NATSStream:            natsStream,

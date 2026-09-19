@@ -23,10 +23,18 @@ func (h *PreprocessingHandler) Start(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid preprocessing start request"})
 		return
 	}
-	if request.Mode != "" && request.Mode != "stream" && request.Mode != "batch" {
+	mode := strings.ToLower(strings.TrimSpace(request.Mode))
+	if mode == "continuous" {
+		mode = "stream"
+	}
+	if mode == "" {
+		mode = "stream"
+	}
+	if mode != "stream" && mode != "batch" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "mode must be stream or batch"})
 		return
 	}
+	request.Mode = mode
 	if request.WorkerCount < 1 || request.WorkerCount > 64 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "worker_count must be between 1 and 64"})
 		return

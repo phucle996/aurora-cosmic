@@ -159,6 +159,16 @@ func (fakeIngest) Storage(context.Context, string, string, int) (*entity.Storage
 	return &entity.StorageListing{Bucket: "aurora", Prefix: "bronze/", Objects: []entity.StorageObject{}}, nil
 }
 
+type fakeLakehouse struct{}
+
+func (fakeLakehouse) List(context.Context, entity.LakehouseListingQuery) (*entity.LakehouseListing, error) {
+	return &entity.LakehouseListing{Bucket: "aurora", Prefix: "bronze/", Objects: []entity.LakehouseObject{}}, nil
+}
+
+func (fakeLakehouse) Preview(context.Context, entity.LakehousePreviewQuery) (*entity.LakehousePreviewResponse, error) {
+	return &entity.LakehousePreviewResponse{Key: "test.txt", Format: "text", TextContent: "hello"}, nil
+}
+
 func (fakeIngest) Start(context.Context, entity.IngestStartRequest) (*entity.IngestControlJob, error) {
 	return &entity.IngestControlJob{TicketID: "ingest-job-test", Status: "running"}, nil
 }
@@ -170,6 +180,7 @@ func (fakeIngest) Cancel(context.Context, string) (*entity.IngestControlJob, err
 var _ service.Candidate = fakeCandidate{}
 var _ service.Anomaly = fakeAnomaly{}
 var _ service.Target = fakeTarget{}
+var _ service.Lakehouse = fakeLakehouse{}
 
 func newTestRouter() http.Handler {
 	return app.NewRouter(&config.Config{
@@ -184,12 +195,13 @@ func newTestRouter() http.Handler {
 		PreprocessingHandler: handler.NewPreprocessingHandler(fakePreprocessing{}),
 		GoldControlHandler:   handler.NewGoldControlHandler(fakeGoldControl{}),
 		IngestHandler:        handler.NewIngestHandler(fakeIngest{}),
+		LakehouseHandler:     handler.NewLakehouseHandler(fakeLakehouse{}),
 	}, provider.NewMetrics())
 }
 
 func TestRouterEndpoints(t *testing.T) {
 	router := newTestRouter()
-	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/preprocessing/graph", "/api/v1/gold/control", "/api/v1/gold/snapshots", "/api/v1/gold/snapshots/gold-v1-test", "/api/v1/gold/snapshots/gold-v1-test/artifacts/candidate/42", "/api/v1/ingest/status", "/api/v1/storage?prefix=bronze/&limit=10", "/api/v1/targets", "/api/v1/targets/101?sector=42", "/api/v1/candidates?snapshot_id=gold-v1-test", "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", "/api/v1/lightcurves?tic_id=101&sector=42", "/api/v1/models/training-cohort/review-queue?snapshot_id=gold-v1-test"} {
+	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/preprocessing/graph", "/api/v1/gold/control", "/api/v1/gold/snapshots", "/api/v1/gold/snapshots/gold-v1-test", "/api/v1/gold/snapshots/gold-v1-test/artifacts/candidate/42", "/api/v1/ingest/status", "/api/v1/storage?prefix=bronze/&limit=10", "/api/v1/lakehouse/objects?prefix=bronze/&limit=10", "/api/v1/lakehouse/preview?key=test.txt", "/api/v1/targets", "/api/v1/targets/101?sector=42", "/api/v1/candidates?snapshot_id=gold-v1-test", "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", "/api/v1/lightcurves?tic_id=101&sector=42", "/api/v1/models/training-cohort/review-queue?snapshot_id=gold-v1-test"} {
 		req := httptest.NewRequest(http.MethodGet, endpoint, nil)
 		recorder := httptest.NewRecorder()
 		router.ServeHTTP(recorder, req)

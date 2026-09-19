@@ -445,7 +445,7 @@ export function HopDetailDrawer({
                   </Badge>
                 )}
                 <Badge variant="secondary" className="font-mono text-[10px] uppercase">
-                  {mode === 'stream' ? 'Continuous mode' : 'Backlog mode'}
+                  {mode === 'stream' ? 'Stream mode' : 'Batch mode'}
                 </Badge>
               </DrawerTitle>
               <DrawerDescription className="text-xs mt-0.5">
