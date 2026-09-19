@@ -63,20 +63,28 @@ def dispatchable_ready_batches(
     return [*full, *(partial if source_quiet else [])]
 
 
-def _materialize_candidate(
+def _build_candidate_parquet(
     config: Config, events: list[SilverEvent], catalogs: CatalogBundle
-):
-    """Commit canonical Gold, then index it before acknowledging Silver input."""
+) -> GoldBuildResult:
+    """Build candidate snapshot and serialize Parquet artifacts to MinIO."""
     store = MinioObjectStore(
         config.minio_endpoint, config.minio_access_key, config.minio_secret_key
     )
-    result = GoldBuilder(
+    return GoldBuilder(
         store=store,
         default_bucket=config.minio_bucket,
         scratch_dir=config.scratch_dir,
     ).build_candidate(events, set_current=True, catalogs=catalogs)
-    indexed_rows = GoldClickHouseProjector(config, store).project(result)
-    return result, indexed_rows
+
+
+def _project_candidate_clickhouse(
+    config: Config, result: GoldBuildResult
+) -> int:
+    """Project materialized Gold rows into ClickHouse."""
+    store = MinioObjectStore(
+        config.minio_endpoint, config.minio_access_key, config.minio_secret_key
+    )
+    return GoldClickHouseProjector(config, store).project(result)
 
 
 async def run_worker(config: Config, metrics: Metrics) -> None:
@@ -573,23 +581,47 @@ async def run_worker(config: Config, metrics: Metrics) -> None:
                 await report_status(batch_control, "RUNNING")
                 await set_worker_state(
                     worker_id,
-                    action="MATERIALIZING_AND_INDEXING",
+                    action="EXTRACTING_FEATURES",
                     control=batch_control,
                     batch_ref=batch_ref,
                     input_count=len(batch),
-                    detail="Writing Gold Parquet artifacts and projecting rows to ClickHouse",
+                    detail="Extracting transit features and TPF centroid shifts",
                     step_index=4,
-                    step_name="MATERIALIZE",
+                    step_name="EXTRACT",
                 )
-                (
-                    result,
-                    indexed_rows,
-                ) = await asyncio.get_running_loop().run_in_executor(
+                await set_worker_state(
+                    worker_id,
+                    action="MATERIALIZING_PARQUET",
+                    control=batch_control,
+                    batch_ref=batch_ref,
+                    input_count=len(batch),
+                    detail="Writing calibrated Gold Parquet tables to MinIO",
+                    step_index=5,
+                    step_name="PARQUET",
+                )
+                result = await asyncio.get_running_loop().run_in_executor(
                     build_executor,
-                    _materialize_candidate,
+                    _build_candidate_parquet,
                     config,
                     events,
                     catalog_result.catalogs,
+                )
+                await set_worker_state(
+                    worker_id,
+                    action="INDEXING_CLICKHOUSE",
+                    control=batch_control,
+                    batch_ref=batch_ref,
+                    input_count=len(batch),
+                    snapshot_id=result.snapshot_id,
+                    detail="Projecting Gold candidate rows to ClickHouse real-time tables",
+                    step_index=6,
+                    step_name="INDEX",
+                )
+                indexed_rows = await asyncio.get_running_loop().run_in_executor(
+                    build_executor,
+                    _project_candidate_clickhouse,
+                    config,
+                    result,
                 )
                 completed_at = datetime.now(timezone.utc)
                 await set_worker_state(
@@ -600,7 +632,7 @@ async def run_worker(config: Config, metrics: Metrics) -> None:
                     input_count=len(batch),
                     snapshot_id=result.snapshot_id,
                     detail="Recording durable run history and publishing the committed snapshot",
-                    step_index=5,
+                    step_index=7,
                     step_name="COMMIT",
                 )
                 await asyncio.to_thread(
@@ -654,7 +686,7 @@ async def run_worker(config: Config, metrics: Metrics) -> None:
                     input_count=len(batch),
                     snapshot_id=result.snapshot_id,
                     detail=f"Committed {indexed_rows} indexed Gold rows",
-                    step_index=5,
+                    step_index=7,
                     step_name="COMMIT",
                 )
             except CatalogSyncError as exc:
@@ -710,8 +742,8 @@ async def run_worker(config: Config, metrics: Metrics) -> None:
                     batch_ref=batch_ref,
                     input_count=len(batch),
                     detail=last_error,
-                    step_index=4,
-                    step_name="MATERIALIZE",
+                    step_index=5,
+                    step_name="PARQUET",
                 )
                 if batch_control is not None and batch_control.command_id:
                     await asyncio.to_thread(

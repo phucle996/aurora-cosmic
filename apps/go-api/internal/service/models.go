@@ -784,7 +784,7 @@ func (s *ModelsService) requireCommittedGoldSnapshot(ctx context.Context, snapsh
 		}
 		return fmt.Errorf("read Gold snapshot %s: %w", snapshotID, err)
 	}
-	var snapshot entity.GoldSnapshotDetail
+	var snapshot entity.EnrichmentSnapshotDetail
 	if err := json.Unmarshal(data, &snapshot); err != nil {
 		return invalidModelRequest("decode Gold snapshot %s: %v", snapshotID, err)
 	}

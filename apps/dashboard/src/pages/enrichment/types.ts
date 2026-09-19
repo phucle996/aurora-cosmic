@@ -4,6 +4,7 @@ export type GoldControlOverview = {
     mode: 'PAUSED' | 'STREAM' | 'BATCH';
     max_batch_records: number;
     idle_flush_seconds: number;
+    ticket_id?: string;
     command_id?: string;
     updated_at?: string;
     requested_by?: string;
@@ -51,6 +52,7 @@ export type GoldWorkerTelemetry = {
   worker_id: string;
   lifecycle: 'SPAWNED' | 'ALIVE' | 'KILLED' | string;
   action: string;
+  ticket_id?: string;
   command_id?: string;
   batch_ref?: string;
   input_count: number;
@@ -77,4 +79,22 @@ export type GoldLiveEvent = {
     worker?: GoldWorkerTelemetry;
     runtime?: GoldControlOverview['runtime'];
   };
+};export type GoldConfig = {
+  mode: 'stream' | 'batch';
+  maxBatchRecords: number;
+  idleFlushSeconds: number;
+};
+
+export type ConnectionState = 'connecting' | 'live' | 'reconnecting';
+
+export type EventRow = {
+  id: string;
+  worker: GoldWorkerTelemetry;
+  observedAt: string;
+};
+
+export type PipelineStep = {
+  step: number;
+  label: string;
+  key: string;
 };

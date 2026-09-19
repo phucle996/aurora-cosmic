@@ -144,7 +144,7 @@ func (s *InferenceService) ensureSnapshotCoverage(ctx context.Context, snapshotI
 	if err != nil {
 		return 0, fmt.Errorf("read Gold manifest: %w", err)
 	}
-	var snapshot entity.GoldSnapshotDetail
+	var snapshot entity.EnrichmentSnapshotDetail
 	if err := json.Unmarshal(raw, &snapshot); err != nil {
 		return 0, fmt.Errorf("decode Gold manifest: %w", err)
 	}
@@ -180,7 +180,7 @@ func (s *InferenceService) ensureSnapshotCoverage(ctx context.Context, snapshotI
 	return dispatched, nil
 }
 
-func buildChampionInferenceJob(snapshot entity.GoldSnapshotDetail, artifact entity.GoldArtifact, goldManifestSHA, goldManifestKey string, champion resolvedChampion) (inferenceJobManifestDTO, error) {
+func buildChampionInferenceJob(snapshot entity.EnrichmentSnapshotDetail, artifact entity.EnrichmentArtifact, goldManifestSHA, goldManifestKey string, champion resolvedChampion) (inferenceJobManifestDTO, error) {
 	artifactSHA := strings.TrimSpace(artifact.ParquetSHA256)
 	if artifactSHA == "" {
 		artifactSHA = strings.TrimSpace(artifact.ContentSHA256)

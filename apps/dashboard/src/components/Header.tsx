@@ -30,8 +30,6 @@ export default function Header(): JSX.Element {
     ? 'Scientific Research Factory · Target Analysis'
     : location.pathname.startsWith('/candidates/')
       ? 'Candidate detail'
-      : location.pathname.startsWith('/gold/snapshots/')
-        ? 'Gold file explorer'
       : location.pathname === '/data-factory/preprocessing'
         ? 'Data Factory · Preprocessing'
       : location.pathname === '/data-factory/enrichment'

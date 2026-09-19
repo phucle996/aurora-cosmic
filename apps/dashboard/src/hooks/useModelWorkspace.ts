@@ -81,7 +81,7 @@ export function useModelWorkspace(view?: string) {
   const loadAvailableSnapshots = useCallback(async () => {
     setSnapshotsLoading(true);
     try {
-      const inventory = await apiFetch<GoldSnapshotInventoryResponse>('/v1/gold/snapshots?limit=200');
+      const inventory = await apiFetch<GoldSnapshotInventoryResponse>('/v1/enrichment/snapshots?limit=200');
 
       const trainedSnapshotSet = new Map<string, string>();
       for (const m of models) {

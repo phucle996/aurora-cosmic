@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -134,28 +135,28 @@ func (fakeDAGAggregation) AggregateHopMetrics(context.Context, string, string) (
 }
 func (fakeDAGAggregation) ObserveRuntime(entity.PreprocessingRuntimeEvent) {}
 
-type fakeGoldControl struct{}
+type fakeEnrichmentControl struct{}
 
-func (fakeGoldControl) Query(context.Context) (*entity.GoldControlOverview, error) {
-	return &entity.GoldControlOverview{Control: entity.GoldControlState{Mode: "PAUSED", IdleFlushSeconds: 180}}, nil
+func (fakeEnrichmentControl) GetControlOverview(context.Context) (*entity.EnrichmentControlOverview, error) {
+	return &entity.EnrichmentControlOverview{Control: entity.EnrichmentControlState{Mode: "PAUSED", IdleFlushSeconds: 180}}, nil
 }
-func (fakeGoldControl) Start(context.Context, entity.GoldControlStartRequest) (*entity.GoldControlOverview, error) {
-	return &entity.GoldControlOverview{Control: entity.GoldControlState{Mode: "STREAM", IdleFlushSeconds: 180}}, nil
+func (fakeEnrichmentControl) Start(context.Context, entity.EnrichmentControlStartRequest) (*entity.EnrichmentCommandResult, error) {
+	return &entity.EnrichmentCommandResult{Status: "armed", TicketID: "test-cmd"}, nil
 }
-func (fakeGoldControl) Stop(context.Context) (*entity.GoldControlOverview, error) {
-	return &entity.GoldControlOverview{Control: entity.GoldControlState{Mode: "PAUSED", IdleFlushSeconds: 180}}, nil
+func (fakeEnrichmentControl) Stop(context.Context) (*entity.EnrichmentCommandResult, error) {
+	return &entity.EnrichmentCommandResult{Status: "pause_requested", TicketID: "test-cmd"}, nil
 }
-func (fakeGoldControl) ResolveLineage(_ context.Context, inputs []entity.GoldLineageLookup) ([]entity.GoldLineageResolution, error) {
-	return make([]entity.GoldLineageResolution, 0, len(inputs)), nil
+func (fakeEnrichmentControl) ResolveLineage(_ context.Context, inputs []entity.EnrichmentLineageLookup) ([]entity.EnrichmentLineageResolution, error) {
+	return make([]entity.EnrichmentLineageResolution, 0, len(inputs)), nil
 }
-func (fakeGoldControl) ListSnapshots(context.Context, int) ([]entity.GoldSnapshotSummary, error) {
-	return []entity.GoldSnapshotSummary{{SnapshotID: "gold-v1-test", Status: "COMMITTED"}}, nil
+func (fakeEnrichmentControl) ListSnapshots(context.Context, int) ([]entity.EnrichmentSnapshotSummary, error) {
+	return []entity.EnrichmentSnapshotSummary{{SnapshotID: "gold-v1-test", Status: "COMMITTED"}}, nil
 }
-func (fakeGoldControl) Snapshot(_ context.Context, snapshotID string) (*entity.GoldSnapshotDetail, error) {
-	return &entity.GoldSnapshotDetail{SnapshotID: snapshotID, Artifacts: []entity.GoldArtifact{}}, nil
+func (fakeEnrichmentControl) Snapshot(_ context.Context, snapshotID string) (*entity.EnrichmentSnapshotDetail, error) {
+	return &entity.EnrichmentSnapshotDetail{SnapshotID: snapshotID, Artifacts: []entity.EnrichmentArtifact{}}, nil
 }
-func (fakeGoldControl) Artifact(_ context.Context, snapshotID, dataset string, sector int, _ entity.GoldArtifactPreviewQuery) (*entity.GoldArtifactDetail, error) {
-	return &entity.GoldArtifactDetail{SnapshotID: snapshotID, Artifact: entity.GoldArtifact{Dataset: dataset, Sector: sector}}, nil
+func (fakeEnrichmentControl) Artifact(_ context.Context, snapshotID, dataset string, sector int, _ entity.EnrichmentArtifactPreviewQuery) (*entity.EnrichmentArtifactDetail, error) {
+	return &entity.EnrichmentArtifactDetail{SnapshotID: snapshotID, Artifact: entity.EnrichmentArtifact{Dataset: dataset, Sector: sector}}, nil
 }
 
 type fakeIngest struct{}
@@ -190,28 +191,29 @@ var _ service.Candidate = fakeCandidate{}
 var _ service.Anomaly = fakeAnomaly{}
 var _ service.Target = fakeTarget{}
 var _ service.Lakehouse = fakeLakehouse{}
+var _ service.EnrichmentControl = fakeEnrichmentControl{}
 
 func newTestRouter() http.Handler {
 	return app.NewRouter(&config.Config{
 		CORSAllowedOrigin: "http://localhost:8501",
 	}, &app.Module{
-		TargetHandler:        handler.NewTargetHandler(fakeTarget{}),
-		CandidateHandler:     handler.NewCandidateHandler(fakeCandidate{}),
-		AnomalyHandler:       handler.NewAnomalyHandler(fakeAnomaly{}),
-		ModelsHandler:        handler.NewModelsHandler(fakeModels{}, fakeInference{}),
-		SystemHandler:         handler.NewSystemHandler(fakeReadiness{}),
-		MonitoringHandler:     handler.NewMonitoringHandler(fakeMonitoring{}),
-		DAGAggregationHandler: handler.NewDAGAggregationHandler(fakeDAGAggregation{}),
-		PreprocessingHandler:  handler.NewPreprocessingHandler(fakePreprocessing{}),
-		GoldControlHandler:    handler.NewGoldControlHandler(fakeGoldControl{}),
-		IngestHandler:         handler.NewIngestHandler(fakeIngest{}),
-		LakehouseHandler:      handler.NewLakehouseHandler(fakeLakehouse{}),
+		TargetHandler:            handler.NewTargetHandler(fakeTarget{}),
+		CandidateHandler:         handler.NewCandidateHandler(fakeCandidate{}),
+		AnomalyHandler:           handler.NewAnomalyHandler(fakeAnomaly{}),
+		ModelsHandler:            handler.NewModelsHandler(fakeModels{}, fakeInference{}),
+		SystemHandler:            handler.NewSystemHandler(fakeReadiness{}),
+		MonitoringHandler:        handler.NewMonitoringHandler(fakeMonitoring{}),
+		DAGAggregationHandler:    handler.NewDAGAggregationHandler(fakeDAGAggregation{}),
+		PreprocessingHandler:     handler.NewPreprocessingHandler(fakePreprocessing{}),
+		EnrichmentControlHandler: handler.NewEnrichmentControlHandler(fakeEnrichmentControl{}),
+		IngestHandler:            handler.NewIngestHandler(fakeIngest{}),
+		LakehouseHandler:         handler.NewLakehouseHandler(fakeLakehouse{}),
 	}, provider.NewMetrics())
 }
 
 func TestRouterEndpoints(t *testing.T) {
 	router := newTestRouter()
-	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/dag/hops/bronze", "/api/v1/dag/graph", "/api/v1/gold/control", "/api/v1/gold/snapshots", "/api/v1/gold/snapshots/gold-v1-test", "/api/v1/gold/snapshots/gold-v1-test/artifacts/candidate/42", "/api/v1/ingest/status", "/api/v1/storage?prefix=bronze/&limit=10", "/api/v1/lakehouse/objects?prefix=bronze/&limit=10", "/api/v1/lakehouse/preview?key=test.txt", "/api/v1/targets", "/api/v1/targets/101?sector=42", "/api/v1/candidates?snapshot_id=gold-v1-test", "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", "/api/v1/lightcurves?tic_id=101&sector=42", "/api/v1/models/training-cohort/review-queue?snapshot_id=gold-v1-test"} {
+	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/dag/hops/bronze", "/api/v1/dag/graph", "/api/v1/enrichment/control", "/api/v1/enrichment/snapshots", "/api/v1/enrichment/snapshots/gold-v1-test", "/api/v1/enrichment/snapshots/gold-v1-test/artifacts/candidate/42", "/api/v1/ingest/status", "/api/v1/storage?prefix=bronze/&limit=10", "/api/v1/lakehouse/objects?prefix=bronze/&limit=10", "/api/v1/lakehouse/preview?key=test.txt", "/api/v1/targets", "/api/v1/targets/101?sector=42", "/api/v1/candidates?snapshot_id=gold-v1-test", "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", "/api/v1/lightcurves?tic_id=101&sector=42", "/api/v1/models/training-cohort/review-queue?snapshot_id=gold-v1-test"} {
 		req := httptest.NewRequest(http.MethodGet, endpoint, nil)
 		recorder := httptest.NewRecorder()
 		router.ServeHTTP(recorder, req)
@@ -224,20 +226,75 @@ func TestRouterEndpoints(t *testing.T) {
 	}
 }
 
-func TestGoldControlStartAndStop(t *testing.T) {
+
+func TestEnrichmentControlStartAndStop(t *testing.T) {
 	router := newTestRouter()
-	start := httptest.NewRequest(http.MethodPost, "/api/v1/gold/control/start", strings.NewReader(`{"mode":"stream","idle_flush_seconds":180}`))
+	query := httptest.NewRequest(http.MethodGet, "/api/v1/enrichment/control", nil)
+	queryRecorder := httptest.NewRecorder()
+	router.ServeHTTP(queryRecorder, query)
+	if queryRecorder.Code != http.StatusOK {
+		t.Fatalf("enrichment query returned HTTP %d", queryRecorder.Code)
+	}
+
+	start := httptest.NewRequest(http.MethodPost, "/api/v1/enrichment/control/start", strings.NewReader(`{"mode":"batch","max_batch_records":1000,"idle_flush_seconds":120,"ticket_id":"test-ticket"}`))
 	start.Header.Set("Content-Type", "application/json")
 	startRecorder := httptest.NewRecorder()
 	router.ServeHTTP(startRecorder, start)
 	if startRecorder.Code != http.StatusAccepted {
-		t.Fatalf("gold start returned HTTP %d", startRecorder.Code)
+		t.Fatalf("enrichment start returned HTTP %d", startRecorder.Code)
 	}
-	stop := httptest.NewRequest(http.MethodPost, "/api/v1/gold/control/stop", nil)
+
+	stop := httptest.NewRequest(http.MethodPost, "/api/v1/enrichment/control/stop", nil)
 	stopRecorder := httptest.NewRecorder()
 	router.ServeHTTP(stopRecorder, stop)
 	if stopRecorder.Code != http.StatusAccepted {
-		t.Fatalf("gold stop returned HTTP %d", stopRecorder.Code)
+		t.Fatalf("enrichment stop returned HTTP %d", stopRecorder.Code)
+	}
+
+	// Validation rejection: invalid mode
+	badMode := httptest.NewRequest(http.MethodPost, "/api/v1/enrichment/control/start", strings.NewReader(`{"mode":"invalid_mode"}`))
+	badMode.Header.Set("Content-Type", "application/json")
+	badModeRecorder := httptest.NewRecorder()
+	router.ServeHTTP(badModeRecorder, badMode)
+	if badModeRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request for invalid mode, got %d", badModeRecorder.Code)
+	}
+
+	// Validation rejection: idle flush out of range
+	badFlush := httptest.NewRequest(http.MethodPost, "/api/v1/enrichment/control/start", strings.NewReader(`{"mode":"stream","idle_flush_seconds":10,"max_batch_records":5000}`))
+	badFlush.Header.Set("Content-Type", "application/json")
+	badFlushRecorder := httptest.NewRecorder()
+	router.ServeHTTP(badFlushRecorder, badFlush)
+	if badFlushRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request for invalid idle flush, got %d", badFlushRecorder.Code)
+	}
+
+	// Validation rejection: batch size out of range
+	badBatch := httptest.NewRequest(http.MethodPost, "/api/v1/enrichment/control/start", strings.NewReader(`{"mode":"stream","idle_flush_seconds":180,"max_batch_records":0}`))
+	badBatch.Header.Set("Content-Type", "application/json")
+	badBatchRecorder := httptest.NewRecorder()
+	router.ServeHTTP(badBatchRecorder, badBatch)
+	if badBatchRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request for invalid batch size, got %d", badBatchRecorder.Code)
+	}
+
+	// Validation rejection: ticket_id too long
+	longTicket := strings.Repeat("A", 129)
+	badTicket := httptest.NewRequest(http.MethodPost, "/api/v1/enrichment/control/start", strings.NewReader(fmt.Sprintf(`{"mode":"stream","idle_flush_seconds":180,"max_batch_records":5000,"ticket_id":%q}`, longTicket)))
+	badTicket.Header.Set("Content-Type", "application/json")
+	badTicketRecorder := httptest.NewRecorder()
+	router.ServeHTTP(badTicketRecorder, badTicket)
+	if badTicketRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request for too long ticket_id, got %d", badTicketRecorder.Code)
+	}
+
+	// Validation rejection: missing ticket_id
+	emptyTicket := httptest.NewRequest(http.MethodPost, "/api/v1/enrichment/control/start", strings.NewReader(`{"mode":"stream","idle_flush_seconds":180,"max_batch_records":5000}`))
+	emptyTicket.Header.Set("Content-Type", "application/json")
+	emptyTicketRecorder := httptest.NewRecorder()
+	router.ServeHTTP(emptyTicketRecorder, emptyTicket)
+	if emptyTicketRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request for missing ticket_id, got %d", emptyTicketRecorder.Code)
 	}
 }
 

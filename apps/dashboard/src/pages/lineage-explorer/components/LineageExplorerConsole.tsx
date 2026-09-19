@@ -274,7 +274,7 @@ export function LineageExplorerConsole(): JSX.Element {
 
       if (joined.length > 0) {
         try {
-          const gold = await apiFetch<GoldLineageResponse>('/v1/gold/lineage/resolve', {
+          const gold = await apiFetch<GoldLineageResponse>('/v1/enrichment/lineage/resolve', {
             method: 'POST',
             body: JSON.stringify({
               inputs: joined.map((record) => ({

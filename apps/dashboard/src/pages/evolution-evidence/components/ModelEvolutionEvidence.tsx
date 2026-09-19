@@ -101,7 +101,7 @@ function EvolutionConsole({ model, models, evaluation, jobs, onSelect }: { model
 
   return <div className="min-w-0">
     <section className="border-b border-border/60 p-4 sm:p-5"><div className="grid gap-3 xl:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr_auto_1fr] xl:items-stretch">
-      <EvolutionNode icon={Database} step="01 / DATA" title="Gold snapshot" tone="cyan" primary={evaluation.gold_snapshot_id || 'binding unavailable'} secondary={evaluation.dataset_view_version || 'dataset view not recorded'} link={evaluation.gold_snapshot_id ? `/gold/snapshots/${encodeURIComponent(evaluation.gold_snapshot_id)}` : undefined} />
+      <EvolutionNode icon={Database} step="01 / DATA" title="Gold snapshot" tone="cyan" primary={evaluation.gold_snapshot_id || 'binding unavailable'} secondary={evaluation.dataset_view_version || 'dataset view not recorded'} />
       <RailArrow />
       <EvolutionNode icon={BrainCircuit} step="02 / TRAIN" title="Training run" tone="violet" primary={evaluation.training_run_id} secondary={`${evaluation.split_id || 'split unavailable'} · ${evaluation.feature_count} features`} />
       <RailArrow />

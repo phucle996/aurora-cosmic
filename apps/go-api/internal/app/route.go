@@ -23,13 +23,14 @@ func RegisterRoutes(engine *gin.Engine, module *Module) {
 	}
 	engine.POST("/api/v1/preprocessing/tickets", module.PreprocessingHandler.Start)
 	engine.POST("/api/v1/preprocessing/tickets/:ticket_id/stop", module.PreprocessingHandler.Stop)
-	engine.GET("/api/v1/gold/control", module.GoldControlHandler.Query)
-	engine.POST("/api/v1/gold/control/start", module.GoldControlHandler.Start)
-	engine.POST("/api/v1/gold/control/stop", module.GoldControlHandler.Stop)
-	engine.POST("/api/v1/gold/lineage/resolve", module.GoldControlHandler.ResolveLineage)
-	engine.GET("/api/v1/gold/snapshots", module.GoldControlHandler.ListSnapshots)
-	engine.GET("/api/v1/gold/snapshots/:snapshot_id", module.GoldControlHandler.Snapshot)
-	engine.GET("/api/v1/gold/snapshots/:snapshot_id/artifacts/:dataset/:sector", module.GoldControlHandler.Artifact)
+	// Enrichment workflow routes
+	engine.GET("/api/v1/enrichment/control", module.EnrichmentControlHandler.GetControlOverview)
+	engine.POST("/api/v1/enrichment/control/start", module.EnrichmentControlHandler.Start)
+	engine.POST("/api/v1/enrichment/control/stop", module.EnrichmentControlHandler.Stop)
+	engine.POST("/api/v1/enrichment/lineage/resolve", module.EnrichmentControlHandler.ResolveLineage)
+	engine.GET("/api/v1/enrichment/snapshots", module.EnrichmentControlHandler.ListSnapshots)
+	engine.GET("/api/v1/enrichment/snapshots/:snapshot_id", module.EnrichmentControlHandler.Snapshot)
+	engine.GET("/api/v1/enrichment/snapshots/:snapshot_id/artifacts/:dataset/:sector", module.EnrichmentControlHandler.Artifact)
 	if module.EventsHandler != nil {
 		engine.GET("/api/v1/events", module.EventsHandler.Stream)
 	}

@@ -19,9 +19,9 @@ type Module struct {
 	SystemHandler         *handler.SystemHandler
 	MonitoringHandler     *handler.MonitoringHandler
 	DAGAggregationHandler *handler.DAGAggregationHandler
-	PreprocessingHandler  *handler.PreprocessingHandler
-	GoldControlHandler    *handler.GoldControlHandler
-	TicketHandler         *handler.TicketHandler
+	PreprocessingHandler     *handler.PreprocessingHandler
+	EnrichmentControlHandler *handler.EnrichmentControlHandler
+	TicketHandler            *handler.TicketHandler
 	IngestHandler         *handler.IngestHandler
 	LakehouseHandler      *handler.LakehouseHandler
 	EventsHandler         *handler.EventsHandler
@@ -99,9 +99,9 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	if preprocessingService == nil {
 		return nil, fmt.Errorf("service PreprocessingService is nil")
 	}
-	goldControlService := service.NewGoldControlService(objectRepo, eventBroker)
-	if goldControlService == nil {
-		return nil, fmt.Errorf("service GoldControlService is nil")
+	enrichmentControlService := service.NewEnrichmentControlService(objectRepo, eventBroker)
+	if enrichmentControlService == nil {
+		return nil, fmt.Errorf("service EnrichmentControlService is nil")
 	}
 	ticketRepository := repository.NewTicketClickHouse(infra.ClickHouse, objectRepo)
 	ticketService := service.NewTicketService(ticketRepository)
@@ -129,16 +129,16 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	})
 
 	return &Module{
-		TargetHandler:         handler.NewTargetHandler(targetService),
-		CandidateHandler:      handler.NewCandidateHandler(candidateService),
-		AnomalyHandler:        handler.NewAnomalyHandler(anomalyService),
-		ModelsHandler:         handler.NewModelsHandler(modelsService, inferenceService),
-		SystemHandler:         handler.NewSystemHandler(readinessService),
-		MonitoringHandler:     handler.NewMonitoringHandler(monitoringService),
-		DAGAggregationHandler: handler.NewDAGAggregationHandler(dagAggregationService),
-		PreprocessingHandler:  handler.NewPreprocessingHandler(preprocessingService),
-		GoldControlHandler:    handler.NewGoldControlHandler(goldControlService),
-		TicketHandler:         handler.NewTicketHandler(ticketService),
+		TargetHandler:            handler.NewTargetHandler(targetService),
+		CandidateHandler:         handler.NewCandidateHandler(candidateService),
+		AnomalyHandler:           handler.NewAnomalyHandler(anomalyService),
+		ModelsHandler:            handler.NewModelsHandler(modelsService, inferenceService),
+		SystemHandler:            handler.NewSystemHandler(readinessService),
+		MonitoringHandler:        handler.NewMonitoringHandler(monitoringService),
+		DAGAggregationHandler:    handler.NewDAGAggregationHandler(dagAggregationService),
+		PreprocessingHandler:     handler.NewPreprocessingHandler(preprocessingService),
+		EnrichmentControlHandler: handler.NewEnrichmentControlHandler(enrichmentControlService),
+		TicketHandler:            handler.NewTicketHandler(ticketService),
 		IngestHandler:         handler.NewIngestHandler(ingestService),
 		LakehouseHandler:      handler.NewLakehouseHandler(lakehouseService),
 		EventsHandler:         handler.NewEventsHandler(eventBroker, infra.NATS),

@@ -3,7 +3,17 @@ import type { JSX } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
-import type { GoldSnapshotInput } from '@/pages/gold-snapshot/types';
+export interface GoldSnapshotInput {
+  lineage_id: string;
+  source_product_id: string;
+  product_kind: string;
+  silver_bucket: string;
+  silver_object_key: string;
+  silver_sha256: string;
+  silver_schema_version: string;
+  processor_version: string;
+  sample_id: string;
+}
 
 interface SilverLineageTableProps {
   inputs: GoldSnapshotInput[];

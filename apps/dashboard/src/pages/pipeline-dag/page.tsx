@@ -107,7 +107,7 @@ export default function PipelineDagPage(): JSX.Element {
     try {
       const [nextGraph, nextGoldControl] = await Promise.all([
         apiFetch<PreprocessingGraph>('/v1/dag/graph'),
-        apiFetch<GoldControlOverview>('/v1/gold/control'),
+        apiFetch<GoldControlOverview>('/v1/enrichment/control'),
       ]);
       setGraph(normalizePreprocessingGraph(nextGraph));
       setGoldControl(nextGoldControl);
