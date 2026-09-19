@@ -15,10 +15,8 @@ use crate::runtime::RuntimeReporter;
 use crate::worker;
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct PreprocessingControlCommand {
     action: String,
-    #[serde(alias = "job_id")]
     ticket_id: String,
     #[serde(default = "default_mode")]
     mode: String,
@@ -26,9 +24,13 @@ struct PreprocessingControlCommand {
     worker_count: Option<usize>,
 }
 
+/// Durable Ticket-level lifecycle state saved in MinIO (`checkpoints/preprocessing/runs/<ticket_id>.json`).
+///
+/// Note: This tracks high-level job execution status (RUNNING/COMPLETED/FAILED/STOPPED).
+/// It is distinct from the item-level `PreprocessingCheckpoint` in `domain::checkpoint`
+/// which ensures per-FITS product idempotency and deduplication.
 #[derive(Debug, Clone, Deserialize, Serialize)]
-struct PreprocessingRunCheckpoint {
-    schema_version: u32,
+struct PreprocessingTicketCheckpoint {
     run_id: String,
     status: String,
     mode: String,
@@ -137,7 +139,7 @@ pub async fn run(config: Config) -> Result<()> {
                     worker_task.take();
                     active_run = None;
                 }
-                match command.action.as_str() {
+                match command.action.trim().to_lowercase().as_str() {
                     "start" => {
                         if worker_task.is_some() {
                             tracing::warn!(ticket_id = %command.ticket_id, "Preprocessing run already active");
@@ -205,9 +207,10 @@ async fn ensure_silver_stream(jetstream: &async_nats::jetstream::Context) -> Res
 
 async fn start_run(
     deps: RunDependencies,
-    command: PreprocessingControlCommand,
+    mut command: PreprocessingControlCommand,
     run_cancel: CancellationToken,
 ) -> Result<JoinHandle<()>> {
+    command.mode = command.mode.trim().to_lowercase();
     if !matches!(command.mode.as_str(), "stream" | "batch") {
         bail!("mode must be 'stream' or 'batch'");
     }
@@ -216,8 +219,7 @@ async fn start_run(
         bail!("worker_count must be between 1 and 64");
     }
     let now = chrono::Utc::now().to_rfc3339();
-    let checkpoint = PreprocessingRunCheckpoint {
-        schema_version: 2,
+    let checkpoint = PreprocessingTicketCheckpoint {
         run_id: command.ticket_id.clone(),
         status: "RUNNING".to_string(),
         mode: command.mode.clone(),
@@ -244,19 +246,17 @@ async fn start_run(
     Ok(tokio::spawn(async move {
         let mut consumer = deps.consumer.clone();
         consumer.workers = worker_count;
-        let result = worker::run_pool(
-            deps.jetstream.clone(),
-            Arc::clone(&deps.minio),
-            &consumer,
-            deps.lightcurve.clone(),
-            deps.image.clone(),
-            run_cancel.clone(),
-            Arc::clone(&deps.metrics),
-            &command.mode,
-            deps.runtime.clone(),
-            &command.ticket_id,
-        )
-        .await;
+        let pool_caps = worker::WorkerPoolCapabilities {
+            jetstream: deps.jetstream.clone(),
+            minio: Arc::clone(&deps.minio),
+            consumer,
+            lc_config: deps.lightcurve.clone(),
+            img_config: deps.image.clone(),
+            cancel: run_cancel.clone(),
+            metrics: Arc::clone(&deps.metrics),
+            runtime: deps.runtime.clone(),
+        };
+        let result = worker::run_pool(pool_caps, &command.mode, &command.ticket_id).await;
         let (status, error) = match result {
             Ok(()) if run_cancel.is_cancelled() => ("STOPPED", None),
             Ok(()) => ("COMPLETED", None),
@@ -277,7 +277,7 @@ async fn update_run_status(
     let key = run_checkpoint_key(run_id);
     let Some(mut checkpoint) = deps
         .minio
-        .get_json_object::<PreprocessingRunCheckpoint>(&deps.bucket, &key)
+        .get_json_object::<PreprocessingTicketCheckpoint>(&deps.bucket, &key)
         .await?
     else {
         bail!("preprocessing run checkpoint does not exist: {run_id}");

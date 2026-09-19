@@ -1,27 +1,95 @@
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::Read;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
 use arrow::array::{
-    ArrayRef, Float32Array, Float32Builder, Float64Array, Int32Array, Int64Array, ListBuilder,
-    RecordBatch,
+    ArrayRef, Float32Array, Float32Builder, Float64Array, Int32Array, ListBuilder, RecordBatch,
 };
 use arrow::datatypes::{DataType, Field, Schema};
 
 use parquet::arrow::arrow_writer::ArrowWriter;
-use parquet::basic::Compression;
+use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::properties::WriterProperties;
 
 use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 
 use crate::event::BronzeObjectReady;
-use crate::pipeline::image::{ImageProcessingMetadata, ProcessedFfi, ProcessedTargetPixel};
 use crate::pipeline::lightcurve::ProcessedLightCurve;
+use crate::pipeline::target_pixel::{ProcessedTargetPixel, TargetPixelProcessingMetadata};
+
+/// Dedicated stream hasher tracker that computes SHA-256 and byte counts in-flight as
+/// Parquet blocks are written to disk, avoiding any expensive disk re-reads.
+#[derive(Clone)]
+pub struct StreamHashTracker {
+    hasher: Arc<Mutex<Sha256>>,
+    bytes_written: Arc<AtomicU64>,
+}
+
+impl StreamHashTracker {
+    pub fn new() -> Self {
+        Self {
+            hasher: Arc::new(Mutex::new(Sha256::new())),
+            bytes_written: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    pub fn finalize(&self) -> (u64, String) {
+        let bytes = self.bytes_written.load(Ordering::SeqCst);
+        let hasher = self.hasher.lock().unwrap();
+        let digest = hasher.clone().finalize();
+        (bytes, hex::encode(digest))
+    }
+}
+
+impl Default for StreamHashTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A transparent `std::io::Write` adapter that feeds all written bytes to `StreamHashTracker`.
+pub struct HashingWriter<W: Write> {
+    inner: W,
+    tracker: StreamHashTracker,
+}
+
+impl<W: Write> HashingWriter<W> {
+    pub fn new(inner: W, tracker: StreamHashTracker) -> Self {
+        Self { inner, tracker }
+    }
+}
+
+impl<W: Write> Write for HashingWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let written = self.inner.write(buf)?;
+        if written > 0 {
+            self.tracker
+                .bytes_written
+                .fetch_add(written as u64, Ordering::SeqCst);
+            let mut hasher = self.tracker.hasher.lock().unwrap();
+            hasher.update(&buf[..written]);
+        }
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+/// Create high-throughput streaming Parquet writer properties with ZSTD Level 1.
+fn fast_zstd_properties() -> WriterProperties {
+    let zstd_level = ZstdLevel::try_new(1).unwrap_or_default();
+    WriterProperties::builder()
+        .set_compression(Compression::ZSTD(zstd_level))
+        .build()
+}
 
 /// Metadata and local file handle of a serialized Silver Parquet artifact.
 #[derive(Debug)]
@@ -43,8 +111,9 @@ pub struct SilverArtifact {
 /// in memory.
 pub struct TargetPixelStreamWriter {
     schema: Arc<Schema>,
-    writer: ArrowWriter<File>,
+    writer: ArrowWriter<HashingWriter<File>>,
     temp_file: NamedTempFile,
+    tracker: StreamHashTracker,
     rows: Option<usize>,
     cols: Option<usize>,
     output_cadences: usize,
@@ -57,16 +126,17 @@ impl TargetPixelStreamWriter {
             .context("Failed to create temporary TPF Parquet file")?;
         let file = File::create(temp_file.path())
             .context("Failed to open temporary TPF Parquet file for writing")?;
-        let props = WriterProperties::builder()
-            .set_compression(Compression::ZSTD(Default::default()))
-            .build();
-        let writer = ArrowWriter::try_new(file, schema.clone(), Some(props))
+        let tracker = StreamHashTracker::new();
+        let hashing_file = HashingWriter::new(file, tracker.clone());
+        let props = fast_zstd_properties();
+        let writer = ArrowWriter::try_new(hashing_file, schema.clone(), Some(props))
             .context("Failed to create streaming TPF Parquet writer")?;
 
         Ok(Self {
             schema,
             writer,
             temp_file,
+            tracker,
             rows: None,
             cols: None,
             output_cadences: 0,
@@ -104,7 +174,7 @@ impl TargetPixelStreamWriter {
         self,
         event: &BronzeObjectReady,
         tic_id: Option<u64>,
-        processing: ImageProcessingMetadata,
+        processing: TargetPixelProcessingMetadata,
         chunk_count: usize,
         chunk_cadences: usize,
         processing_fingerprint: &str,
@@ -118,7 +188,7 @@ impl TargetPixelStreamWriter {
             .context("Failed to finalize streaming TPF Parquet writer")?;
 
         let local_path = self.temp_file.path().to_path_buf();
-        let (size_bytes, sha256) = file_size_and_sha256(&local_path)?;
+        let (size_bytes, sha256) = self.tracker.finalize();
         let schema_version = "silver-target-pixel-v1".to_string();
         let processor_version = processing.processor_version.clone();
         let object_key = build_tpf_key(
@@ -261,26 +331,6 @@ pub fn build_tpf_key(
         .unwrap_or_else(|| "none".to_string());
     format!(
         "silver/tess/target-pixel/processor={processor_version}/config={processing_fingerprint}/sector={sector:04}/tic={tic_str}/{source_product_id}.parquet"
-    )
-}
-
-/// Build deterministic Silver MinIO object key for Full Frame Image (FFI).
-pub fn build_ffi_key(
-    sector: u32,
-    camera: Option<u8>,
-    ccd: Option<u8>,
-    source_product_id: &str,
-    processor_version: &str,
-    processing_fingerprint: &str,
-) -> String {
-    let cam_str = camera
-        .map(|c| c.to_string())
-        .unwrap_or_else(|| "none".to_string());
-    let ccd_str = ccd
-        .map(|c| c.to_string())
-        .unwrap_or_else(|| "none".to_string());
-    format!(
-        "silver/tess/ffi/processor={processor_version}/config={processing_fingerprint}/sector={sector:04}/camera={cam_str}/ccd={ccd_str}/{source_product_id}.parquet"
     )
 }
 
@@ -435,9 +485,12 @@ fn target_pixel_schema() -> Arc<Schema> {
 }
 
 fn target_pixel_batch(schema: Arc<Schema>, tpf: &ProcessedTargetPixel) -> Result<RecordBatch> {
+    let cadences = tpf.time.len();
+    let total_pixels = cadences * tpf.rows * tpf.cols;
     let time_array = Arc::new(Float64Array::from(tpf.time.clone())) as ArrayRef;
     let quality_array = Arc::new(Int32Array::from(tpf.quality.clone())) as ArrayRef;
-    let mut flux_builder = ListBuilder::new(Float32Builder::new());
+    let values_builder = Float32Builder::with_capacity(total_pixels);
+    let mut flux_builder = ListBuilder::with_capacity(values_builder, cadences);
 
     for cadence in &tpf.flux {
         for row in cadence {
@@ -448,8 +501,8 @@ fn target_pixel_batch(schema: Arc<Schema>, tpf: &ProcessedTargetPixel) -> Result
         flux_builder.append(true);
     }
     let flux_list_array = Arc::new(flux_builder.finish()) as ArrayRef;
-    let rows_array = Arc::new(Int32Array::from(vec![tpf.rows as i32; tpf.time.len()])) as ArrayRef;
-    let cols_array = Arc::new(Int32Array::from(vec![tpf.cols as i32; tpf.time.len()])) as ArrayRef;
+    let rows_array = Arc::new(Int32Array::from(vec![tpf.rows as i32; cadences])) as ArrayRef;
+    let cols_array = Arc::new(Int32Array::from(vec![tpf.cols as i32; cadences])) as ArrayRef;
 
     RecordBatch::try_new(
         schema,
@@ -492,84 +545,6 @@ fn target_pixel_metadata(
     metadata
 }
 
-/// Serialize a ProcessedFfi to a Parquet file with Arrow schema `silver-ffi-v1` and ZSTD compression.
-pub fn serialize_ffi(
-    ffi: &ProcessedFfi,
-    event: &BronzeObjectReady,
-    tmp_dir: &Path,
-    processing_fingerprint: &str,
-) -> Result<SilverArtifact> {
-    let schema_version = "silver-ffi-v1".to_string();
-    let processor_version = ffi.processing.processor_version.clone();
-    let object_key = build_ffi_key(
-        event.sector,
-        event.camera,
-        event.ccd,
-        &event.source_product_id,
-        &processor_version,
-        processing_fingerprint,
-    );
-
-    let schema = Arc::new(Schema::new(vec![
-        Field::new("width", DataType::Int32, false),
-        Field::new("height", DataType::Int32, false),
-        Field::new("finite_pixel_count", DataType::Int64, false),
-        Field::new("finite_pixel_fraction", DataType::Float32, false),
-        Field::new("median", DataType::Float32, false),
-        Field::new("mean", DataType::Float32, false),
-        Field::new("stddev", DataType::Float32, false),
-        Field::new("min", DataType::Float32, false),
-        Field::new("max", DataType::Float32, false),
-    ]));
-
-    let s = &ffi.statistics;
-    let batch = RecordBatch::try_new(
-        schema.clone(),
-        vec![
-            Arc::new(Int32Array::from(vec![s.width as i32])) as ArrayRef,
-            Arc::new(Int32Array::from(vec![s.height as i32])) as ArrayRef,
-            Arc::new(Int64Array::from(vec![s.finite_pixel_count as i64])) as ArrayRef,
-            Arc::new(Float32Array::from(vec![s.finite_pixel_fraction])) as ArrayRef,
-            Arc::new(Float32Array::from(vec![s.median])) as ArrayRef,
-            Arc::new(Float32Array::from(vec![s.mean])) as ArrayRef,
-            Arc::new(Float32Array::from(vec![s.stddev])) as ArrayRef,
-            Arc::new(Float32Array::from(vec![s.min])) as ArrayRef,
-            Arc::new(Float32Array::from(vec![s.max])) as ArrayRef,
-        ],
-    )
-    .context("Failed to create FFI Arrow RecordBatch")?;
-
-    let (local_path, size_bytes, sha256, handle) = write_parquet_batch(schema, batch, tmp_dir)?;
-
-    let mut metadata = HashMap::new();
-    metadata.insert("schema-version".to_string(), schema_version.clone());
-    metadata.insert("processor-version".to_string(), processor_version.clone());
-    metadata.insert(
-        "source-product-id".to_string(),
-        event.source_product_id.clone(),
-    );
-    metadata.insert("bronze-object-key".to_string(), event.object_key.clone());
-    metadata.insert("bronze-sha256".to_string(), event.sha256.clone());
-    metadata.insert(
-        "processing-fingerprint".to_string(),
-        processing_fingerprint.to_string(),
-    );
-    metadata.insert("silver-sha256".to_string(), sha256.clone());
-    metadata.insert("product-kind".to_string(), "FFI".to_string());
-
-    Ok(SilverArtifact {
-        bucket: event.bucket.clone(),
-        object_key,
-        schema_version,
-        processor_version,
-        local_path,
-        size_bytes,
-        sha256,
-        metadata,
-        _handle: handle,
-    })
-}
-
 /// Helper: Write Arrow RecordBatch to local Parquet file with ZSTD compression and return path, size, sha256, temp handle.
 fn write_parquet_batch(
     schema: Arc<Schema>,
@@ -581,12 +556,12 @@ fn write_parquet_batch(
     let path = temp_file.path().to_path_buf();
 
     let file = File::create(&path).context("Failed to open temp Parquet file for writing")?;
+    let tracker = StreamHashTracker::new();
+    let hashing_file = HashingWriter::new(file, tracker.clone());
 
-    let props = WriterProperties::builder()
-        .set_compression(Compression::ZSTD(Default::default()))
-        .build();
+    let props = fast_zstd_properties();
 
-    let mut writer = ArrowWriter::try_new(file, schema, Some(props))
+    let mut writer = ArrowWriter::try_new(hashing_file, schema, Some(props))
         .context("Failed to create Parquet ArrowWriter")?;
 
     writer
@@ -596,29 +571,7 @@ fn write_parquet_batch(
         .close()
         .context("Failed to finalize Parquet file writer")?;
 
-    let (size_bytes, sha256) = file_size_and_sha256(&path)?;
+    let (size_bytes, sha256) = tracker.finalize();
 
     Ok((path, size_bytes, sha256, temp_file))
-}
-
-/// Hash output incrementally so a multi-GB Parquet artifact is never copied
-/// into RAM merely to calculate its integrity metadata.
-fn file_size_and_sha256(path: &Path) -> Result<(u64, String)> {
-    let mut file = File::open(path).context("Failed to open Parquet file for hashing")?;
-    let mut hasher = Sha256::new();
-    let mut size_bytes = 0u64;
-    let mut buffer = [0u8; 1024 * 1024];
-
-    loop {
-        let read = file
-            .read(&mut buffer)
-            .context("Failed to read Parquet file for hashing")?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-        size_bytes += read as u64;
-    }
-
-    Ok((size_bytes, hex::encode(hasher.finalize())))
 }

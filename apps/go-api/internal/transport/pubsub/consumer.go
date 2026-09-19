@@ -20,7 +20,7 @@ type Config struct {
 	Conn              *nats.Conn
 	NATSURL           string
 	Broker            *provider.SSEBroker
-	Preprocessing     service.Preprocessing
+	DAGAggregation    service.DAGAggregation
 	ChampionInference service.ChampionInferencePlanner
 	Logger            *slog.Logger
 }
@@ -29,7 +29,7 @@ type Config struct {
 // real-time events to the SSE broker and internal domain service callbacks.
 type NATSPubSub struct {
 	broker            *provider.SSEBroker
-	preprocessing     service.Preprocessing
+	dagAggregation    service.DAGAggregation
 	championInference service.ChampionInferencePlanner
 	log               *slog.Logger
 	natsURL           string
@@ -60,7 +60,7 @@ func New(cfg Config) *NATSPubSub {
 
 	return &NATSPubSub{
 		broker:            cfg.Broker,
-		preprocessing:     cfg.Preprocessing,
+		dagAggregation:    cfg.DAGAggregation,
 		championInference: cfg.ChampionInference,
 		log:               logger,
 		natsURL:           cfg.NATSURL,

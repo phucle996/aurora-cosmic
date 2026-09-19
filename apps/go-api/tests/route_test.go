@@ -114,8 +114,8 @@ func (fakeMonitoring) Query(context.Context, entity.MonitoringWindow, string) ([
 
 type fakePreprocessing struct{}
 
-func (fakePreprocessing) Query(context.Context) (*entity.PreprocessingGraph, error) {
-	return &entity.PreprocessingGraph{Status: "not_observed", Hops: []entity.PreprocessingHop{}, Edges: []entity.PreprocessingEdge{}}, nil
+func (fakePreprocessing) GetActiveJob(context.Context) (*entity.PreprocessingControlJob, error) {
+	return nil, nil
 }
 func (fakePreprocessing) Start(context.Context, entity.PreprocessingStartRequest) (*entity.PreprocessingControlJob, error) {
 	return &entity.PreprocessingControlJob{TicketID: "preprocess-job-test", Status: "running", Mode: "stream"}, nil
@@ -123,7 +123,16 @@ func (fakePreprocessing) Start(context.Context, entity.PreprocessingStartRequest
 func (fakePreprocessing) Stop(context.Context, string) (*entity.PreprocessingControlJob, error) {
 	return &entity.PreprocessingControlJob{TicketID: "preprocess-job-test", Status: "cancelling", Mode: "stream"}, nil
 }
-func (fakePreprocessing) ObserveRuntime(entity.PreprocessingRuntimeEvent) {}
+
+type fakeDAGAggregation struct{}
+
+func (fakeDAGAggregation) QueryGraph(context.Context) (*entity.PreprocessingGraph, error) {
+	return &entity.PreprocessingGraph{Status: "not_observed", Hops: []entity.PreprocessingHop{}, Edges: []entity.PreprocessingEdge{}}, nil
+}
+func (fakeDAGAggregation) AggregateHopMetrics(context.Context, string, string) (*entity.PreprocessingHop, error) {
+	return &entity.PreprocessingHop{ID: "bronze", Label: "Bronze Ingestion"}, nil
+}
+func (fakeDAGAggregation) ObserveRuntime(entity.PreprocessingRuntimeEvent) {}
 
 type fakeGoldControl struct{}
 
@@ -190,18 +199,19 @@ func newTestRouter() http.Handler {
 		CandidateHandler:     handler.NewCandidateHandler(fakeCandidate{}),
 		AnomalyHandler:       handler.NewAnomalyHandler(fakeAnomaly{}),
 		ModelsHandler:        handler.NewModelsHandler(fakeModels{}, fakeInference{}),
-		SystemHandler:        handler.NewSystemHandler(fakeReadiness{}),
-		MonitoringHandler:    handler.NewMonitoringHandler(fakeMonitoring{}),
-		PreprocessingHandler: handler.NewPreprocessingHandler(fakePreprocessing{}),
-		GoldControlHandler:   handler.NewGoldControlHandler(fakeGoldControl{}),
-		IngestHandler:        handler.NewIngestHandler(fakeIngest{}),
-		LakehouseHandler:     handler.NewLakehouseHandler(fakeLakehouse{}),
+		SystemHandler:         handler.NewSystemHandler(fakeReadiness{}),
+		MonitoringHandler:     handler.NewMonitoringHandler(fakeMonitoring{}),
+		DAGAggregationHandler: handler.NewDAGAggregationHandler(fakeDAGAggregation{}),
+		PreprocessingHandler:  handler.NewPreprocessingHandler(fakePreprocessing{}),
+		GoldControlHandler:    handler.NewGoldControlHandler(fakeGoldControl{}),
+		IngestHandler:         handler.NewIngestHandler(fakeIngest{}),
+		LakehouseHandler:      handler.NewLakehouseHandler(fakeLakehouse{}),
 	}, provider.NewMetrics())
 }
 
 func TestRouterEndpoints(t *testing.T) {
 	router := newTestRouter()
-	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/preprocessing/graph", "/api/v1/gold/control", "/api/v1/gold/snapshots", "/api/v1/gold/snapshots/gold-v1-test", "/api/v1/gold/snapshots/gold-v1-test/artifacts/candidate/42", "/api/v1/ingest/status", "/api/v1/storage?prefix=bronze/&limit=10", "/api/v1/lakehouse/objects?prefix=bronze/&limit=10", "/api/v1/lakehouse/preview?key=test.txt", "/api/v1/targets", "/api/v1/targets/101?sector=42", "/api/v1/candidates?snapshot_id=gold-v1-test", "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", "/api/v1/lightcurves?tic_id=101&sector=42", "/api/v1/models/training-cohort/review-queue?snapshot_id=gold-v1-test"} {
+	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/dag/hops/bronze", "/api/v1/dag/graph", "/api/v1/gold/control", "/api/v1/gold/snapshots", "/api/v1/gold/snapshots/gold-v1-test", "/api/v1/gold/snapshots/gold-v1-test/artifacts/candidate/42", "/api/v1/ingest/status", "/api/v1/storage?prefix=bronze/&limit=10", "/api/v1/lakehouse/objects?prefix=bronze/&limit=10", "/api/v1/lakehouse/preview?key=test.txt", "/api/v1/targets", "/api/v1/targets/101?sector=42", "/api/v1/candidates?snapshot_id=gold-v1-test", "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", "/api/v1/lightcurves?tic_id=101&sector=42", "/api/v1/models/training-cohort/review-queue?snapshot_id=gold-v1-test"} {
 		req := httptest.NewRequest(http.MethodGet, endpoint, nil)
 		recorder := httptest.NewRecorder()
 		router.ServeHTTP(recorder, req)
@@ -311,7 +321,7 @@ func TestMonitoringTabValidation(t *testing.T) {
 
 func TestPreprocessingStart(t *testing.T) {
 	// Missing ticket_id must fail with 400
-	reqMissing := httptest.NewRequest(http.MethodPost, "/api/v1/preprocessing/jobs", strings.NewReader(`{"mode":"batch","worker_count":2}`))
+	reqMissing := httptest.NewRequest(http.MethodPost, "/api/v1/preprocessing/tickets", strings.NewReader(`{"mode":"batch","worker_count":2}`))
 	reqMissing.Header.Set("Content-Type", "application/json")
 	recMissing := httptest.NewRecorder()
 	newTestRouter().ServeHTTP(recMissing, reqMissing)
@@ -319,7 +329,7 @@ func TestPreprocessingStart(t *testing.T) {
 		t.Fatalf("preprocessing start without ticket_id returned HTTP %d, expected 400", recMissing.Code)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/preprocessing/jobs", strings.NewReader(`{"ticket_id":"preprocess-job-test","mode":"batch","worker_count":2}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/preprocessing/tickets", strings.NewReader(`{"ticket_id":"preprocess-job-test","mode":"batch","worker_count":2}`))
 	req.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	newTestRouter().ServeHTTP(recorder, req)
@@ -329,7 +339,7 @@ func TestPreprocessingStart(t *testing.T) {
 }
 
 func TestPreprocessingStop(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/preprocessing/jobs/preprocess-job-test/stop", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/preprocessing/tickets/preprocess-job-test/stop", nil)
 	recorder := httptest.NewRecorder()
 	newTestRouter().ServeHTTP(recorder, req)
 	if recorder.Code != http.StatusAccepted {

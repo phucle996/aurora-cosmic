@@ -197,7 +197,7 @@ impl Metrics {
         // Materialize every bounded counter/histogram label at startup. Idle
         // workers then export zero-valued families instead of appearing to
         // have a broken Prometheus contract before their first product.
-        for kind in ["lightcurve", "target_pixel", "ffi", "unknown"] {
+        for kind in ["lightcurve", "target_pixel", "unknown"] {
             for status in [STATUS_SUCCESS, STATUS_RECOVERED, STATUS_FAILED] {
                 products.with_label_values(&[kind, status]);
             }
@@ -567,7 +567,6 @@ fn normalize_kind(kind: &str) -> &'static str {
     match kind {
         "lightcurve" | "LightCurve" | "LIGHT_CURVE" => "lightcurve",
         "target_pixel" | "TargetPixel" | "TARGET_PIXEL" => "target_pixel",
-        "ffi" | "Ffi" | "FFI" => "ffi",
         _ => "unknown",
     }
 }

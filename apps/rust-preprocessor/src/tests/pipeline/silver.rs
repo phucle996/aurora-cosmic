@@ -6,15 +6,12 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
 use crate::event::{BronzeObjectReady, ProductKind};
 use crate::output::silver::{
-    build_ffi_key, build_lc_key, build_tpf_key, serialize_ffi, serialize_lightcurve,
-    TargetPixelStreamWriter,
-};
-use crate::pipeline::image::{
-    ImageProcessingMetadata, ImageStatistics, ProcessedFfi, ProcessedTargetPixel,
+    build_lc_key, build_tpf_key, serialize_lightcurve, TargetPixelStreamWriter,
 };
 use crate::pipeline::lightcurve::{
     FluxSource, LightCurveProcessingMetadata, ProcessedLightCurve, QualityMode,
 };
+use crate::pipeline::target_pixel::{ProcessedTargetPixel, TargetPixelProcessingMetadata};
 
 fn make_event(kind: ProductKind) -> BronzeObjectReady {
     BronzeObjectReady {
@@ -47,12 +44,6 @@ fn test_build_deterministic_keys() {
     assert_eq!(
         tpf_key,
         "silver/tess/target-pixel/processor=v1/config=test-config/sector=0042/tic=123456789/prod-1.parquet"
-    );
-
-    let ffi_key = build_ffi_key(42, Some(1), Some(2), "prod-1", "v1", "test-config");
-    assert_eq!(
-        ffi_key,
-        "silver/tess/ffi/processor=v1/config=test-config/sector=0042/camera=1/ccd=2/prod-1.parquet"
     );
 }
 
@@ -162,7 +153,7 @@ fn test_serialize_target_pixel_parquet_roundtrip() {
         ],
         rows: 2,
         cols: 2,
-        processing: ImageProcessingMetadata {
+        processing: TargetPixelProcessingMetadata {
             processor_version: "tpf-preprocess-v1".to_string(),
             normalization_mode: "temporal-median".to_string(),
             input_cadences: 2,
@@ -223,7 +214,7 @@ fn test_serialize_target_pixel_parquet_roundtrip() {
 fn test_stream_target_pixel_parquet_writes_multiple_chunks() {
     let dir = tempdir().unwrap();
     let event = make_event(ProductKind::TargetPixel);
-    let processing = ImageProcessingMetadata {
+    let processing = TargetPixelProcessingMetadata {
         processor_version: "tpf-preprocess-v2-chunked".to_string(),
         normalization_mode: "chunk-temporal-median".to_string(),
         input_cadences: 2,
@@ -300,64 +291,3 @@ fn test_stream_target_pixel_parquet_writes_multiple_chunks() {
     );
 }
 
-#[test]
-fn test_serialize_ffi_parquet_roundtrip() {
-    let dir = tempdir().unwrap();
-    let event = make_event(ProductKind::Ffi);
-
-    let ffi = ProcessedFfi {
-        width: 10,
-        height: 10,
-        statistics: ImageStatistics {
-            width: 10,
-            height: 10,
-            finite_pixel_count: 100,
-            finite_pixel_fraction: 1.0,
-            median: 50.0,
-            mean: 50.0,
-            stddev: 10.0,
-            min: 0.0,
-            max: 100.0,
-        },
-        cutouts: Vec::new(),
-        processing: ImageProcessingMetadata {
-            processor_version: "ffi-preprocess-v1".to_string(),
-            normalization_mode: "median".to_string(),
-            input_cadences: 1,
-            output_cadences: 1,
-            quality_removed: 0,
-            invalid_time_removed: 0,
-            nonfinite_removed: 0,
-            nonpositive_time_removed: 0,
-            finite_pixel_fraction: 1.0,
-            input_pixel_values: 0,
-            normalized_pixel_values: 0,
-            nonfinite_pixel_values: 0,
-            invalid_reference_values: 0,
-            invalid_reference_pixels: 0,
-            pixel_scatter_mad_p50_ppm: 0.0,
-            pixel_scatter_mad_p95_ppm: 0.0,
-            reference_drift_p50_ppm: 0.0,
-            reference_drift_p95_ppm: 0.0,
-            boundary_jump_p50_ppm: 0.0,
-            boundary_jump_p95_ppm: 0.0,
-        },
-    };
-
-    let artifact = serialize_ffi(&ffi, &event, dir.path(), "test-config").unwrap();
-    assert_eq!(artifact.schema_version, "silver-ffi-v1");
-    assert!(artifact.size_bytes > 0);
-
-    let file = File::open(&artifact.local_path).unwrap();
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file).unwrap();
-    let mut reader = builder.build().unwrap();
-
-    let batch = reader.next().unwrap().unwrap();
-    assert_eq!(batch.num_rows(), 1);
-    assert_eq!(batch.num_columns(), 9);
-
-    let width_col = batch
-        .column(0)
-        .as_primitive::<arrow::datatypes::Int32Type>();
-    assert_eq!(width_col.value(0), 10);
-}

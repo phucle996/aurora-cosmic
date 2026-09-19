@@ -73,7 +73,7 @@ export default function PreprocessingPage(): JSX.Element {
   useEffect(() => {
     let mounted = true;
     const loadGraph = () => {
-      apiFetch<PreprocessingGraph>('/v1/preprocessing/graph')
+      apiFetch<PreprocessingGraph>('/v1/dag/graph')
         .then((next) => {
           if (mounted) {
             const normalized = normalizePreprocessingGraph(next);
@@ -124,7 +124,7 @@ export default function PreprocessingPage(): JSX.Element {
     setStartBusy(true);
     setObservationError(null);
     try {
-      const job = await apiFetch<PreprocessingJob>('/v1/preprocessing/jobs', {
+      const job = await apiFetch<PreprocessingJob>('/v1/preprocessing/tickets', {
         method: 'POST',
         body: JSON.stringify({ mode: startMode, worker_count: workerCount, ticket_id: activeTicket }),
       });

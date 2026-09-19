@@ -106,7 +106,7 @@ export default function PipelineDagPage(): JSX.Element {
     if (showLoading) setLoading(true);
     try {
       const [nextGraph, nextGoldControl] = await Promise.all([
-        apiFetch<PreprocessingGraph>('/v1/preprocessing/graph'),
+        apiFetch<PreprocessingGraph>('/v1/dag/graph'),
         apiFetch<GoldControlOverview>('/v1/gold/control'),
       ]);
       setGraph(normalizePreprocessingGraph(nextGraph));
@@ -471,6 +471,7 @@ export default function PipelineDagPage(): JSX.Element {
       {historicalRun ? <PhaseLedger detail={historicalRun} /> : null}
       <HopDetailDrawer
         selectedHop={selectedHop}
+        ticketID={effectiveTicketID}
         onClose={() => setSelectedHopID(undefined)}
         mode={graph?.run?.mode === 'stream' ? 'stream' : 'batch'}
         totalFiles={historicalRun?.run.input_records ?? liveEvidenceRun?.run.input_records ?? graph?.progress?.bronze_total ?? 0}

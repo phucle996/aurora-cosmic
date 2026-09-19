@@ -3,6 +3,7 @@ package pubsub
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"go-api/internal/domain/entity"
@@ -75,13 +76,24 @@ func (p *NATSPubSub) reconcileChampionInference() {
 }
 
 func (p *NATSPubSub) handlePreprocessingEvent(_ context.Context, msg *nats.Msg) {
-	if msg.Subject == "aurora.v1.preprocessing.runtime" && p.preprocessing != nil {
+	if msg.Subject == "aurora.v1.preprocessing.runtime" && p.dagAggregation != nil {
 		var runtime entity.PreprocessingRuntimeEvent
 		if err := json.Unmarshal(msg.Data, &runtime); err != nil {
 			p.log.Warn("Invalid preprocessing runtime event", "error", err)
 			return
 		}
-		p.preprocessing.ObserveRuntime(runtime)
+		runtime.WorkerID = strings.TrimSpace(runtime.WorkerID)
+		if runtime.WorkerID == "" {
+			return
+		}
+		runtime.TicketID = strings.TrimSpace(runtime.TicketID)
+		runtime.ProductKind = strings.TrimSpace(runtime.ProductKind)
+		runtime.ObjectKey = strings.TrimSpace(runtime.ObjectKey)
+		runtime.Stage = strings.TrimSpace(runtime.Stage)
+		if runtime.OccurredAt.IsZero() {
+			runtime.OccurredAt = time.Now().UTC()
+		}
+		p.dagAggregation.ObserveRuntime(runtime)
 		return
 	}
 	p.log.Debug("Preprocessing control event received", "subject", msg.Subject)

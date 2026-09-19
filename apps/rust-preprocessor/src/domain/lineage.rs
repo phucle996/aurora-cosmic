@@ -398,7 +398,6 @@ pub fn build_lineage_object_key(product_kind: &ProductKind, lineage_id: &str) ->
     let kind_path = match product_kind {
         ProductKind::LightCurve => "lightcurve",
         ProductKind::TargetPixel => "target-pixel",
-        ProductKind::Ffi => "ffi",
     };
     format!("lineage/v1/tess/{kind_path}/{lineage_id}.json")
 }

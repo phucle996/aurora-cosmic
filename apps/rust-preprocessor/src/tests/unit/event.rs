@@ -36,23 +36,6 @@ fn light_curve_json() -> &'static str {
     }"#
 }
 
-fn ffi_json() -> &'static str {
-    r#"{
-        "event_id": "evt-003",
-        "event_type": "bronze.object.ready",
-        "source_product_id": "mast-prod-003",
-        "bucket": "aurora",
-        "object_key": "bronze/tess/2024/sector-0042/ffi/tess2024001-s0042-1-1-ffic.fits",
-        "product_kind": "FFI",
-        "sector": 42,
-        "camera": 1,
-        "ccd": 2,
-        "size_bytes": 67108864,
-        "sha256": "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
-        "occurred_at": "2026-08-07T06:00:02Z"
-    }"#
-}
-
 #[test]
 fn test_deserialize_target_pixel() {
     let event: BronzeObjectReady = serde_json::from_str(target_pixel_json()).unwrap();
@@ -68,15 +51,6 @@ fn test_deserialize_light_curve() {
     assert_eq!(event.product_kind, ProductKind::LightCurve);
     assert_eq!(event.tic_id, Some(123456789));
     assert!(event.sample_id.is_none());
-}
-
-#[test]
-fn test_deserialize_ffi() {
-    let event: BronzeObjectReady = serde_json::from_str(ffi_json()).unwrap();
-    assert_eq!(event.product_kind, ProductKind::Ffi);
-    assert_eq!(event.camera, Some(1));
-    assert_eq!(event.ccd, Some(2));
-    assert!(event.tic_id.is_none());
 }
 
 #[test]
@@ -159,17 +133,16 @@ fn test_product_kind_light_curve() {
 }
 
 #[test]
-fn test_product_kind_ffi() {
-    let ffi: ProductKind = serde_json::from_str("\"FFI\"").unwrap();
-    assert_eq!(ffi, ProductKind::Ffi);
-}
-
-#[test]
 fn test_product_kind_unknown_rejected() {
     let unknown = serde_json::from_str::<ProductKind>("\"UNKNOWN\"");
     assert!(
         unknown.is_err(),
         "UNKNOWN must not deserialize into ProductKind"
+    );
+    let ffi = serde_json::from_str::<ProductKind>("\"FFI\"");
+    assert!(
+        ffi.is_err(),
+        "FFI must not deserialize into ProductKind (removed/unsupported)"
     );
 }
 

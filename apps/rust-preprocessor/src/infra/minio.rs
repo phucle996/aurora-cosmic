@@ -25,8 +25,6 @@ pub struct TempFitsFile {
 #[derive(Debug, Clone)]
 pub struct StoredObjectStat {
     pub size_bytes: u64,
-    #[allow(dead_code)]
-    pub sha256: Option<String>,
     /// Full user metadata map from MinIO object headers.
     pub metadata: HashMap<String, String>,
 }
@@ -75,7 +73,7 @@ impl MinioClient {
         })
     }
 
-    /// Stat an object and return its content length and optional user metadata SHA-256.
+    /// Stat an object and return its content length and metadata map.
     pub async fn stat_object(&self, bucket: &str, key: &str) -> Result<StoredObjectStat> {
         let resp = self
             .client
@@ -91,11 +89,9 @@ impl MinioClient {
             .metadata()
             .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
             .unwrap_or_default();
-        let sha256 = all_metadata.get("sha256").cloned();
 
         Ok(StoredObjectStat {
             size_bytes,
-            sha256,
             metadata: all_metadata,
         })
     }

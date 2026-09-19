@@ -11,16 +11,17 @@ func RegisterRoutes(engine *gin.Engine, module *Module) {
 
 	engine.GET("/api/v1/system", module.SystemHandler.System)
 	engine.GET("/api/v1/monitoring", module.MonitoringHandler.Query)
-	engine.GET("/api/v1/preprocessing/graph", module.PreprocessingHandler.Query)
+	if module.DAGAggregationHandler != nil {
+		engine.GET("/api/v1/dag/hops/:hop_id", module.DAGAggregationHandler.QueryHop)
+		engine.GET("/api/v1/dag/graph", module.DAGAggregationHandler.QueryGraph)
+	}
 	if module.TicketHandler != nil {
 		engine.GET("/api/v1/data-factory/runs", module.TicketHandler.List)
 		engine.GET("/api/v1/data-factory/runs/:run_id", module.TicketHandler.Detail)
 		engine.GET("/api/v1/data-factory/tickets", module.TicketHandler.ListTickets)
 		engine.POST("/api/v1/data-factory/tickets", module.TicketHandler.CreateTicket)
 	}
-	engine.POST("/api/v1/preprocessing/jobs", module.PreprocessingHandler.Start)
 	engine.POST("/api/v1/preprocessing/tickets", module.PreprocessingHandler.Start)
-	engine.POST("/api/v1/preprocessing/jobs/:ticket_id/stop", module.PreprocessingHandler.Stop)
 	engine.POST("/api/v1/preprocessing/tickets/:ticket_id/stop", module.PreprocessingHandler.Stop)
 	engine.GET("/api/v1/gold/control", module.GoldControlHandler.Query)
 	engine.POST("/api/v1/gold/control/start", module.GoldControlHandler.Start)

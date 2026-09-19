@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"go-api/internal/domain/entity"
 	"go-api/internal/provider"
 
 	"github.com/nats-io/nats.go"
@@ -154,3 +155,62 @@ func TestNATSPubSubExtractsTrainingJobIDFromRequestedEvent(t *testing.T) {
 	}
 }
 
+type fakeDAGAggregationObserver struct {
+	observed []entity.PreprocessingRuntimeEvent
+}
+
+func (f *fakeDAGAggregationObserver) QueryGraph(context.Context) (*entity.PreprocessingGraph, error) {
+	return nil, nil
+}
+func (f *fakeDAGAggregationObserver) AggregateHopMetrics(context.Context, string, string) (*entity.PreprocessingHop, error) {
+	return nil, nil
+}
+func (f *fakeDAGAggregationObserver) ObserveRuntime(e entity.PreprocessingRuntimeEvent) {
+	f.observed = append(f.observed, e)
+}
+
+func TestHandlePreprocessingEventValidatesWorkerID(t *testing.T) {
+	observer := &fakeDAGAggregationObserver{}
+	ps := New(Config{
+		NATSURL:        "nats://localhost:4222",
+		Broker:         provider.NewSSEBroker(),
+		DAGAggregation: observer,
+	})
+
+	// 1. Empty worker_id should be rejected at transport
+	payloadEmptyWorker, _ := json.Marshal(map[string]any{
+		"event":     "worker_spawned",
+		"worker_id": "   ",
+	})
+	ps.handlePreprocessingEvent(context.Background(), &nats.Msg{
+		Subject: "aurora.v1.preprocessing.runtime",
+		Data:    payloadEmptyWorker,
+	})
+	if len(observer.observed) != 0 {
+		t.Fatalf("expected empty worker_id to be dropped, got: %d events", len(observer.observed))
+	}
+
+	// 2. Valid worker_id should be trimmed and accepted with defaulted OccurredAt
+	payloadValid, _ := json.Marshal(map[string]any{
+		"event":     "worker_spawned",
+		"worker_id": "  preprocess-01  ",
+		"ticket_id": "  RUN-01  ",
+	})
+	ps.handlePreprocessingEvent(context.Background(), &nats.Msg{
+		Subject: "aurora.v1.preprocessing.runtime",
+		Data:    payloadValid,
+	})
+	if len(observer.observed) != 1 {
+		t.Fatalf("expected 1 event, got: %d", len(observer.observed))
+	}
+	obs := observer.observed[0]
+	if obs.WorkerID != "preprocess-01" {
+		t.Errorf("expected trimmed worker ID 'preprocess-01', got: %q", obs.WorkerID)
+	}
+	if obs.TicketID != "RUN-01" {
+		t.Errorf("expected trimmed ticket ID 'RUN-01', got: %q", obs.TicketID)
+	}
+	if obs.OccurredAt.IsZero() {
+		t.Errorf("expected OccurredAt to be defaulted to current time, got zero")
+	}
+}

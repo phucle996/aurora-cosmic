@@ -6,15 +6,32 @@ use uuid::Uuid;
 
 use crate::event::{BronzeObjectReady, ProductKind, SilverObjectReady};
 
+/// Descriptor of the Silver artifact to be announced in the SilverObjectReady event.
+#[derive(Debug, Clone)]
+pub struct SilverArtifactDescriptor<'a> {
+    pub bucket: &'a str,
+    pub object_key: &'a str,
+    pub sha256: &'a str,
+    pub size_bytes: u64,
+    pub schema_version: &'a str,
+}
+
+impl<'a> From<&'a crate::output::silver::SilverArtifact> for SilverArtifactDescriptor<'a> {
+    fn from(a: &'a crate::output::silver::SilverArtifact) -> Self {
+        Self {
+            bucket: &a.bucket,
+            object_key: &a.object_key,
+            sha256: &a.sha256,
+            size_bytes: a.size_bytes,
+            schema_version: &a.schema_version,
+        }
+    }
+}
+
 /// Build a SilverObjectReady event struct.
-#[allow(clippy::too_many_arguments)]
 pub fn build_silver_event(
     event: &BronzeObjectReady,
-    bucket: &str,
-    object_key: &str,
-    sha256: &str,
-    size_bytes: u64,
-    schema_version: &str,
+    artifact: &SilverArtifactDescriptor<'_>,
     processor_version: &str,
     processing_fingerprint: &str,
 ) -> SilverObjectReady {
@@ -24,18 +41,18 @@ pub fn build_silver_event(
         source_event_id: event.event_id.clone(),
         source_product_id: event.source_product_id.clone(),
         sample_id: event.sample_id.clone(),
-        bucket: bucket.to_string(),
-        object_key: object_key.to_string(),
+        bucket: artifact.bucket.to_string(),
+        object_key: artifact.object_key.to_string(),
         product_kind: event.product_kind.clone(),
-        schema_version: schema_version.to_string(),
+        schema_version: artifact.schema_version.to_string(),
         processor_version: processor_version.to_string(),
         processing_fingerprint: processing_fingerprint.to_string(),
         sector: event.sector,
         tic_id: event.tic_id,
         camera: event.camera,
         ccd: event.ccd,
-        size_bytes,
-        sha256: sha256.to_string(),
+        size_bytes: artifact.size_bytes,
+        sha256: artifact.sha256.to_string(),
         occurred_at: Utc::now().to_rfc3339(),
     }
 }
@@ -48,7 +65,6 @@ pub async fn publish_silver_event(
     let subject = match event.product_kind {
         ProductKind::LightCurve => "aurora.v1.silver.lightcurve.ready",
         ProductKind::TargetPixel => "aurora.v1.silver.target_pixel.ready",
-        ProductKind::Ffi => "aurora.v1.silver.ffi.ready",
     };
 
     let payload = serde_json::to_vec(event)?;

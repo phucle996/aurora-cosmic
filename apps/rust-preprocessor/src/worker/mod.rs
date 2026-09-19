@@ -15,10 +15,8 @@ use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
 pub use pipeline::execute_item_pipeline;
-#[allow(unused_imports)]
-pub use pool::parse_duration;
-pub use pool::run_pool;
-pub use publisher::{build_silver_event, publish_silver_event};
+pub use pool::{run_pool, WorkerPoolCapabilities};
+pub use publisher::{build_silver_event, publish_silver_event, SilverArtifactDescriptor};
 pub use recovery::evaluate_recovery;
 
 use crate::checkpoint::{
@@ -34,6 +32,30 @@ use crate::lineage::{
 use crate::observer::Metrics;
 use crate::runtime::RuntimeReporter;
 
+/// Capabilities required to process a single bronze object item.
+#[derive(Clone)]
+pub struct ItemWorkerCapabilities {
+    pub minio: Arc<MinioClient>,
+    pub jetstream: jetstream::Context,
+    pub tmp_dir: PathBuf,
+    pub lc_cfg: LightCurveConfig,
+    pub img_cfg: ImageConfig,
+    pub metrics: Arc<Metrics>,
+    pub runtime: RuntimeReporter,
+}
+
+struct FailureRequestContext<'a> {
+    bucket: &'a str,
+    checkpoint_key: &'a str,
+    event_id: String,
+    delivery_attempt: i64,
+    ticket_id: &'a str,
+    worker_id: &'a str,
+    product_kind: &'a str,
+    object_key: &'a str,
+    started: Instant,
+}
+
 /// Process a single Data Object through the end-to-end flow:
 /// 1. Recovery Check: Load checkpoint — fast-path reuse / terminal guard
 /// 2. Ingest: Bronze stat & SHA-256 verified download
@@ -43,16 +65,9 @@ use crate::runtime::RuntimeReporter;
 /// 6. Silver Sink: Upload Silver to MinIO, update checkpoint to COMPLETED
 /// 7. Lineage Commit: Commit durable lineage record and evaluate Bronze eviction eligibility
 /// 8. ACK JetStream message
-#[allow(clippy::too_many_arguments)]
 pub async fn process_message(
     msg: jetstream::Message,
-    minio: Arc<MinioClient>,
-    jetstream: jetstream::Context,
-    tmp_dir: PathBuf,
-    lc_cfg: LightCurveConfig,
-    img_cfg: ImageConfig,
-    metrics: Arc<Metrics>,
-    runtime: RuntimeReporter,
+    caps: ItemWorkerCapabilities,
     ticket_id: String,
     worker_id: String,
     ack_progress_interval: Duration,
@@ -76,27 +91,25 @@ pub async fn process_message(
         }
     });
 
-    process_message_inner(
-        msg, minio, jetstream, tmp_dir, lc_cfg, img_cfg, metrics, runtime, ticket_id, worker_id,
-    )
-    .await;
+    process_message_inner(msg, caps, ticket_id, worker_id).await;
     progress_cancel.cancel();
     let _ = progress_task.await;
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn process_message_inner(
     msg: jetstream::Message,
-    minio: Arc<MinioClient>,
-    jetstream: jetstream::Context,
-    tmp_dir: PathBuf,
-    lc_cfg: LightCurveConfig,
-    img_cfg: ImageConfig,
-    metrics: Arc<Metrics>,
-    runtime: RuntimeReporter,
+    caps: ItemWorkerCapabilities,
     ticket_id: String,
     worker_id: String,
 ) {
+    let minio = Arc::clone(&caps.minio);
+    let jetstream = caps.jetstream.clone();
+    let tmp_dir = caps.tmp_dir.clone();
+    let lc_cfg = caps.lc_cfg.clone();
+    let img_cfg = caps.img_cfg.clone();
+    let metrics = Arc::clone(&caps.metrics);
+    let runtime = caps.runtime.clone();
+
     let subject = msg.subject.clone();
     let mut observation = metrics.begin("unknown", 0);
 
@@ -133,11 +146,6 @@ async fn process_message_inner(
     };
 
     let event_id = event.event_id.clone();
-    if matches!(event.product_kind, ProductKind::Ffi) {
-        tracing::warn!(event_id = %event_id, "retired FFI event ignored");
-        let _ = msg.ack_with(AckKind::Term).await;
-        return;
-    }
     let runtime_kind = format!("{:?}", event.product_kind).to_lowercase();
     let runtime_key = event.object_key.clone();
     let runtime_started = Instant::now();
@@ -155,7 +163,6 @@ async fn process_message_inner(
     observation.set_kind(match event.product_kind {
         ProductKind::LightCurve => "lightcurve",
         ProductKind::TargetPixel => "target_pixel",
-        ProductKind::Ffi => "ffi",
     });
     observation.set_input_bytes(event.size_bytes);
     let processor_version = processor_version(&event.product_kind, &img_cfg);
@@ -181,21 +188,24 @@ async fn process_message_inner(
                     &processing_fingerprint,
                 );
                 let checkpoint_key = build_checkpoint_object_key(&checkpoint.checkpoint_id);
+                let failure_ctx = FailureRequestContext {
+                    bucket: &event.bucket,
+                    checkpoint_key: &checkpoint_key,
+                    event_id: event_id.clone(),
+                    delivery_attempt,
+                    ticket_id: &ticket_id,
+                    worker_id: &worker_id,
+                    product_kind: &runtime_kind,
+                    object_key: &runtime_key,
+                    started: runtime_started,
+                };
                 handle_failure(
                     &minio,
+                    &runtime,
                     &mut checkpoint,
-                    &event.bucket,
-                    &checkpoint_key,
                     &msg,
                     failure,
-                    event_id.clone(),
-                    delivery_attempt,
-                    &runtime,
-                    &ticket_id,
-                    &worker_id,
-                    &runtime_kind,
-                    &runtime_key,
-                    runtime_started,
+                    &failure_ctx,
                 )
                 .await;
                 return;
@@ -238,13 +248,16 @@ async fn process_message_inner(
                 &cp.silver_sha256,
                 cp.silver_size_bytes,
             ) {
+                let descriptor = SilverArtifactDescriptor {
+                    bucket: s_bucket,
+                    object_key: s_key,
+                    sha256: s_sha,
+                    size_bytes: s_size,
+                    schema_version: cp.silver_schema_version.as_deref().unwrap_or("v1"),
+                };
                 let silver_event = build_silver_event(
                     &event,
-                    s_bucket,
-                    s_key,
-                    s_sha,
-                    s_size,
-                    cp.silver_schema_version.as_deref().unwrap_or("v1"),
+                    &descriptor,
                     processor_version,
                     &processing_fingerprint,
                 );
@@ -308,13 +321,16 @@ async fn process_message_inner(
                 &cp.silver_sha256,
                 cp.silver_size_bytes,
             ) {
+                let descriptor = SilverArtifactDescriptor {
+                    bucket: s_bucket,
+                    object_key: s_key,
+                    sha256: s_sha,
+                    size_bytes: s_size,
+                    schema_version: cp.silver_schema_version.as_deref().unwrap_or("v1"),
+                };
                 let silver_event = build_silver_event(
                     &event,
-                    s_bucket,
-                    s_key,
-                    s_sha,
-                    s_size,
-                    cp.silver_schema_version.as_deref().unwrap_or("v1"),
+                    &descriptor,
                     processor_version,
                     &processing_fingerprint,
                 );
@@ -365,21 +381,24 @@ async fn process_message_inner(
         .await
     {
         let failure = ProcessingFailure::retryable(ErrorKind::InternalTemporary, e.to_string());
+        let failure_ctx = FailureRequestContext {
+            bucket: &event.bucket,
+            checkpoint_key: &checkpoint_key,
+            event_id: event_id.clone(),
+            delivery_attempt,
+            ticket_id: &ticket_id,
+            worker_id: &worker_id,
+            product_kind: &runtime_kind,
+            object_key: &runtime_key,
+            started: runtime_started,
+        };
         handle_failure(
             &minio,
+            &runtime,
             &mut checkpoint,
-            &event.bucket,
-            &checkpoint_key,
             &msg,
             failure,
-            event_id.clone(),
-            delivery_attempt,
-            &runtime,
-            &ticket_id,
-            &worker_id,
-            &runtime_kind,
-            &runtime_key,
-            runtime_started,
+            &failure_ctx,
         )
         .await;
         return;
@@ -421,21 +440,24 @@ async fn process_message_inner(
         Ok(a) => a,
         Err(err) => {
             let failure = classify_pipeline_error(&err);
+            let failure_ctx = FailureRequestContext {
+                bucket: &event.bucket,
+                checkpoint_key: &checkpoint_key,
+                event_id: event_id.clone(),
+                delivery_attempt,
+                ticket_id: &ticket_id,
+                worker_id: &worker_id,
+                product_kind: &runtime_kind,
+                object_key: &runtime_key,
+                started: runtime_started,
+            };
             handle_failure(
                 &minio,
+                &runtime,
                 &mut checkpoint,
-                &event.bucket,
-                &checkpoint_key,
                 &msg,
                 failure,
-                event_id.clone(),
-                delivery_attempt,
-                &runtime,
-                &ticket_id,
-                &worker_id,
-                &runtime_kind,
-                &runtime_key,
-                runtime_started,
+                &failure_ctx,
             )
             .await;
             return;
@@ -466,21 +488,24 @@ async fn process_message_inner(
         .await
     {
         let failure = ProcessingFailure::retryable(ErrorKind::SilverWriteFailed, e.to_string());
+        let failure_ctx = FailureRequestContext {
+            bucket: &event.bucket,
+            checkpoint_key: &checkpoint_key,
+            event_id: event_id.clone(),
+            delivery_attempt,
+            ticket_id: &ticket_id,
+            worker_id: &worker_id,
+            product_kind: &runtime_kind,
+            object_key: &runtime_key,
+            started: runtime_started,
+        };
         handle_failure(
             &minio,
+            &runtime,
             &mut checkpoint,
-            &event.bucket,
-            &checkpoint_key,
             &msg,
             failure,
-            event_id.clone(),
-            delivery_attempt,
-            &runtime,
-            &ticket_id,
-            &worker_id,
-            &runtime_kind,
-            &runtime_key,
-            runtime_started,
+            &failure_ctx,
         )
         .await;
         return;
@@ -600,13 +625,10 @@ async fn process_message_inner(
         None,
         None,
     );
+    let descriptor = SilverArtifactDescriptor::from(&artifact);
     let silver_event = build_silver_event(
         &event,
-        &artifact.bucket,
-        &artifact.object_key,
-        &artifact.sha256,
-        artifact.size_bytes,
-        &artifact.schema_version,
+        &descriptor,
         processor_version,
         &processing_fingerprint,
     );
@@ -681,7 +703,6 @@ fn processor_version(product_kind: &ProductKind, image_config: &ImageConfig) -> 
             "tpf-preprocess-v2-chunked"
         }
         ProductKind::TargetPixel => "tpf-preprocess-v2-streamed",
-        ProductKind::Ffi => "ffi-preprocess-v2",
     }
 }
 
@@ -705,11 +726,6 @@ fn processing_fingerprint(
             "quality_mode": image_config.tpf_quality_mode,
             "normalization": image_config.tpf_normalization,
             "chunk_cadences": image_config.tpf_chunk_cadences,
-        }),
-        ProductKind::Ffi => serde_json::json!({
-            "product_kind": "FFI",
-            "processor_version": processor_version(product_kind, image_config),
-            "normalization": image_config.ffi_normalization,
         }),
     };
     let bytes = serde_json::to_vec(&parameters).expect("static processing parameters serialize");
@@ -739,9 +755,6 @@ fn build_processing_params(
             "tpf_quality_mode": img_cfg.tpf_quality_mode,
             "tpf_normalization": img_cfg.tpf_normalization,
         }),
-        ProductKind::Ffi => serde_json::json!({
-            "ffi_normalization": img_cfg.ffi_normalization,
-        }),
     }
 }
 
@@ -750,31 +763,22 @@ fn build_processing_params(
 /// - TERMINAL   → persist FAILED + terminal checkpoint, TERM
 /// - CONFLICT   → persist FAILED + terminal checkpoint, TERM (preserve artifacts)
 /// - REJECTED   → persist FAILED + terminal checkpoint, TERM (scientific rejection)
-#[allow(clippy::too_many_arguments)]
 async fn handle_failure(
     minio: &MinioClient,
+    runtime: &RuntimeReporter,
     checkpoint: &mut PreprocessingCheckpoint,
-    bucket: &str,
-    checkpoint_key: &str,
     msg: &jetstream::Message,
     failure: ProcessingFailure,
-    event_id: String,
-    delivery_attempt: i64,
-    runtime: &RuntimeReporter,
-    ticket_id: &str,
-    worker_id: &str,
-    product_kind: &str,
-    object_key: &str,
-    started: Instant,
+    ctx: &FailureRequestContext<'_>,
 ) {
     let is_terminal = failure.class != FailureClass::Retryable;
 
     tracing::warn!(
-        event_id = %event_id,
+        event_id = %ctx.event_id,
         failure_class = ?failure.class,
         error_kind = ?failure.kind,
         error = %failure.message,
-        delivery_attempt = delivery_attempt,
+        delivery_attempt = ctx.delivery_attempt,
         processing_attempt = checkpoint.attempts,
         operation = if is_terminal { "preprocess_terminal" } else { "preprocess_retry" },
         "Processing failure classified"
@@ -785,7 +789,7 @@ async fn handle_failure(
     if is_terminal {
         checkpoint.mark_terminal();
         tracing::warn!(
-            event_id = %event_id,
+            event_id = %ctx.event_id,
             checkpoint_id = %checkpoint.checkpoint_id,
             operation = "preprocess_terminal",
             action = "term",
@@ -794,9 +798,9 @@ async fn handle_failure(
     }
 
     // Persist failure record before any broker action
-    if let Err(e) = checkpoint.save(minio, bucket, checkpoint_key).await {
+    if let Err(e) = checkpoint.save(minio, ctx.bucket, ctx.checkpoint_key).await {
         tracing::error!(
-            event_id = %event_id,
+            event_id = %ctx.event_id,
             error = %e,
             "Failed to persist failure checkpoint — not taking broker action to avoid losing diagnostics"
         );
@@ -811,13 +815,13 @@ async fn handle_failure(
     }
     runtime.emit(
         "file_failed",
-        ticket_id,
-        worker_id,
+        ctx.ticket_id,
+        ctx.worker_id,
         "failed",
-        Some(product_kind.to_string()),
-        Some(object_key.to_string()),
+        Some(ctx.product_kind.to_string()),
+        Some(ctx.object_key.to_string()),
         Some("failed".to_string()),
-        Some(started.elapsed().as_millis() as u64),
+        Some(ctx.started.elapsed().as_millis() as u64),
         Some(failure.message),
     );
 }

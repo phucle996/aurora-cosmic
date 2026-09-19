@@ -1,6 +1,7 @@
-import { type JSX } from 'react';
-import { Activity, Calculator, FileText, Workflow, X } from 'lucide-react';
+import { useEffect, useState, type JSX } from 'react';
+import { Activity, Calculator, FileText, Loader2, Workflow, X } from 'lucide-react';
 
+import { apiFetch } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -414,17 +415,73 @@ function ScientificMethodCard({ hop }: { hop: Hop }): JSX.Element {
 
 export function HopDetailDrawer({
   selectedHop,
+  ticketID,
   onClose,
   mode = 'batch',
   totalFiles = 0,
   portalContainer,
 }: {
   selectedHop: Hop | undefined;
+  ticketID?: string;
   onClose: () => void;
   mode?: 'stream' | 'batch';
   totalFiles?: number;
   portalContainer?: HTMLElement | null;
 }): JSX.Element {
+  const [liveHopData, setLiveHopData] = useState<Partial<Hop> | null>(null);
+  const [isLoadingHop, setIsLoadingHop] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!selectedHop) {
+      setLiveHopData(null);
+      return;
+    }
+
+    const pipelineHopIds = new Set([
+      'bronze', 'route', 'lc-quality', 'lc-transform', 'lc-parquet',
+      'tpf-quality', 'tpf-transform', 'tpf-parquet', 'silver',
+      'checkpoint', 'lineage', 'event', 'ack',
+    ]);
+
+    if (!pipelineHopIds.has(selectedHop.id)) {
+      setLiveHopData(null);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingHop(true);
+    const searchParams = new URLSearchParams();
+    if (ticketID) searchParams.set('ticket_id', ticketID);
+    const query = searchParams.toString() ? `?${searchParams.toString()}` : '';
+
+    apiFetch<Partial<Hop>>(`/v1/dag/hops/${encodeURIComponent(selectedHop.id)}${query}`)
+      .then((data) => {
+        if (!cancelled && data) {
+          setLiveHopData(data);
+        }
+      })
+      .catch((err) => {
+        console.warn(`Failed to fetch on-demand metrics for hop ${selectedHop.id}:`, err);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingHop(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedHop?.id, ticketID]);
+
+  const mergedMetrics = selectedHop ? {
+    ...selectedHop.metrics,
+    ...liveHopData?.metrics,
+  } : undefined;
+
+  const mergedTelemetry = selectedHop ? {
+    ...selectedHop.telemetry,
+    ...liveHopData?.telemetry,
+  } : undefined;
+
   return (
     <Drawer
       open={selectedHop !== undefined}
@@ -514,10 +571,15 @@ export function HopDetailDrawer({
                     <Activity className="size-4 text-primary" />
                     <span>{selectedHop.shortTitle}</span>
                   </div>
-                  <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground">Observed evidence only</span>
+                  <div className="flex items-center gap-2">
+                    {isLoadingHop && <Loader2 className="size-3 animate-spin text-primary" />}
+                    <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground">
+                      {ticketID ? `Aggregated for ${ticketID}` : 'Observed evidence only'}
+                    </span>
+                  </div>
                 </div>
 
-                  {renderHopChart(selectedHop.id, mode, totalFiles, selectedHop.metrics, selectedHop.telemetry, selectedHop.scatter_points, selectedHop.tpf_transform_points, selectedHop.materialization_points, selectedHop.encode_failures, selectedHop.silver_failures, selectedHop.checkpoint_points, selectedHop.details, selectedHop.lc_feature_evidence, selectedHop.bls_search_evidence, selectedHop.tpf_spatial_evidence, selectedHop.candidate_assembly_evidence, selectedHop.gold_materialization_evidence, selectedHop.gold_projection_evidence, selectedHop.gold_commit_evidence)}
+                  {renderHopChart(selectedHop.id, mode, totalFiles, mergedMetrics, mergedTelemetry, selectedHop.scatter_points, selectedHop.tpf_transform_points, selectedHop.materialization_points, selectedHop.encode_failures, selectedHop.silver_failures, selectedHop.checkpoint_points, selectedHop.details, selectedHop.lc_feature_evidence, selectedHop.bls_search_evidence, selectedHop.tpf_spatial_evidence, selectedHop.candidate_assembly_evidence, selectedHop.gold_materialization_evidence, selectedHop.gold_projection_evidence, selectedHop.gold_commit_evidence)}
               </div>
             </div>
           ) : (

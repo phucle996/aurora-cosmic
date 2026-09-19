@@ -65,11 +65,6 @@ pub async fn execute_item_pipeline(
                     pipeline::lightcurve::preprocess_lc(raw_lc, &event_clone, &lc_config)?;
                 silver::serialize_lightcurve(&processed, &event_clone, &tmp_dir_clone, &fingerprint)
             }
-            DecodedProduct::Ffi(raw_ffi) => {
-                let processed =
-                    pipeline::image::preprocess_ffi(raw_ffi, &event_clone, &img_config, None)?;
-                silver::serialize_ffi(&processed, &event_clone, &tmp_dir_clone, &fingerprint)
-            }
         }
     })
     .await
@@ -145,7 +140,7 @@ fn process_target_pixel_in_chunks(
             tic_id = raw.tic_id;
         }
 
-        match pipeline::image::preprocess_target_pixel(raw, event, config) {
+        match pipeline::target_pixel::preprocess_target_pixel(raw, event, config) {
             Ok(processed) => {
                 output_cadences += processed.processing.output_cadences;
                 quality_removed += processed.processing.quality_removed;
@@ -224,7 +219,7 @@ fn process_target_pixel_in_chunks(
     } else {
         (finite_pixels / inspected_pixels as f64) as f32
     };
-    let processing = pipeline::image::ImageProcessingMetadata {
+    let processing = pipeline::target_pixel::TargetPixelProcessingMetadata {
         processor_version: if config.tpf_normalization == "chunk-temporal-median" {
             "tpf-preprocess-v2-chunked".to_string()
         } else {

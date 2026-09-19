@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 pub enum ProductKind {
     TargetPixel,
     LightCurve,
-    Ffi,
 }
 
 /// Typed Rust representation of the `bronze-object-ready` event contract.

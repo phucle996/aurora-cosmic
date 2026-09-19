@@ -75,7 +75,7 @@ pub struct LightCurveConfig {
     pub sigma_clip: Option<f64>,
 }
 
-/// TPF and FFI image preprocessing configuration.
+/// TPF image preprocessing configuration.
 #[derive(Debug, Clone)]
 pub struct ImageConfig {
     /// Quality mode for TPF: "strict" (quality == 0) or "none".
@@ -85,8 +85,6 @@ pub struct ImageConfig {
     pub tpf_normalization: String,
     /// Maximum number of TPF cadences materialized in one read/Parquet row group.
     pub tpf_chunk_cadences: usize,
-    /// FFI normalization strategy: "median" (default) or "none".
-    pub ffi_normalization: String,
 }
 
 /// Full application configuration.
@@ -184,15 +182,6 @@ impl Config {
             return Err("AURORA_TPF_CHUNK_CADENCES must be >= 1".to_string());
         }
 
-        let ffi_normalization = env::var("AURORA_FFI_NORMALIZATION")
-            .unwrap_or_else(|_| "median".to_string())
-            .to_lowercase();
-        if !matches!(ffi_normalization.as_str(), "median" | "none") {
-            return Err(format!(
-                "Invalid AURORA_FFI_NORMALIZATION '{ffi_normalization}' (allowed: 'median', 'none')"
-            ));
-        }
-
         Ok(Self {
             core: CoreConfig {
                 env: require_env("AURORA_ENV")?,
@@ -250,7 +239,6 @@ impl Config {
                 tpf_quality_mode,
                 tpf_normalization,
                 tpf_chunk_cadences,
-                ffi_normalization,
             },
         })
     }
@@ -278,7 +266,6 @@ impl Config {
             tpf_quality_mode = %self.image_pipeline.tpf_quality_mode,
             tpf_normalization = %self.image_pipeline.tpf_normalization,
             tpf_chunk_cadences = self.image_pipeline.tpf_chunk_cadences,
-            ffi_normalization = %self.image_pipeline.ffi_normalization,
             "Configuration summary loaded"
         );
     }

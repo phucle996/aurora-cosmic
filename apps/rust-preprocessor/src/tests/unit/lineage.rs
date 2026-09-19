@@ -70,12 +70,6 @@ fn test_lineage_key_target_pixel() {
     assert_eq!(key, "lineage/v1/tess/target-pixel/def456.json");
 }
 
-#[test]
-fn test_lineage_key_ffi() {
-    let key = build_lineage_object_key(&ProductKind::Ffi, "ghi789");
-    assert_eq!(key, "lineage/v1/tess/ffi/ghi789.json");
-}
-
 // ---------------------------------------------------------------------------
 // Eviction Eligibility Policy
 // ---------------------------------------------------------------------------

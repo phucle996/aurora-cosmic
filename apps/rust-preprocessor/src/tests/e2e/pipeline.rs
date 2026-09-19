@@ -3,11 +3,10 @@ use tempfile::tempdir;
 use crate::config::{ImageConfig, LightCurveConfig};
 use crate::event::{BronzeObjectReady, ProductKind};
 use crate::output::silver::{
-    build_ffi_key, build_lc_key, build_tpf_key, serialize_ffi, serialize_lightcurve,
-    TargetPixelStreamWriter,
+    build_lc_key, build_tpf_key, serialize_lightcurve, TargetPixelStreamWriter,
 };
-use crate::pipeline::image::{preprocess_ffi, preprocess_target_pixel};
 use crate::pipeline::lightcurve::preprocess_lc;
+use crate::pipeline::target_pixel::preprocess_target_pixel;
 
 fn make_event(kind: ProductKind, event_id: &str) -> BronzeObjectReady {
     BronzeObjectReady {
@@ -42,7 +41,6 @@ fn default_img_config() -> ImageConfig {
         tpf_quality_mode: "strict".to_string(),
         tpf_normalization: "temporal-median".to_string(),
         tpf_chunk_cadences: 256,
-        ffi_normalization: "median".to_string(),
     }
 }
 
@@ -130,35 +128,3 @@ fn test_e2e_tpf_pipeline_flow() {
     assert!(artifact.size_bytes > 0);
 }
 
-#[test]
-fn test_e2e_ffi_pipeline_flow() {
-    let tmp_dir = tempdir().unwrap();
-    let event = make_event(ProductKind::Ffi, "ffi-001");
-    let img_cfg = default_img_config();
-
-    let raw_ffi = crate::fits::RawFfi {
-        width: 4,
-        height: 4,
-        pixels: vec![
-            10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0, 110.0, 120.0, 130.0,
-            140.0, 150.0, 160.0,
-        ],
-    };
-
-    let processed = preprocess_ffi(raw_ffi, &event, &img_cfg, Some(&[(1, 1, 2, 2)])).unwrap();
-    assert_eq!(processed.processing.processor_version, "ffi-preprocess-v1");
-    assert_eq!(processed.cutouts.len(), 1);
-
-    let artifact = serialize_ffi(&processed, &event, tmp_dir.path(), "test-config").unwrap();
-    let expected_key = build_ffi_key(
-        event.sector,
-        event.camera,
-        event.ccd,
-        &event.source_product_id,
-        "ffi-preprocess-v1",
-        "test-config",
-    );
-    assert_eq!(artifact.object_key, expected_key);
-    assert_eq!(artifact.schema_version, "silver-ffi-v1");
-    assert!(artifact.size_bytes > 0);
-}

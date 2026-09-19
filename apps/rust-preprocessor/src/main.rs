@@ -1,19 +1,6 @@
-mod app;
-mod domain;
-mod fits;
-mod infra;
-mod observer;
-mod output;
-mod pipeline;
-mod runtime;
-mod worker;
-
-#[cfg(test)]
-mod tests;
-
-// Re-export domain & infra modules for crate root compatibility
-pub use domain::{checkpoint, event, failure, lineage};
-pub use infra::{config, logger};
+use aurora_preprocessor::app;
+use aurora_preprocessor::config;
+use aurora_preprocessor::logger;
 
 #[tokio::main]
 async fn main() {

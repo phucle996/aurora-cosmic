@@ -18,6 +18,7 @@ type Module struct {
 	ModelsHandler         *handler.ModelsHandler
 	SystemHandler         *handler.SystemHandler
 	MonitoringHandler     *handler.MonitoringHandler
+	DAGAggregationHandler *handler.DAGAggregationHandler
 	PreprocessingHandler  *handler.PreprocessingHandler
 	GoldControlHandler    *handler.GoldControlHandler
 	TicketHandler         *handler.TicketHandler
@@ -113,10 +114,12 @@ func NewModule(infra Infrastructure) (*Module, error) {
 		return nil, fmt.Errorf("service LakehouseService is nil")
 	}
 
+	dagAggregationService := service.NewDAGAggregationService(preprocessingService, prometheusQuerier, objectRepo)
+
 	natsPubSub := pubsub.New(pubsub.Config{
 		NATSURL:           infra.NATS.URL,
 		Broker:            eventBroker,
-		Preprocessing:     preprocessingService,
+		DAGAggregation:    dagAggregationService,
 		ChampionInference: inferenceService,
 	})
 
@@ -132,6 +135,7 @@ func NewModule(infra Infrastructure) (*Module, error) {
 		ModelsHandler:         handler.NewModelsHandler(modelsService, inferenceService),
 		SystemHandler:         handler.NewSystemHandler(readinessService),
 		MonitoringHandler:     handler.NewMonitoringHandler(monitoringService),
+		DAGAggregationHandler: handler.NewDAGAggregationHandler(dagAggregationService),
 		PreprocessingHandler:  handler.NewPreprocessingHandler(preprocessingService),
 		GoldControlHandler:    handler.NewGoldControlHandler(goldControlService),
 		TicketHandler:         handler.NewTicketHandler(ticketService),

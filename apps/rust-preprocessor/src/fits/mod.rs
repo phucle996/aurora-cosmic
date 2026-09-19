@@ -1,13 +1,13 @@
-pub mod image;
 pub mod lightcurve;
+pub mod target_pixel;
 
 use std::path::Path;
 
 use anyhow::{bail, Result};
 
 use crate::event::{BronzeObjectReady, ProductKind};
-pub use image::{RawFfi, RawTargetPixel, TargetPixelChunkReader};
 pub use lightcurve::RawLightCurve;
+pub use target_pixel::{RawTargetPixel, TargetPixelChunkReader};
 
 /// Decoded FITS product — one variant per product kind.
 ///
@@ -16,18 +16,6 @@ pub use lightcurve::RawLightCurve;
 #[derive(Debug)]
 pub enum DecodedProduct {
     LightCurve(RawLightCurve),
-    Ffi(RawFfi),
-}
-
-/// Decoded source bundle: original event + decoded FITS data.
-///
-/// Preserves all event metadata (object_key, sha256, sample_id, etc.) so
-/// downstream pipeline phases never lose source traceability.
-#[derive(Debug)]
-#[allow(dead_code)]
-pub struct DecodedSource {
-    pub event: BronzeObjectReady,
-    pub product: DecodedProduct,
 }
 
 /// Dispatch FITS decode based on `product_kind`.
@@ -42,10 +30,6 @@ pub fn decode(path: &Path, event: &BronzeObjectReady) -> Result<DecodedProduct> 
         }
         ProductKind::TargetPixel => {
             bail!("Target Pixel products must be decoded through TargetPixelChunkReader")
-        }
-        ProductKind::Ffi => {
-            let ffi = image::decode_ffi(path, event)?;
-            Ok(DecodedProduct::Ffi(ffi))
         }
     }
 }

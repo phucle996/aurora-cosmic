@@ -1,7 +1,7 @@
 use crate::config::ImageConfig;
 use crate::event::{BronzeObjectReady, ProductKind};
-use crate::fits::{RawFfi, RawTargetPixel};
-use crate::pipeline::image::{preprocess_ffi, preprocess_target_pixel};
+use crate::fits::RawTargetPixel;
+use crate::pipeline::target_pixel::preprocess_target_pixel;
 
 fn make_tpf_event() -> BronzeObjectReady {
     BronzeObjectReady {
@@ -22,31 +22,11 @@ fn make_tpf_event() -> BronzeObjectReady {
     }
 }
 
-fn make_ffi_event() -> BronzeObjectReady {
-    BronzeObjectReady {
-        event_id: "evt-ffi-001".to_string(),
-        event_type: "bronze.object.ready".to_string(),
-        source_product_id: "tess-ffi-001".to_string(),
-        sample_id: None,
-        bucket: "aurora".to_string(),
-        object_key: "bronze/tess/ffi/sector=0042/camera=1/ccd=2/ffi.fits".to_string(),
-        product_kind: ProductKind::Ffi,
-        sector: 42,
-        tic_id: None,
-        camera: Some(1),
-        ccd: Some(2),
-        size_bytes: 8192,
-        sha256: "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210".to_string(),
-        occurred_at: "2026-08-07T00:00:00Z".to_string(),
-    }
-}
-
 fn default_image_config() -> ImageConfig {
     ImageConfig {
         tpf_quality_mode: "strict".to_string(),
         tpf_normalization: "temporal-median".to_string(),
         tpf_chunk_cadences: 256,
-        ffi_normalization: "median".to_string(),
     }
 }
 
@@ -273,85 +253,3 @@ fn test_tpf_determinism() {
     assert_eq!(res1.flux, res2.flux);
 }
 
-#[test]
-fn test_ffi_statistics_and_non_finite_handling() {
-    let pixels = vec![
-        10.0,
-        20.0,
-        f32::NAN,
-        40.0,
-        50.0,
-        60.0,
-        70.0,
-        f32::INFINITY,
-        90.0,
-        100.0,
-        110.0,
-        120.0,
-        130.0,
-        140.0,
-        150.0,
-        160.0,
-    ];
-    let raw = RawFfi {
-        width: 4,
-        height: 4,
-        pixels,
-    };
-    let event = make_ffi_event();
-    let cfg = default_image_config();
-
-    let res = preprocess_ffi(raw, &event, &cfg, None).unwrap();
-    assert_eq!(res.width, 4);
-    assert_eq!(res.height, 4);
-    assert_eq!(res.statistics.finite_pixel_count, 14);
-    assert!((res.statistics.finite_pixel_fraction - 14.0 / 16.0).abs() < 1e-6);
-    assert!((res.statistics.min - (10.0 / 95.0 - 1.0)).abs() < 1e-6);
-    assert!((res.statistics.max - (160.0 / 95.0 - 1.0)).abs() < 1e-6);
-}
-
-#[test]
-fn test_ffi_cutout_extraction() {
-    let pixels = vec![
-        1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0,
-    ];
-    let raw = RawFfi {
-        width: 4,
-        height: 4,
-        pixels,
-    };
-    let event = make_ffi_event();
-    let cfg = default_image_config();
-
-    // Extract 2x2 cutout at x=1, y=1
-    let cutouts_req = vec![(1, 1, 2, 2)];
-    let res = preprocess_ffi(raw, &event, &cfg, Some(&cutouts_req)).unwrap();
-
-    assert_eq!(res.cutouts.len(), 1);
-    let cutout = &res.cutouts[0];
-    assert_eq!(cutout.x, 1);
-    assert_eq!(cutout.y, 1);
-    assert_eq!(cutout.width, 2);
-    assert_eq!(cutout.height, 2);
-    // Rows 1 and 2, cols 1 and 2, normalized against the image median 8.5.
-    let expected = vec![6.0, 7.0, 10.0, 11.0]
-        .into_iter()
-        .map(|pixel| pixel / 8.5 - 1.0)
-        .collect::<Vec<f32>>();
-    assert_eq!(cutout.pixels, expected);
-}
-
-#[test]
-fn test_ffi_invalid_cutout_bounds_error() {
-    let raw = RawFfi {
-        width: 4,
-        height: 4,
-        pixels: vec![1.0; 16],
-    };
-    let event = make_ffi_event();
-    let cfg = default_image_config();
-
-    // Out of bounds cutout at x=3, y=3, w=2, h=2 (exceeds width/height 4)
-    let cutouts_req = vec![(3, 3, 2, 2)];
-    assert!(preprocess_ffi(raw, &event, &cfg, Some(&cutouts_req)).is_err());
-}

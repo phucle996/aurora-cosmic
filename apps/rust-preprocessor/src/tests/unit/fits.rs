@@ -1,5 +1,5 @@
 use crate::event::{BronzeObjectReady, ProductKind};
-use crate::fits::{DecodedProduct, RawFfi, RawLightCurve, RawTargetPixel};
+use crate::fits::{DecodedProduct, RawLightCurve, RawTargetPixel};
 
 fn make_event(kind: ProductKind) -> BronzeObjectReady {
     BronzeObjectReady {
@@ -58,19 +58,6 @@ fn test_raw_tpf_struct() {
 }
 
 #[test]
-fn test_raw_ffi_struct() {
-    let ffi = RawFfi {
-        width: 10,
-        height: 10,
-        pixels: vec![0.0; 100],
-    };
-
-    assert_eq!(ffi.width, 10);
-    assert_eq!(ffi.height, 10);
-    assert_eq!(ffi.pixels.len(), 100);
-}
-
-#[test]
 fn test_decoded_product_enum() {
     let event = make_event(ProductKind::LightCurve);
     let lc = RawLightCurve {
@@ -88,6 +75,5 @@ fn test_decoded_product_enum() {
         DecodedProduct::LightCurve(val) => {
             assert_eq!(val.tic_id, Some(123456789));
         }
-        _ => panic!("Expected LightCurve product variant"),
     }
 }

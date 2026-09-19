@@ -340,18 +340,26 @@ pub fn preprocess_lc(
     })
 }
 
-/// Calculate the median of a slice of f32 values.
+/// Calculate the median of a slice of f32 values using O(n) quickselect.
 fn calculate_median(values: &[f32]) -> f32 {
     if values.is_empty() {
         return 0.0;
     }
-    let mut sorted = values.to_vec();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let mid = sorted.len() / 2;
-    if sorted.len().is_multiple_of(2) {
-        (sorted[mid - 1] + sorted[mid]) / 2.0
+    let mut scratch = values.to_vec();
+    let mid = scratch.len() / 2;
+    scratch.select_nth_unstable_by(mid, |a, b| {
+        a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    if scratch.len().is_multiple_of(2) {
+        let val_mid = scratch[mid];
+        let max_left = scratch[..mid]
+            .iter()
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .copied()
+            .unwrap_or(val_mid);
+        (max_left + val_mid) / 2.0
     } else {
-        sorted[mid]
+        scratch[mid]
     }
 }
 

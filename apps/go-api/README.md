@@ -45,13 +45,28 @@ connections and low-level transport operations.
   `(tic_id, sector)` and include lightcurve coverage plus latest candidate and
   anomaly summaries derived from ClickHouse query indexes.
 * `/api/v1/models` only exposes committed runtime manifests whose ONNX,
+## Runtime contract
+
+* `/healthz` is process liveness and does not require dependencies.
+* `/readyz` checks MinIO and ClickHouse and returns `503` until both are ready.
+* `/metrics` is served on the dedicated observer listener (default `:8086`),
+  while the public API listener remains on `AURORA_API_PORT`.
+* Candidate and anomaly queries require an explicit `snapshot_id` so cumulative
+  Gold snapshots cannot be double-counted.
+* Anomaly queries return threshold-crossing predictions by default. Pass
+  `only_flagged=false` when an audit view needs every scored row.
+* Target discovery supports TIC/Sector, Tmag, effective-temperature, RA/Dec,
+  pipeline-state and data-availability filters. Target rows are keyed by
+  `(tic_id, sector)` and include lightcurve coverage plus latest candidate and
+  anomaly summaries derived from ClickHouse query indexes.
+* `/api/v1/models` only exposes committed runtime manifests whose ONNX,
   preprocessing, threshold, and parity fixture checksums match MinIO.
 * Inference retry publishes an existing immutable job manifest to NATS; the API
   never loads a model or performs CPU inference itself.
 * `/api/v1/monitoring?tab=<component>&range=1h&step=60` returns one selected
   component and generic metric series (`key`, `name`, `unit`, `kind`, `points`).
   The `tab` can be omitted for the legacy all-components response.
-* `/api/v1/preprocessing/graph` projects the latest five minutes of Rust
+* `/api/v1/dag/graph` projects the latest five minutes of Rust
   preprocessor Prometheus telemetry onto the Bronze → Silver lineage canvas.
   It returns `not_observed` when no samples exist, and otherwise derives
   `running`, `completed`, `retry`, or `failed` from bounded worker, queue,
@@ -68,11 +83,11 @@ connections and low-level transport operations.
 * `GET /api/v1/events?workflow=preprocessing` is a long-lived SSE invalidation
   stream. Start/stop commands publish workflow events so dashboards can
   refetch authoritative status immediately; polling remains the fallback.
-* `POST /api/v1/preprocessing/jobs` publishes an asynchronous preprocessing
+* `POST /api/v1/preprocessing/tickets` publishes an asynchronous preprocessing
   start command to NATS. `mode=stream` follows new Bronze events; `mode=batch`
   drains retained Bronze events. Preprocessing owns a separate checkpoint
   namespace under `checkpoints/preprocessing/`.
-* `POST /api/v1/preprocessing/jobs/:job_id/stop` cancels the active worker and
+* `POST /api/v1/preprocessing/tickets/:ticket_id/stop` cancels the active worker and
   records a durable `CANCELED` run checkpoint. The stop state is kept in API
   memory while the worker drains, so refreshes do not re-enable a stale start.
 * `GET /api/v1/gold/control` returns the durable Gold Builder desired mode and
@@ -95,7 +110,7 @@ GET /api/v1/targets/882271?sector=42
 GET /api/v1/lightcurves?tic_id=882271&sector=42&limit=1000&offset=0
 GET /api/v1/models?task=anomaly
 GET /api/v1/inference/jobs?model_id=model-anom-v1-dde689ef5383
-GET /api/v1/preprocessing/graph
+GET /api/v1/dag/graph
 GET /api/v1/gold/control
 GET /api/v1/ingest/status
 GET /api/v1/storage?prefix=bronze/&page=1&limit=50

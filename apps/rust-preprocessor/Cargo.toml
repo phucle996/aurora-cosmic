@@ -36,6 +36,26 @@ fitsio = { version = "0.21", features = ["fitsio-src"] }
 arrow = { version = "54.0", features = ["ffi"] }
 parquet = { version = "54.0", features = ["zstd"] }
 
+[lib]
+name = "aurora_preprocessor"
+path = "src/lib.rs"
+
+[[bin]]
+name = "aurora-preprocessor"
+path = "src/main.rs"
+
+[[bench]]
+name = "pipeline_benchmark"
+harness = false
+
+[[bench]]
+name = "lightcurve_benchmark"
+harness = false
+
+[[bench]]
+name = "target_pixel_benchmark"
+harness = false
+
 [dev-dependencies]
 criterion = "0.5"
 tokio = { version = "1.38", features = ["full", "test-util"] }

@@ -12,25 +12,37 @@ use crate::event::{BronzeObjectReady, ProductKind};
 use crate::infra::MinioClient;
 use crate::observer::Metrics;
 use crate::runtime::RuntimeReporter;
-use crate::worker::process_message;
+use crate::worker::{process_message, ItemWorkerCapabilities};
 
 /// Subjects to subscribe from AURORA_BRONZE stream.
 const BRONZE_FILTER_SUBJECT: &str = "aurora.v1.bronze.*.ready";
 
+/// Capabilities required to run the Tokio Parallel Worker Pool.
+pub struct WorkerPoolCapabilities {
+    pub jetstream: jetstream::Context,
+    pub minio: Arc<MinioClient>,
+    pub consumer: ConsumerConfig,
+    pub lc_config: LightCurveConfig,
+    pub img_config: ImageConfig,
+    pub cancel: CancellationToken,
+    pub metrics: Arc<Metrics>,
+    pub runtime: RuntimeReporter,
+}
+
 /// Run the Tokio Parallel Worker Pool.
-#[allow(clippy::too_many_arguments)]
 pub async fn run_pool(
-    jetstream: jetstream::Context,
-    minio: Arc<MinioClient>,
-    cfg: &ConsumerConfig,
-    lc_cfg: LightCurveConfig,
-    img_cfg: ImageConfig,
-    cancel: CancellationToken,
-    metrics: Arc<Metrics>,
+    caps: WorkerPoolCapabilities,
     mode: &str,
-    runtime: RuntimeReporter,
     ticket_id: &str,
 ) -> Result<()> {
+    let jetstream = caps.jetstream;
+    let minio = caps.minio;
+    let cfg = caps.consumer;
+    let lc_cfg = caps.lc_config;
+    let img_cfg = caps.img_config;
+    let cancel = caps.cancel;
+    let metrics = caps.metrics;
+    let runtime = caps.runtime;
     // The ingester creates AURORA_BRONZE lazily when it publishes the first
     // product. Keep the preprocessor alive while that happens instead of
     // turning a normal Compose startup race into a permanently idle service.
@@ -130,6 +142,16 @@ pub async fn run_pool(
     let fetch_size = cfg.workers;
     let ack_progress_interval = ack_progress_interval(&cfg.ack_wait);
 
+    let item_caps = ItemWorkerCapabilities {
+        minio,
+        jetstream,
+        tmp_dir: cfg.tmp_dir.clone(),
+        lc_cfg,
+        img_cfg,
+        metrics: Arc::clone(&metrics),
+        runtime: runtime.clone(),
+    };
+
     loop {
         tokio::select! {
             biased;
@@ -146,7 +168,7 @@ pub async fn run_pool(
                 };
 
                 if let Ok(info) = consumer.info().await {
-                    metrics.set_backlog(info.num_pending, info.num_ack_pending);
+                    item_caps.metrics.set_backlog(info.num_pending, info.num_ack_pending);
                 }
 
                 let mut fetch = consumer.fetch().max_messages(fetch_size);
@@ -161,7 +183,7 @@ pub async fn run_pool(
                             break;
                         }
                         tracing::error!(error = %e, "Failed to fetch messages from JetStream");
-                        metrics.record_transport_error();
+                        item_caps.metrics.record_transport_error();
                         drop(permit);
                         tokio::time::sleep(Duration::from_secs(1)).await;
                         continue;
@@ -182,7 +204,7 @@ pub async fn run_pool(
                 }
 
                 let mut pending_messages = msgs.len();
-                metrics.set_queue_depth(pending_messages);
+                item_caps.metrics.set_queue_depth(pending_messages);
 
                 let mut available_permit = Some(permit);
                 for msg_result in msgs {
@@ -190,19 +212,14 @@ pub async fn run_pool(
                         Ok(m) => m,
                         Err(e) => {
                             tracing::warn!(error = %e, "Failed to receive message from fetch batch");
-                            metrics.record_transport_error();
+                            item_caps.metrics.record_transport_error();
                             pending_messages = pending_messages.saturating_sub(1);
-                            metrics.set_queue_depth(pending_messages);
+                            item_caps.metrics.set_queue_depth(pending_messages);
                             continue;
                         }
                     };
 
-                    let minio_ref = minio.clone();
-                    let js_ref = jetstream.clone();
-                    let tmp_dir = cfg.tmp_dir.clone();
-                    let lc_config = lc_cfg.clone();
-                    let img_config = img_cfg.clone();
-                    let metrics_ref = metrics.clone();
+                    let item_caps_ref = item_caps.clone();
                     let runtime_ref = runtime.clone();
                     let ack_progress_interval_ref = ack_progress_interval;
                     let ticket_id_ref = ticket_id.to_string();
@@ -233,43 +250,47 @@ pub async fn run_pool(
                         .pop()
                         .expect("worker slot must exist while a pool permit is held");
 
-                    let large_staging_permit = match serde_json::from_slice::<BronzeObjectReady>(&msg.payload) {
-                        Ok(event)
-                            if matches!(event.product_kind, ProductKind::TargetPixel | ProductKind::Ffi)
-                                && event.size_bytes >= cfg.large_staging_threshold_bytes => {
-                            tracing::info!(
-                                worker_id = %worker_id,
-                                object_key = %event.object_key,
-                                size_bytes = event.size_bytes,
-                                threshold_bytes = cfg.large_staging_threshold_bytes,
-                                max_concurrent = cfg.large_staging_concurrency,
-                                "Waiting for large FITS staging admission"
-                            );
-                            match large_staging_slots_ref.acquire_owned().await {
-                                Ok(permit) => Some(permit),
-                                Err(_) => break,
-                            }
-                        }
-                        _ => None,
-                    };
+                    let large_staging_threshold = cfg.large_staging_threshold_bytes;
+                    let large_staging_concurrency = cfg.large_staging_concurrency;
 
                     tasks.spawn(async move {
+                        let large_staging_permit = match serde_json::from_slice::<BronzeObjectReady>(&msg.payload) {
+                            Ok(event)
+                                if matches!(event.product_kind, ProductKind::TargetPixel)
+                                    && event.size_bytes >= large_staging_threshold => {
+                                tracing::info!(
+                                    worker_id = %worker_id,
+                                    object_key = %event.object_key,
+                                    size_bytes = event.size_bytes,
+                                    threshold_bytes = large_staging_threshold,
+                                    max_concurrent = large_staging_concurrency,
+                                    "Waiting for large FITS staging admission"
+                                );
+                                large_staging_slots_ref.acquire_owned().await.ok()
+                            }
+                            _ => None,
+                        };
+
                         process_message(
                             msg,
-                            minio_ref,
-                            js_ref,
-                            tmp_dir,
-                            lc_config,
-                            img_config,
-                            metrics_ref,
-                            runtime_ref.clone(),
+                            item_caps_ref,
                             ticket_id_ref.clone(),
                             worker_id.clone(),
                             ack_progress_interval_ref,
                             large_staging_permit,
                         )
                         .await;
-                        runtime_ref.emit("worker_idle", &ticket_id_ref, &worker_id, "idle", None, None, Some("waiting".to_string()), None, None);
+                        runtime_ref.emit(
+                            "worker_idle",
+                            &ticket_id_ref,
+                            &worker_id,
+                            "idle",
+                            None,
+                            None,
+                            Some("waiting".to_string()),
+                            None,
+                            None,
+                        );
                         slots_ref.lock().await.push(worker_id);
                         drop(task_permit);
                     });
