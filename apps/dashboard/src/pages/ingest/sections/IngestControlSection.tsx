@@ -17,7 +17,6 @@ interface IngestControlSectionProps {
   isDraining: boolean;
   controlBusy: boolean;
   activeTicket: string;
-  activeJobId?: string;
   activeStatus?: string;
   status: IngestStatus | null;
   planningSignal: PlanningSignal | null;
@@ -38,7 +37,6 @@ export function IngestControlSection({
   isDraining,
   controlBusy,
   activeTicket,
-  activeJobId,
   activeStatus,
   status,
   planningSignal,
@@ -192,24 +190,16 @@ export function IngestControlSection({
         </form>
         <div className="mt-4 grid gap-2 border-t border-border/60 pt-4 text-xs">
           <div className="flex items-center justify-between gap-3">
-            <span className="text-muted-foreground">Runner Ticket</span>
+            <span className="text-muted-foreground">Ticket</span>
             <span className="max-w-[190px] truncate font-mono text-muted-foreground" title={activeTicket}>
               {activeTicket}
             </span>
           </div>
           {activeStatus && (
-            <>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-muted-foreground">Control job</span>
-                <span className="max-w-[190px] truncate font-mono text-foreground" title={activeJobId}>
-                  {activeJobId}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">State</span>
-                <Badge variant={statusVariant(activeStatus)}>{activeStatus}</Badge>
-              </div>
-            </>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">State</span>
+              <Badge variant={statusVariant(activeStatus)}>{activeStatus}</Badge>
+            </div>
           )}
         </div>
       </CardContent>

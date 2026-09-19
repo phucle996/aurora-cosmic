@@ -5,23 +5,22 @@ import (
 	"log/slog"
 	"time"
 
-	"go-api/internal/domain/repo"
 	domainService "go-api/internal/domain/service"
 	"go-api/internal/provider"
 )
 
 type ReadinessService struct {
-	minio     provider.ObjectStorage
-	analytics repo.AnalyticsRepository
-	nats      dependencyPinger
+	minio      provider.ObjectStorage
+	clickhouse dependencyPinger
+	nats       dependencyPinger
 }
 
 type dependencyPinger interface {
 	Ping(context.Context) error
 }
 
-func NewReadinessService(minio provider.ObjectStorage, analytics repo.AnalyticsRepository, nats dependencyPinger) domainService.Readiness {
-	return &ReadinessService{minio: minio, analytics: analytics, nats: nats}
+func NewReadinessService(minio provider.ObjectStorage, clickhouse dependencyPinger, nats dependencyPinger) domainService.Readiness {
+	return &ReadinessService{minio: minio, clickhouse: clickhouse, nats: nats}
 }
 
 func (s *ReadinessService) Check(parent context.Context) (map[string]string, bool) {
@@ -39,8 +38,8 @@ func (s *ReadinessService) Check(parent context.Context) (map[string]string, boo
 	} else {
 		ready = false
 	}
-	if s.analytics != nil {
-		if err := s.analytics.Ping(ctx); err == nil {
+	if s.clickhouse != nil {
+		if err := s.clickhouse.Ping(ctx); err == nil {
 			status["query_engine"] = "UP"
 		} else {
 			slog.Default().Warn("ClickHouse readiness check failed", slog.Any("error", err))

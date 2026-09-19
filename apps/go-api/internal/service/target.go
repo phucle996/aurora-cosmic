@@ -11,15 +11,13 @@ import (
 
 // TargetService chịu trách nhiệm quản lý danh mục sao mục tiêu TIC và dữ liệu trắc quang quang phổ.
 type TargetService struct {
-	targetRepo    repo.TargetRepository
-	candidateRepo repo.CandidateRepository
+	targetRepo repo.TargetRepository
 }
 
 // NewTargetService khởi tạo TargetService
-func NewTargetService(targetRepo repo.TargetRepository, candidateRepo repo.CandidateRepository) domainService.Target {
+func NewTargetService(targetRepo repo.TargetRepository) domainService.Target {
 	return &TargetService{
-		targetRepo:    targetRepo,
-		candidateRepo: candidateRepo,
+		targetRepo: targetRepo,
 	}
 }
 
@@ -35,15 +33,12 @@ func (s *TargetService) GetTarget(ctx context.Context, ticID int64, sector int, 
 	if err != nil {
 		return nil, err
 	}
-	candidate := entity.Candidate{TICID: detail.Target.TICID, Sector: detail.Target.Sector, SnapshotID: detail.Target.GoldSnapshotID}
-	if detail.Target.HasCandidate && detail.Target.CandidatePredictionID != "" {
-		candDetail, candErr := s.candidateRepo.GetCandidate(ctx, detail.Target.CandidatePredictionID, detail.Target.GoldSnapshotID)
-		if candErr == nil && candDetail != nil {
-			candidate = candDetail.Candidate
-			detail.Evidence = &candDetail.Evidence
-		}
-	}
 	if detail.Evidence != nil {
+		candidate := entity.Candidate{
+			TICID:      detail.Target.TICID,
+			Sector:     detail.Target.Sector,
+			SnapshotID: detail.Target.GoldSnapshotID,
+		}
 		phys, hab := physics.DeriveCandidate(candidate, *detail.Evidence)
 		detail.Physics = &phys
 		detail.Habitability = &hab

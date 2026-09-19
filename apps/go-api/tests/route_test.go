@@ -155,16 +155,16 @@ func (fakeIngest) Status(context.Context) (*entity.IngestStatus, error) {
 	return &entity.IngestStatus{Observed: false, Status: "not_observed"}, nil
 }
 
-func (fakeIngest) Storage(context.Context, string, int, int) (*entity.StorageListing, error) {
+func (fakeIngest) Storage(context.Context, string, string, int) (*entity.StorageListing, error) {
 	return &entity.StorageListing{Bucket: "aurora", Prefix: "bronze/", Objects: []entity.StorageObject{}}, nil
 }
 
 func (fakeIngest) Start(context.Context, entity.IngestStartRequest) (*entity.IngestControlJob, error) {
-	return &entity.IngestControlJob{JobID: "ingest-job-test", Status: "running"}, nil
+	return &entity.IngestControlJob{TicketID: "ingest-job-test", Status: "running"}, nil
 }
 
 func (fakeIngest) Cancel(context.Context, string) (*entity.IngestControlJob, error) {
-	return &entity.IngestControlJob{JobID: "ingest-job-test", Status: "draining"}, nil
+	return &entity.IngestControlJob{TicketID: "ingest-job-test", Status: "draining"}, nil
 }
 
 var _ service.Candidate = fakeCandidate{}

@@ -302,10 +302,7 @@ func (s *InferenceService) persistAndDispatchChampionJob(ctx context.Context, pl
 	if err != nil {
 		return false, fmt.Errorf("marshal inference request: %w", err)
 	}
-	if s.dispatcher == nil {
-		return false, fmt.Errorf("inference dispatcher is unavailable")
-	}
-	if err := s.dispatcher.Dispatch(ctx, taxonomy.TaskCandidateVetting, payload); err != nil {
+	if err := s.dispatchInference(ctx, payload); err != nil {
 		return false, fmt.Errorf("dispatch inference request: %w", err)
 	}
 	return true, nil

@@ -14,7 +14,7 @@ import (
 )
 
 type ingestObservationPublisher interface {
-	PublishCore(context.Context, string, []byte) error
+	Publish(context.Context, string, []byte) error
 }
 
 type EventsHandler struct {
@@ -119,11 +119,11 @@ func (h *EventsHandler) Stream(c *gin.Context) {
 	}
 
 	for _, target := range targets {
-		_ = h.observations.PublishCore(c.Request.Context(), target.registerSubject, target.payload)
+		_ = h.observations.Publish(c.Request.Context(), target.registerSubject, target.payload)
 	}
 	defer func() {
 		for _, target := range targets {
-			_ = h.observations.PublishCore(context.Background(), target.unregisterSubject, target.payload)
+			_ = h.observations.Publish(context.Background(), target.unregisterSubject, target.payload)
 		}
 	}()
 
@@ -160,7 +160,7 @@ func (h *EventsHandler) Stream(c *gin.Context) {
 			c.Writer.Flush()
 		case <-heartbeat.C:
 			for _, target := range targets {
-				_ = h.observations.PublishCore(c.Request.Context(), target.registerSubject, target.payload)
+				_ = h.observations.Publish(c.Request.Context(), target.registerSubject, target.payload)
 			}
 			fmt.Fprint(c.Writer, ": keep-alive\n\n")
 			c.Writer.Flush()

@@ -45,7 +45,7 @@ func NewService(cfg *config.Config, log *slog.Logger, metrics *observer.Metrics,
 
 func (s *Service) Run(ctx context.Context, command control.Command) (runErr error) {
 	defer func() {
-		event := observer.IngestRuntimeEvent{JobID: command.JobID, Status: "completed"}
+		event := observer.IngestRuntimeEvent{TicketID: command.TicketID, Status: "completed"}
 		switch {
 		case ctx.Err() != nil:
 			event.Status = "canceled"
@@ -146,7 +146,7 @@ func (s *Service) Run(ctx context.Context, command control.Command) (runErr erro
 			Drain:              command.Drain,
 			Progress: func(progress ProgressEvent) {
 				s.runtime.Publish(observer.IngestRuntimeEvent{
-					JobID:             command.JobID,
+					TicketID:          command.TicketID,
 					Status:            "progress",
 					ProductID:         progress.Result.SourceProductID,
 					CompletedProducts: progress.CompletedProducts,
@@ -162,7 +162,7 @@ func (s *Service) Run(ctx context.Context, command control.Command) (runErr erro
 					status = "transfer_complete"
 				}
 				s.runtime.Publish(observer.IngestRuntimeEvent{
-					JobID:                command.JobID,
+					TicketID:             command.TicketID,
 					Status:               status,
 					WorkerID:             progress.WorkerID,
 					ProductID:            progress.ProductID,
@@ -178,7 +178,7 @@ func (s *Service) Run(ctx context.Context, command control.Command) (runErr erro
 	if command.ReportRunning != nil {
 		command.ReportRunning()
 	}
-	s.runtime.Publish(observer.IngestRuntimeEvent{JobID: command.JobID, Status: "running"})
+	s.runtime.Publish(observer.IngestRuntimeEvent{TicketID: command.TicketID, Status: "running"})
 
 	summary, _, err := pipeline.IngestManifest(ctx, manifest)
 	if err != nil {
@@ -367,7 +367,7 @@ func (s *Service) publishPlanning(command control.Command, stage string, complet
 		return
 	}
 	s.runtime.Publish(observer.IngestRuntimeEvent{
-		JobID:             command.JobID,
+		TicketID:          command.TicketID,
 		Status:            "planning",
 		PlanningStage:     stage,
 		PlanningCompleted: completed,
@@ -380,7 +380,7 @@ func (s *Service) publishMeasuredPlanning(command control.Command, progress mast
 		return
 	}
 	s.runtime.Publish(observer.IngestRuntimeEvent{
-		JobID:             command.JobID,
+		TicketID:          command.TicketID,
 		Status:            "planning",
 		PlanningStage:     progress.Stage,
 		PlanningCompleted: progress.Completed,

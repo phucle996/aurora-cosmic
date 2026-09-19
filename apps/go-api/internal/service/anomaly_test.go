@@ -86,6 +86,9 @@ func (m *mockStorage) ListObjects(ctx context.Context, prefix string) ([]provide
 func (m *mockStorage) ListObjectsWithMetadata(ctx context.Context, prefix string) ([]provider.ObjectInfo, error) {
 	return nil, nil
 }
+func (m *mockStorage) ListObjectsCursor(ctx context.Context, prefix string, cursor string, limit int) ([]provider.ObjectInfo, string, bool, error) {
+	return nil, "", false, nil
+}
 func (m *mockStorage) GetObject(ctx context.Context, key string) ([]byte, error) {
 	if m.err != nil {
 		return nil, m.err

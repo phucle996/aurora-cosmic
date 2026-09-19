@@ -5,11 +5,24 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
+	"go-api/infra/clickhouse"
 	"go-api/internal/domain/entity"
+	"go-api/internal/domain/repo"
 )
 
-func (r *AnalyticsClickHouse) ensureCandidateReviewSchema(ctx context.Context) error {
+type CandidateClickHouse struct {
+	client                     *clickhouse.Client
+	candidateReviewSchemaMu    sync.Mutex
+	candidateReviewSchemaReady bool
+}
+
+func NewCandidateClickHouse(client *clickhouse.Client) repo.CandidateRepository {
+	return &CandidateClickHouse{client: client}
+}
+
+func (r *CandidateClickHouse) ensureCandidateReviewSchema(ctx context.Context) error {
 	r.candidateReviewSchemaMu.Lock()
 	defer r.candidateReviewSchemaMu.Unlock()
 	if r.candidateReviewSchemaReady {
@@ -35,7 +48,7 @@ func (r *AnalyticsClickHouse) ensureCandidateReviewSchema(ctx context.Context) e
 	return err
 }
 
-func (r *AnalyticsClickHouse) ListCandidates(ctx context.Context, query entity.CandidateQuery) (entity.Page[entity.Candidate], error) {
+func (r *CandidateClickHouse) ListCandidates(ctx context.Context, query entity.CandidateQuery) (entity.Page[entity.Candidate], error) {
 	rawQuery := "SELECT prediction_id, source_product_id, tic_id, sector, raw_logit, candidate_score, decision_threshold, above_threshold, model_version, registered_model_id, gold_snapshot_id, runtime_validation_id, runtime_package_id, predicted_at FROM candidate_predictions"
 	conditions := make([]string, 0, 2)
 	if query.Sector > 0 {
@@ -103,7 +116,7 @@ func (r *AnalyticsClickHouse) ListCandidates(ctx context.Context, query entity.C
 	}, nil
 }
 
-func (r *AnalyticsClickHouse) GetCandidate(ctx context.Context, predictionID string, snapshotID string) (*entity.CandidateDetail, error) {
+func (r *CandidateClickHouse) GetCandidate(ctx context.Context, predictionID string, snapshotID string) (*entity.CandidateDetail, error) {
 	if err := r.ensureCandidateReviewSchema(ctx); err != nil {
 		return nil, err
 	}
@@ -238,7 +251,7 @@ func (r *AnalyticsClickHouse) GetCandidate(ctx context.Context, predictionID str
 	}, nil
 }
 
-func (r *AnalyticsClickHouse) SaveCandidateReview(ctx context.Context, input entity.CandidateReviewInput) (*entity.CandidateReview, error) {
+func (r *CandidateClickHouse) SaveCandidateReview(ctx context.Context, input entity.CandidateReviewInput) (*entity.CandidateReview, error) {
 	if err := r.ensureCandidateReviewSchema(ctx); err != nil {
 		return nil, err
 	}

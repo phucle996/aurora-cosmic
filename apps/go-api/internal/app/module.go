@@ -38,16 +38,16 @@ func NewModule(infra Infrastructure) (*Module, error) {
 		return nil, fmt.Errorf("infrastructure prediction MinIO client is nil")
 	}
 	if infra.NATS == nil {
-		return nil, fmt.Errorf("infrastructure NATS dispatcher is nil")
+		return nil, fmt.Errorf("infrastructure NATS client is nil")
 	}
 	if infra.Prometheus == nil {
 		return nil, fmt.Errorf("infrastructure Prometheus client is nil")
 	}
 
-	analyticsRepo := repository.NewAnalyticsClickHouse(infra.ClickHouse)
-	if analyticsRepo == nil {
-		return nil, fmt.Errorf("repository AnalyticsClickHouse is nil")
-	}
+	targetRepo := repository.NewTargetClickHouse(infra.ClickHouse)
+	candidateRepo := repository.NewCandidateClickHouse(infra.ClickHouse)
+	anomalyRepo := repository.NewAnomalyClickHouse(infra.ClickHouse)
+	trainingRepo := repository.NewTrainingClickHouse(infra.ClickHouse)
 	objectRepo := provider.NewObjectStorage(infra.MinIO)
 	if objectRepo == nil {
 		return nil, fmt.Errorf("provider ObjectStorage is nil")
@@ -64,19 +64,19 @@ func NewModule(infra Infrastructure) (*Module, error) {
 		infra.PredictionMinIO.Bucket,
 	)
 
-	targetService := service.NewTargetService(analyticsRepo, analyticsRepo)
+	targetService := service.NewTargetService(targetRepo)
 	if targetService == nil {
 		return nil, fmt.Errorf("service TargetService is nil")
 	}
-	candidateService := service.NewCandidateService(analyticsRepo)
+	candidateService := service.NewCandidateService(candidateRepo)
 	if candidateService == nil {
 		return nil, fmt.Errorf("service CandidateService is nil")
 	}
-	anomalyService := service.NewAnomalyService(analyticsRepo, predictionObjectRepo)
+	anomalyService := service.NewAnomalyService(anomalyRepo, predictionObjectRepo)
 	if anomalyService == nil {
 		return nil, fmt.Errorf("service AnomalyService is nil")
 	}
-	modelsService := service.NewModelsService(objectRepo, infra.NATS, analyticsRepo)
+	modelsService := service.NewModelsService(objectRepo, infra.NATS, trainingRepo)
 	if modelsService == nil {
 		return nil, fmt.Errorf("service ModelsService is nil")
 	}
@@ -84,7 +84,7 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	if inferenceService == nil {
 		return nil, fmt.Errorf("service InferenceService is nil")
 	}
-	readinessService := service.NewReadinessService(objectRepo, analyticsRepo, infra.NATS)
+	readinessService := service.NewReadinessService(objectRepo, infra.ClickHouse, infra.NATS)
 	if readinessService == nil {
 		return nil, fmt.Errorf("service ReadinessService is nil")
 	}
@@ -102,7 +102,7 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	}
 	ticketRepository := repository.NewTicketClickHouse(infra.ClickHouse, objectRepo)
 	ticketService := service.NewTicketService(ticketRepository)
-	ingestService := service.NewIngestService(objectRepo, infra.Prometheus, infra.MinIO.Bucket, infra.Ingester, eventBroker)
+	ingestService := service.NewIngestService(objectRepo, infra.MinIO.Bucket, infra.NATS, eventBroker)
 	if ingestService == nil {
 		return nil, fmt.Errorf("service IngestService is nil")
 	}

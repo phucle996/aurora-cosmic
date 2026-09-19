@@ -9,7 +9,7 @@ import { formatBytes, formatDate, formatTransferBytes, statusVariant } from '../
 interface IngestWorkerTelemetrySectionProps {
   status: IngestStatus | null;
   percent: number;
-  activeJobId?: string;
+  activeTicket?: string;
   activeStatus?: string;
   spawnedWorkerCount: number;
   workerSignals: Record<number, WorkerSignal>;
@@ -19,7 +19,7 @@ interface IngestWorkerTelemetrySectionProps {
 export function IngestWorkerTelemetrySection({
   status,
   percent,
-  activeJobId,
+  activeTicket,
   activeStatus,
   spawnedWorkerCount,
   workerSignals,
@@ -64,8 +64,8 @@ export function IngestWorkerTelemetrySection({
 
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="border-l-2 border-primary bg-muted/20 p-3">
-            <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Run identifier</p>
-            <p className="mt-1 break-all font-mono text-xs text-foreground">{activeJobId}</p>
+            <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Ticket identifier</p>
+            <p className="mt-1 break-all font-mono text-xs text-foreground">{activeTicket || status?.ticket_id || '—'}</p>
           </div>
           <div className="border-l-2 border-emerald-500 bg-muted/20 p-3">
             <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Last checkpoint</p>

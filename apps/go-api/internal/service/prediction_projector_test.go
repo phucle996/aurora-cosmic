@@ -28,6 +28,9 @@ func (o *projectionObjects) ListObjects(_ context.Context, prefix string) ([]pro
 func (o *projectionObjects) ListObjectsWithMetadata(ctx context.Context, prefix string) ([]provider.ObjectInfo, error) {
 	return o.ListObjects(ctx, prefix)
 }
+func (o *projectionObjects) ListObjectsCursor(context.Context, string, string, int) ([]provider.ObjectInfo, string, bool, error) {
+	return nil, "", false, nil
+}
 func (o *projectionObjects) GetObject(_ context.Context, key string) ([]byte, error) {
 	value, found := o.values[key]
 	if !found {

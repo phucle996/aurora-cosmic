@@ -34,17 +34,7 @@ func TestTargetServiceGetTargetLinksCandidatePhysics(t *testing.T) {
 				HasCandidate:          true,
 				CandidatePredictionID: "pred-1",
 			},
-		},
-	}
-	candRepo := &mockCandidateRepo{
-		detail: &entity.CandidateDetail{
-			Candidate: entity.Candidate{
-				PredictionID: "pred-1",
-				TICID:        12345,
-				Sector:       1,
-				SnapshotID:   "gold-1",
-			},
-			Evidence: entity.CandidateEvidence{
+			Evidence: &entity.CandidateEvidence{
 				BLSAvailable: true,
 				BLSPeriod:    10.5,
 				BLSDepth:     0.01,
@@ -52,7 +42,7 @@ func TestTargetServiceGetTargetLinksCandidatePhysics(t *testing.T) {
 		},
 	}
 
-	targetSvc := NewTargetService(targetRepo, candRepo)
+	targetSvc := NewTargetService(targetRepo)
 	detail, err := targetSvc.GetTarget(context.Background(), 12345, 1, "gold-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

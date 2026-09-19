@@ -119,7 +119,6 @@ func (p *NATSPubSub) Start(ctx context.Context) error {
 		"aurora.v1.ml.>",
 		"aurora.v1.preprocessing.control",
 		"aurora.v1.preprocessing.runtime",
-		"aurora.v1.ingest.runtime.>",
 		"aurora.live.gold.>",
 		"aurora.live.ml.>",
 	}

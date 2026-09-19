@@ -9,10 +9,13 @@ import (
 	"strings"
 	"testing"
 
+	"go-api/infra/nats"
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/repo"
 	"go-api/internal/provider"
 	"go-api/internal/taxonomy"
+
+	natsio "github.com/nats-io/nats.go"
 )
 
 type memoryModelObjects struct{ objects map[string][]byte }
@@ -30,6 +33,9 @@ func (m *memoryModelObjects) ListObjects(_ context.Context, prefix string) ([]pr
 func (m *memoryModelObjects) ListObjectsWithMetadata(ctx context.Context, prefix string) ([]provider.ObjectInfo, error) {
 	return m.ListObjects(ctx, prefix)
 }
+func (m *memoryModelObjects) ListObjectsCursor(context.Context, string, string, int) ([]provider.ObjectInfo, string, bool, error) {
+	return nil, "", false, nil
+}
 func (m *memoryModelObjects) GetObject(_ context.Context, key string) ([]byte, error) {
 	data, ok := m.objects[key]
 	if !ok {
@@ -44,14 +50,6 @@ func (m *memoryModelObjects) PutObject(_ context.Context, key string, data []byt
 func (m *memoryModelObjects) DeleteObject(_ context.Context, key string) error {
 	delete(m.objects, key)
 	return nil
-}
-
-type recordingDispatcher struct {
-	calls           int
-	err             error
-	coreEvents      int
-	canaryStatus    string
-	canaryRuntimeID string
 }
 
 type readyTrainingAnalytics struct{}
@@ -89,39 +87,46 @@ func (blockedTrainingAnalytics) ListTrainingReviewQueue(context.Context, []strin
 	return entity.Page[entity.TrainingReviewQueueItem]{}, nil
 }
 
-func (d *recordingDispatcher) Dispatch(context.Context, string, []byte) error {
-	d.calls++
-	return d.err
+type recordingTracker struct {
+	calls      int
+	coreEvents int
 }
 
-func (d *recordingDispatcher) PublishCore(context.Context, string, []byte) error {
-	d.coreEvents++
-	return d.err
-}
-
-func (d *recordingDispatcher) RequestCore(_ context.Context, _ string, payload []byte) ([]byte, error) {
-	if d.err != nil {
-		return nil, d.err
+func newRecordingNATS(status string, runtimeID string, err error) (*nats.Client, *recordingTracker) {
+	tracker := &recordingTracker{}
+	client := &nats.Client{
+		PublishFunc: func(_ context.Context, _ string, _ []byte) error {
+			tracker.coreEvents++
+			return err
+		},
+		PublishMsgFunc: func(_ context.Context, _ *natsio.Msg) (*natsio.PubAck, error) {
+			tracker.calls++
+			return &natsio.PubAck{}, err
+		},
+		RequestFunc: func(_ context.Context, _ string, payload []byte) ([]byte, error) {
+			if err != nil {
+				return nil, err
+			}
+			var request struct {
+				RuntimePackageID string `json:"runtime_package_id"`
+			}
+			_ = json.Unmarshal(payload, &request)
+			st := status
+			if st == "" {
+				st = "PASS"
+			}
+			rID := runtimeID
+			if rID == "" {
+				rID = request.RuntimePackageID
+			}
+			return json.Marshal(map[string]any{
+				"status": st, "runtime_package_id": rID,
+				"runtime_validation_id": "rval-v1-test", "engine": "rust-inference-ort",
+				"max_absolute_error": 0.000001, "max_relative_error": 0.000002,
+			})
+		},
 	}
-	var request struct {
-		RuntimePackageID string `json:"runtime_package_id"`
-	}
-	if err := json.Unmarshal(payload, &request); err != nil {
-		return nil, err
-	}
-	status := d.canaryStatus
-	if status == "" {
-		status = "PASS"
-	}
-	runtimeID := d.canaryRuntimeID
-	if runtimeID == "" {
-		runtimeID = request.RuntimePackageID
-	}
-	return json.Marshal(map[string]any{
-		"status": status, "runtime_package_id": runtimeID,
-		"runtime_validation_id": "rval-v1-test", "engine": "rust-inference-ort",
-		"max_absolute_error": 0.000001, "max_relative_error": 0.000002,
-	})
+	return client, tracker
 }
 
 func modelFixture(parity string) map[string][]byte {
@@ -198,14 +203,14 @@ func TestGetModelEvaluationReadsVerifiedEvidence(t *testing.T) {
 
 func TestDeploymentPinsValidatedRuntimePackage(t *testing.T) {
 	objects := &memoryModelObjects{objects: modelFixture("PASS")}
-	dispatcher := &recordingDispatcher{}
-	service := NewModelsService(objects, dispatcher, readyTrainingAnalytics{})
+	natsClient, tracker := newRecordingNATS("", "", nil)
+	service := NewModelsService(objects, natsClient, readyTrainingAnalytics{})
 	result, err := service.SetModelDeployment(context.Background(), "runtime-a", taxonomy.TaskCandidateVetting, true, "b6f13230-64c7-4b70-a513-56e4e832af31")
 	if err != nil {
 		t.Fatalf("deploy runtime: %v", err)
 	}
-	if result.RuntimeValidation != "rval-v1-test" || dispatcher.coreEvents < 4 {
-		t.Fatalf("promotion did not retain canary evidence: result=%#v events=%d", result, dispatcher.coreEvents)
+	if result.RuntimeValidation != "rval-v1-test" || tracker.coreEvents < 4 {
+		t.Fatalf("promotion did not retain canary evidence: result=%#v events=%d", result, tracker.coreEvents)
 	}
 	pointer := string(objects.objects["models/candidate/champion.json"])
 	if pointer == "" || !strings.Contains(pointer, `"runtime_package_id": "runtime-a"`) || !strings.Contains(pointer, `"runtime_validation_id": "rval-v1-test"`) {
@@ -222,8 +227,8 @@ func TestDeploymentPinsValidatedRuntimePackage(t *testing.T) {
 func TestDeploymentKeepsPriorChampionWhenRuntimeCanaryFails(t *testing.T) {
 	objects := &memoryModelObjects{objects: modelFixture("PASS")}
 	objects.objects["models/candidate/champion.json"] = []byte(`{"runtime_package_id":"runtime-prior"}`)
-	dispatcher := &recordingDispatcher{canaryStatus: "FAIL"}
-	service := NewModelsService(objects, dispatcher, readyTrainingAnalytics{})
+	natsClient, _ := newRecordingNATS("FAIL", "", nil)
+	service := NewModelsService(objects, natsClient, readyTrainingAnalytics{})
 	if _, err := service.SetModelDeployment(context.Background(), "runtime-a", taxonomy.TaskCandidateVetting, true, "8b26dc45-ce4e-4bc0-aac9-aa81f784358d"); err == nil {
 		t.Fatal("promotion succeeded despite failed Rust runtime canary")
 	}
@@ -241,8 +246,8 @@ func TestTrainingRequiresCommittedSnapshotAndDispatcher(t *testing.T) {
 	if _, err := service.StartTrainingJob(context.Background(), entity.TrainingJobSpec{GoldSnapshotID: "gold-v1-committed"}); err == nil {
 		t.Fatal("training was accepted without a dispatcher")
 	}
-	dispatcher := &recordingDispatcher{}
-	service = NewModelsService(objects, dispatcher, readyTrainingAnalytics{})
+	natsClient, tracker := newRecordingNATS("", "", nil)
+	service = NewModelsService(objects, natsClient, readyTrainingAnalytics{})
 	if _, err := service.StartTrainingJob(context.Background(), entity.TrainingJobSpec{GoldSnapshotID: "gold-v1-missing"}); err == nil {
 		t.Fatal("training was accepted for a missing snapshot")
 	}
@@ -253,8 +258,8 @@ func TestTrainingRequiresCommittedSnapshotAndDispatcher(t *testing.T) {
 	if _, err := service.StartTrainingJob(context.Background(), entity.TrainingJobSpec{GoldSnapshotID: "gold-v1-committed", Task: "unknown"}); err == nil {
 		t.Fatal("training accepted unknown task")
 	}
-	if _, err := service.StartTrainingJob(context.Background(), entity.TrainingJobSpec{GoldSnapshotID: "gold-v1-committed"}); err != nil || dispatcher.calls != 2 {
-		t.Fatalf("committed training was not dispatched: %v, calls=%d", err, dispatcher.calls)
+	if _, err := service.StartTrainingJob(context.Background(), entity.TrainingJobSpec{GoldSnapshotID: "gold-v1-committed"}); err != nil || tracker.calls != 2 {
+		t.Fatalf("committed training was not dispatched: %v, calls=%d", err, tracker.calls)
 	}
 }
 
@@ -262,8 +267,8 @@ func TestTrainingRejectsCandidateGoldWithoutTwoLabelClasses(t *testing.T) {
 	objects := &memoryModelObjects{objects: map[string][]byte{
 		"gold/snapshots/gold-v1-candidate-only/manifest.json": []byte(`{"snapshot_id":"gold-v1-candidate-only","status":"COMMITTED"}`),
 	}}
-	dispatcher := &recordingDispatcher{}
-	service := NewModelsService(objects, dispatcher, blockedTrainingAnalytics{})
+	natsClient, tracker := newRecordingNATS("", "", nil)
+	service := NewModelsService(objects, natsClient, blockedTrainingAnalytics{})
 	_, err := service.StartTrainingJob(context.Background(), entity.TrainingJobSpec{
 		GoldSnapshotID: "gold-v1-candidate-only",
 		TrainingMode:   "scratch",
@@ -271,13 +276,11 @@ func TestTrainingRejectsCandidateGoldWithoutTwoLabelClasses(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "not a supervised training cohort") {
 		t.Fatalf("expected supervised cohort guard, got %v", err)
 	}
-	if dispatcher.calls != 0 {
-		t.Fatalf("blocked cohort was dispatched %d times", dispatcher.calls)
+	if tracker.calls != 0 {
+		t.Fatalf("blocked cohort was dispatched %d times", tracker.calls)
 	}
 }
 
 var _ provider.ObjectStorage = (*memoryModelObjects)(nil)
-var _ repo.InferenceDispatcher = (*recordingDispatcher)(nil)
-var _ repo.ModelPromotionBus = (*recordingDispatcher)(nil)
 var _ repo.TrainingRepository = readyTrainingAnalytics{}
 var _ repo.TrainingRepository = blockedTrainingAnalytics{}

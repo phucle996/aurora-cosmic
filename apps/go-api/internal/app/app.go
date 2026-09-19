@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"go-api/infra/clickhouse"
-	"go-api/infra/ingester"
 	"go-api/infra/minio"
 	"go-api/infra/nats"
 	"go-api/infra/prometheus"
@@ -27,9 +26,8 @@ type Infrastructure struct {
 	ClickHouse      *clickhouse.Client
 	MinIO           *minio.Client
 	PredictionMinIO *minio.Client
-	NATS            *nats.Dispatcher
+	NATS            *nats.Client
 	Prometheus      *prometheus.Client
-	Ingester        *ingester.Client
 }
 
 type App struct {
@@ -37,7 +35,7 @@ type App struct {
 	Observer *provider.MetricsServer
 	PubSub   *pubsub.NATSPubSub
 	Stream   *stream.StreamConsumer
-	NATS     *nats.Dispatcher
+	NATS     *nats.Client
 	Addr     string
 }
 
@@ -70,9 +68,8 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 		ClickHouse:      clickhouse.NewClient(cfg.ClickHouse.Endpoint, cfg.ClickHouse.Database, cfg.ClickHouse.User, cfg.ClickHouse.Password),
 		MinIO:           minio.NewClient(cfg.MinIO.Endpoint, cfg.MinIO.Bucket, cfg.MinIO.AccessKey, cfg.MinIO.SecretKey),
 		PredictionMinIO: minio.NewClient(cfg.MinIO.Endpoint, cfg.MinIO.PredictionBucket, cfg.MinIO.AccessKey, cfg.MinIO.SecretKey),
-		NATS:            nats.NewDispatcher(cfg.NATS.URL),
+		NATS:            nats.NewClient(cfg.NATS.URL),
 		Prometheus:      prometheus.NewClient(cfg.Prometheus.URL),
-		Ingester:        ingester.NewClient(cfg.IngesterControlURL),
 	}
 
 	module, err := NewModule(infra)

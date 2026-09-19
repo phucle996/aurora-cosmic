@@ -32,14 +32,16 @@ func (s *ingestHTTPStub) Status(context.Context) (*entity.IngestStatus, error) {
 	}, nil
 }
 
-func (*ingestHTTPStub) Storage(context.Context, string, int, int) (*entity.StorageListing, error) {
+func (*ingestHTTPStub) Storage(_ context.Context, prefix, cursor string, limit int) (*entity.StorageListing, error) {
 	return &entity.StorageListing{
 		Bucket:     "aurora",
-		Prefix:     "bronze/",
-		Page:       1,
-		PageSize:   25,
-		Total:      12656,
-		TotalBytes: 28424102400,
+		Prefix:     prefix,
+		Limit:      limit,
+		Cursor:     cursor,
+		NextCursor: "bronze/tess/lightcurve/sector=0001/tic=2/example.fits",
+		Truncated:  true,
+		Total:      1,
+		TotalBytes: 2039040,
 		Objects: []entity.StorageObject{{
 			Key:          "bronze/tess/lightcurve/sector=0001/tic=1/example.fits",
 			SizeBytes:    2039040,
@@ -51,11 +53,11 @@ func (*ingestHTTPStub) Storage(context.Context, string, int, int) (*entity.Stora
 
 func (s *ingestHTTPStub) Start(_ context.Context, request entity.IngestStartRequest) (*entity.IngestControlJob, error) {
 	s.started = request
-	return &entity.IngestControlJob{JobID: "ingest-job-1", Status: "running", ManifestPath: request.ManifestPath, Sector: request.Sector, Concurrency: request.Concurrency}, nil
+	return &entity.IngestControlJob{TicketID: "ingest-job-1", Status: "running", ManifestPath: request.ManifestPath, Sector: request.Sector, Concurrency: request.Concurrency}, nil
 }
 
 func (*ingestHTTPStub) Cancel(context.Context, string) (*entity.IngestControlJob, error) {
-	return &entity.IngestControlJob{JobID: "ingest-job-1", Status: "cancelling"}, nil
+	return &entity.IngestControlJob{TicketID: "ingest-job-1", Status: "cancelling"}, nil
 }
 
 func TestIngestHTTPContractUsesSnakeCaseDTOs(t *testing.T) {
@@ -81,7 +83,7 @@ func TestIngestHTTPContractUsesSnakeCaseDTOs(t *testing.T) {
 	}
 
 	storageRecorder := httptest.NewRecorder()
-	router.ServeHTTP(storageRecorder, httptest.NewRequest(http.MethodGet, "/storage?prefix=bronze/&page=1&limit=25", nil))
+	router.ServeHTTP(storageRecorder, httptest.NewRequest(http.MethodGet, "/storage?prefix=bronze/&cursor=start-key&limit=25", nil))
 	if storageRecorder.Code != http.StatusOK {
 		t.Fatalf("storage response = %d", storageRecorder.Code)
 	}
@@ -89,8 +91,14 @@ func TestIngestHTTPContractUsesSnakeCaseDTOs(t *testing.T) {
 	if err := json.Unmarshal(storageRecorder.Body.Bytes(), &storage); err != nil {
 		t.Fatalf("decode storage response: %v", err)
 	}
-	if storage["total"] != float64(12656) || storage["total_bytes"] != float64(28424102400) || storage["Total"] != nil {
-		t.Fatalf("storage response does not match the dashboard contract: %s", storageRecorder.Body.String())
+	if storage["cursor"] != "start-key" || storage["next_cursor"] != "bronze/tess/lightcurve/sector=0001/tic=2/example.fits" || storage["truncated"] != true || storage["limit"] != float64(25) {
+		t.Fatalf("storage response does not match the cursor contract: %s", storageRecorder.Body.String())
+	}
+
+	storageEmptyPrefix := httptest.NewRecorder()
+	router.ServeHTTP(storageEmptyPrefix, httptest.NewRequest(http.MethodGet, "/storage?prefix=", nil))
+	if storageEmptyPrefix.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request for empty prefix, got %d", storageEmptyPrefix.Code)
 	}
 
 	startRecorder := httptest.NewRecorder()
@@ -103,7 +111,7 @@ func TestIngestHTTPContractUsesSnakeCaseDTOs(t *testing.T) {
 	if stub.started.Sector != 42 || stub.started.Concurrency != 8 || !stub.started.Fresh {
 		t.Fatalf("request DTO did not map to the entity: %#v", stub.started)
 	}
-	if !strings.Contains(startRecorder.Body.String(), `"job_id":"ingest-job-1"`) {
+	if !strings.Contains(startRecorder.Body.String(), `"ticket_id":"ingest-job-1"`) {
 		t.Fatalf("control response does not use snake_case: %s", startRecorder.Body.String())
 	}
 }
@@ -114,7 +122,7 @@ func (*ingestHTTPErrorStub) Status(context.Context) (*entity.IngestStatus, error
 	return nil, errors.New("unavailable")
 }
 
-func (*ingestHTTPErrorStub) Storage(context.Context, string, int, int) (*entity.StorageListing, error) {
+func (*ingestHTTPErrorStub) Storage(context.Context, string, string, int) (*entity.StorageListing, error) {
 	return nil, errors.New("unavailable")
 }
 
@@ -131,7 +139,7 @@ func TestIngestHTTPErrorMapping(t *testing.T) {
 	h := NewIngestHandler(&ingestHTTPErrorStub{})
 	router := gin.New()
 	router.POST("/jobs", h.Start)
-	router.POST("/jobs/:job_id/cancel", h.Cancel)
+	router.POST("/jobs/:ticket_id/cancel", h.Cancel)
 
 	startRecorder := httptest.NewRecorder()
 	startReq := httptest.NewRequest(http.MethodPost, "/jobs", strings.NewReader(`{"sector":1}`))

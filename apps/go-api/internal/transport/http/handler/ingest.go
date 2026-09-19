@@ -2,9 +2,11 @@ package handler
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/service"
@@ -96,17 +98,15 @@ func (h *IngestHandler) Status(c *gin.Context) {
 
 	c.JSON(http.StatusOK, resp)
 }
-
 func (h *IngestHandler) Storage(c *gin.Context) {
-	page := 1
-	if raw := strings.TrimSpace(c.Query("page")); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 1 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "page must be a positive integer"})
-			return
-		}
-		page = parsed
+	prefix := strings.TrimSpace(c.Query("prefix"))
+	if prefix == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "prefix query parameter is required"})
+		return
 	}
+
+	cursor := strings.TrimSpace(c.Query("cursor"))
+
 	limit := 100
 	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
@@ -116,7 +116,7 @@ func (h *IngestHandler) Storage(c *gin.Context) {
 		}
 		limit = parsed
 	}
-	listing, err := h.ingest.Storage(c.Request.Context(), c.Query("prefix"), page, limit)
+	listing, err := h.ingest.Storage(c.Request.Context(), prefix, cursor, limit)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "storage listing unavailable"})
 		return
@@ -138,8 +138,9 @@ func (h *IngestHandler) Storage(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"bucket":      listing.Bucket,
 		"prefix":      listing.Prefix,
-		"page":        listing.Page,
-		"page_size":   listing.PageSize,
+		"limit":       listing.Limit,
+		"cursor":      listing.Cursor,
+		"next_cursor": listing.NextCursor,
 		"total":       listing.Total,
 		"total_bytes": listing.TotalBytes,
 		"truncated":   listing.Truncated,
@@ -165,6 +166,14 @@ func (h *IngestHandler) Start(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "sector or manifest_path is required"})
 		return
 	}
+	req.TicketID = strings.TrimSpace(req.TicketID)
+	if req.TicketID == "" {
+		if req.Sector > 0 {
+			req.TicketID = fmt.Sprintf("tic-ingest-s%d-%d", req.Sector, time.Now().Unix())
+		} else {
+			req.TicketID = fmt.Sprintf("tic-ingest-%d", time.Now().Unix())
+		}
+	}
 	job, err := h.ingest.Start(c.Request.Context(), entity.IngestStartRequest{
 		TicketID:     req.TicketID,
 		ManifestPath: req.ManifestPath,
@@ -184,7 +193,6 @@ func (h *IngestHandler) Start(c *gin.Context) {
 	}
 
 	resp := gin.H{
-		"job_id":        job.JobID,
 		"ticket_id":     job.TicketID,
 		"status":        job.Status,
 		"manifest_path": job.ManifestPath,
@@ -200,7 +208,12 @@ func (h *IngestHandler) Start(c *gin.Context) {
 }
 
 func (h *IngestHandler) Cancel(c *gin.Context) {
-	job, err := h.ingest.Cancel(c.Request.Context(), strings.TrimSpace(c.Param("job_id")))
+	ticketID := strings.TrimSpace(c.Param("ticket_id"))
+	if ticketID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ticket_id is required"})
+		return
+	}
+	job, err := h.ingest.Cancel(c.Request.Context(), ticketID)
 	if err != nil {
 		if errors.Is(err, entity.ErrIngestJobNotFound) || strings.Contains(err.Error(), "not found") {
 			c.JSON(http.StatusNotFound, gin.H{"error": "ingest job not found"})
@@ -211,7 +224,6 @@ func (h *IngestHandler) Cancel(c *gin.Context) {
 	}
 
 	resp := gin.H{
-		"job_id":        job.JobID,
 		"ticket_id":     job.TicketID,
 		"status":        job.Status,
 		"manifest_path": job.ManifestPath,

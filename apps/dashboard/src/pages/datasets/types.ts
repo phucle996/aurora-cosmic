@@ -9,10 +9,13 @@ export type StorageObject = {
 export type StorageListing = {
   bucket: string;
   prefix: string;
-  page: number;
-  page_size: number;
-  total: number;
-  total_bytes: number;
+  limit?: number;
+  cursor?: string;
+  next_cursor?: string;
+  page?: number;
+  page_size?: number;
+  total?: number;
+  total_bytes?: number;
   truncated: boolean;
   objects: StorageObject[];
 };

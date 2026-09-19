@@ -10,7 +10,6 @@ import { IngestHeroSection } from './sections/IngestHeroSection';
 import { IngestMetricCardsSection } from './sections/IngestMetricCardsSection';
 import { IngestWorkerTelemetrySection } from './sections/IngestWorkerTelemetrySection';
 import { IngestControlSection } from './sections/IngestControlSection';
-import { IngestCompositionSection } from './sections/IngestCompositionSection';
 import { IngestProductTableSection } from './sections/IngestProductTableSection';
 
 const SECTOR_STORAGE_KEY = 'aurora.ingest.sector';
@@ -60,7 +59,8 @@ export default function IngestPage(): JSX.Element {
   useEffect(() => {
     void load();
 
-    const eventSource = new EventSource(`${apiBase}/v1/events?topic=${encodeURIComponent(`ingest:${activeTicket}`)}&topic=ingest`);
+    const sseTopic = activeTicket ? `ingest:${activeTicket}` : 'ingest';
+    const eventSource = new EventSource(`${apiBase}/v1/events?topic=${encodeURIComponent(sseTopic)}`);
     eventSource.addEventListener('ready', () => {
       void load();
     });
@@ -173,7 +173,6 @@ export default function IngestPage(): JSX.Element {
     );
   }, [reportedStatus, status?.downloading, status?.inflight_products]);
 
-  const activeJobId = controlJob?.job_id || 'active';
   const isDraining = (reportedStatus ?? '').toLowerCase() === 'draining';
 
   useEffect(() => {
@@ -203,8 +202,8 @@ export default function IngestPage(): JSX.Element {
     setControlBusy(true);
     setError(null);
     try {
-      const jobId = activeJobId;
-      const job = await apiFetch<IngestControlJob>(`/v1/ingest/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });
+      const ticketId = activeTicket || controlJob?.ticket_id || status?.ticket_id || 'active';
+      const job = await apiFetch<IngestControlJob>(`/v1/ingest/jobs/${encodeURIComponent(ticketId)}/cancel`, { method: 'POST' });
       setControlJob(job);
       await load();
     } catch (requestError) {
@@ -218,11 +217,6 @@ export default function IngestPage(): JSX.Element {
     if (!status?.total_products) return 0;
     return Math.min(100, Math.round((status.completed_products / status.total_products) * 100));
   }, [status?.completed_products, status?.total_products]);
-
-  const productKinds = useMemo(() => [
-    ['LIGHT_CURVE', 'Light curves'],
-    ['TARGET_PIXEL', 'TPF'],
-  ].map(([key, label]) => ({ key, label, summary: status?.product_kinds?.[key] })), [status?.product_kinds]);
 
   const downloadingProducts = useMemo(
     () => (status?.products ?? []).filter((product) => product.state === 'downloading' || product.state === 'running'),
@@ -272,7 +266,7 @@ export default function IngestPage(): JSX.Element {
         <IngestWorkerTelemetrySection
           status={status}
           percent={percent}
-          activeJobId={activeJobId}
+          activeTicket={activeTicket}
           activeStatus={activeStatus}
           spawnedWorkerCount={spawnedWorkerCount}
           workerSignals={workerSignals}
@@ -287,7 +281,6 @@ export default function IngestPage(): JSX.Element {
           isDraining={isDraining}
           controlBusy={controlBusy}
           activeTicket={activeTicket}
-          activeJobId={activeJobId}
           activeStatus={activeStatus}
           status={status}
           planningSignal={planningSignal}
@@ -300,13 +293,7 @@ export default function IngestPage(): JSX.Element {
         />
       </section>
 
-      {/* 5. Sample Composition & Acquisition Conditions Section */}
-      <IngestCompositionSection
-        productKinds={productKinds}
-        observed={status?.observed}
-      />
-
-      {/* 6. Observed FITS Products Table Section */}
+      {/* 5. Observed FITS Products Table Section */}
       <IngestProductTableSection products={status?.products} />
     </div>
   );

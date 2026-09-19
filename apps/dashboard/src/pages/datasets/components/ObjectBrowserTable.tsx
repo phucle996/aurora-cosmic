@@ -85,7 +85,7 @@ export function ObjectBrowserTable({
 
       <div className="flex flex-col gap-3 border-t border-border/60 px-4 py-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
         <span className="font-mono text-[10px] uppercase tracking-[0.08em]">
-          <strong className="font-medium text-foreground">{(data?.total ?? 0).toLocaleString()}</strong> objects · {formatBytes(data?.total_bytes ?? 0)}
+          <strong className="font-medium text-foreground">{(data?.total ?? objects.length).toLocaleString()}</strong> objects {data?.truncated ? '(has more)' : ''} · {formatBytes(data?.total_bytes ?? 0)}
         </span>
         <div className="flex items-center gap-2">
           <Button
@@ -99,13 +99,13 @@ export function ObjectBrowserTable({
             <ChevronLeft className="size-3.5" />
           </Button>
           <span className="min-w-20 text-center font-mono text-[10px] uppercase">
-            Page {page} / {totalPages}
+            Page {page} {totalPages > 1 ? `/ ${totalPages}` : ''}
           </span>
           <Button
             variant="outline"
             size="sm"
             className="h-7 w-7 rounded-none p-0"
-            disabled={page >= totalPages || loading}
+            disabled={(!data?.truncated && !data?.next_cursor && page >= totalPages) || loading}
             onClick={() => onPageChange(page + 1)}
             aria-label="Next object page"
           >

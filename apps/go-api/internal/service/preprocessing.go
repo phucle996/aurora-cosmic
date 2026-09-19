@@ -14,12 +14,14 @@ import (
 	"sync"
 	"time"
 
+	"go-api/infra/nats"
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/repo"
 	domainService "go-api/internal/domain/service"
 	"go-api/internal/provider"
 
 	"github.com/google/uuid"
+	natsio "github.com/nats-io/nats.go"
 	"github.com/parquet-go/parquet-go"
 )
 
@@ -109,11 +111,11 @@ var preprocessingMetrics = []preprocessingMetric{
 // 3. Quét bất đồng bộ tiến độ checkpoint từ MinIO (`checkpoints/preprocessing/objects/...`).
 type PreprocessingService struct {
 	prometheus         repo.PrometheusQuerier          // Truy vấn metrics telemetry từ Prometheus
-	dispatcher         repo.WorkflowDispatcher         // Gửi lệnh điều khiển (start/stop) tới Rust Preprocessor
+	nats               *nats.Client                    // Kết nối NATS client trực tiếp để gửi lệnh và quan sát stream
 	publisher          provider.EventPublisher         // Phát sự kiện workflow
 	objects            provider.ObjectStorage          // Đọc checkpoint từ MinIO S3
-	eventObserver      repo.SilverEventStreamObserver  // Đọc metadata AURORA_SILVER mà không consume event
-	bronzeObserver     repo.BronzeConsumerObserver     // Đọc trạng thái ACK của durable Bronze consumer
+	observeSilverFunc  func(ctx context.Context) (repo.SilverEventStreamSnapshot, error)
+	observeBronzeFunc  func(ctx context.Context) (repo.BronzeConsumerSnapshot, error)
 	runtimeMu          sync.RWMutex                    // Khóa đồng bộ dữ liệu runtime trong RAM
 	runtimeJob         *entity.PreprocessingControlJob // Thông tin job tiền xử lý hiện tại
 	progress           entity.PreprocessingProgress    // Tiến độ xử lý (tổng số checkpoint, đã xong, còn lại)
@@ -140,32 +142,86 @@ type silverCheckpointEvidence struct {
 }
 
 // NewPreprocessingService khởi tạo PreprocessingService cơ bản
-func NewPreprocessingService(prometheus repo.PrometheusQuerier, dispatchers ...repo.WorkflowDispatcher) domainService.Preprocessing {
-	var dispatcher repo.WorkflowDispatcher
-	if len(dispatchers) > 0 {
-		dispatcher = dispatchers[0]
+func NewPreprocessingService(prometheus repo.PrometheusQuerier, natsClients ...*nats.Client) domainService.Preprocessing {
+	var natsClient *nats.Client
+	if len(natsClients) > 0 {
+		natsClient = natsClients[0]
 	}
-	return &PreprocessingService{prometheus: prometheus, dispatcher: dispatcher, eventObserver: silverEventObserver(dispatcher), bronzeObserver: bronzeConsumerObserver(dispatcher)}
+	return &PreprocessingService{prometheus: prometheus, nats: natsClient}
 }
 
 // NewPreprocessingServiceWithEvents khởi tạo PreprocessingService có EventPublisher
-func NewPreprocessingServiceWithEvents(prometheus repo.PrometheusQuerier, dispatcher repo.WorkflowDispatcher, publisher provider.EventPublisher) domainService.Preprocessing {
-	return &PreprocessingService{prometheus: prometheus, dispatcher: dispatcher, publisher: publisher, eventObserver: silverEventObserver(dispatcher), bronzeObserver: bronzeConsumerObserver(dispatcher)}
+func NewPreprocessingServiceWithEvents(prometheus repo.PrometheusQuerier, natsClient *nats.Client, publisher provider.EventPublisher) domainService.Preprocessing {
+	return &PreprocessingService{prometheus: prometheus, nats: natsClient, publisher: publisher}
 }
 
 // NewPreprocessingServiceWithEventsAndObjects khởi tạo PreprocessingService đầy đủ chức năng
-func NewPreprocessingServiceWithEventsAndObjects(prometheus repo.PrometheusQuerier, dispatcher repo.WorkflowDispatcher, publisher provider.EventPublisher, objects provider.ObjectStorage) domainService.Preprocessing {
-	return &PreprocessingService{prometheus: prometheus, dispatcher: dispatcher, publisher: publisher, objects: objects, eventObserver: silverEventObserver(dispatcher), bronzeObserver: bronzeConsumerObserver(dispatcher)}
+func NewPreprocessingServiceWithEventsAndObjects(prometheus repo.PrometheusQuerier, natsClient *nats.Client, publisher provider.EventPublisher, objects provider.ObjectStorage) domainService.Preprocessing {
+	return &PreprocessingService{prometheus: prometheus, nats: natsClient, publisher: publisher, objects: objects}
 }
 
-func silverEventObserver(dispatcher repo.WorkflowDispatcher) repo.SilverEventStreamObserver {
-	observer, _ := dispatcher.(repo.SilverEventStreamObserver)
-	return observer
+func (s *PreprocessingService) observeSilverEventStream(ctx context.Context) (repo.SilverEventStreamSnapshot, error) {
+	if s != nil && s.observeSilverFunc != nil {
+		return s.observeSilverFunc(ctx)
+	}
+	if s.nats == nil {
+		return repo.SilverEventStreamSnapshot{}, fmt.Errorf("nats client is unavailable")
+	}
+	js, err := s.nats.JetStream(ctx)
+	if err != nil {
+		return repo.SilverEventStreamSnapshot{}, err
+	}
+	info, err := js.StreamInfo(
+		"AURORA_SILVER",
+		&natsio.StreamInfoRequest{SubjectsFilter: "aurora.v1.silver.>"},
+		natsio.Context(ctx),
+	)
+	if err != nil {
+		return repo.SilverEventStreamSnapshot{}, fmt.Errorf("observe AURORA_SILVER: %w", err)
+	}
+	bySubject := make(map[string]int64, len(info.State.Subjects))
+	for subject, messages := range info.State.Subjects {
+		bySubject[subject] = int64(messages)
+	}
+	return repo.SilverEventStreamSnapshot{
+		Messages: int64(info.State.Msgs), Bytes: int64(info.State.Bytes), Consumers: info.State.Consumers,
+		FirstAt: info.State.FirstTime, LastAt: info.State.LastTime, BySubject: bySubject,
+	}, nil
 }
 
-func bronzeConsumerObserver(dispatcher repo.WorkflowDispatcher) repo.BronzeConsumerObserver {
-	observer, _ := dispatcher.(repo.BronzeConsumerObserver)
-	return observer
+func (s *PreprocessingService) observeBronzeConsumer(ctx context.Context) (repo.BronzeConsumerSnapshot, error) {
+	if s != nil && s.observeBronzeFunc != nil {
+		return s.observeBronzeFunc(ctx)
+	}
+	if s.nats == nil {
+		return repo.BronzeConsumerSnapshot{}, fmt.Errorf("nats client is unavailable")
+	}
+	js, err := s.nats.JetStream(ctx)
+	if err != nil {
+		return repo.BronzeConsumerSnapshot{}, err
+	}
+	stream, err := js.StreamInfo("AURORA_BRONZE", natsio.Context(ctx))
+	if err != nil {
+		return repo.BronzeConsumerSnapshot{}, fmt.Errorf("observe AURORA_BRONZE: %w", err)
+	}
+	consumer, err := js.ConsumerInfo("AURORA_BRONZE", "aurora-rust-preprocessor", natsio.Context(ctx))
+	if err != nil {
+		return repo.BronzeConsumerSnapshot{}, fmt.Errorf("observe Bronze preprocessor consumer: %w", err)
+	}
+	return repo.BronzeConsumerSnapshot{
+		StreamMessages: int64(stream.State.Msgs), StreamBytes: int64(stream.State.Bytes), ConsumerName: consumer.Name,
+		DeliveredConsumerSeq: int64(consumer.Delivered.Consumer), DeliveredStreamSeq: int64(consumer.Delivered.Stream),
+		AckFloorConsumerSeq: int64(consumer.AckFloor.Consumer), AckFloorStreamSeq: int64(consumer.AckFloor.Stream),
+		AckPending: consumer.NumAckPending, Pending: int64(consumer.NumPending), CurrentRedelivered: consumer.NumRedelivered,
+		Waiting: consumer.NumWaiting, LastDeliveredAt: optionalTime(consumer.Delivered.Last), LastAckAt: optionalTime(consumer.AckFloor.Last),
+	}, nil
+}
+
+func optionalTime(value *time.Time) time.Time {
+	if value == nil {
+		return time.Time{}
+	}
+	return *value
 }
 
 // ============================================================================
@@ -173,7 +229,7 @@ func bronzeConsumerObserver(dispatcher repo.WorkflowDispatcher) repo.BronzeConsu
 // ============================================================================
 // Start gửi lệnh khởi động chế độ tiền xử lý (Stream hoặc Batch) tới Rust Preprocessor.
 func (s *PreprocessingService) Start(ctx context.Context, request entity.PreprocessingStartRequest) (*entity.PreprocessingControlJob, error) {
-	if s.dispatcher == nil {
+	if s.nats == nil {
 		return nil, fmt.Errorf("preprocessing control is unavailable")
 	}
 
@@ -233,7 +289,7 @@ func (s *PreprocessingService) Start(ctx context.Context, request entity.Preproc
 		return nil, fmt.Errorf("encode preprocessing command: %w", err)
 	}
 
-	if err := s.dispatcher.Dispatch(ctx, "preprocessing_start", command); err != nil {
+	if err := s.nats.Publish(ctx, "aurora.v1.preprocessing.control", command); err != nil {
 		return nil, fmt.Errorf("dispatch preprocessing command: %w", err)
 	}
 
@@ -358,7 +414,7 @@ func (s *PreprocessingService) ObserveRuntime(event entity.PreprocessingRuntimeE
 // Stop gửi lệnh dừng an toàn tới Rust Preprocessor worker.
 func (s *PreprocessingService) Stop(ctx context.Context, jobID string) (*entity.PreprocessingControlJob, error) {
 	jobID = strings.TrimSpace(jobID)
-	if s.dispatcher == nil || jobID == "" {
+	if s.nats == nil || jobID == "" {
 		return nil, fmt.Errorf("preprocessing control is unavailable")
 	}
 
@@ -385,7 +441,7 @@ func (s *PreprocessingService) Stop(ctx context.Context, jobID string) (*entity.
 	s.runtimeJob = &job
 	s.runtimeMu.Unlock()
 
-	// Gửi lệnh stop qua dispatcher
+	// Gửi lệnh stop qua NATS
 	command, err := json.Marshal(struct {
 		Action string `json:"action"`
 		JobID  string `json:"job_id"`
@@ -394,7 +450,7 @@ func (s *PreprocessingService) Stop(ctx context.Context, jobID string) (*entity.
 		return nil, fmt.Errorf("encode preprocessing stop command: %w", err)
 	}
 
-	if err := s.dispatcher.Dispatch(ctx, "preprocessing_stop", command); err != nil {
+	if err := s.nats.Publish(ctx, "aurora.v1.preprocessing.control", command); err != nil {
 		s.runtimeMu.Lock()
 		if s.runtimeJob != nil && s.runtimeJob.JobID == job.JobID {
 			s.runtimeJob.Status = "running"
@@ -1032,19 +1088,15 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 
 	var silverEvents repo.SilverEventStreamSnapshot
 	silverEventsObserved := false
-	if s.eventObserver != nil {
-		if snapshot, eventErr := s.eventObserver.ObserveSilverEventStream(ctx); eventErr == nil {
-			silverEvents = snapshot
-			silverEventsObserved = true
-		}
+	if snapshot, eventErr := s.observeSilverEventStream(ctx); eventErr == nil {
+		silverEvents = snapshot
+		silverEventsObserved = true
 	}
 	var bronzeConsumer repo.BronzeConsumerSnapshot
 	bronzeConsumerObserved := false
-	if s.bronzeObserver != nil {
-		if snapshot, consumerErr := s.bronzeObserver.ObserveBronzeConsumer(ctx); consumerErr == nil {
-			bronzeConsumer = snapshot
-			bronzeConsumerObserved = true
-		}
+	if snapshot, consumerErr := s.observeBronzeConsumer(ctx); consumerErr == nil {
+		bronzeConsumer = snapshot
+		bronzeConsumerObserved = true
 	}
 
 	s.runtimeMu.Lock()
@@ -1774,4 +1826,10 @@ func optionalUint64Value(value *uint64) uint64 {
 		return 0
 	}
 	return *value
+}
+
+func isProcessableBronzeFITS(key string) bool {
+	key = strings.ToLower(strings.TrimSpace(key))
+	return strings.HasSuffix(key, ".fits") || strings.HasSuffix(key, ".fit") ||
+		strings.HasSuffix(key, ".fits.gz") || strings.HasSuffix(key, ".fit.gz")
 }

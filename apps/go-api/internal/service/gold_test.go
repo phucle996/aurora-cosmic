@@ -40,6 +40,9 @@ func (m *memoryGoldObjects) ListObjects(_ context.Context, prefix string) ([]pro
 func (m *memoryGoldObjects) ListObjectsWithMetadata(_ context.Context, prefix string) ([]provider.ObjectInfo, error) {
 	return m.ListObjects(context.Background(), prefix)
 }
+func (m *memoryGoldObjects) ListObjectsCursor(context.Context, string, string, int) ([]provider.ObjectInfo, string, bool, error) {
+	return nil, "", false, nil
+}
 
 func TestGoldLineageOnlyMarksCommittedManifestInputsExtracted(t *testing.T) {
 	committed, err := json.Marshal(entity.GoldSnapshotDetail{

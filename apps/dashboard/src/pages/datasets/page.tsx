@@ -27,13 +27,14 @@ export default function DatasetsPage(): JSX.Element {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadTier = useCallback(async (tierPrefix: string, targetPage: number) => {
+  const [cursorHistory, setCursorHistory] = useState<Record<number, string>>({ 1: '' });
+
+  const loadTier = useCallback(async (tierPrefix: string, cursor = '', targetPage = 1) => {
     setLoading(true);
     setError(null);
     try {
-      const data = await apiFetch<StorageListing>(
-        `/v1/storage?prefix=${encodeURIComponent(tierPrefix)}&page=${targetPage}&limit=${PAGE_SIZE}`,
-      );
+      const query = `/v1/storage?prefix=${encodeURIComponent(tierPrefix)}&limit=${PAGE_SIZE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+      const data = await apiFetch<StorageListing>(query);
       if (tierPrefix.startsWith('bronze')) setBronzeData(data);
       else if (tierPrefix.startsWith('silver')) setSilverData(data);
       else if (tierPrefix.startsWith('gold')) setGoldData(data);
@@ -51,9 +52,9 @@ export default function DatasetsPage(): JSX.Element {
     setError(null);
 
     Promise.allSettled([
-      apiFetch<StorageListing>(`/v1/storage?prefix=bronze/&page=1&limit=${PAGE_SIZE}`),
-      apiFetch<StorageListing>(`/v1/storage?prefix=silver/&page=1&limit=${PAGE_SIZE}`),
-      apiFetch<StorageListing>(`/v1/storage?prefix=gold/&page=1&limit=${PAGE_SIZE}`),
+      apiFetch<StorageListing>(`/v1/storage?prefix=bronze/&limit=${PAGE_SIZE}`),
+      apiFetch<StorageListing>(`/v1/storage?prefix=silver/&limit=${PAGE_SIZE}`),
+      apiFetch<StorageListing>(`/v1/storage?prefix=gold/&limit=${PAGE_SIZE}`),
     ]).then(([bronzeRes, silverRes, goldRes]) => {
       if (!mounted) return;
       if (bronzeRes.status === 'fulfilled' && bronzeRes.value) setBronzeData(bronzeRes.value);
@@ -79,20 +80,29 @@ export default function DatasetsPage(): JSX.Element {
     const nextTab = tab as 'bronze' | 'silver' | 'gold';
     setActiveTab(nextTab);
     setPage(1);
+    setCursorHistory({ 1: '' });
     const prefix = `${nextTab}/`;
     setCurrentPrefix(prefix);
-    void loadTier(prefix, 1);
+    void loadTier(prefix, '', 1);
   };
 
   const handleSearchOrFilter = (targetPrefix: string) => {
     setPage(1);
+    setCursorHistory({ 1: '' });
     setCurrentPrefix(targetPrefix);
-    void loadTier(targetPrefix, 1);
+    void loadTier(targetPrefix, '', 1);
   };
 
   const handlePageChange = (newPage: number) => {
+    let nextCursor = '';
+    if (newPage > page) {
+      nextCursor = activeListing?.next_cursor ?? '';
+      setCursorHistory((prev) => ({ ...prev, [newPage]: nextCursor }));
+    } else {
+      nextCursor = cursorHistory[newPage] ?? '';
+    }
     setPage(newPage);
-    void loadTier(currentPrefix, newPage);
+    void loadTier(currentPrefix, nextCursor, newPage);
   };
 
   const activeListing = useMemo(() => {

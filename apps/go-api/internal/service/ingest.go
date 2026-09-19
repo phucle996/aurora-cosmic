@@ -4,16 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"go-api/infra/nats"
 	"go-api/internal/domain/entity"
-	"go-api/internal/domain/repo"
 	domainService "go-api/internal/domain/service"
 	"go-api/internal/provider"
+
+	natsgo "github.com/nats-io/nats.go"
 )
 
 // ============================================================================
@@ -21,159 +21,261 @@ import (
 // ============================================================================
 // IngestService chịu trách nhiệm:
 // 1. Kích hoạt (Start) hoặc Hủy bỏ (Cancel) tiến trình tải dữ liệu thiên văn từ NASA MAST.
-// 2. Theo dõi trạng thái tiến trình thời gian thực qua Checkpoint MinIO và Metrics Prometheus.
-// 3. Quản lý danh sách đối tượng lưu trữ trong vùng đệm MinIO Bronze (~50 GiB).
-type storageCacheEntry struct {
-	cachedAt   time.Time
-	objects    []provider.ObjectInfo
-	totalBytes int64
-}
-
+// 2. Theo dõi trạng thái tiến trình thời gian thực qua NATS Pub/Sub event stream.
 type IngestService struct {
-	objects      provider.ObjectStorage        // Storage đọc ghi MinIO S3
-	prometheus   repo.PrometheusQuerier        // Truy vấn metrics tốc độ throughput từ Prometheus
-	bucket       string                        // Tên bucket MinIO (mặc định: "aurora")
-	controller   repo.IngestController         // Controller điều khiển Go Ingester worker
-	publisher    provider.EventPublisher       // Publisher phát sự kiện lifecycle workflow
-	runtimeMu    sync.RWMutex                  // Khóa đồng bộ trạng thái runtime trong bộ nhớ
-	runtimeJob   *entity.IngestControlJob      // Thông tin job điều khiển đang chạy
-	runtime      *entity.IngestStatus          // Snapshot trạng thái thu thập gần nhất
-	cachedRunID  string                        // ID đợt thu thập đã parse và lưu bộ nhớ đệm
-	cachedStatus *entity.IngestStatus          // Trạng thái đã parse sẵn của checkpoint MinIO
-	storageCache map[string]*storageCacheEntry // Bộ đệm cache danh sách MinIO theo prefix (TTL 10s)
-}
+	objects    provider.ObjectStorage   // Storage đọc MinIO S3 cho Storage() browsing
+	bucket     string                   // Tên bucket MinIO (mặc định: "aurora")
+	nats       *nats.Client             // Kết nối NATS Client trực tiếp để trao đổi lệnh và trạng thái
+	publisher  provider.EventPublisher  // Publisher phát sự kiện lifecycle workflow
+	runtimeMu  sync.RWMutex             // Khóa đồng bộ trạng thái runtime trong bộ nhớ
+	runtimeJob *entity.IngestControlJob // Thông tin job điều khiển đang chạy
+	runtime    *entity.IngestStatus     // Snapshot trạng thái thu thập gần nhất
 
-// ============================================================================
-// DTO CHECKPOINT TIẾN TRÌNH THU THẬP (Ingestion Checkpoint DTO)
-// ============================================================================
-// ingestionCheckpoint ánh xạ nội dung file JSON checkpoint lưu tại:
-// s3://aurora/checkpoints/ingestion/runs/<run_id>.json
-type ingestionCheckpoint struct {
-	RunID        string                      `json:"run_id"`        // Mã định danh đợt thu thập (VD: run-2026-s42)
-	Status       string                      `json:"status"`        // Trạng thái: RUNNING, COMPLETED, FAILED, CANCELED
-	ManifestPath string                      `json:"manifest_path"` // Đường dẫn tới manifest kế hoạch thu thập
-	StartedAt    time.Time                   `json:"started_at"`    // Thời điểm bắt đầu
-	UpdatedAt    time.Time                   `json:"updated_at"`    // Thời điểm cập nhật checkpoint gần nhất
-	Products     map[string]ingestionProduct `json:"products"`      // Danh sách trạng thái từng file FITS đang tải
-}
-
-// ingestionProduct lưu trạng thái chi tiết của từng file dữ liệu (Light Curve / TPF FITS)
-type ingestionProduct struct {
-	ProductKind       string    `json:"product_kind"`         // Loại sản phẩm: light_curve, target_pixel, ffi
-	ObjectKey         string    `json:"object_key"`           // Khóa lưu trữ S3 (VD: bronze/sector-42/..._lc.fits)
-	ExpectedSizeBytes int64     `json:"expected_size_bytes"`  // Kích thước dự kiến từ catalog MAST
-	SizeBytes         int64     `json:"size_bytes"`           // Số bytes thực tế đã tải về
-	State             string    `json:"state"`                // Trạng thái: DOWNLOADING, STORED, PUBLISHED, FAILED
-	Attempts          int       `json:"attempts"`             // Số lần đã thử tải lại
-	LastError         string    `json:"last_error,omitempty"` // Lỗi chi tiết nếu thất bại
-	UpdatedAt         time.Time `json:"updated_at"`           // Thời gian cập nhật trạng thái
-}
-
-// applyPlanningStatus promotes an active control run to planning only while the
-// durable catalog or manifest protocol reports that it is still in progress.
-// The API owns this workflow-state mapping; clients must render Status as-is.
-func applyPlanningStatus(status *entity.IngestStatus, controlJob *entity.IngestControlJob) {
-	if status == nil || controlJob == nil || !strings.EqualFold(controlJob.Status, "running") {
-		return
-	}
-	isPlanning := func(state string) bool {
-		switch strings.ToLower(state) {
-		case "planned", "running":
-			return true
-		default:
-			return false
-		}
-	}
-	if (status.CatalogProgress != nil && isPlanning(status.CatalogProgress.State)) ||
-		(status.ManifestProgress != nil && isPlanning(status.ManifestProgress.State)) {
-		status.Status = "planning"
-	}
-}
-
-func (s *IngestService) attachPlanningProgress(ctx context.Context, status *entity.IngestStatus, controlJob *entity.IngestControlJob) {
-	if status == nil || controlJob == nil || !strings.EqualFold(controlJob.Status, "running") {
-		return
-	}
-	if payload, catalogErr := s.objects.GetObject(ctx, "control/ingest/catalog-status.json"); catalogErr == nil {
-		var catalogProgress entity.IngestCatalogProgress
-		if json.Unmarshal(payload, &catalogProgress) == nil && catalogProgress.State != "" {
-			status.CatalogProgress = &catalogProgress
-		}
-	}
-	if payload, manifestErr := s.objects.GetObject(ctx, "control/ingest/manifest-status.json"); manifestErr == nil {
-		var manifestProgress entity.IngestManifestProgress
-		if json.Unmarshal(payload, &manifestProgress) == nil && manifestProgress.State != "" {
-			status.ManifestProgress = &manifestProgress
-		}
-	}
+	lastProgressAt        time.Time
+	lastCompletedBytes    int64
+	lastCompletedProducts int64
 }
 
 // NewIngestService khởi tạo thể hiện duy nhất của IngestService
 func NewIngestService(
 	objects provider.ObjectStorage,
-	prometheus repo.PrometheusQuerier,
 	bucket string,
-	controller repo.IngestController,
+	natsClient *nats.Client,
 	publisher provider.EventPublisher,
 ) domainService.Ingest {
-	return &IngestService{
-		objects:      objects,
-		prometheus:   prometheus,
-		bucket:       bucket,
-		controller:   controller,
-		publisher:    publisher,
-		storageCache: make(map[string]*storageCacheEntry),
+	s := &IngestService{
+		objects:   objects,
+		bucket:    bucket,
+		nats:      natsClient,
+		publisher: publisher,
 	}
+	s.startEventListener()
+	return s
+}
+
+func (s *IngestService) startEventListener() {
+	go func() {
+		nc, err := s.nats.Conn(context.Background())
+		if err != nil {
+			return
+		}
+		_, _ = nc.Subscribe("aurora.v1.ingest.runtime.>", func(msg *natsgo.Msg) {
+			s.handleRuntimeEvent(msg.Data)
+		})
+	}()
+}
+
+func (s *IngestService) handleRuntimeEvent(data []byte) {
+	if len(data) == 0 {
+		return
+	}
+	var ev struct {
+		TicketID             string    `json:"ticket_id"`
+		Status               string    `json:"status"`
+		PlanningStage        string    `json:"planning_stage,omitempty"`
+		PlanningCompleted    int       `json:"planning_completed,omitempty"`
+		PlanningTotal        int       `json:"planning_total,omitempty"`
+		PlanningProducts     int       `json:"planning_products,omitempty"`
+		Error                string    `json:"error,omitempty"`
+		ProductID            string    `json:"product_id,omitempty"`
+		ProductKind          string    `json:"product_kind,omitempty"`
+		WorkerID             int       `json:"worker_id,omitempty"`
+		ProductBytes         int64     `json:"product_bytes,omitempty"`
+		ProductExpectedBytes int64     `json:"product_expected_bytes,omitempty"`
+		CompletedProducts    int64     `json:"completed_products,omitempty"`
+		TotalProducts        int       `json:"total_products,omitempty"`
+		CompletedBytes       int64     `json:"completed_bytes,omitempty"`
+		ExpectedBytes        int64     `json:"expected_bytes,omitempty"`
+		ActiveWorkers        int       `json:"active_workers,omitempty"`
+		OccurredAt           time.Time `json:"occurred_at"`
+	}
+	if err := json.Unmarshal(data, &ev); err != nil {
+		return
+	}
+	ticketID := strings.TrimSpace(ev.TicketID)
+	if ticketID == "" {
+		return
+	}
+
+	now := time.Now().UTC()
+	if ev.OccurredAt.IsZero() {
+		ev.OccurredAt = now
+	}
+
+	s.runtimeMu.Lock()
+	if s.runtime == nil || s.runtime.TicketID != ticketID {
+		s.runtime = &entity.IngestStatus{
+			Observed:     true,
+			TicketID:     ticketID,
+			Status:       strings.ToLower(ev.Status),
+			Error:        ev.Error,
+			ObservedAt:   now,
+			Products:     []entity.IngestProduct{},
+			ProductKinds: make(map[string]entity.IngestKindSummary),
+		}
+		s.lastProgressAt = time.Time{}
+		s.lastCompletedBytes = 0
+		s.lastCompletedProducts = 0
+	}
+
+	if ev.Status != "" {
+		s.runtime.Status = strings.ToLower(ev.Status)
+	}
+	if ev.Error != "" {
+		s.runtime.Error = ev.Error
+	}
+	if ev.TotalProducts > 0 {
+		s.runtime.TotalProducts = ev.TotalProducts
+	}
+	if ev.CompletedProducts > 0 {
+		s.runtime.CompletedProducts = int(ev.CompletedProducts)
+	}
+	if ev.CompletedBytes > 0 {
+		s.runtime.CompletedBytes = ev.CompletedBytes
+	}
+	if ev.ExpectedBytes > 0 {
+		s.runtime.ExpectedBytes = ev.ExpectedBytes
+	}
+	if ev.ActiveWorkers > 0 {
+		s.runtime.InflightProducts = ev.ActiveWorkers
+	}
+
+	// Calculate soft throughput metrics (bytes/s, products/s)
+	if ev.Status == "progress" {
+		if !s.lastProgressAt.IsZero() {
+			secs := now.Sub(s.lastProgressAt).Seconds()
+			if secs > 0 {
+				if ev.CompletedBytes > s.lastCompletedBytes {
+					s.runtime.BytesPerSecond = float64(ev.CompletedBytes-s.lastCompletedBytes) / secs
+				}
+				if ev.CompletedProducts > s.lastCompletedProducts {
+					s.runtime.ProductsPerSecond = float64(ev.CompletedProducts-s.lastCompletedProducts) / secs
+				}
+			}
+		}
+		s.lastProgressAt = now
+		s.lastCompletedBytes = ev.CompletedBytes
+		s.lastCompletedProducts = ev.CompletedProducts
+	}
+
+	// Update planning progress
+	if ev.PlanningStage != "" {
+		s.runtime.Status = "planning"
+		s.runtime.ManifestProgress = &entity.IngestManifestProgress{
+			State:              "RUNNING",
+			Stage:              ev.PlanningStage,
+			StageCompleted:     ev.PlanningCompleted,
+			StageTotal:         ev.PlanningTotal,
+			DiscoveredProducts: ev.PlanningProducts,
+			UpdatedAt:          ev.OccurredAt,
+		}
+	}
+
+	// Update active worker transferring products
+	if ev.Status == "transfer" && ev.ProductID != "" {
+		found := false
+		for i := range s.runtime.Products {
+			if s.runtime.Products[i].ID == ev.ProductID {
+				s.runtime.Products[i].State = "downloading"
+				s.runtime.Products[i].SizeBytes = ev.ProductBytes
+				if ev.ProductExpectedBytes > 0 {
+					s.runtime.Products[i].Expected = ev.ProductExpectedBytes
+				}
+				s.runtime.Products[i].UpdatedAt = ev.OccurredAt
+				found = true
+				break
+			}
+		}
+		if !found {
+			p := entity.IngestProduct{
+				ID:        ev.ProductID,
+				Kind:      ev.ProductKind,
+				State:     "downloading",
+				SizeBytes: ev.ProductBytes,
+				Expected:  ev.ProductExpectedBytes,
+				UpdatedAt: ev.OccurredAt,
+			}
+			s.runtime.Products = append([]entity.IngestProduct{p}, s.runtime.Products...)
+			if len(s.runtime.Products) > 100 {
+				s.runtime.Products = s.runtime.Products[:100]
+			}
+		}
+	} else if ev.Status == "transfer_complete" && ev.ProductID != "" {
+		for i := range s.runtime.Products {
+			if s.runtime.Products[i].ID == ev.ProductID {
+				s.runtime.Products[i].State = "stored"
+				s.runtime.Products[i].SizeBytes = ev.ProductBytes
+				s.runtime.Products[i].UpdatedAt = ev.OccurredAt
+				break
+			}
+		}
+	}
+
+	if ev.Status == "completed" || ev.Status == "canceled" || ev.Status == "stopped" || ev.Status == "failed" {
+		s.runtime.Downloading = 0
+		s.runtime.InflightProducts = 0
+		s.runtime.QueueDepth = 0
+		s.runtime.BytesPerSecond = 0
+		s.runtime.ProductsPerSecond = 0
+	}
+
+	s.runtime.ObservedAt = now
+	s.runtimeMu.Unlock()
+
+	// Push SSE real-time update
+	topic := "ingest:" + ticketID
+	_ = s.publisher.Publish(context.Background(), topic, provider.Event{
+		Type:  "workflow",
+		Topic: topic,
+		Data:  data,
+	})
 }
 
 // ============================================================================
 // HÀM KHỞI CHẠY TIẾN TRÌNH THU THẬP (Start Ingestion)
 // ============================================================================
-// Start gửi lệnh khởi động một đợt thu thập dữ liệu mới tới Go Ingester
-// và phát sự kiện workflow vào event bus.
+// Start gửi lệnh khởi động 1 chiều tới Ingester qua NATS và phát sự kiện SSE
 func (s *IngestService) Start(ctx context.Context, request entity.IngestStartRequest) (*entity.IngestControlJob, error) {
-	// 1. Gọi controller để kích hoạt Ingester worker
-	job, err := s.controller.Start(ctx, request)
+	payload, err := json.Marshal(request)
 	if err != nil {
-		if strings.Contains(err.Error(), "409") || strings.Contains(err.Error(), "already running") {
-			return nil, entity.ErrIngestAlreadyRunning
-		}
-		return nil, err
-	}
-	if job == nil || job.JobID == "" {
-		return nil, fmt.Errorf("ingester controller returned invalid job")
+		return nil, fmt.Errorf("marshal ingest start request: %w", err)
 	}
 
-	// 2. Phát sự kiện workflow (sai thì fail, không fallback)
-	topic := "ingest"
-	if job.TicketID != "" {
-		topic = "ingest:" + job.TicketID
+	// 1. Gửi lệnh 1 chiều (fire-and-forget command) tới Ingester worker qua NATS
+	if err := s.nats.Publish(ctx, "aurora.v1.ingest.control.start", payload); err != nil {
+		return nil, fmt.Errorf("publish ingest start command over NATS: %w", err)
 	}
-	data, err := json.Marshal(map[string]any{
-		"job_id":      job.JobID,
+
+	now := time.Now().UTC()
+	job := &entity.IngestControlJob{
+		TicketID:     request.TicketID,
+		Status:       "running",
+		ManifestPath: request.ManifestPath,
+		Sector:       request.Sector,
+		Concurrency:  request.Concurrency,
+		StartedAt:    now,
+		UpdatedAt:    now,
+	}
+
+	// 2. Phát sự kiện workflow vào event bus
+	topic := "ingest:" + request.TicketID
+	eventData, err := json.Marshal(map[string]any{
 		"ticket_id":   job.TicketID,
 		"status":      strings.ToLower(job.Status),
 		"occurred_at": job.UpdatedAt,
 		"payload":     job,
 	})
-	if err != nil {
-		return nil, fmt.Errorf("marshal ingest start event: %w", err)
-	}
-	if s.publisher != nil {
-		if err := s.publisher.Publish(ctx, topic, provider.Event{
+	if err == nil {
+		_ = s.publisher.Publish(ctx, topic, provider.Event{
 			Type:  "workflow",
 			Topic: topic,
-			Data:  data,
-		}); err != nil {
-			return nil, fmt.Errorf("publish ingest start event: %w", err)
-		}
+			Data:  eventData,
+		})
 	}
 
 	// 3. Cập nhật trạng thái runtime trong bộ nhớ
 	s.runtimeMu.Lock()
 	s.runtimeJob = job
-	s.cachedRunID = ""
-	s.cachedStatus = nil
 	s.runtime = &entity.IngestStatus{
 		Observed:     false,
 		TicketID:     job.TicketID,
@@ -181,7 +283,7 @@ func (s *IngestService) Start(ctx context.Context, request entity.IngestStartReq
 		ManifestPath: job.ManifestPath,
 		StartedAt:    job.StartedAt,
 		UpdatedAt:    job.UpdatedAt,
-		ObservedAt:   time.Now().UTC(),
+		ObservedAt:   now,
 		Products:     []entity.IngestProduct{},
 		ProductKinds: make(map[string]entity.IngestKindSummary),
 	}
@@ -193,62 +295,49 @@ func (s *IngestService) Start(ctx context.Context, request entity.IngestStartReq
 // ============================================================================
 // HÀM HỦY BỎ TIẾN TRÌNH (Cancel Ingestion)
 // ============================================================================
-// Cancel requests a graceful stop. The ingester drains products already owned
-// by workers before it reports the terminal stopped state.
-func (s *IngestService) Cancel(ctx context.Context, jobID string) (*entity.IngestControlJob, error) {
-	jobID = strings.TrimSpace(jobID)
-	if jobID == "" || jobID == "current" || jobID == "active" {
-		s.runtimeMu.RLock()
-		if s.runtimeJob != nil && s.runtimeJob.JobID != "" {
-			jobID = s.runtimeJob.JobID
-		} else {
-			jobID = "active"
-		}
-		s.runtimeMu.RUnlock()
-	}
-
-	job, err := s.controller.Cancel(ctx, jobID)
+// Cancel gửi lệnh 1 chiều hủy bỏ qua NATS và cập nhật trạng thái runtime
+func (s *IngestService) Cancel(ctx context.Context, ticketID string) (*entity.IngestControlJob, error) {
+	payload, err := json.Marshal(map[string]string{
+		"ticket_id": ticketID,
+	})
 	if err != nil {
-		if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "not found") {
-			return nil, entity.ErrIngestJobNotFound
-		}
-		return nil, fmt.Errorf("cancel ingestion job %s: %w", jobID, err)
-	}
-	if job == nil || job.JobID == "" {
-		return nil, fmt.Errorf("ingester returned no cancellation state for job %s", jobID)
+		return nil, fmt.Errorf("marshal cancel request: %w", err)
 	}
 
-	topic := "ingest"
-	if job.TicketID != "" {
-		topic = "ingest:" + job.TicketID
+	// 1. Gửi lệnh 1 chiều hủy bỏ qua NATS
+	if err := s.nats.Publish(ctx, "aurora.v1.ingest.control.cancel", payload); err != nil {
+		return nil, fmt.Errorf("cancel ingestion job %s over NATS: %w", ticketID, err)
 	}
-	data, err := json.Marshal(map[string]any{
-		"job_id":      job.JobID,
+
+	now := time.Now().UTC()
+	job := &entity.IngestControlJob{
+		TicketID:  ticketID,
+		Status:    "draining",
+		UpdatedAt: now,
+	}
+
+	// 2. Phát sự kiện workflow
+	topic := "ingest:" + ticketID
+	eventData, err := json.Marshal(map[string]any{
 		"ticket_id":   job.TicketID,
 		"status":      strings.ToLower(job.Status),
 		"occurred_at": job.UpdatedAt,
 		"payload":     job,
 	})
-	if err != nil {
-		return nil, fmt.Errorf("marshal ingest cancel event: %w", err)
-	}
-	if s.publisher != nil {
-		if err := s.publisher.Publish(ctx, topic, provider.Event{
+	if err == nil {
+		_ = s.publisher.Publish(ctx, topic, provider.Event{
 			Type:  "workflow",
 			Topic: topic,
-			Data:  data,
-		}); err != nil {
-			return nil, fmt.Errorf("publish ingest cancel event: %w", err)
-		}
+			Data:  eventData,
+		})
 	}
 
 	s.runtimeMu.Lock()
 	s.runtimeJob = job
-	s.cachedStatus = nil
 	if s.runtime != nil {
-		s.runtime.Status = strings.ToLower(job.Status)
+		s.runtime.Status = "draining"
 		s.runtime.UpdatedAt = job.UpdatedAt
-		s.runtime.ObservedAt = time.Now().UTC()
+		s.runtime.ObservedAt = now
 	}
 	s.runtimeMu.Unlock()
 
@@ -258,24 +347,20 @@ func (s *IngestService) Cancel(ctx context.Context, jobID string) (*entity.Inges
 // ============================================================================
 // HÀM TRUY VẤN TRẠNG THÁI TIẾN TRÌNH (Ingestion Status & Telemetry)
 // ============================================================================
-// Status tổng hợp trạng thái từ:
-// 1. Runtime controller hiện tại.
-// 2. File checkpoint bền vững trong MinIO (`checkpoints/ingestion/current.json`).
-// 3. Prometheus metrics tốc độ tải (throughput pts/s, bytes/s, hàng đợi).
+// Status trả về snapshot trạng thái realtime từ in-memory NATS Pub/Sub projection
+// và đồng bộ trạng thái controller volatile từ NATS nếu có.
 func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error) {
 	var controlJob *entity.IngestControlJob
-	if runtimeController, ok := s.controller.(repo.IngestRuntimeController); ok {
-		if current, currentErr := runtimeController.Current(ctx); currentErr == nil && current != nil && current.Status != "not_observed" {
-			controlJob = current
+	if data, currentErr := s.nats.Request(ctx, "aurora.v1.ingest.control.current", nil); currentErr == nil && len(data) > 0 {
+		var current entity.IngestControlJob
+		if json.Unmarshal(data, &current) == nil && current.TicketID != "" && current.Status != "not_observed" {
+			controlJob = &current
 			s.runtimeMu.Lock()
-			s.runtimeJob = current
+			s.runtimeJob = &current
 			ticketID := current.TicketID
-			if ticketID == "" {
-				ticketID = current.JobID
-			}
 			if s.runtime == nil || current.StartedAt.After(s.runtime.StartedAt) {
 				s.runtime = &entity.IngestStatus{
-					Observed:     false,
+					Observed:     true,
 					TicketID:     ticketID,
 					Status:       strings.ToLower(current.Status),
 					Error:        current.Error,
@@ -296,290 +381,48 @@ func (s *IngestService) Status(ctx context.Context) (*entity.IngestStatus, error
 		}
 	}
 
-	// 1. Kiểm tra cache đối tượng checkpoint từ MinIO: checkpoints/ingestion/current.json
-	data, err := s.objects.GetObject(ctx, "checkpoints/ingestion/current.json")
-	if err != nil {
-		s.runtimeMu.RLock()
-		if s.runtime != nil {
-			cached := *s.runtime
-			s.runtimeMu.RUnlock()
-			s.attachPlanningProgress(ctx, &cached, controlJob)
-			applyPlanningStatus(&cached, controlJob)
-			return &cached, nil
-		}
-		s.runtimeMu.RUnlock()
-		status := &entity.IngestStatus{Observed: false, Status: "not_observed", ObservedAt: time.Now().UTC()}
-		return status, nil
-	}
-
-	// 2. Đọc run_id đang hoạt động
-	var pointer struct {
-		ActiveRunID string `json:"active_run_id"`
-	}
-	if err := json.Unmarshal(data, &pointer); err != nil || pointer.ActiveRunID == "" {
-		return nil, fmt.Errorf("decode ingestion checkpoint pointer: %w", err)
-	}
-
 	s.runtimeMu.RLock()
-	cachedStatus := s.cachedStatus
-	cachedRunID := s.cachedRunID
-	runtimeSnapshot := s.runtime
-	s.runtimeMu.RUnlock()
+	defer s.runtimeMu.RUnlock()
 
-	var status *entity.IngestStatus
-	usingRuntimeState := false
-
-	// Tối ưu overhead: Tái sử dụng checkpoint đã parse nếu run đã hoàn thành
-	if cachedStatus != nil && cachedRunID == pointer.ActiveRunID &&
-		(cachedStatus.Status == "completed" || cachedStatus.Status == "published" || cachedStatus.Status == "stopped") {
-		cloned := *cachedStatus
-		cloned.ObservedAt = time.Now().UTC()
-		status = &cloned
-	} else {
-		// 3. Đọc chi tiết checkpoint đợt thu thập: checkpoints/ingestion/runs/<run_id>.json
-		data, err = s.objects.GetObject(ctx, "checkpoints/ingestion/runs/"+pointer.ActiveRunID+".json")
-		if err != nil {
-			return nil, fmt.Errorf("load ingestion run %s: %w", pointer.ActiveRunID, err)
-		}
-
-		var checkpoint ingestionCheckpoint
-		if err := json.Unmarshal(data, &checkpoint); err != nil {
-			return nil, fmt.Errorf("decode ingestion run %s: %w", pointer.ActiveRunID, err)
-		}
-
-		// 4. Tổng hợp các thông số sản phẩm tải về (bytes, số file thành công/thất bại)
-		status = &entity.IngestStatus{
-			Observed:     true,
-			RunID:        checkpoint.RunID,
-			Status:       strings.ToLower(checkpoint.Status),
-			ManifestPath: checkpoint.ManifestPath,
-			StartedAt:    checkpoint.StartedAt,
-			UpdatedAt:    checkpoint.UpdatedAt,
+	if s.runtime == nil {
+		return &entity.IngestStatus{
+			Observed:     false,
+			Status:       "not_observed",
 			ObservedAt:   time.Now().UTC(),
-			Products:     make([]entity.IngestProduct, 0, len(checkpoint.Products)),
+			Products:     []entity.IngestProduct{},
 			ProductKinds: make(map[string]entity.IngestKindSummary),
-		}
-		if controlJob != nil {
-			if controlJob.TicketID != "" {
-				status.TicketID = controlJob.TicketID
-			} else if controlJob.JobID != "" {
-				status.TicketID = controlJob.JobID
-			}
-		}
-
-		if runtimeSnapshot != nil && controlJob != nil && runtimeSnapshot.StartedAt.After(checkpoint.UpdatedAt) {
-			usingRuntimeState = true
-			status = &entity.IngestStatus{
-				Observed:     true,
-				TicketID:     runtimeSnapshot.TicketID,
-				Status:       runtimeSnapshot.Status,
-				Error:        runtimeSnapshot.Error,
-				ManifestPath: runtimeSnapshot.ManifestPath,
-				StartedAt:    runtimeSnapshot.StartedAt,
-				UpdatedAt:    runtimeSnapshot.UpdatedAt,
-				ObservedAt:   time.Now().UTC(),
-				Products:     []entity.IngestProduct{},
-				ProductKinds: make(map[string]entity.IngestKindSummary),
-			}
-		}
-
-		if !usingRuntimeState {
-			for id, product := range checkpoint.Products {
-				kind := string(product.ProductKind)
-				kindSummary := status.ProductKinds[kind]
-				kindSummary.Planned++
-				status.TotalProducts++
-				expectedSize := product.ExpectedSizeBytes
-				if expectedSize <= 0 && (strings.EqualFold(product.State, "STORED") || strings.EqualFold(product.State, "PUBLISHED")) {
-					expectedSize = product.SizeBytes
-				}
-				status.ExpectedBytes += expectedSize
-				status.CompletedBytes += product.SizeBytes
-				switch strings.ToUpper(product.State) {
-				case "STORED", "PUBLISHED":
-					status.CompletedProducts++
-					kindSummary.Completed++
-				case "DOWNLOADING":
-					status.Downloading++
-					kindSummary.Downloading++
-				case "FAILED":
-					status.FailedProducts++
-					kindSummary.Failed++
-				}
-				status.ProductKinds[kind] = kindSummary
-				status.Products = append(status.Products, entity.IngestProduct{
-					ID:        id,
-					Kind:      string(product.ProductKind),
-					ObjectKey: product.ObjectKey,
-					State:     strings.ToLower(product.State),
-					SizeBytes: product.SizeBytes,
-					Expected:  expectedSize,
-					Attempts:  product.Attempts,
-					LastError: product.LastError,
-					UpdatedAt: product.UpdatedAt,
-				})
-			}
-			if (status.Status == "completed" || status.Status == "published") && status.ExpectedBytes <= 0 {
-				status.ExpectedBytes = status.CompletedBytes
-			}
-			sort.Slice(status.Products, func(i, j int) bool { return status.Products[i].UpdatedAt.After(status.Products[j].UpdatedAt) })
-
-			s.runtimeMu.Lock()
-			s.cachedRunID = pointer.ActiveRunID
-			s.cachedStatus = status
-			s.runtimeMu.Unlock()
-		}
+		}, nil
 	}
 
-	// Đảm bảo trạng thái hủy bỏ (Cancel) từ control plane được ưu tiên hiển thị ngay
+	cloned := *s.runtime
 	if controlJob != nil {
 		if controlJob.TicketID != "" {
-			status.TicketID = controlJob.TicketID
-		} else if controlJob.JobID != "" && status.TicketID == "" {
-			status.TicketID = controlJob.JobID
+			cloned.TicketID = controlJob.TicketID
 		}
-		status.Status = strings.ToLower(controlJob.Status)
-		status.Error = controlJob.Error
-		if controlJob.UpdatedAt.After(status.UpdatedAt) {
-			status.UpdatedAt = controlJob.UpdatedAt
+		cloned.Status = strings.ToLower(controlJob.Status)
+		cloned.Error = controlJob.Error
+		if controlJob.UpdatedAt.After(cloned.UpdatedAt) {
+			cloned.UpdatedAt = controlJob.UpdatedAt
 		}
-	} else if status.Status == "running" && !status.UpdatedAt.IsZero() && time.Since(status.UpdatedAt) > 20*time.Second {
-		// Nếu checkpoint ghi là running nhưng controller thực tế không có job nào đang chạy
-		// và checkpoint đã ngưng cập nhật quá 20 giây, đánh dấu tiến trình đã dừng
-		status.Status = "stopped"
-		status.Downloading = 0
 	}
-
-	// Chỉ đọc planning khi job đang running
-	s.attachPlanningProgress(ctx, status, controlJob)
-	applyPlanningStatus(status, controlJob)
-	if status.Status != "planning" {
-		status.CatalogProgress = nil
-		status.ManifestProgress = nil
-	}
-
-	// Prometheus metrics chỉ truy vấn khi status là running hoặc draining
-	if s.prometheus != nil && (status.Status == "running" || status.Status == "draining") {
-		end := time.Now().UTC()
-		start := end.Add(-2 * time.Minute)
-		queries := map[string]string{
-			"products": "sum(rate(aurora_ingester_products_total{status=\"success\"}[2m]))",
-			"bytes":    "rate(aurora_ingester_bytes_processed_total[2m])",
-			"queue":    "aurora_ingester_queue_depth",
-			"inflight": "aurora_ingester_inflight_products",
-		}
-		var wg sync.WaitGroup
-		var mu sync.Mutex
-		values := make(map[string]float64, len(queries))
-		for key, query := range queries {
-			key, query := key, query
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				points, queryErr := s.prometheus.QueryRange(ctx, query, start, end, time.Minute)
-				if queryErr != nil || len(points) == 0 {
-					return
-				}
-				mu.Lock()
-				values[key] = points[len(points)-1].Value
-				mu.Unlock()
-			}()
-		}
-		wg.Wait()
-		status.ProductsPerSecond = values["products"]
-		status.BytesPerSecond = values["bytes"]
-		status.QueueDepth = int(math.Round(values["queue"]))
-		status.InflightProducts = int(math.Round(values["inflight"]))
-	}
-	// Prometheus is scrape-based and can lag the durable checkpoint by one or
-	// more intervals. A product marked DOWNLOADING is authoritative evidence of
-	// an active worker, so never report fewer active workers than the checkpoint.
-	if status.Downloading > status.InflightProducts {
-		status.InflightProducts = status.Downloading
-	}
-	if status.Status == "completed" || status.Status == "published" || status.Status == "stopped" {
-		status.Downloading = 0
-		status.InflightProducts = 0
-		status.QueueDepth = 0
-	}
-
-	s.runtimeMu.Lock()
-	s.runtime = status
-	if controlJob != nil {
-		s.runtimeJob = controlJob
-	}
-	s.runtimeMu.Unlock()
-	return status, nil
+	cloned.ObservedAt = time.Now().UTC()
+	return &cloned, nil
 }
 
 // ============================================================================
 // HÀM DUYỆT BỘ NHỚ ĐỆM MEDALLION (Lakehouse Catalog & Storage Listing)
 // ============================================================================
-// Storage phân trang danh sách các file FITS thô, Parquet Silver và Snapshot Gold,
-// Storage returns the current physical inventory in MinIO.  ClickHouse remains
-// useful for search-oriented metadata, but is an eventually-consistent index:
-// it can contain multiple historical rows for one object before merges finish.
-// Operator-facing tier counts and bytes must therefore never be sourced from it.
-func (s *IngestService) Storage(ctx context.Context, prefix string, page, limit int) (*entity.StorageListing, error) {
-	prefix = strings.TrimSpace(prefix)
-	if prefix == "" {
-		prefix = "bronze/"
-	}
-	if limit <= 0 || limit > 200 {
-		limit = 100
-	}
-	if page < 1 {
-		page = 1
+// Storage returns objects in MinIO using native cursor streaming (StartAfter).
+func (s *IngestService) Storage(ctx context.Context, prefix string, cursor string, limit int) (*entity.StorageListing, error) {
+	objects, nextCursor, truncated, err := s.objects.ListObjectsCursor(ctx, prefix, cursor, limit)
+	if err != nil {
+		return nil, err
 	}
 
-	var allObjects []provider.ObjectInfo
-	var totalBytes int64
-
-	s.runtimeMu.Lock()
-	cached, ok := s.storageCache[prefix]
-	if ok && time.Since(cached.cachedAt) < 15*time.Second {
-		allObjects = cached.objects
-		totalBytes = cached.totalBytes
-	}
-	s.runtimeMu.Unlock()
-
-	if allObjects == nil {
-		objects, err := s.objects.ListObjects(ctx, prefix)
-		if err != nil {
-			return nil, err
-		}
-
-		sort.Slice(objects, func(i, j int) bool { return objects[i].LastModified.After(objects[j].LastModified) })
-
-		for _, object := range objects {
-			if strings.HasPrefix(prefix, "bronze/") && !isProcessableBronzeFITS(object.Key) {
-				continue
-			}
-			totalBytes += object.Size
-			allObjects = append(allObjects, object)
-		}
-
-		s.runtimeMu.Lock()
-		s.storageCache[prefix] = &storageCacheEntry{
-			cachedAt:   time.Now().UTC(),
-			objects:    allObjects,
-			totalBytes: totalBytes,
-		}
-		s.runtimeMu.Unlock()
-	}
-
-	start := (page - 1) * limit
-	if start > len(allObjects) {
-		start = len(allObjects)
-	}
-	end := start + limit
-	if end > len(allObjects) {
-		end = len(allObjects)
-	}
-
-	sliced := allObjects[start:end]
-	items := make([]entity.StorageObject, len(sliced))
-	for i, object := range sliced {
+	items := make([]entity.StorageObject, len(objects))
+	var pageBytes int64
+	for i, object := range objects {
+		pageBytes += object.Size
 		items[i] = entity.StorageObject{
 			Key:          object.Key,
 			SizeBytes:    object.Size,
@@ -588,23 +431,15 @@ func (s *IngestService) Storage(ctx context.Context, prefix string, page, limit 
 		}
 	}
 
-	listing := &entity.StorageListing{
+	return &entity.StorageListing{
 		Bucket:     s.bucket,
 		Prefix:     prefix,
-		Page:       page,
-		PageSize:   limit,
-		Total:      len(allObjects),
-		TotalBytes: totalBytes,
-		Truncated:  end < len(allObjects),
+		Limit:      limit,
+		Cursor:     cursor,
+		NextCursor: nextCursor,
+		Truncated:  truncated,
+		Total:      len(items),
+		TotalBytes: pageBytes,
 		Objects:    items,
-	}
-
-	return listing, nil
+	}, nil
 }
-
-func isProcessableBronzeFITS(key string) bool {
-	key = strings.ToLower(strings.TrimSpace(key))
-	return strings.HasSuffix(key, ".fits") || strings.HasSuffix(key, ".fit") ||
-		strings.HasSuffix(key, ".fits.gz") || strings.HasSuffix(key, ".fit.gz")
-}
-

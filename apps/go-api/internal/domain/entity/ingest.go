@@ -85,25 +85,24 @@ type IngestStatus struct {
 }
 
 type IngestStartRequest struct {
-	TicketID     string
-	ManifestPath string
-	Sector       int
-	Limit        int
-	Concurrency  int
-	Resume       bool
-	Fresh        bool
+	TicketID     string `json:"ticket_id"`
+	ManifestPath string `json:"manifest_path"`
+	Sector       int    `json:"sector"`
+	Limit        int    `json:"limit"`
+	Concurrency  int    `json:"concurrency"`
+	Resume       bool   `json:"resume"`
+	Fresh        bool   `json:"fresh"`
 }
 
 type IngestControlJob struct {
-	JobID        string
-	TicketID     string
-	Status       string
-	ManifestPath string
-	Sector       int
-	Concurrency  int
-	StartedAt    time.Time
-	UpdatedAt    time.Time
-	Error        string
+	TicketID     string    `json:"ticket_id"`
+	Status       string    `json:"status"`
+	ManifestPath string    `json:"manifest_path"`
+	Sector       int       `json:"sector"`
+	Concurrency  int       `json:"concurrency"`
+	StartedAt    time.Time `json:"started_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Error        string    `json:"error,omitempty"`
 }
 
 type StorageObject struct {
@@ -116,6 +115,9 @@ type StorageObject struct {
 type StorageListing struct {
 	Bucket     string
 	Prefix     string
+	Limit      int
+	Cursor     string
+	NextCursor string
 	Page       int
 	PageSize   int
 	Total      int

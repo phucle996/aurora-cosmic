@@ -2,6 +2,7 @@ package observer
 
 import (
 	"encoding/json"
+	"errors"
 	"sync"
 	"time"
 
@@ -12,7 +13,6 @@ import (
 // the ingestion UI. It intentionally contains metadata only, never FITS data.
 type IngestRuntimeEvent struct {
 	TicketID             string    `json:"ticket_id"`
-	JobID                string    `json:"job_id"`
 	Status               string    `json:"status"`
 	PlanningStage        string    `json:"planning_stage,omitempty"`
 	PlanningCompleted    int       `json:"planning_completed,omitempty"`
@@ -45,13 +45,18 @@ func NewIngestRuntimeObserver(url string) (*IngestRuntimeObserver, error) {
 	if err != nil {
 		return nil, err
 	}
+	return NewIngestRuntimeObserverFromConn(nc)
+}
+
+func NewIngestRuntimeObserverFromConn(nc *nats.Conn) (*IngestRuntimeObserver, error) {
+	if nc == nil {
+		return nil, errors.New("nats connection is required")
+	}
 	o := &IngestRuntimeObserver{nc: nc, tickets: make(map[string]time.Time)}
 	if _, err := nc.Subscribe("aurora.v1.ingest.observe.>", o.observe); err != nil {
-		nc.Close()
 		return nil, err
 	}
 	if err := nc.FlushTimeout(5 * time.Second); err != nil {
-		nc.Close()
 		return nil, err
 	}
 	return o, nil
@@ -93,10 +98,22 @@ func (o *IngestRuntimeObserver) Publish(event IngestRuntimeEvent) {
 		tickets = append(tickets, ticket)
 	}
 	o.mu.Unlock()
+
+	seen := make(map[string]struct{})
+	if event.TicketID != "" {
+		seen[event.TicketID] = struct{}{}
+		if payload, err := json.Marshal(event); err == nil {
+			_ = o.nc.Publish("aurora.v1.ingest.runtime."+event.TicketID, payload)
+			_ = o.nc.Publish("aurora.v1.ingest.runtime.events", payload)
+		}
+	}
 	for _, ticket := range tickets {
+		if _, ok := seen[ticket]; ok {
+			continue
+		}
+		seen[ticket] = struct{}{}
 		event.TicketID = ticket
-		payload, err := json.Marshal(event)
-		if err == nil {
+		if payload, err := json.Marshal(event); err == nil {
 			_ = o.nc.Publish("aurora.v1.ingest.runtime."+ticket, payload)
 		}
 	}

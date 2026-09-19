@@ -1,5 +1,5 @@
-// Package control owns the ingestion control-plane contract and volatile job
-// lifecycle. It never creates production adapters or processes FITS data.
+// Package control owns the ingestion control-plane contract and volatile execution lifecycle.
+// It never creates production adapters or processes FITS data.
 package control
 
 import (
@@ -24,7 +24,6 @@ type StartRequest struct {
 }
 
 type Command struct {
-	JobID        string
 	TicketID     string
 	ManifestPath string
 	Sector       int
@@ -41,9 +40,8 @@ type Command struct {
 	ReportRunning func()
 }
 
-type Job struct {
-	ID           string    `json:"job_id"`
-	TicketID     string    `json:"ticket_id,omitempty"`
+type Execution struct {
+	TicketID     string    `json:"ticket_id"`
 	Status       string    `json:"status"`
 	ManifestPath string    `json:"manifest_path,omitempty"`
 	Sector       int       `json:"sector,omitempty"`
@@ -57,65 +55,65 @@ type Runner interface {
 	Run(context.Context, Command) error
 }
 
-type JobManager struct {
+type Controller struct {
 	parent             context.Context
 	defaultConcurrency int
 	runner             Runner
 
 	mu     sync.RWMutex
-	active *activeJob
+	active *activeExecution
 }
 
-type activeJob struct {
-	Job
+type activeExecution struct {
+	Execution
 	cancel    context.CancelFunc
 	drain     chan struct{}
 	drainOnce sync.Once
 	done      chan struct{}
 }
 
-func NewJobManager(parent context.Context, defaultConcurrency int, runner Runner) *JobManager {
+func NewController(parent context.Context, defaultConcurrency int, runner Runner) *Controller {
 	if parent == nil {
 		parent = context.Background()
 	}
 	if defaultConcurrency < 1 {
 		defaultConcurrency = 1
 	}
-	return &JobManager{
+	return &Controller{
 		parent:             parent,
 		defaultConcurrency: defaultConcurrency,
 		runner:             runner,
 	}
 }
 
-func (m *JobManager) Start(request StartRequest) (*Job, error) {
-	command, err := m.commandFromRequest(request)
+func (c *Controller) Start(request StartRequest) (*Execution, error) {
+	command, err := c.commandFromRequest(request)
 	if err != nil {
 		return nil, err
 	}
-	if m.runner == nil {
+	if c.runner == nil {
 		return nil, fmt.Errorf("ingestion runner is not configured")
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.active != nil && isActive(m.active.Status) {
-		return nil, ErrJobAlreadyRunning
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.active != nil && isActive(c.active.Status) {
+		return nil, ErrAlreadyRunning
 	}
 
 	now := time.Now().UTC()
-	jobCtx, cancel := context.WithCancel(m.parent)
+	execCtx, cancel := context.WithCancel(c.parent)
 	drain := make(chan struct{})
 	ticketID := strings.TrimSpace(request.TicketID)
-	jobID := fmt.Sprintf("job-ingest-%s", strings.ToLower(uuid.NewString()[:8]))
+	if ticketID == "" {
+		ticketID = fmt.Sprintf("tic-ingest-%s", strings.ToLower(uuid.NewString()[:8]))
+	}
 
-	command.JobID = jobID
 	command.TicketID = ticketID
 	command.Drain = drain
-	command.ReportRunning = func() { m.markRunning(command.JobID) }
-	m.active = &activeJob{
-		Job: Job{
-			ID:           command.JobID,
+	command.ReportRunning = func() { c.markRunning(command.TicketID) }
+	c.active = &activeExecution{
+		Execution: Execution{
 			TicketID:     ticketID,
 			Status:       "planning",
 			ManifestPath: displayManifestPath(command),
@@ -128,55 +126,55 @@ func (m *JobManager) Start(request StartRequest) (*Job, error) {
 		drain:  drain,
 		done:   make(chan struct{}),
 	}
-	job := m.snapshotLocked()
-	go m.run(jobCtx, command)
-	return job, nil
+	exec := c.snapshotLocked()
+	go c.run(execCtx, command)
+	return exec, nil
 }
 
-func (m *JobManager) Current() *Job {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.snapshotLocked()
+func (c *Controller) Current() *Execution {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.snapshotLocked()
 }
 
-func (m *JobManager) Cancel(id string) (*Job, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.active == nil || !matchesJob(id, m.active.ID, m.active.TicketID) {
-		return nil, ErrJobNotFound
+func (c *Controller) Cancel(ticketID string) (*Execution, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	ticketID = strings.TrimSpace(ticketID)
+	if c.active == nil || ticketID == "" || c.active.TicketID != ticketID {
+		return nil, ErrTicketNotFound
 	}
-	if m.active.Status == "planning" {
-		m.active.Status = "cancelling"
-		m.active.UpdatedAt = time.Now().UTC()
-		m.active.cancel()
-	} else if m.active.Status == "running" {
-		m.active.Status = "draining"
-		m.active.UpdatedAt = time.Now().UTC()
-		m.active.drainOnce.Do(func() { close(m.active.drain) })
+	if c.active.Status == "planning" {
+		c.active.Status = "cancelling"
+		c.active.UpdatedAt = time.Now().UTC()
+		c.active.cancel()
+	} else if c.active.Status == "running" {
+		c.active.Status = "draining"
+		c.active.UpdatedAt = time.Now().UTC()
+		c.active.drainOnce.Do(func() { close(c.active.drain) })
 	}
-	return m.snapshotLocked(), nil
+	return c.snapshotLocked(), nil
 }
 
-func (m *JobManager) markRunning(jobID string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.active == nil || m.active.ID != jobID || m.active.Status != "planning" {
+func (c *Controller) markRunning(ticketID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.active == nil || c.active.TicketID != ticketID || c.active.Status != "planning" {
 		return
 	}
-	m.active.Status = "running"
-	m.active.UpdatedAt = time.Now().UTC()
+	c.active.Status = "running"
+	c.active.UpdatedAt = time.Now().UTC()
 }
 
-// Wait blocks until the active job has observed cancellation or completed.
-// It lets process shutdown preserve the pipeline's final checkpoint flush.
-func (m *JobManager) Wait(ctx context.Context) error {
-	m.mu.RLock()
-	if m.active == nil || !isActive(m.active.Status) {
-		m.mu.RUnlock()
+// Wait blocks until the active execution has observed cancellation or completed.
+func (c *Controller) Wait(ctx context.Context) error {
+	c.mu.RLock()
+	if c.active == nil || !isActive(c.active.Status) {
+		c.mu.RUnlock()
 		return nil
 	}
-	done := m.active.done
-	m.mu.RUnlock()
+	done := c.active.done
+	c.mu.RUnlock()
 
 	select {
 	case <-done:
@@ -186,30 +184,30 @@ func (m *JobManager) Wait(ctx context.Context) error {
 	}
 }
 
-func (m *JobManager) run(ctx context.Context, command Command) {
-	err := m.runner.Run(ctx, command)
+func (c *Controller) run(ctx context.Context, command Command) {
+	err := c.runner.Run(ctx, command)
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.active == nil || m.active.ID != command.JobID {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.active == nil || c.active.TicketID != command.TicketID {
 		return
 	}
-	m.active.UpdatedAt = time.Now().UTC()
+	c.active.UpdatedAt = time.Now().UTC()
 	switch {
 	case errors.Is(err, context.Canceled), ctx.Err() != nil:
-		m.active.Status = "canceled"
+		c.active.Status = "canceled"
 	case err != nil:
-		m.active.Status = "failed"
-		m.active.Error = err.Error()
-	case m.active.Status == "draining":
-		m.active.Status = "stopped"
+		c.active.Status = "failed"
+		c.active.Error = err.Error()
+	case c.active.Status == "draining":
+		c.active.Status = "stopped"
 	default:
-		m.active.Status = "completed"
+		c.active.Status = "completed"
 	}
-	close(m.active.done)
+	close(c.active.done)
 }
 
-func (m *JobManager) commandFromRequest(request StartRequest) (Command, error) {
+func (c *Controller) commandFromRequest(request StartRequest) (Command, error) {
 	if request.ManifestPath == "" && request.Sector <= 0 {
 		return Command{}, fmt.Errorf("manifest_path or sector is required")
 	}
@@ -217,7 +215,7 @@ func (m *JobManager) commandFromRequest(request StartRequest) (Command, error) {
 		return Command{}, fmt.Errorf("limit must be zero or greater")
 	}
 	if request.Concurrency <= 0 {
-		request.Concurrency = m.defaultConcurrency
+		request.Concurrency = c.defaultConcurrency
 	}
 	return Command{
 		ManifestPath: request.ManifestPath,
@@ -229,12 +227,12 @@ func (m *JobManager) commandFromRequest(request StartRequest) (Command, error) {
 	}, nil
 }
 
-func (m *JobManager) snapshotLocked() *Job {
-	if m.active == nil {
+func (c *Controller) snapshotLocked() *Execution {
+	if c.active == nil {
 		return nil
 	}
-	job := m.active.Job
-	return &job
+	exec := c.active.Execution
+	return &exec
 }
 
 func displayManifestPath(command Command) string {
@@ -252,11 +250,7 @@ func isActive(status string) bool {
 	return status == "planning" || status == "running" || status == "cancelling" || status == "draining"
 }
 
-func matchesJob(id, activeID, activeTicketID string) bool {
-	return id == "" || id == "active" || id == "current" || id == activeID || (activeTicketID != "" && id == activeTicketID)
-}
-
 var (
-	ErrJobAlreadyRunning = errors.New("an ingest job is already running")
-	ErrJobNotFound       = errors.New("ingest job not found")
+	ErrAlreadyRunning = errors.New("an ingest execution is already running")
+	ErrTicketNotFound = errors.New("ingest ticket not found")
 )

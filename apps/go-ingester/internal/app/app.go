@@ -1,5 +1,3 @@
-// Package app wires Aurora's process-level dependencies. The HTTP transport
-// lives in control and the ingestion workflow lives in pipeline/ingest.
 package app
 
 import (
@@ -12,6 +10,8 @@ import (
 	"go-ingester/internal/control"
 	"go-ingester/internal/observer"
 	"go-ingester/internal/pipeline/ingest"
+
+	"github.com/nats-io/nats.go"
 )
 
 func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, metrics *observer.Metrics) error {
@@ -22,32 +22,36 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, metrics *obs
 		log = slog.Default()
 	}
 
-	runtimeObserver, err := observer.NewIngestRuntimeObserver(cfg.NATS.URL)
+	nc, err := nats.Connect(cfg.NATS.URL, nats.Name("aurora-ingester"), nats.Timeout(10*time.Second))
+	if err != nil {
+		return fmt.Errorf("nats connect %s: %w", cfg.NATS.URL, err)
+	}
+	defer nc.Close()
+
+	runtimeObserver, err := observer.NewIngestRuntimeObserverFromConn(nc)
 	if err != nil {
 		return fmt.Errorf("start ingest runtime observer: %w", err)
 	}
-	defer runtimeObserver.Close()
 
 	runner := ingest.NewService(cfg, log, metrics, runtimeObserver)
-	jobs := control.NewJobManager(ctx, cfg.Ingest.Concurrency, runner)
-	server := control.NewServer(cfg.Control.Addr, jobs)
-	if err := server.Start(); err != nil {
+	ctrl := control.NewController(ctx, cfg.Ingest.Concurrency, runner)
+	natsListener, err := control.NewNATSListener(nc, ctrl, log)
+	if err != nil {
+		return fmt.Errorf("start ingest NATS control listener: %w", err)
+	}
+	if err := natsListener.Start(); err != nil {
 		return err
 	}
 	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			log.Warn("ingest control shutdown failed", slog.Any("error", err))
-		}
+		_ = natsListener.Close()
 	}()
 
-	log.Info("ingest control ready; waiting for an explicit UI start command")
+	log.Info("ingest NATS control ready; waiting for an explicit start command")
 	<-ctx.Done()
 	log.Info("shutdown signal received; cancelling active ingestion work")
 	waitCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := jobs.Wait(waitCtx); err != nil {
+	if err := ctrl.Wait(waitCtx); err != nil {
 		log.Warn("ingestion work did not stop before shutdown deadline", slog.Any("error", err))
 	}
 	return nil

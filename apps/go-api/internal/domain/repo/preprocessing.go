@@ -1,14 +1,8 @@
 package repo
 
 import (
-	"context"
 	"time"
 )
-
-// WorkflowDispatcher định nghĩa port điều khiển tác vụ tiền xử lý qua message bus
-type WorkflowDispatcher interface {
-	Dispatch(context.Context, string, []byte) error
-}
 
 // SilverEventStreamSnapshot snapshot trạng thái stream JetStream AURORA_SILVER
 type SilverEventStreamSnapshot struct {
@@ -18,11 +12,6 @@ type SilverEventStreamSnapshot struct {
 	FirstAt   time.Time
 	LastAt    time.Time
 	BySubject map[string]int64
-}
-
-// SilverEventStreamObserver giám sát metadata của JetStream stream AURORA_SILVER
-type SilverEventStreamObserver interface {
-	ObserveSilverEventStream(context.Context) (SilverEventStreamSnapshot, error)
 }
 
 // BronzeConsumerSnapshot snapshot trạng thái ACK/Pending của consumer Bronze
@@ -40,9 +29,4 @@ type BronzeConsumerSnapshot struct {
 	Waiting              int
 	LastDeliveredAt      time.Time
 	LastAckAt            time.Time
-}
-
-// BronzeConsumerObserver giám sát trạng thái ACK của durable Bronze consumer
-type BronzeConsumerObserver interface {
-	ObserveBronzeConsumer(context.Context) (BronzeConsumerSnapshot, error)
 }

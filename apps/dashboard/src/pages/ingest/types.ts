@@ -69,8 +69,7 @@ export type IngestStatus = {
 };
 
 export type IngestControlJob = {
-  job_id: string;
-  ticket_id?: string;
+  ticket_id: string;
   status: string;
   sector?: number;
   concurrency?: number;

@@ -6,11 +6,20 @@ import (
 	"fmt"
 	"strings"
 
+	"go-api/infra/clickhouse"
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/repo"
 )
 
-func (r *AnalyticsClickHouse) ListAnomalies(ctx context.Context, sector int, snapshotID string, flaggedOnly bool, page entity.PageRequest) (entity.Page[entity.Anomaly], error) {
+type AnomalyClickHouse struct {
+	client *clickhouse.Client
+}
+
+func NewAnomalyClickHouse(client *clickhouse.Client) repo.AnomalyRepository {
+	return &AnomalyClickHouse{client: client}
+}
+
+func (r *AnomalyClickHouse) ListAnomalies(ctx context.Context, sector int, snapshotID string, flaggedOnly bool, page entity.PageRequest) (entity.Page[entity.Anomaly], error) {
 	query := "SELECT prediction_id, source_product_id, tic_id, sector, reconstruction_mse, decision_threshold, above_threshold, model_version, registered_model_id, gold_snapshot_id, runtime_validation_id, runtime_package_id, predicted_at FROM anomaly_predictions"
 	conditions := make([]string, 0, 3)
 	if sector > 0 {
@@ -79,7 +88,7 @@ func (r *AnalyticsClickHouse) ListAnomalies(ctx context.Context, sector int, sna
 	}, nil
 }
 
-func (r *AnalyticsClickHouse) GetAnomaly(ctx context.Context, predictionID string, snapshotID string) (*entity.Anomaly, error) {
+func (r *AnomalyClickHouse) GetAnomaly(ctx context.Context, predictionID string, snapshotID string) (*entity.Anomaly, error) {
 	query := fmt.Sprintf("SELECT prediction_id, source_product_id, tic_id, sector, reconstruction_mse, decision_threshold, above_threshold, model_version, registered_model_id, gold_snapshot_id, runtime_validation_id, runtime_package_id, predicted_at FROM anomaly_predictions WHERE prediction_id = '%s' AND gold_snapshot_id = '%s' LIMIT 1 FORMAT JSON", escapeSQL(predictionID), escapeSQL(snapshotID))
 	body, err := r.client.Query(ctx, query)
 	if err != nil {

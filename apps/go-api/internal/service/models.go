@@ -12,11 +12,14 @@ import (
 	"strings"
 	"time"
 
+	"go-api/infra/nats"
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/repo"
 	domainService "go-api/internal/domain/service"
 	"go-api/internal/provider"
 	"go-api/internal/taxonomy"
+
+	natsio "github.com/nats-io/nats.go"
 )
 
 var ticketIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
@@ -30,14 +33,14 @@ var ticketIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 // 3. Xác định trạng thái của mô hình: Champion (đang phục vụ chính), Validated (hợp lệ), hoặc Invalid (lỗi băm/parity).
 // 4. Phát lệnh huấn luyện mô hình mới tới GPU ML Worker qua NATS JetStream.
 type ModelsService struct {
-	objects    provider.ObjectStorage   // Storage tương tác với MinIO S3
-	dispatcher repo.InferenceDispatcher // Dispatcher phát event sang NATS JetStream
-	training   repo.TrainingRepository
+	objects  provider.ObjectStorage  // Storage tương tác với MinIO S3
+	nats     *nats.Client            // NATS Client kết nối trực tiếp
+	training repo.TrainingRepository
 }
 
 // NewModelsService khởi tạo thể hiện của ModelsService
-func NewModelsService(objects provider.ObjectStorage, dispatcher repo.InferenceDispatcher, training repo.TrainingRepository) domainService.Models {
-	return &ModelsService{objects: objects, dispatcher: dispatcher, training: training}
+func NewModelsService(objects provider.ObjectStorage, natsClient *nats.Client, training repo.TrainingRepository) domainService.Models {
+	return &ModelsService{objects: objects, nats: natsClient, training: training}
 }
 
 func (s *ModelsService) TrainingReadiness(ctx context.Context, snapshotIDs []string) (*entity.TrainingReadiness, error) {
@@ -528,11 +531,16 @@ func (s *ModelsService) StartTrainingJob(ctx context.Context, req entity.Trainin
 		return nil, fmt.Errorf("marshal training request: %w", err)
 	}
 
-	if s.dispatcher == nil {
+	if s.nats == nil {
 		return nil, fmt.Errorf("training dispatcher is unavailable")
 	}
-	if err := s.dispatcher.Dispatch(ctx, "training_start", payload); err != nil {
-		return nil, fmt.Errorf("dispatch training event: %w", err)
+	subject := "aurora.v1.ml.training.requested"
+	message := natsio.NewMsg(subject)
+	message.Data = payload
+	digest := sha256.Sum256(append(append([]byte(subject+":"), payload...), byte(0)))
+	message.Header.Set(natsio.MsgIdHdr, fmt.Sprintf("%x", digest[:]))
+	if err := s.nats.PublishDurable(ctx, message); err != nil {
+		return nil, fmt.Errorf("publish durable request: %w", err)
 	}
 
 	return &entity.TrainingJobResult{
@@ -580,8 +588,7 @@ func (s *ModelsService) SetModelDeployment(ctx context.Context, modelID string, 
 	if modelID == "" {
 		return nil, invalidModelRequest("runtime_package_id is required")
 	}
-	bus, ok := s.dispatcher.(repo.ModelPromotionBus)
-	if !ok {
+	if s.nats == nil {
 		return nil, fmt.Errorf("model promotion event bus is unavailable")
 	}
 	emit := func(status, phase string, progress int, message string, evidence map[string]any) error {
@@ -604,7 +611,7 @@ func (s *ModelsService) SetModelDeployment(ctx context.Context, modelID string, 
 		if err != nil {
 			return err
 		}
-		return bus.PublishCore(ctx, "aurora.live.ml.promotion.progress", data)
+		return s.nats.Publish(ctx, "aurora.live.ml.promotion.progress", data)
 	}
 	fail := func(phase string, cause error) (*entity.ModelDeploymentResult, error) {
 		_ = emit("failed", phase, 100, cause.Error(), map[string]any{"error": cause.Error()})
@@ -661,7 +668,7 @@ func (s *ModelsService) SetModelDeployment(ctx context.Context, modelID string, 
 	}
 	canaryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	responseData, err := bus.RequestCore(canaryCtx, "aurora.live.ml.promotion.requested", requestData)
+	responseData, err := s.nats.Request(canaryCtx, "aurora.live.ml.promotion.requested", requestData)
 	if err != nil {
 		return fail("runtime_canary", fmt.Errorf("Rust runtime canary did not complete: %w", err))
 	}

@@ -112,7 +112,7 @@ func TestLiveClickHouseListTargets(t *testing.T) {
 		t.Skipf("ClickHouse not reachable, skipping live test: %v", err)
 	}
 
-	repo := NewAnalyticsClickHouse(client)
+	repo := NewTargetClickHouse(client)
 	page, err := repo.ListTargets(context.Background(), entity.TargetQuery{
 		Page: entity.PageRequest{Limit: 2},
 	})

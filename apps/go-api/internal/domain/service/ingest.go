@@ -8,7 +8,7 @@ import (
 
 type Ingest interface {
 	Status(context.Context) (*entity.IngestStatus, error)
-	Storage(context.Context, string, int, int) (*entity.StorageListing, error)
+	Storage(ctx context.Context, prefix string, cursor string, limit int) (*entity.StorageListing, error)
 	Start(context.Context, entity.IngestStartRequest) (*entity.IngestControlJob, error)
-	Cancel(context.Context, string) (*entity.IngestControlJob, error)
+	Cancel(ctx context.Context, ticketID string) (*entity.IngestControlJob, error)
 }

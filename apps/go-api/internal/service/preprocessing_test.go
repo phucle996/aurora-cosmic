@@ -44,6 +44,9 @@ func (f fakePreprocessingObjects) ListObjects(_ context.Context, prefix string) 
 func (f fakePreprocessingObjects) ListObjectsWithMetadata(_ context.Context, prefix string) ([]provider.ObjectInfo, error) {
 	return f.listObjects(prefix, true)
 }
+func (f fakePreprocessingObjects) ListObjectsCursor(_ context.Context, prefix string, cursor string, limit int) ([]provider.ObjectInfo, string, bool, error) {
+	return nil, "", false, nil
+}
 func (f fakePreprocessingObjects) listObjects(prefix string, withMetadata bool) ([]provider.ObjectInfo, error) {
 	objects := make([]provider.ObjectInfo, 0)
 	for key, data := range f.data {
@@ -72,19 +75,6 @@ func (f fakePreprocessingObjects) DeleteObject(context.Context, string) error { 
 type fakePreprocessingPrometheus struct {
 	values map[string]float64
 	err    error
-}
-
-type fakeSilverEventDispatcher struct {
-	snapshot       repo.SilverEventStreamSnapshot
-	bronzeSnapshot repo.BronzeConsumerSnapshot
-}
-
-func (f fakeSilverEventDispatcher) Dispatch(context.Context, string, []byte) error { return nil }
-func (f fakeSilverEventDispatcher) ObserveSilverEventStream(context.Context) (repo.SilverEventStreamSnapshot, error) {
-	return f.snapshot, nil
-}
-func (f fakeSilverEventDispatcher) ObserveBronzeConsumer(context.Context) (repo.BronzeConsumerSnapshot, error) {
-	return f.bronzeSnapshot, nil
 }
 
 func preprocessingHopByID(t *testing.T, graph *entity.PreprocessingGraph, id string) entity.PreprocessingHop {
@@ -202,19 +192,21 @@ func TestPreprocessingCountsActualUnprocessedBronzeFITS(t *testing.T) {
 			"bronze-object-key": "bronze/tess/lightcurve/complete.fits", "bronze-sha256": "bronze-hash", "silver-sha256": "silver-hash", "schema-version": "silver-lightcurve-v1", "parquet-encode-duration-ms": "12.5", "input-points": "100", "output-points": "90", "quality-removed": "6", "invalid-removed": "2", "nonfinite-removed": "1", "nonpositive-time-removed": "1", "outlier-removed": "2", "sigma-clip-4-5-removed": "1", "sigma-clip-ge-5-removed": "1", "sigma-clip-level": "4", "normalized-scatter-before-clip-ppm": "1200", "normalized-scatter-after-clip-ppm": "800",
 		},
 	}}
-	eventDispatcher := fakeSilverEventDispatcher{
-		snapshot: repo.SilverEventStreamSnapshot{
+	svc := NewPreprocessingServiceWithEventsAndObjects(fakePreprocessingPrometheus{}, nil, nil, objects).(*PreprocessingService)
+	svc.observeSilverFunc = func(context.Context) (repo.SilverEventStreamSnapshot, error) {
+		return repo.SilverEventStreamSnapshot{
 			Messages: 3, Bytes: 900, Consumers: 1,
 			FirstAt: time.Date(2026, 9, 2, 0, 0, 5, 0, time.UTC), LastAt: time.Date(2026, 9, 2, 0, 0, 9, 0, time.UTC),
 			BySubject: map[string]int64{"aurora.v1.silver.lightcurve.ready": 3},
-		},
-		bronzeSnapshot: repo.BronzeConsumerSnapshot{
+		}, nil
+	}
+	svc.observeBronzeFunc = func(context.Context) (repo.BronzeConsumerSnapshot, error) {
+		return repo.BronzeConsumerSnapshot{
 			StreamMessages: 2, StreamBytes: 500, ConsumerName: "aurora-rust-preprocessor",
 			DeliveredConsumerSeq: 3, DeliveredStreamSeq: 2, AckFloorConsumerSeq: 3, AckFloorStreamSeq: 2,
 			LastDeliveredAt: time.Date(2026, 9, 2, 0, 0, 8, 0, time.UTC), LastAckAt: time.Date(2026, 9, 2, 0, 0, 9, 0, time.UTC),
-		},
+		}, nil
 	}
-	svc := NewPreprocessingServiceWithEventsAndObjects(fakePreprocessingPrometheus{}, eventDispatcher, nil, objects).(*PreprocessingService)
 	svc.refreshCheckpointProgress(context.Background())
 	graph, err := svc.Query(context.Background())
 	if err != nil {

@@ -62,6 +62,9 @@ func (r commitObjectStorage) ListObjects(context.Context, string) ([]provider.Ob
 func (r commitObjectStorage) ListObjectsWithMetadata(context.Context, string) ([]provider.ObjectInfo, error) {
 	return nil, nil
 }
+func (r commitObjectStorage) ListObjectsCursor(context.Context, string, string, int) ([]provider.ObjectInfo, string, bool, error) {
+	return nil, "", false, nil
+}
 func (r commitObjectStorage) GetObject(_ context.Context, key string) ([]byte, error) {
 	value, ok := r.objects[key]
 	if !ok {

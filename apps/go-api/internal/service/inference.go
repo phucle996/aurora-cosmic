@@ -10,10 +10,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go-api/infra/nats"
 	"go-api/internal/domain/entity"
-	"go-api/internal/domain/repo"
 	"go-api/internal/provider"
 	"go-api/internal/taxonomy"
+
+	natsio "github.com/nats-io/nats.go"
 )
 
 // ============================================================================
@@ -24,25 +26,25 @@ import (
 // 2. Kiểm tra trạng thái hoàn thành (Completed) hay đang chờ (Planned) qua output files.
 // 3. Cho phép kích hoạt chạy lại (Retry / Re-dispatch) một Inference Job qua NATS.
 type InferenceService struct {
-	objects        provider.ObjectStorage   // Storage tương tác trực tiếp với MinIO S3
-	results        provider.ObjectStorage   // Prediction/status bucket (may differ from the manifest bucket)
-	dispatcher     repo.InferenceDispatcher // Dispatcher gửi event kích hoạt job qua NATS JetStream
+	objects        provider.ObjectStorage // Storage tương tác trực tiếp với MinIO S3
+	results        provider.ObjectStorage // Prediction/status bucket (may differ from the manifest bucket)
+	nats           *nats.Client           // NATS Client gửi event kích hoạt job qua NATS JetStream
 	manifestBucket string
 }
 
 // NewInferenceService khởi tạo thể hiện của InferenceService
-func NewInferenceService(objects provider.ObjectStorage, dispatcher repo.InferenceDispatcher) *InferenceService {
-	return NewInferenceServiceWithResults(objects, objects, dispatcher, "aurora")
+func NewInferenceService(objects provider.ObjectStorage, natsClient *nats.Client) *InferenceService {
+	return NewInferenceServiceWithResults(objects, objects, natsClient, "aurora")
 }
 
-func NewInferenceServiceWithResults(objects, results provider.ObjectStorage, dispatcher repo.InferenceDispatcher, manifestBucket string) *InferenceService {
+func NewInferenceServiceWithResults(objects, results provider.ObjectStorage, natsClient *nats.Client, manifestBucket string) *InferenceService {
 	if results == nil {
 		results = objects
 	}
 	if strings.TrimSpace(manifestBucket) == "" {
 		manifestBucket = "aurora"
 	}
-	return &InferenceService{objects: objects, results: results, dispatcher: dispatcher, manifestBucket: manifestBucket}
+	return &InferenceService{objects: objects, results: results, nats: natsClient, manifestBucket: manifestBucket}
 }
 
 // ============================================================================
@@ -287,12 +289,7 @@ func (s *InferenceService) RetryJob(ctx context.Context, jobID string) (entity.I
 		return entity.InferenceJobManifest{}, nil, err
 	}
 
-	if s.dispatcher == nil {
-		return entity.InferenceJobManifest{}, nil, fmt.Errorf("inference dispatcher is unavailable")
-	}
-
-	// 4. Phát tín hiệu event vào NATS JetStream
-	if err := s.dispatcher.Dispatch(ctx, manifest.Task, payload); err != nil {
+	if err := s.dispatchInference(ctx, payload); err != nil {
 		return entity.InferenceJobManifest{}, nil, err
 	}
 
@@ -320,4 +317,19 @@ func (s *InferenceService) RetryJob(ctx context.Context, jobID string) (entity.I
 	}
 
 	return domainManifest, event, nil
+}
+
+func (s *InferenceService) dispatchInference(ctx context.Context, payload []byte) error {
+	if s.nats == nil {
+		return fmt.Errorf("inference dispatcher is unavailable")
+	}
+	subject := "aurora.v1.inference.candidate.requested"
+	message := natsio.NewMsg(subject)
+	message.Data = payload
+	digest := sha256.Sum256(append(append([]byte(subject+":"), payload...), byte(0)))
+	message.Header.Set(natsio.MsgIdHdr, fmt.Sprintf("%x", digest[:]))
+	if err := s.nats.PublishDurable(ctx, message); err != nil {
+		return fmt.Errorf("publish durable inference request: %w", err)
+	}
+	return nil
 }

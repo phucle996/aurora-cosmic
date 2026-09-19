@@ -6,9 +6,18 @@ import (
 	"fmt"
 	"strings"
 
+	"go-api/infra/clickhouse"
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/repo"
 )
+
+type TrainingClickHouse struct {
+	client *clickhouse.Client
+}
+
+func NewTrainingClickHouse(client *clickhouse.Client) repo.TrainingRepository {
+	return &TrainingClickHouse{client: client}
+}
 
 // Training starts with a balanced experimental cohort. Higher maturity levels
 // remain observable without turning the long-term hard-negative diversity
@@ -60,7 +69,7 @@ func applyTrainingReadinessPolicy(readiness *entity.TrainingReadiness) {
 	}
 }
 
-func (r *AnalyticsClickHouse) TrainingReadiness(ctx context.Context, snapshotIDs []string) (*entity.TrainingReadiness, error) {
+func (r *TrainingClickHouse) TrainingReadiness(ctx context.Context, snapshotIDs []string) (*entity.TrainingReadiness, error) {
 	if len(snapshotIDs) == 0 {
 		return nil, fmt.Errorf("at least one gold snapshot id is required")
 	}
@@ -120,7 +129,7 @@ func (r *AnalyticsClickHouse) TrainingReadiness(ctx context.Context, snapshotIDs
 	return readiness, nil
 }
 
-func (r *AnalyticsClickHouse) OverrideTrainingLabel(ctx context.Context, value entity.TrainingLabelOverride) error {
+func (r *TrainingClickHouse) OverrideTrainingLabel(ctx context.Context, value entity.TrainingLabelOverride) error {
 	escapedSnapshot := escapeSQL(value.SnapshotID)
 	escapedSource := escapeSQL(value.SourceProductID)
 	query := fmt.Sprintf("SELECT tic_id, sector, evidence_json FROM candidate_training_cohort_v1 FINAL WHERE snapshot_id = '%s' AND source_product_id = '%s' LIMIT 1 FORMAT JSON", escapedSnapshot, escapedSource)
@@ -152,7 +161,7 @@ func (r *AnalyticsClickHouse) OverrideTrainingLabel(ctx context.Context, value e
 	return r.client.Exec(ctx, insert)
 }
 
-func (r *AnalyticsClickHouse) ListTrainingReviews(ctx context.Context, limit int) ([]entity.TrainingReview, error) {
+func (r *TrainingClickHouse) ListTrainingReviews(ctx context.Context, limit int) ([]entity.TrainingReview, error) {
 	query := fmt.Sprintf(`SELECT snapshot_id, source_product_id, tic_id, sector, training_label, review_status,
 		ifNull(review_reason, '') AS review_reason, confidence, toString(updated_at) AS updated_at
 		FROM candidate_training_cohort_v1 FINAL
@@ -190,7 +199,7 @@ func (r *AnalyticsClickHouse) ListTrainingReviews(ctx context.Context, limit int
 	return items, nil
 }
 
-func (r *AnalyticsClickHouse) ListTrainingReviewQueue(ctx context.Context, snapshotIDs []string, page entity.PageRequest) (entity.Page[entity.TrainingReviewQueueItem], error) {
+func (r *TrainingClickHouse) ListTrainingReviewQueue(ctx context.Context, snapshotIDs []string, page entity.PageRequest) (entity.Page[entity.TrainingReviewQueueItem], error) {
 	quoted := make([]string, 0, len(snapshotIDs))
 	for _, snapshotID := range snapshotIDs {
 		quoted = append(quoted, "'"+escapeSQL(snapshotID)+"'")
