@@ -22,7 +22,7 @@ const InferenceEnginePage = lazy(() => import('@/pages/inference-engine/page'));
 const ModelDetailPage = lazy(() => import('@/pages/model-detail/page'));
 const PreprocessingPage = lazy(() => import('@/pages/preprocessing/page'));
 const IngestPage = lazy(() => import('@/pages/ingest/page'));
-const DatasetsPage = lazy(() => import('@/pages/datasets/page'));
+const LakehousePage = lazy(() => import('@/pages/lakehouse/page'));
 const EnrichmentPage = lazy(() => import('@/pages/enrichment/page'));
 const GoldSnapshotPage = lazy(() => import('@/pages/gold-snapshot/page'));
 const GoldArtifactPage = lazy(() => import('@/pages/gold-artifact/page'));
@@ -74,7 +74,8 @@ export default function App(): JSX.Element {
                     <Route path="/research-factory/vetting" element={<Navigate to="/research-factory/candidates" replace />} />
                     <Route path="/research-factory/systems" element={<Navigate to="/research-factory/discovery" replace />} />
                     <Route path="/research-factory/evidence" element={<Navigate to="/ai-factory/evidence" replace />} />
-                    <Route path="/datasets" element={<DatasetsPage />} />
+                    <Route path="/lakehouse" element={<LakehousePage />} />
+                    <Route path="/datasets" element={<Navigate to="/lakehouse" replace />} />
                     <Route path="/gold/snapshots/:snapshotId" element={<GoldSnapshotPage />} />
                     <Route path="/gold/snapshots/:snapshotId/files/:dataset/:sector" element={<GoldArtifactPage />} />
                     <Route path="/candidates" element={<Navigate to="/research-factory/candidates" replace />} />

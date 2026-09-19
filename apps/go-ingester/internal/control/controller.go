@@ -185,6 +185,16 @@ func (c *Controller) Wait(ctx context.Context) error {
 }
 
 func (c *Controller) run(ctx context.Context, command Command) {
+	c.mu.RLock()
+	var done chan struct{}
+	if c.active != nil && c.active.TicketID == command.TicketID {
+		done = c.active.done
+	}
+	c.mu.RUnlock()
+	if done != nil {
+		defer close(done)
+	}
+
 	err := c.runner.Run(ctx, command)
 
 	c.mu.Lock()
@@ -204,7 +214,6 @@ func (c *Controller) run(ctx context.Context, command Command) {
 	default:
 		c.active.Status = "completed"
 	}
-	close(c.active.done)
 }
 
 func (c *Controller) commandFromRequest(request StartRequest) (Command, error) {

@@ -284,3 +284,102 @@ func TestCheckpointManagerConcurrency(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckpointCrossRunResume(t *testing.T) {
+	mastClient := mast.NewClient("http://localhost:9999", 5*time.Second)
+	mockStorage := newMockStorageClient()
+	mockPub := &mockPublisher{}
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	prodPublished := model.ManifestProduct{
+		SourceProductID: "p-published",
+		Kind:            model.KindTargetPixel,
+		Filename:        "pub_tp.fits",
+		DataURI:         "mast:TESS/pub_tp.fits",
+		SizeBytes:       10,
+		Sector:          2,
+		TICID:           222,
+	}
+	prodStored := model.ManifestProduct{
+		SourceProductID: "p-stored",
+		Kind:            model.KindLightCurve,
+		Filename:        "store_lc.fits",
+		DataURI:         "mast:TESS/store_lc.fits",
+		SizeBytes:       20,
+		Sector:          2,
+		TICID:           222,
+	}
+
+	storedKey := "bronze/tess/lightcurve/sector=0002/tic=222/store_lc.fits"
+	mockStorage.objects[storedKey] = &storagecontract.ObjectInfo{
+		Key:  storedKey,
+		Size: 20,
+	}
+	mockStorage.content[storedKey] = []byte("STORED_20_BYTES_PAYLOAD_HERE")
+
+	prevCp := &model.Checkpoint{
+		RunID:  "run-prev",
+		Status: model.RunStatusCompleted,
+		Products: map[string]*model.ProductCheckpoint{
+			"p-published": {
+				SourceProductID: "p-published",
+				State:           model.StatePublished,
+				ObjectKey:       "bronze/tess/target-pixel/sector=0002/tic=222/pub_tp.fits",
+				SizeBytes:       10,
+				SHA256:          "pubsha",
+			},
+			"p-stored": {
+				SourceProductID: "p-stored",
+				State:           model.StateStored,
+				ObjectKey:       storedKey,
+				SizeBytes:       20,
+				SHA256:          "storesha",
+			},
+		},
+	}
+
+	currCp := checkpoint.NewInitial("run-curr", "manifest.json", "hash-curr", []model.ManifestProduct{prodPublished, prodStored})
+	cpStore := checkpoint.NewStore(mockStorage, "aurora")
+	mgr := checkpoint.NewManager(cpStore, currCp)
+	mgr.SetPreviousCheckpoint(prevCp)
+
+	pipe := newTestPipeline(mastClient, mockStorage, mockPub, mgr, "aurora", 2, logger)
+	man := &model.Manifest{
+		SchemaVersion: 1,
+		Source:        "test",
+		Samples: []model.Sample{
+			{
+				SampleID:    "s-resume",
+				TICID:       222,
+				Sector:      2,
+				TargetPixel: &prodPublished,
+				LightCurve:  &prodStored,
+			},
+		},
+	}
+
+	summary, results, err := pipe.IngestManifest(context.Background(), man)
+	if err != nil {
+		t.Fatalf("unexpected pipeline error: %v", err)
+	}
+
+	if summary.SkippedCount != 1 {
+		t.Errorf("expected 1 skipped product, got %d", summary.SkippedCount)
+	}
+	if summary.PublishedCount != 1 {
+		t.Errorf("expected 1 published product (for p-stored), got %d", summary.PublishedCount)
+	}
+	if len(mockPub.published) != 1 {
+		t.Errorf("expected exactly 1 event published to NATS, got %d", len(mockPub.published))
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0].Status != model.StatusSkipped {
+		t.Errorf("expected p-published to be SKIPPED, got %s", results[0].Status)
+	}
+	if results[1].Status != model.StatusPublished {
+		t.Errorf("expected p-stored to be PUBLISHED, got %s", results[1].Status)
+	}
+}
+

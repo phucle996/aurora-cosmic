@@ -432,21 +432,25 @@ func (s *Service) openCheckpoint(ctx context.Context, store *checkpoint.Store, m
 			if command.Resume || current.ManifestHash == manifestHash {
 				return checkpoint.NewManager(store, current), nil
 			}
-			manager := checkpoint.NewManager(store, newCheckpoint(manifestRef, manifestHash, manifest))
+			manager := checkpoint.NewManager(store, newCheckpoint(command.TicketID, manifestRef, manifestHash, manifest))
 			manager.SetPreviousCheckpoint(current)
 			return manager, nil
 		}
 	}
-	return checkpoint.NewManager(store, newCheckpoint(manifestRef, manifestHash, manifest)), nil
+	return checkpoint.NewManager(store, newCheckpoint(command.TicketID, manifestRef, manifestHash, manifest)), nil
 }
 
 func (s *Service) newMASTClient() *mast.Client {
 	return mast.NewClient(s.cfg.MAST.APIURL, s.cfg.MAST.Timeout)
 }
 
-func newCheckpoint(manifestRef, manifestHash string, manifest *model.Manifest) *model.Checkpoint {
+func newCheckpoint(ticketID, manifestRef, manifestHash string, manifest *model.Manifest) *model.Checkpoint {
+	runID := ticketID
+	if runID == "" {
+		runID = "ingest-" + uuid.NewString()[:8]
+	}
 	return checkpoint.NewInitial(
-		"ingest-"+uuid.NewString()[:8],
+		runID,
 		manifestRef,
 		manifestHash,
 		plan.SampleProducts(manifest),

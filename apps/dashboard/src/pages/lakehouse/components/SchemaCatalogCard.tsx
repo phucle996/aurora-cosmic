@@ -4,7 +4,7 @@ import { ChevronDown } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
-import type { SchemaCatalog } from '@/pages/datasets/types';
+import type { SchemaCatalog } from '../types';
 
 type SchemaCatalogCardProps = {
   catalog: SchemaCatalog;

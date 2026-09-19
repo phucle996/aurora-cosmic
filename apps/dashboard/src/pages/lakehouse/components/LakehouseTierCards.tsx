@@ -2,7 +2,7 @@ import type { JSX } from 'react';
 import { CheckCircle2, Database, Sparkles, TableProperties } from 'lucide-react';
 
 import { Progress } from '@/components/ui/progress';
-import { formatBytes, type StorageListing } from '@/pages/datasets/types';
+import { formatBytes, type StorageListing } from '../types';
 
 interface LakehouseTierCardsProps {
   activeTab: 'bronze' | 'silver' | 'gold';

@@ -1,10 +1,10 @@
 import type { JSX } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import type { StorageListing } from '@/pages/datasets/types';
+import type { StorageListing } from '../types';
 import { ObjectBrowserTable } from './ObjectBrowserTable';
 import { SchemaCatalogCard } from './SchemaCatalogCard';
-import { silverFfiSchema, silverLightCurveSchema, silverTargetPixelSchema } from '@/pages/datasets/types';
+import { silverFfiSchema, silverLightCurveSchema, silverTargetPixelSchema } from '../types';
 
 interface SilverLayerTabProps {
   silverData: StorageListing | null;
@@ -37,7 +37,7 @@ export function SilverLayerTab({
             <div>
               <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-primary">Object inspector / silver prefix</p>
               <CardTitle className="mt-1 text-lg">Prepared time-series artifacts</CardTitle>
-              <CardDescription>Light Curve, Target Pixel và FFI đã được kiểm tra, chuẩn hoá hoặc tổng hợp thành Parquet.</CardDescription>
+              <CardDescription>Light Curve, Target Pixel, and FFI validated, normalized, or synthesized into Parquet.</CardDescription>
             </div>
             <div className="grid grid-cols-3 gap-2 sm:flex">
               <Button

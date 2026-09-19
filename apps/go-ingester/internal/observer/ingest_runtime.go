@@ -104,7 +104,6 @@ func (o *IngestRuntimeObserver) Publish(event IngestRuntimeEvent) {
 		seen[event.TicketID] = struct{}{}
 		if payload, err := json.Marshal(event); err == nil {
 			_ = o.nc.Publish("aurora.v1.ingest.runtime."+event.TicketID, payload)
-			_ = o.nc.Publish("aurora.v1.ingest.runtime.events", payload)
 		}
 	}
 	for _, ticket := range tickets {

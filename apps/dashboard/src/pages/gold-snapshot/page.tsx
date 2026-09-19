@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { apiFetch } from '@/lib/api';
-import { formatBytes, formatDate } from '@/pages/datasets/types';
+import { formatBytes, formatDate } from '@/pages/lakehouse/types';
 
 import type { GoldSnapshotDetail } from '@/pages/gold-snapshot/types';
 
@@ -45,7 +45,7 @@ export default function GoldSnapshotPage(): JSX.Element {
   return (
     <div className="space-y-6">
       <div>
-        <Button asChild variant="ghost" size="sm" className="mb-3 -ml-3"><Link to="/datasets"><ArrowLeft />Gold datasets</Link></Button>
+        <Button asChild variant="ghost" size="sm" className="mb-3 -ml-3"><Link to="/lakehouse"><ArrowLeft />Lakehouse storage</Link></Button>
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="font-heading text-2xl font-semibold tracking-tight md:text-3xl">Gold snapshot</h2>
           <Badge>{detail.status || 'COMMITTED'}</Badge>

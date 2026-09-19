@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { formatBytes, formatDate, StorageListing } from '@/pages/datasets/types';
+import { formatBytes, formatDate, StorageListing } from '../types';
 
 interface ObjectBrowserTableProps {
   data: StorageListing | null;
@@ -48,7 +48,7 @@ export function ObjectBrowserTable({
             ) : objects.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={4} className="h-32 text-center text-sm text-muted-foreground">
-                  Không có object trong prefix hiện tại.
+                  No objects found in current prefix.
                 </TableCell>
               </TableRow>
             ) : (

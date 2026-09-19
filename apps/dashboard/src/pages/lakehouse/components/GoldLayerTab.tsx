@@ -5,21 +5,12 @@ import { Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import type { StorageListing } from '@/pages/datasets/types';
+import { goldCandidateSchema, type StorageListing } from '../types';
 import { ObjectBrowserTable } from './ObjectBrowserTable';
 import { SchemaCatalogCard } from './SchemaCatalogCard';
-import {
-  bronzeLightCurveHduSchema,
-  bronzeLightCurvePrimaryHeaderSchema,
-  bronzeLightCurveFitsSchema,
-  bronzeManifestSchema,
-  bronzeTargetPixelCosmicRaySchema,
-  bronzeTargetPixelHduSchema,
-  bronzeTargetPixelFitsSchema,
-} from '@/pages/datasets/types';
 
-interface BronzeLayerTabProps {
-  bronzeData: StorageListing | null;
+interface GoldLayerTabProps {
+  goldData: StorageListing | null;
   loading: boolean;
   page: number;
   totalPages: number;
@@ -27,19 +18,29 @@ interface BronzeLayerTabProps {
   onSearch: (prefix: string) => void;
 }
 
-export function BronzeLayerTab({
-  bronzeData,
+export function GoldLayerTab({
+  goldData,
   loading,
   page,
   totalPages,
   onPageChange,
   onSearch,
-}: BronzeLayerTabProps): JSX.Element {
+}: GoldLayerTabProps): JSX.Element {
   const [searchPrefix, setSearchPrefix] = useState('');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSearch(searchPrefix.trim() ? searchPrefix.trim() : 'bronze/');
+    onSearch(searchPrefix.trim() ? searchPrefix.trim() : 'gold/');
+  };
+
+  const goldDetailLink = (key: string): string | undefined => {
+    const manifest = /^gold\/snapshots\/(gold-v1-[^/]+)\/manifest\.json$/.exec(key);
+    if (manifest) return `/gold/snapshots/${encodeURIComponent(manifest[1])}`;
+
+    const artifact = /^gold\/snapshots\/(gold-v1-[^/]+)\/data\/(candidate)\/sector=(\d+)\/[^/]+\.parquet$/.exec(key);
+    if (!artifact) return undefined;
+    const dataset = artifact[2];
+    return `/gold/snapshots/${encodeURIComponent(artifact[1])}/files/${encodeURIComponent(dataset)}/${artifact[3]}`;
   };
 
   return (
@@ -48,14 +49,14 @@ export function BronzeLayerTab({
         <CardHeader className="border-b border-border/60 pb-4">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-primary">Object inspector / bronze prefix</p>
-              <CardTitle className="mt-1 text-lg">Raw observation artifacts</CardTitle>
-              <CardDescription>FITS bất biến tải trực tiếp từ NASA MAST theo từng TESS sector.</CardDescription>
+              <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-primary">Object inspector / gold prefix</p>
+              <CardTitle className="mt-1 text-lg">Gold artifacts</CardTitle>
+              <CardDescription>Snapshot manifests, Parquet partitions, and current pointers.</CardDescription>
             </div>
             <form onSubmit={handleSubmit} className="flex min-w-0 gap-2 sm:min-w-[22rem]">
               <Input
-                aria-label="Bronze object prefix"
-                placeholder="bronze/tess/..."
+                aria-label="Gold object prefix"
+                placeholder="gold/snapshots/..."
                 className="h-9 min-w-0 flex-1 rounded-none font-mono text-xs"
                 value={searchPrefix}
                 onChange={(e) => setSearchPrefix(e.target.value)}
@@ -69,22 +70,17 @@ export function BronzeLayerTab({
         </CardHeader>
         <CardContent className="p-0">
           <ObjectBrowserTable
-            data={bronzeData}
+            data={goldData}
             loading={loading}
             page={page}
             totalPages={totalPages}
             onPageChange={onPageChange}
+            linkForObject={goldDetailLink}
           />
         </CardContent>
       </Card>
 
-      <SchemaCatalogCard catalog={bronzeManifestSchema} />
-      <SchemaCatalogCard catalog={bronzeLightCurveHduSchema} />
-      <SchemaCatalogCard catalog={bronzeLightCurvePrimaryHeaderSchema} />
-      <SchemaCatalogCard catalog={bronzeLightCurveFitsSchema} />
-      <SchemaCatalogCard catalog={bronzeTargetPixelHduSchema} />
-      <SchemaCatalogCard catalog={bronzeTargetPixelFitsSchema} />
-      <SchemaCatalogCard catalog={bronzeTargetPixelCosmicRaySchema} />
+      <SchemaCatalogCard catalog={goldCandidateSchema} />
     </div>
   );
 }

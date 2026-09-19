@@ -1,7 +1,6 @@
 import {
   Activity,
   BrainCircuit,
-	Clock3,
   Database,
   DownloadCloud,
   Factory,
@@ -38,7 +37,7 @@ import {
 const menuItems = [
   { path: '/', label: 'Platform Overview', icon: LayoutDashboard },
   { path: '/ingest', label: 'Ingest Pipeline', icon: DownloadCloud },
-  { path: '/datasets', label: 'Datasets (Lakehouse)', icon: Database },
+  { path: '/lakehouse', label: 'Lakehouse', icon: Database },
   { path: '/monitoring', label: 'Monitoring', icon: Server },
 ];
 

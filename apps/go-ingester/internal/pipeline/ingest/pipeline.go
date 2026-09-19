@@ -208,6 +208,7 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest) (*mode
 	// a single StatObject call — much faster than downloading from MAST again.
 	// Products absent from the previous checkpoint are queued for fresh download.
 	type prevEntry struct {
+		state     model.ProductState
 		objectKey string
 		size      int64
 		sha256    string
@@ -217,7 +218,7 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest) (*mode
 		if prev := p.cpManager.PreviousCheckpoint(); prev != nil {
 			for id, pc := range prev.Products {
 				if pc != nil && (pc.State == model.StatePublished || pc.State == model.StateStored) && pc.ObjectKey != "" {
-					prevDone[id] = prevEntry{objectKey: pc.ObjectKey, size: pc.SizeBytes, sha256: pc.SHA256}
+					prevDone[id] = prevEntry{state: pc.State, objectKey: pc.ObjectKey, size: pc.SizeBytes, sha256: pc.SHA256}
 				}
 			}
 			p.log.Info("ingest: previous checkpoint loaded for cross-run resume",
@@ -229,15 +230,30 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest) (*mode
 	// 2. Filter pass: resolve each product against previous checkpoint or current run checkpoint.
 	for _, prod := range allProducts {
 		// Fast path A: product was STORED/PUBLISHED in a previous run.
-		// Verify the Bronze object still exists with one StatObject — if valid, skip download.
 		if prev, ok := prevDone[prod.SourceProductID]; ok {
+			if prev.state == model.StatePublished {
+				// Already published in previous run - skip without re-download or duplicate event.
+				res := model.ProductResult{
+					SourceProductID: prod.SourceProductID,
+					ObjectKey:       prev.objectKey,
+					SizeBytes:       prev.size,
+					SHA256:          prev.sha256,
+					Status:          model.StatusSkipped,
+				}
+				if p.metrics != nil {
+					p.metrics.ProductStarted()
+				}
+				resultsChan <- res
+				reportProgress(res)
+				recordMetrics(p.metrics, res, 0)
+				continue
+			}
+
+			// Stored but not published in previous run: verify Bronze object exists and publish event.
 			recoveryStart := time.Now()
 			info, exists, statErr := p.minioClient.StatObject(ctx, p.bucket, prev.objectKey)
 			if statErr == nil && exists && info.Size > 0 {
 				res := p.publishOnly(ctx, prod, prev.objectKey, info.Size, prev.sha256)
-				if res.Status == model.StatusStored {
-					res.Status = model.StatusSkipped
-				}
 				if p.metrics != nil {
 					p.metrics.ProductStarted()
 				}

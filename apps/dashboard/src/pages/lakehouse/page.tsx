@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
-import { AlertCircle, Database, RefreshCw } from 'lucide-react';
+import { AlertCircle, Database } from 'lucide-react';
 
-import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { apiFetch } from '@/lib/api';
 
@@ -10,11 +9,11 @@ import { BronzeLayerTab } from './components/BronzeLayerTab';
 import { GoldLayerTab } from './components/GoldLayerTab';
 import { LakehouseTierCards } from './components/LakehouseTierCards';
 import { SilverLayerTab } from './components/SilverLayerTab';
-import type { StorageListing } from '@/pages/datasets/types';
+import type { StorageListing } from './types';
 
 const PAGE_SIZE = 25;
 
-export default function DatasetsPage(): JSX.Element {
+export default function LakehousePage(): JSX.Element {
   const [activeTab, setActiveTab] = useState<'bronze' | 'silver' | 'gold'>('gold');
 
   // Storage states for Medallion Tiers
@@ -29,7 +28,7 @@ export default function DatasetsPage(): JSX.Element {
 
   const [cursorHistory, setCursorHistory] = useState<Record<number, string>>({ 1: '' });
 
-  const loadTier = useCallback(async (tierPrefix: string, cursor = '', targetPage = 1) => {
+  const loadTier = useCallback(async (tierPrefix: string, cursor = '', _targetPage = 1) => {
     setLoading(true);
     setError(null);
     try {
@@ -39,7 +38,7 @@ export default function DatasetsPage(): JSX.Element {
       else if (tierPrefix.startsWith('silver')) setSilverData(data);
       else if (tierPrefix.startsWith('gold')) setGoldData(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Không thể tải dữ liệu Storage');
+      setError(err instanceof Error ? err.message : 'Unable to load storage data');
     } finally {
       setLoading(false);
     }
@@ -66,7 +65,7 @@ export default function DatasetsPage(): JSX.Element {
         goldRes.status === 'rejected' ? 'Gold' : null,
       ].filter((tier): tier is string => tier !== null);
       if (unavailableTiers.length > 0) {
-        setError(`Không thể quan sát inventory: ${unavailableTiers.join(', ')}`);
+        setError(`Unable to observe inventory: ${unavailableTiers.join(', ')}`);
       }
       setLoading(false);
     });
@@ -112,35 +111,24 @@ export default function DatasetsPage(): JSX.Element {
   }, [activeTab, bronzeData, silverData, goldData]);
 
   const totalPages = useMemo(() => {
-    if (!activeListing || activeListing.total <= 0) return 1;
-    return Math.max(1, Math.ceil(activeListing.total / PAGE_SIZE));
+    const total = activeListing?.total;
+    if (total === undefined || total <= 0) return 1;
+    return Math.max(1, Math.ceil(total / PAGE_SIZE));
   }, [activeListing]);
 
   return (
     <div className="space-y-5 pb-6">
       <section className="relative overflow-hidden border border-border/70 bg-card px-4 py-5 shadow-sm sm:px-6">
         <div className="pointer-events-none absolute inset-0 opacity-[0.18] [background-image:linear-gradient(to_right,var(--border)_1px,transparent_1px),linear-gradient(to_bottom,var(--border)_1px,transparent_1px)] [background-size:28px_28px]" />
-        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="min-w-0">
-            <div className="mb-3 flex items-center gap-2 font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-primary">
-              <Database className="size-4" aria-hidden="true" />
-              Lakehouse observatory / object catalog
-            </div>
-            <h2 className="font-heading text-2xl font-semibold tracking-tight md:text-3xl">Datasets &amp; Feature Store</h2>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              Kiểm kê Bronze FITS, Silver Parquet và Gold ML features trực tiếp từ MinIO object storage.
-            </p>
+        <div className="relative">
+          <div className="mb-3 flex items-center gap-2 font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-primary">
+            <Database className="size-4" aria-hidden="true" />
+            Lakehouse observatory / object catalog
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void loadTier(currentPrefix, page)}
-            disabled={loading}
-            className="w-full shrink-0 rounded-none font-mono text-[10px] uppercase tracking-[0.1em] sm:w-auto"
-          >
-            <RefreshCw className={`size-3.5 ${loading ? 'animate-spin' : ''}`} />
-            Sync active prefix
-          </Button>
+          <h2 className="font-heading text-2xl font-semibold tracking-tight md:text-3xl">Datasets &amp; Feature Store</h2>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground xl:whitespace-nowrap">
+            Inventory Bronze FITS, Silver Parquet, and Gold ML features directly from MinIO object storage.
+          </p>
         </div>
       </section>
 
