@@ -22,20 +22,55 @@ func NewDAGAggregationHandler(dagAggregation service.DAGAggregation) *DAGAggrega
 }
 
 // QueryGraph returns the full visual DAG topology graph.
-// GET /api/v1/dag/graph
+// GET /api/v1/dag/graph?stage=<all|preprocessing|enrichment>
 func (h *DAGAggregationHandler) QueryGraph(c *gin.Context) {
-	graph, err := h.dagAggregation.QueryGraph(c.Request.Context())
+	stage := strings.ToLower(strings.TrimSpace(c.Query("stage")))
+	ticketID := strings.TrimSpace(c.Query("ticket_id"))
+
+	graph, err := h.dagAggregation.QueryGraph(c.Request.Context(), stage, ticketID)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Prometheus preprocessing observation is unavailable"})
 		return
 	}
 	hops := make([]gin.H, len(graph.Hops))
 	for i, hop := range graph.Hops {
-		hops[i] = gin.H{"id": hop.ID, "label": hop.Label, "description": hop.Description, "contract": hop.Contract, "status": hop.Status, "input": hop.Input, "output": hop.Output, "observed_at": hop.ObservedAt.Format(time.RFC3339), "metrics": hop.Metrics, "telemetry": hop.Telemetry, "details": hop.Details, "scatter_points": hop.ScatterPoints, "tpf_transform_points": hop.TPFTransformPoints, "materialization_points": hop.MaterializationPoints, "encode_failures": hop.EncodeFailures, "silver_failures": hop.SilverFailures, "checkpoint_points": hop.CheckpointPoints}
+		hops[i] = gin.H{
+			"id":                            hop.ID,
+			"stage":                         hop.Stage,
+			"label":                         hop.Label,
+			"description":                   hop.Description,
+			"contract":                      hop.Contract,
+			"status":                        hop.Status,
+			"input":                         hop.Input,
+			"output":                        hop.Output,
+			"observed_at":                   hop.ObservedAt.Format(time.RFC3339),
+			"metrics":                       hop.Metrics,
+			"telemetry":                     hop.Telemetry,
+			"details":                       hop.Details,
+			"scatter_points":                hop.ScatterPoints,
+			"tpf_transform_points":          hop.TPFTransformPoints,
+			"materialization_points":        hop.MaterializationPoints,
+			"encode_failures":               hop.EncodeFailures,
+			"silver_failures":               hop.SilverFailures,
+			"checkpoint_points":             hop.CheckpointPoints,
+			"lc_feature_evidence":           hop.LCFeatureEvidence,
+			"bls_search_evidence":           hop.BLSSearchEvidence,
+			"tpf_spatial_evidence":          hop.TPFSpatialEvidence,
+			"candidate_assembly_evidence":   hop.CandidateAssemblyEvidence,
+			"gold_materialization_evidence": hop.GoldMaterializationEvidence,
+			"gold_projection_evidence":      hop.GoldProjectionEvidence,
+			"gold_commit_evidence":          hop.GoldCommitEvidence,
+		}
 	}
 	edges := make([]gin.H, len(graph.Edges))
 	for i, edge := range graph.Edges {
-		edges[i] = gin.H{"id": edge.ID, "source": edge.Source, "target": edge.Target, "status": edge.Status, "observed_at": edge.ObservedAt.Format(time.RFC3339)}
+		edges[i] = gin.H{
+			"id":          edge.ID,
+			"source":      edge.Source,
+			"target":      edge.Target,
+			"status":      edge.Status,
+			"observed_at": edge.ObservedAt.Format(time.RFC3339),
+		}
 	}
 	var run any
 	if graph.Run != nil {

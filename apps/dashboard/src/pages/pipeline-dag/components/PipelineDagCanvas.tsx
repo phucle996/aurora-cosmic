@@ -53,7 +53,20 @@ const BRANCHED_POSITIONS: Record<string, { x: number; y: number }> = {
   'gold-commit': { x: 2080, y: 2100 },
 };
 
-function nodePosition(index: number, layout: DagLayout, id?: string): { x: number; y: number } {
+const ENRICHMENT_BRANCHED_POSITIONS: Record<string, { x: number; y: number }> = {
+  'gold-pairing': { x: 50, y: 350 },
+  'gold-catalog': { x: 420, y: 80 },
+  'gold-lc-features': { x: 420, y: 350 },
+  'gold-bls': { x: 800, y: 350 },
+  'gold-tpf-evidence': { x: 800, y: 620 },
+  'gold-candidate': { x: 1220, y: 350 },
+  'gold-parquet': { x: 1620, y: 350 },
+  'gold-index': { x: 2020, y: 350 },
+  'gold-commit': { x: 2420, y: 350 },
+};
+
+function nodePosition(index: number, layout: DagLayout, id?: string, isEnrichmentOnly?: boolean): { x: number; y: number } {
+  if (isEnrichmentOnly && id && ENRICHMENT_BRANCHED_POSITIONS[id]) return ENRICHMENT_BRANCHED_POSITIONS[id];
   if (layout === 'branched' && id && BRANCHED_POSITIONS[id]) return BRANCHED_POSITIONS[id];
   if (layout === 'reverse-c') {
     const row = Math.floor(index / 4);

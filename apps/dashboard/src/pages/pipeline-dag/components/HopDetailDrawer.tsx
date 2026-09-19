@@ -437,17 +437,6 @@ export function HopDetailDrawer({
       return;
     }
 
-    const pipelineHopIds = new Set([
-      'bronze', 'route', 'lc-quality', 'lc-transform', 'lc-parquet',
-      'tpf-quality', 'tpf-transform', 'tpf-parquet', 'silver',
-      'checkpoint', 'lineage', 'event', 'ack',
-    ]);
-
-    if (!pipelineHopIds.has(selectedHop.id)) {
-      setLiveHopData(null);
-      return;
-    }
-
     let cancelled = false;
     setIsLoadingHop(true);
     const searchParams = new URLSearchParams();

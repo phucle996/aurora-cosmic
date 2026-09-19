@@ -118,7 +118,13 @@ export default function EnrichmentPage(): JSX.Element {
         // Malformed live messages never replace the durable runtime snapshot.
       }
     });
-    return () => stream.close();
+    const interval = setInterval(() => {
+      void loadOverview();
+    }, 5000);
+    return () => {
+      clearInterval(interval);
+      stream.close();
+    };
   }, [loadHistory, loadOverview, activeTicket]);
 
   useEffect(() => {
@@ -133,7 +139,7 @@ export default function EnrichmentPage(): JSX.Element {
         method: 'POST',
         body: JSON.stringify({ mode, max_batch_records: maxBatchRecords, idle_flush_seconds: idleFlushSeconds, ticket_id: activeTicket }),
       });
-      await poll();
+      await loadOverview();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Failed to launch Enrichment run');
     } finally {
@@ -146,7 +152,7 @@ export default function EnrichmentPage(): JSX.Element {
     setError(null);
     try {
       await apiFetch('/v1/enrichment/control/stop', { method: 'POST' });
-      await poll();
+      await loadOverview();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Failed to freeze Enrichment Builder');
     } finally {

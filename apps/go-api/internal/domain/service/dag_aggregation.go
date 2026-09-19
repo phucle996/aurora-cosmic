@@ -7,9 +7,9 @@ import (
 )
 
 // DAGAggregation provides visual topology graph and on-demand per-step metrics.
-// It remains decoupled from domain preprocessing pipelines and focuses purely on step-level visualization.
+// It visualizes unified end-to-end processing across Preprocessing and Enrichment stages.
 type DAGAggregation interface {
-	QueryGraph(ctx context.Context) (*entity.PreprocessingGraph, error)
-	AggregateHopMetrics(ctx context.Context, ticketID string, hopID string) (*entity.PreprocessingHop, error)
+	QueryGraph(ctx context.Context, stage string, ticketID string) (*entity.DAGGraph, error)
+	AggregateHopMetrics(ctx context.Context, ticketID string, hopID string) (*entity.DAGHop, error)
 	ObserveRuntime(event entity.PreprocessingRuntimeEvent)
 }

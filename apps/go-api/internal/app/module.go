@@ -120,7 +120,7 @@ func NewModule(infra Infrastructure) (*Module, error) {
 		return nil, fmt.Errorf("service LakehouseService is nil")
 	}
 
-	dagAggregationService := service.NewDAGAggregationService(preprocessingService, prometheusQuerier, objectRepo)
+	dagAggregationService := service.NewDAGAggregationService(preprocessingService, prometheusQuerier, objectRepo, ticketRepository)
 
 	natsPubSub := pubsub.New(pubsub.Config{
 		NATSURL:           infra.NATS.URL,

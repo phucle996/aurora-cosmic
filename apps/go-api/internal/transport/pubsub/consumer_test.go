@@ -159,10 +159,10 @@ type fakeDAGAggregationObserver struct {
 	observed []entity.PreprocessingRuntimeEvent
 }
 
-func (f *fakeDAGAggregationObserver) QueryGraph(context.Context) (*entity.PreprocessingGraph, error) {
+func (f *fakeDAGAggregationObserver) QueryGraph(context.Context, string, string) (*entity.DAGGraph, error) {
 	return nil, nil
 }
-func (f *fakeDAGAggregationObserver) AggregateHopMetrics(context.Context, string, string) (*entity.PreprocessingHop, error) {
+func (f *fakeDAGAggregationObserver) AggregateHopMetrics(context.Context, string, string) (*entity.DAGHop, error) {
 	return nil, nil
 }
 func (f *fakeDAGAggregationObserver) ObserveRuntime(e entity.PreprocessingRuntimeEvent) {
