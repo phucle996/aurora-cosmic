@@ -118,7 +118,7 @@ var components = []componentSpec{
 		},
 	},
 	{
-		ID: "gold-builder", Name: "Gold Builder", Group: "Pipeline", Container: "aurora-gold-builder", Job: "aurora-gold-builder", HealthQuery: `max(up{job="aurora-gold-builder"})`,
+		ID: "enrichment", Name: "Enrichment Service", Group: "Pipeline", Container: "aurora-enrichment", Job: "aurora-enrichment", HealthQuery: `max(up{job="aurora-enrichment"})`,
 		Metrics: []metricSpec{
 			{Key: "throughput", Name: "Committed batches / second", Unit: "batches/s", Kind: "rate", Query: rate(`aurora_gold_batches_total{status="success"}`)},
 			{Key: "duration_p95", Name: "Gold build latency p95", Unit: "seconds", Kind: "histogram p95", Query: p95Duration("aurora_gold_batch_duration_seconds", `{status="success"}`)},
@@ -294,6 +294,9 @@ func (s *MonitoringService) queryComponent(ctx context.Context, spec componentSp
 func selectComponents(componentID string) ([]componentSpec, error) {
 	if componentID == "" || componentID == "all" {
 		return components, nil
+	}
+	if componentID == "gold-builder" {
+		componentID = "enrichment"
 	}
 	for _, component := range components {
 		if component.ID == componentID {

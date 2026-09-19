@@ -21,6 +21,7 @@ type Module struct {
 	DAGAggregationHandler *handler.DAGAggregationHandler
 	PreprocessingHandler     *handler.PreprocessingHandler
 	EnrichmentControlHandler *handler.EnrichmentControlHandler
+	LineageHandler           *handler.LineageHandler
 	TicketHandler            *handler.TicketHandler
 	IngestHandler         *handler.IngestHandler
 	LakehouseHandler      *handler.LakehouseHandler
@@ -99,6 +100,11 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	if preprocessingService == nil {
 		return nil, fmt.Errorf("service PreprocessingService is nil")
 	}
+	lineageRepo := repository.NewLineageClickHouse(infra.ClickHouse)
+	lineageService := service.NewLineageService(lineageRepo)
+	if lineageService == nil {
+		return nil, fmt.Errorf("service LineageService is nil")
+	}
 	enrichmentControlService := service.NewEnrichmentControlService(objectRepo, eventBroker)
 	if enrichmentControlService == nil {
 		return nil, fmt.Errorf("service EnrichmentControlService is nil")
@@ -138,6 +144,7 @@ func NewModule(infra Infrastructure) (*Module, error) {
 		DAGAggregationHandler:    handler.NewDAGAggregationHandler(dagAggregationService),
 		PreprocessingHandler:     handler.NewPreprocessingHandler(preprocessingService),
 		EnrichmentControlHandler: handler.NewEnrichmentControlHandler(enrichmentControlService),
+		LineageHandler:           handler.NewLineageHandler(lineageService),
 		TicketHandler:            handler.NewTicketHandler(ticketService),
 		IngestHandler:         handler.NewIngestHandler(ingestService),
 		LakehouseHandler:      handler.NewLakehouseHandler(lakehouseService),

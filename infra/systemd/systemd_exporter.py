@@ -19,7 +19,7 @@ UNITS: Final = (
     "aurora-dashboard.service",
     "aurora-go-api.service",
     "aurora-go-ingester.service",
-    "aurora-gold-builder.service",
+    "aurora-enrichment.service",
     "aurora-python-ml-worker.service",
     "aurora-rust-inference.service",
     "aurora-rust-preprocessor.service",

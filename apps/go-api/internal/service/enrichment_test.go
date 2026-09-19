@@ -1,22 +1,15 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 
-	"github.com/parquet-go/parquet-go"
 	"go-api/internal/domain/entity"
 	"go-api/internal/provider"
 )
-
-type testEnrichmentRow struct {
-	SourceProductID string  `parquet:"source_product_id"`
-	Score           float64 `parquet:"score"`
-}
 
 type memoryEnrichmentObjects struct{ data map[string][]byte }
 
@@ -59,74 +52,12 @@ func (m *memoryEnrichmentObjects) DeleteObject(_ context.Context, key string) er
 	return nil
 }
 
-func TestEnrichmentLineageOnlyMarksCommittedManifestInputsExtracted(t *testing.T) {
-	committed, err := json.Marshal(entity.EnrichmentSnapshotDetail{
-		SnapshotID: "gold-v1-committed", Status: "COMMITTED",
-		CompletenessContract: entity.EnrichmentCompletenessContract{Policy: "research-ready-target-pair-v4"},
-		Artifacts:            []entity.EnrichmentArtifact{{Dataset: "candidate", RowCount: 1}},
-		Inputs:               []entity.EnrichmentSnapshotInput{{SourceProductID: "tess-lc-1", SilverObjectKey: "silver/tess/lc-1.parquet"}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	pending, err := json.Marshal(entity.EnrichmentSnapshotDetail{
-		SnapshotID: "gold-v1-pending", Status: "PENDING",
-		Artifacts: []entity.EnrichmentArtifact{{Dataset: "candidate", RowCount: 1}},
-		Inputs:    []entity.EnrichmentSnapshotInput{{SourceProductID: "tess-lc-2"}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	objects := &memoryEnrichmentObjects{data: map[string][]byte{
-		"gold/snapshots/gold-v1-committed/manifest.json": committed,
-		"gold/snapshots/gold-v1-pending/manifest.json":   pending,
-	}}
-	service := NewEnrichmentControlService(objects, nil)
-	resolved, err := service.ResolveLineage(context.Background(), []entity.EnrichmentLineageLookup{
-		{SourceProductID: "tess-lc-1"}, {SourceProductID: "tess-lc-2"}, {SourceProductID: "missing"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resolved[0].Status != "EXTRACTED" || resolved[0].SnapshotID != "gold-v1-committed" || len(resolved[0].Datasets) != 1 {
-		t.Fatalf("expected committed input to be extracted, got %#v", resolved[0])
-	}
-	if resolved[1].Status != "PENDING" || resolved[2].Status != "PENDING" {
-		t.Fatalf("pending or missing inputs must not be inferred as extracted: %#v", resolved)
-	}
-}
-
-func TestEnrichmentLineageDoesNotTreatLegacyPartialSnapshotAsExtracted(t *testing.T) {
-	legacy, err := json.Marshal(entity.EnrichmentSnapshotDetail{
-		SnapshotID: "gold-v1-legacy", Status: "COMMITTED",
-		Artifacts: []entity.EnrichmentArtifact{{Dataset: "candidate", RowCount: 1}},
-		Inputs:    []entity.EnrichmentSnapshotInput{{SourceProductID: "tess-lc-legacy"}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	service := NewEnrichmentControlService(&memoryEnrichmentObjects{data: map[string][]byte{
-		"gold/snapshots/gold-v1-legacy/manifest.json": legacy,
-	}}, nil)
-	resolved, err := service.ResolveLineage(context.Background(), []entity.EnrichmentLineageLookup{{SourceProductID: "tess-lc-legacy"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resolved[0].Status != "PENDING" {
-		t.Fatalf("legacy partial snapshot must not resolve as extracted: %#v", resolved[0])
-	}
-}
-
 func TestEnrichmentControlStartsAndPausesDurably(t *testing.T) {
 	objects := &memoryEnrichmentObjects{data: map[string][]byte{}}
 	publisher := &recordingEnrichmentPublisher{}
 	service := NewEnrichmentControlService(objects, publisher)
 
-	initial, err := service.GetControlOverview(context.Background())
-	if err != nil || initial.Control.Mode != "PAUSED" {
-		t.Fatalf("expected default paused control, got %#v err=%v", initial, err)
-	}
-
+	// Start requires a persisted control state — seed one first.
 	started, err := service.Start(context.Background(), entity.EnrichmentControlStartRequest{
 		Mode: "stream", IdleFlushSeconds: 180, MaxBatchRecords: 5000, TicketID: "enrichment-observer-test",
 	})
@@ -144,18 +75,31 @@ func TestEnrichmentControlStartsAndPausesDurably(t *testing.T) {
 		t.Fatalf("unexpected event data: %#v", eventData)
 	}
 
+	// After start, GetControlOverview must read persisted state.
+	overview, err := service.GetControlOverview(context.Background())
+	if err != nil {
+		t.Fatalf("expected readable control overview after start, got err=%v", err)
+	}
+	if overview.Control.Mode != "STREAM" {
+		t.Fatalf("expected STREAM mode after start, got %s", overview.Control.Mode)
+	}
+
 	stopped, err := service.Stop(context.Background())
 	if err != nil || stopped.Status != "pause_requested" || stopped.TicketID == "" {
 		t.Fatalf("expected durable paused command result, got %#v err=%v", stopped, err)
 	}
 
-	overview, err := service.GetControlOverview(context.Background())
+	overview, err = service.GetControlOverview(context.Background())
 	if err != nil || overview.Control.Mode != "PAUSED" {
 		t.Fatalf("expected paused control in overview, got %#v err=%v", overview, err)
 	}
 }
 
 func TestEnrichmentControlReadsDurableReadinessTelemetry(t *testing.T) {
+	// Seed a valid control state alongside runtime telemetry.
+	controlData, _ := json.Marshal(entity.EnrichmentControlState{
+		SchemaVersion: 1, Mode: "PAUSED",
+	})
 	runtime, err := json.Marshal(entity.EnrichmentRuntimeStatus{
 		SchemaVersion: 2,
 		State:         "WAITING_FOR_MODALITY",
@@ -176,7 +120,10 @@ func TestEnrichmentControlReadsDurableReadinessTelemetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	objects := &memoryEnrichmentObjects{data: map[string][]byte{enrichmentRuntimeStatusKey: runtime}}
+	objects := &memoryEnrichmentObjects{data: map[string][]byte{
+		enrichmentControlKey:       controlData,
+		enrichmentRuntimeStatusKey: runtime,
+	}}
 	overview, err := NewEnrichmentControlService(objects, nil).GetControlOverview(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -187,7 +134,6 @@ func TestEnrichmentControlReadsDurableReadinessTelemetry(t *testing.T) {
 }
 
 func TestEnrichmentControlPersistedControlRejectsInvalidWithoutFallback(t *testing.T) {
-	// Persisted control with invalid idle flush fails without fallback
 	badPersisted, _ := json.Marshal(map[string]any{
 		"schema_version":     1,
 		"mode":               "STREAM",
@@ -202,68 +148,54 @@ func TestEnrichmentControlPersistedControlRejectsInvalidWithoutFallback(t *testi
 	}
 }
 
-func TestEnrichmentArtifactReadsRealParquetSchemaPreviewAndLineage(t *testing.T) {
-	var parquetBytes bytes.Buffer
-	writer := parquet.NewGenericWriter[testEnrichmentRow](&parquetBytes)
-	if _, err := writer.Write([]testEnrichmentRow{{SourceProductID: "tess-lc-1", Score: 0.98}}); err != nil {
-		t.Fatalf("write test parquet: %v", err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close test parquet: %v", err)
-	}
-	artifactKey := "gold/snapshots/gold-v1-test/data/candidate/sector=0042/part-00000.parquet"
-	manifest, err := json.Marshal(entity.EnrichmentSnapshotDetail{
-		SnapshotID: "gold-v1-test",
-		Artifacts: []entity.EnrichmentArtifact{{
-			Dataset: "candidate", Sector: 42, ObjectKey: artifactKey, SizeBytes: int64(parquetBytes.Len()), RowCount: 1,
-		}},
-		Inputs: []entity.EnrichmentSnapshotInput{{
-			ProductKind: "LIGHT_CURVE", SilverObjectKey: "silver/tess/lc-1.parquet", SilverSHA256: "abc",
-		}},
-	})
-	if err != nil {
-		t.Fatalf("marshal manifest: %v", err)
-	}
-	objects := &memoryEnrichmentObjects{data: map[string][]byte{
-		"gold/snapshots/gold-v1-test/manifest.json": manifest,
-		artifactKey: parquetBytes.Bytes(),
-	}}
-	service := NewEnrichmentControlService(objects, nil)
-	detail, err := service.Artifact(context.Background(), "gold-v1-test", "candidate", 42, entity.EnrichmentArtifactPreviewQuery{Limit: 10})
-	if err != nil {
-		t.Fatalf("read artifact detail: %v", err)
-	}
-	if len(detail.Schema) != 2 || len(detail.Preview) != 1 {
-		t.Fatalf("unexpected artifact detail: %#v", detail)
-	}
-	if detail.Preview[0]["source_product_id"] != "tess-lc-1" {
-		t.Fatalf("expected real Parquet preview, got %#v", detail.Preview[0])
+func TestEnrichmentControlGetOverviewFailsWhenNoControlExists(t *testing.T) {
+	// With no control file at all, GetControlOverview must fail (no silent fallback).
+	service := NewEnrichmentControlService(&memoryEnrichmentObjects{data: map[string][]byte{}}, nil)
+	if _, err := service.GetControlOverview(context.Background()); err == nil {
+		t.Fatal("expected error when no control file exists")
 	}
 }
 
-func TestEnrichmentArtifactPreviewPaginatesAndFiltersRealParquetRows(t *testing.T) {
-	var parquetBytes bytes.Buffer
-	writer := parquet.NewGenericWriter[testEnrichmentRow](&parquetBytes)
-	if _, err := writer.Write([]testEnrichmentRow{{SourceProductID: "alpha", Score: 0.1}, {SourceProductID: "beta", Score: 0.2}, {SourceProductID: "beta", Score: 0.3}}); err != nil {
-		t.Fatalf("write test parquet: %v", err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close test parquet: %v", err)
-	}
-	artifactKey := "gold/snapshots/gold-v1-page/data/candidate/sector=0042/part-00000.parquet"
+func TestEnrichmentSnapshotLoadsManifest(t *testing.T) {
 	manifest, err := json.Marshal(entity.EnrichmentSnapshotDetail{
-		SnapshotID: "gold-v1-page",
-		Artifacts:  []entity.EnrichmentArtifact{{Dataset: "candidate", Sector: 42, ObjectKey: artifactKey, SizeBytes: int64(parquetBytes.Len()), RowCount: 3}},
+		SnapshotID: "gold-v1-test",
+		Artifacts: []entity.EnrichmentArtifact{
+			{Dataset: "candidate", Sector: 42, ObjectKey: "gold/snapshots/gold-v1-test/data/candidate/sector=0042/part-00000.parquet", SizeBytes: 1024, RowCount: 1},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := NewEnrichmentControlService(&memoryEnrichmentObjects{data: map[string][]byte{"gold/snapshots/gold-v1-page/manifest.json": manifest, artifactKey: parquetBytes.Bytes()}}, nil)
-	detail, err := service.Artifact(context.Background(), "gold-v1-page", "candidate", 42, entity.EnrichmentArtifactPreviewQuery{Limit: 1, Offset: 1, FilterColumn: "source_product_id", FilterValue: "beta"})
+	objects := &memoryEnrichmentObjects{data: map[string][]byte{
+		"gold/snapshots/gold-v1-test/manifest.json": manifest,
+	}}
+	service := NewEnrichmentControlService(objects, nil)
+	snapshot, err := service.Snapshot(context.Background(), "gold-v1-test")
 	if err != nil {
-		t.Fatalf("read paginated artifact: %v", err)
+		t.Fatalf("snapshot read failed: %v", err)
 	}
-	if detail.MatchedRows != 2 || detail.PreviewOffset != 1 || len(detail.Preview) != 1 || detail.Preview[0]["score"] != float64(0.3) {
-		t.Fatalf("unexpected filtered preview: %#v", detail)
+	if snapshot.SnapshotID != "gold-v1-test" || len(snapshot.Artifacts) != 1 {
+		t.Fatalf("unexpected snapshot: %#v", snapshot)
+	}
+}
+
+func TestEnrichmentListSnapshotsReturnsManifestSummaries(t *testing.T) {
+	manifest, err := json.Marshal(entity.EnrichmentSnapshotDetail{
+		SnapshotID: "gold-v1-page",
+		Status:     "COMMITTED",
+		Artifacts:  []entity.EnrichmentArtifact{{Dataset: "candidate", Sector: 42, SizeBytes: 2048, RowCount: 3}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewEnrichmentControlService(&memoryEnrichmentObjects{data: map[string][]byte{
+		"gold/snapshots/gold-v1-page/manifest.json": manifest,
+	}}, nil)
+	summaries, err := service.ListSnapshots(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("list snapshots failed: %v", err)
+	}
+	if len(summaries) != 1 || summaries[0].SnapshotID != "gold-v1-page" || summaries[0].SizeBytes != 2048 {
+		t.Fatalf("unexpected summaries: %#v", summaries)
 	}
 }

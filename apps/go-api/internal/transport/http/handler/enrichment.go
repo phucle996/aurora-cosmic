@@ -13,10 +13,9 @@ import (
 )
 
 const (
-	minEnrichmentIdleFlush     = 60
-	maxEnrichmentIdleFlush     = 900
-	maxEnrichmentBatchSize     = 5000
-	maxEnrichmentLineageInputs = 100
+	minEnrichmentIdleFlush = 60
+	maxEnrichmentIdleFlush = 900
+	maxEnrichmentBatchSize = 5000
 )
 
 type EnrichmentControlHandler struct {
@@ -83,24 +82,6 @@ func (h *EnrichmentControlHandler) Stop(c *gin.Context) {
 	c.JSON(http.StatusAccepted, result)
 }
 
-func (h *EnrichmentControlHandler) ResolveLineage(c *gin.Context) {
-	var request entity.EnrichmentLineageResolveRequest
-	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid enrichment lineage request"})
-		return
-	}
-	if len(request.Inputs) > maxEnrichmentLineageInputs {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("at most %d enrichment lineage inputs are allowed", maxEnrichmentLineageInputs)})
-		return
-	}
-	resolutions, err := h.enrichment.ResolveLineage(c.Request.Context(), request.Inputs)
-	if err != nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"items": resolutions})
-}
-
 func (h *EnrichmentControlHandler) ListSnapshots(c *gin.Context) {
 	limit := 100
 	if rawLimit := strings.TrimSpace(c.Query("limit")); rawLimit != "" {
@@ -126,48 +107,4 @@ func (h *EnrichmentControlHandler) Snapshot(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, snapshot)
-}
-
-func (h *EnrichmentControlHandler) Artifact(c *gin.Context) {
-	sector, err := strconv.Atoi(c.Param("sector"))
-	if err != nil || sector < 1 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "sector must be a positive integer"})
-		return
-	}
-	offset := 0
-	if rawOffset := strings.TrimSpace(c.Query("offset")); rawOffset != "" {
-		parsed, parseErr := strconv.Atoi(rawOffset)
-		if parseErr != nil || parsed < 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "offset must be non-negative"})
-			return
-		}
-		offset = parsed
-	}
-	limit := 25
-	if rawLimit := strings.TrimSpace(c.Query("limit")); rawLimit != "" {
-		parsed, parseErr := strconv.Atoi(rawLimit)
-		if parseErr != nil || parsed < 1 || parsed > 50 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "limit must be between 1 and 50"})
-			return
-		}
-		limit = parsed
-	}
-	detail, err := h.enrichment.Artifact(
-		c.Request.Context(),
-		strings.TrimSpace(c.Param("snapshot_id")),
-		strings.TrimSpace(c.Param("dataset")),
-		sector,
-		entity.EnrichmentArtifactPreviewQuery{
-			Offset:       offset,
-			Limit:        limit,
-			Search:       strings.TrimSpace(c.Query("search")),
-			FilterColumn: strings.TrimSpace(c.Query("filter_column")),
-			FilterValue:  strings.TrimSpace(c.Query("filter_value")),
-		},
-	)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, detail)
 }

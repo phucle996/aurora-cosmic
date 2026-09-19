@@ -111,7 +111,7 @@ func TestComponentsExposeTailoredDomainMetrics(t *testing.T) {
 		"rust-preprocessor":  {"throughput", "duration_p95", "errors", "inflight", "queue", "backlog", "bytes"},
 		"python-ml-worker":   {"throughput", "duration_p95", "errors", "inflight", "queue", "gpu_available", "gpu_utilization", "gpu_memory_used", "gpu_memory_total"},
 		"rust-inference":     {"throughput", "duration_p95", "errors", "inflight", "queue", "rows"},
-		"gold-builder":       {"throughput", "duration_p95", "errors", "deferred", "inflight", "queue", "rows"},
+		"enrichment":         {"throughput", "duration_p95", "errors", "deferred", "inflight", "queue", "rows"},
 		"go-api":             {"throughput", "duration_p95", "errors", "inflight"},
 		"minio":              {"requests", "ttfb_p95", "inflight", "errors", "traffic_in", "traffic_out", "usage", "objects", "offline_drives"},
 		"nats":               {"inbound", "outbound", "connections", "cpu", "memory", "pending_bytes"},

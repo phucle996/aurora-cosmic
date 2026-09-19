@@ -39,7 +39,7 @@ export const components = [
   { id: 'rust-preprocessor', label: 'Preprocessor', group: 'Pipeline' },
   { id: 'python-ml-worker', label: 'ML worker', group: 'Pipeline' },
   { id: 'rust-inference', label: 'Inference', group: 'Pipeline' },
-  { id: 'gold-builder', label: 'Gold builder', group: 'Pipeline' },
+  { id: 'enrichment', label: 'Enrichment', group: 'Pipeline' },
   { id: 'go-api', label: 'Go API', group: 'Platform' },
   { id: 'minio', label: 'MinIO', group: 'Platform' },
   { id: 'nats', label: 'NATS', group: 'Platform' },

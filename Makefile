@@ -15,7 +15,7 @@ SYSTEMD_UNITS := \
 	infra/systemd/aurora-go-ingester.service \
 	infra/systemd/aurora-rust-preprocessor.service \
 	infra/systemd/aurora-python-ml-worker.service \
-	infra/systemd/aurora-gold-builder.service \
+	infra/systemd/aurora-enrichment.service \
 	infra/systemd/aurora-rust-inference.service \
 	infra/systemd/aurora-go-api.service \
 	infra/systemd/aurora-dashboard.service
@@ -45,7 +45,7 @@ build:
 	@cd apps/rust-inference && cargo check
 	@echo "==> Syncing Python environments with uv..."
 	@cd apps/python-ml-worker && uv sync
-	@cd apps/python-gold-builder && uv sync
+	@cd apps/python-enrichment && uv sync
 	@echo "==> Checking dashboard dependencies..."
 	@cd apps/dashboard && npm install
 	@echo "==> All AURORA components built successfully."

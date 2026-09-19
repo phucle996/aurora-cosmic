@@ -34,7 +34,7 @@ The platform operates on a **rolling bounded storage model**:
                     │ (Bronze FITS)                      │                                   │ (NATS ML/Infer Job)
                     ▼                                    ▼                                   ▼
          ┌─────────────────────┐              ┌─────────────────────┐             ┌─────────────────────┐
-         │  rust-preprocessor  │              │ python-gold-builder │             │   rust-inference    │
+         │  rust-preprocessor  │              │  python-enrichment  │             │   rust-inference    │
          │  (FITS -> Parquet)  │              │ (Feature Aggregator │             │ (ONNX Runtime CPU/  │
          │  (Tokio / Rayon)    │              │  & Catalog Joins)   │             │  CUDA Hot-Reload)   │
          └──────────┬──────────┘              └──────────┬──────────┘             └──────────┬──────────┘
@@ -73,7 +73,7 @@ The platform operates on a **rolling bounded storage model**:
 |---|---|---|
 | **`go-ingester`** | Go 1.26 | Stream downloads from MAST to MinIO Bronze, enforce ~50 GiB rolling storage quota, track ingestion checkpoints, emit `bronze-object-ready` NATS events. |
 | **`rust-preprocessor`** | Rust 1.89, Tokio | Bounded concurrent FITS parsing, detrending, FFT & BLS period search, outlier filtering, write Silver & Gold Parquet to MinIO. |
-| **`python-gold-builder`** | Python 3.12, Polars/DuckDB | Build and maintain cumulative Gold analytical datasets, join TIC/TOI catalog metadata, index features into ClickHouse. |
+| **`python-enrichment`** | Python 3.12, Polars/DuckDB | Build and maintain cumulative Gold analytical datasets, join TIC/TOI catalog metadata, index features into ClickHouse. |
 | **`python-ml-worker`** | Python 3.12, PyTorch/CUDA | Train light-curve classifiers & anomaly autoencoders, run Champion vs Challenger evaluation, export validated models to ONNX. |
 | **`rust-inference`** | Rust 1.89, ONNX Runtime | High-throughput batch inference (CPU/CUDA fallback), hot-swap model reloading from MinIO, consume prediction jobs from NATS. |
 | **`go-api`** | Go 1.26, Gin | REST & SSE API Gateway, exoplanet physics & habitability classification, telemetry and health monitoring. |

@@ -112,6 +112,19 @@ ENGINE = MergeTree()
 PRIMARY KEY (snapshot_id)
 ORDER BY (snapshot_id);
 
+-- Immutable Gold lineage input mapping. Materialized by Enrichment stage at snapshot commit.
+CREATE TABLE IF NOT EXISTS aurora.gold_lineage_inputs_v1 (
+    source_product_id String,
+    silver_object_key String,
+    snapshot_id String,
+    datasets Array(String),
+    status LowCardinality(String),
+    committed_at DateTime64(3, 'UTC') DEFAULT now64()
+)
+ENGINE = ReplacingMergeTree(committed_at)
+PRIMARY KEY (source_product_id, snapshot_id)
+ORDER BY (source_product_id, snapshot_id);
+
 -- First-class Runner Tickets catalog. Persists user and system initiated tickets.
 CREATE TABLE IF NOT EXISTS aurora.factory_tickets_v1 (
     ticket_id LowCardinality(String),
@@ -122,7 +135,7 @@ CREATE TABLE IF NOT EXISTS aurora.factory_tickets_v1 (
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (ticket_id);
 
--- Durable Data Factory operational history. Gold Builder writes observed
+-- Durable Data Factory operational history. Enrichment service writes observed
 -- lifecycle and batch facts; the dashboard never derives historical runs.
 CREATE TABLE IF NOT EXISTS aurora.pipeline_runs_v1 (
     pipeline LowCardinality(String),

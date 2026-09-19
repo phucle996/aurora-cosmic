@@ -111,6 +111,7 @@ func isMonitoringComponent(id string) bool {
 		"rust-preprocessor",
 		"python-ml-worker",
 		"rust-inference",
+		"enrichment",
 		"gold-builder",
 		"go-api",
 		"minio",

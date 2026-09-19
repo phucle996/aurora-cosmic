@@ -1,0 +1,27 @@
+[Unit]
+Description=AURORA Enrichment Service (native)
+Requires=aurora-nats.service aurora-minio-init.service aurora-clickhouse-init.service
+After=aurora-nats.service aurora-minio-init.service aurora-clickhouse-init.service
+PartOf=aurora.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Desktop/aurora-cosmic/apps/python-enrichment
+EnvironmentFile=%h/Desktop/aurora-cosmic/apps/python-enrichment/.env.example
+EnvironmentFile=%h/Desktop/aurora-cosmic/infra/systemd/aurora-host.env
+Environment=MINIO_ENDPOINT=http://127.0.0.1:9000
+Environment=NATS_URL=nats://127.0.0.1:4222
+Environment=AURORA_CLICKHOUSE_HOST=127.0.0.1
+Environment=AURORA_ENRICHMENT_METRICS_ADDR=:8088
+Environment=PYTHONPATH=%h/Desktop/aurora-cosmic/apps/python-ml-worker
+Environment=UV_CACHE_DIR=%h/.cache/uv
+ExecStartPre=%h/.local/bin/uv sync --project %h/Desktop/aurora-cosmic/apps/python-enrichment
+ExecStart=%h/.local/bin/uv run --project %h/Desktop/aurora-cosmic/apps/python-enrichment --no-sync python service.py
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGINT
+SuccessExitStatus=0 1 2 130 143 SIGINT SIGTERM
+TimeoutStopSec=5
+
+[Install]
+WantedBy=aurora.target

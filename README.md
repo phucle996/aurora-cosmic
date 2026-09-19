@@ -20,7 +20,7 @@ Latest release: **`v1.0.0` (Production / GA)** — published to [GitHub Containe
 |---|---|
 | Go Ingester | `ghcr.io/phucle996/aurora-go-ingester:latest` |
 | Rust Preprocessor | `ghcr.io/phucle996/aurora-rust-preprocessor:latest` |
-| Python Gold Builder | `ghcr.io/phucle996/aurora-gold-builder:latest` |
+| Python Enrichment | `ghcr.io/phucle996/aurora-enrichment:latest` |
 | Python ML Worker | `ghcr.io/phucle996/aurora-python-ml-worker:latest` |
 | Rust Inference | `ghcr.io/phucle996/aurora-rust-inference:latest` |
 | Go API | `ghcr.io/phucle996/aurora-go-api:latest` |
@@ -37,7 +37,7 @@ Copy default environment templates for all sub-projects:
 cp apps/go-ingester/.env.example apps/go-ingester/.env
 cp apps/rust-preprocessor/.env.example apps/rust-preprocessor/.env
 cp apps/python-ml-worker/.env.example apps/python-ml-worker/.env
-cp apps/python-gold-builder/.env.example apps/python-gold-builder/.env
+cp apps/python-enrichment/.env.example apps/python-enrichment/.env
 cp apps/rust-inference/.env.example apps/rust-inference/.env
 cp apps/go-api/.env.example apps/go-api/.env
 cp apps/dashboard/.env.example apps/dashboard/.env

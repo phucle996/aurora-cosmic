@@ -18,7 +18,7 @@ jobs:
       go-ingester: ${{ steps.filter.outputs.go-ingester }}
       rust-preprocessor: ${{ steps.filter.outputs.rust-preprocessor }}
       python-ml-worker: ${{ steps.filter.outputs.python-ml-worker }}
-      gold-builder: ${{ steps.filter.outputs.gold-builder }}
+      enrichment: ${{ steps.filter.outputs.enrichment }}
       rust-inference: ${{ steps.filter.outputs.rust-inference }}
       go-api: ${{ steps.filter.outputs.go-api }}
       dashboard: ${{ steps.filter.outputs.dashboard }}
@@ -39,8 +39,8 @@ jobs:
               - 'apps/rust-preprocessor/**'
             python-ml-worker:
               - 'apps/python-ml-worker/**'
-            gold-builder:
-              - 'apps/python-gold-builder/**'
+            enrichment:
+              - 'apps/python-enrichment/**'
               - 'apps/python-ml-worker/aurora_ml/pipeline/**'
             rust-inference:
               - 'apps/rust-inference/**'
@@ -62,7 +62,7 @@ jobs:
           go_ingester=${{ steps.filter.outputs.go-ingester }}
           rust_preprocessor=${{ steps.filter.outputs.rust-preprocessor }}
           python_ml_worker=${{ steps.filter.outputs.python-ml-worker }}
-          gold_builder=${{ steps.filter.outputs.gold-builder }}
+          enrichment=${{ steps.filter.outputs.enrichment }}
           rust_inference=${{ steps.filter.outputs.rust-inference }}
           go_api=${{ steps.filter.outputs.go-api }}
           dashboard=${{ steps.filter.outputs.dashboard }}
@@ -197,10 +197,10 @@ jobs:
           ruff check .
           PYTHONPATH=. pytest
 
-  gold-builder-checks:
-    name: Python Verification (gold-builder)
+  enrichment-checks:
+    name: Python Verification (enrichment)
     needs: changes
-    if: ${{ needs.changes.outputs.gold-builder == 'true' || needs.changes.outputs.shared == 'true' }}
+    if: ${{ needs.changes.outputs.enrichment == 'true' || needs.changes.outputs.shared == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -209,15 +209,15 @@ jobs:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: |
-            apps/python-gold-builder/pyproject.toml
+            apps/python-enrichment/pyproject.toml
             apps/python-ml-worker/pyproject.toml
       - name: Install dependencies
-        working-directory: apps/python-gold-builder
+        working-directory: apps/python-enrichment
         run: |
           pip install -e "../python-ml-worker[dev]"
           pip install -e ".[dev]"
-      - name: Verify gold-builder
-        working-directory: apps/python-gold-builder
+      - name: Verify enrichment
+        working-directory: apps/python-enrichment
         run: |
           ruff format --check .
           ruff check .
@@ -286,17 +286,17 @@ jobs:
           severity: CRITICAL,HIGH
           version: latest
 
-  scan-gold-builder:
+  scan-enrichment:
     needs: changes
-    if: ${{ needs.changes.outputs.gold-builder == 'true' }}
-    name: Trivy Scan (gold-builder)
+    if: ${{ needs.changes.outputs.enrichment == 'true' }}
+    name: Trivy Scan (enrichment)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: aquasecurity/trivy-action@v0.35.0
         with:
           scan-type: fs
-          scan-ref: apps/python-gold-builder
+          scan-ref: apps/python-enrichment
           format: table
           severity: CRITICAL,HIGH
           version: latest

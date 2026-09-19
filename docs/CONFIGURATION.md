@@ -31,7 +31,7 @@ All platform and service configurations are strictly managed via environment var
 | **Rust Inference** | `8084` | `http://rust-inference:8084/metrics` | Batch prediction throughput, ONNX runtime parity |
 | **cAdvisor** | `8085` | `http://cadvisor:8080/metrics` | Host/container resource utilization |
 | **Go API Telemetry** | `8086` | `http://go-api:8086/metrics` | API requests/sec, SSE subscriber count, ClickHouse lag |
-| **Gold Builder** | `8088` | `http://gold-builder:8088/metrics` | Batch aggregation rates, catalog synchronization |
+| **Enrichment Service** | `8088` | `http://enrichment:8088/metrics` | Batch aggregation rates, catalog synchronization |
 | **NATS Exporter** | `7777` | `http://nats-exporter:7777/metrics` | JetStream message queues, consumer lag |
 | **ClickHouse Metrics**| `9363` | `http://clickhouse:9363/metrics` | Query latency, disk write volume |
 
@@ -51,7 +51,7 @@ Each sub-project owns its `.env.example` in its application directory:
 
 * `apps/go-ingester/.env.example`
 * `apps/rust-preprocessor/.env.example`
-* `apps/python-gold-builder/.env.example`
+* `apps/python-enrichment/.env.example`
 * `apps/python-ml-worker/.env.example`
 * `apps/rust-inference/.env.example`
 * `apps/go-api/.env.example`

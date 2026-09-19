@@ -7,7 +7,7 @@ This directory defines shared data contracts and event schemas for the AURORA pl
 * `events/bronze-object-ready.schema.json` — Emitted by `go-ingester` when a raw TESS FITS object is verified in MinIO Bronze. Consumed by `rust-preprocessor`.
   * **Stream**: `AURORA_BRONZE`
   * **Subjects**: `aurora.v1.bronze.target-pixel.ready`, `aurora.v1.bronze.lightcurve.ready`, `aurora.v1.bronze.ffi.ready`
-* `events/silver-object-ready.schema.json` — Emitted by `rust-preprocessor` when a cleaned/normalized Parquet artifact is committed to MinIO Silver. Consumed by `gold-builder`.
+* `events/silver-object-ready.schema.json` — Emitted by `rust-preprocessor` when a cleaned/normalized Parquet artifact is committed to MinIO Silver. Consumed by `aurora-enrichment`.
   * **Stream**: `AURORA_SILVER`
   * **Subjects**: `aurora.v1.silver.target-pixel.ready`, `aurora.v1.silver.lightcurve.ready`, `aurora.v1.silver.ffi.ready`
 * `events/inference-job-requested.schema.json` — Emitted by `python-ml-worker` or control plane to trigger ONNX batch inference jobs. Consumed by `rust-inference`.

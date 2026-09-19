@@ -146,17 +146,17 @@ func (fakeEnrichmentControl) Start(context.Context, entity.EnrichmentControlStar
 func (fakeEnrichmentControl) Stop(context.Context) (*entity.EnrichmentCommandResult, error) {
 	return &entity.EnrichmentCommandResult{Status: "pause_requested", TicketID: "test-cmd"}, nil
 }
-func (fakeEnrichmentControl) ResolveLineage(_ context.Context, inputs []entity.EnrichmentLineageLookup) ([]entity.EnrichmentLineageResolution, error) {
-	return make([]entity.EnrichmentLineageResolution, 0, len(inputs)), nil
-}
 func (fakeEnrichmentControl) ListSnapshots(context.Context, int) ([]entity.EnrichmentSnapshotSummary, error) {
 	return []entity.EnrichmentSnapshotSummary{{SnapshotID: "gold-v1-test", Status: "COMMITTED"}}, nil
 }
 func (fakeEnrichmentControl) Snapshot(_ context.Context, snapshotID string) (*entity.EnrichmentSnapshotDetail, error) {
 	return &entity.EnrichmentSnapshotDetail{SnapshotID: snapshotID, Artifacts: []entity.EnrichmentArtifact{}}, nil
 }
-func (fakeEnrichmentControl) Artifact(_ context.Context, snapshotID, dataset string, sector int, _ entity.EnrichmentArtifactPreviewQuery) (*entity.EnrichmentArtifactDetail, error) {
-	return &entity.EnrichmentArtifactDetail{SnapshotID: snapshotID, Artifact: entity.EnrichmentArtifact{Dataset: dataset, Sector: sector}}, nil
+
+type fakeLineage struct{}
+
+func (fakeLineage) TraceLineage(_ context.Context, inputs []entity.LineageLookup) ([]entity.LineageResolution, error) {
+	return make([]entity.LineageResolution, 0, len(inputs)), nil
 }
 
 type fakeIngest struct{}
@@ -206,6 +206,7 @@ func newTestRouter() http.Handler {
 		DAGAggregationHandler:    handler.NewDAGAggregationHandler(fakeDAGAggregation{}),
 		PreprocessingHandler:     handler.NewPreprocessingHandler(fakePreprocessing{}),
 		EnrichmentControlHandler: handler.NewEnrichmentControlHandler(fakeEnrichmentControl{}),
+		LineageHandler:           handler.NewLineageHandler(fakeLineage{}),
 		IngestHandler:            handler.NewIngestHandler(fakeIngest{}),
 		LakehouseHandler:         handler.NewLakehouseHandler(fakeLakehouse{}),
 	}, provider.NewMetrics())
@@ -213,7 +214,7 @@ func newTestRouter() http.Handler {
 
 func TestRouterEndpoints(t *testing.T) {
 	router := newTestRouter()
-	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/dag/hops/bronze", "/api/v1/dag/graph", "/api/v1/enrichment/control", "/api/v1/enrichment/snapshots", "/api/v1/enrichment/snapshots/gold-v1-test", "/api/v1/enrichment/snapshots/gold-v1-test/artifacts/candidate/42", "/api/v1/ingest/status", "/api/v1/storage?prefix=bronze/&limit=10", "/api/v1/lakehouse/objects?prefix=bronze/&limit=10", "/api/v1/lakehouse/preview?key=test.txt", "/api/v1/targets", "/api/v1/targets/101?sector=42", "/api/v1/candidates?snapshot_id=gold-v1-test", "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", "/api/v1/lightcurves?tic_id=101&sector=42", "/api/v1/models/training-cohort/review-queue?snapshot_id=gold-v1-test"} {
+	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/dag/hops/bronze", "/api/v1/dag/graph", "/api/v1/enrichment/control", "/api/v1/enrichment/snapshots", "/api/v1/enrichment/snapshots/gold-v1-test", "/api/v1/ingest/status", "/api/v1/storage?prefix=bronze/&limit=10", "/api/v1/lakehouse/objects?prefix=bronze/&limit=10", "/api/v1/lakehouse/preview?key=test.txt", "/api/v1/targets", "/api/v1/targets/101?sector=42", "/api/v1/candidates?snapshot_id=gold-v1-test", "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", "/api/v1/lightcurves?tic_id=101&sector=42", "/api/v1/models/training-cohort/review-queue?snapshot_id=gold-v1-test"} {
 		req := httptest.NewRequest(http.MethodGet, endpoint, nil)
 		recorder := httptest.NewRecorder()
 		router.ServeHTTP(recorder, req)
@@ -422,3 +423,24 @@ func TestCORSHeaders(t *testing.T) {
 		t.Fatalf("CORS headers were not applied")
 	}
 }
+
+func TestLineageTraceRoute(t *testing.T) {
+	router := newTestRouter()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/trace", strings.NewReader(`{"inputs":[{"source_product_id":"source-1"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", recorder.Code)
+	}
+
+	// Verify legacy route is removed and returns 404
+	legacyReq := httptest.NewRequest(http.MethodPost, "/api/v1/enrichment/lineage/resolve", strings.NewReader(`{"inputs":[{"source_product_id":"source-1"}]}`))
+	legacyReq.Header.Set("Content-Type", "application/json")
+	legacyRecorder := httptest.NewRecorder()
+	router.ServeHTTP(legacyRecorder, legacyReq)
+	if legacyRecorder.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 Not Found for removed legacy route, got %d", legacyRecorder.Code)
+	}
+}
+

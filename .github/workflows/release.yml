@@ -29,7 +29,7 @@ jobs:
       go-ingester: ${{ steps.outputs.outputs.go-ingester }}
       rust-preprocessor: ${{ steps.outputs.outputs.rust-preprocessor }}
       python-ml-worker: ${{ steps.outputs.outputs.python-ml-worker }}
-      gold-builder: ${{ steps.outputs.outputs.gold-builder }}
+      enrichment: ${{ steps.outputs.outputs.enrichment }}
       rust-inference: ${{ steps.outputs.outputs.rust-inference }}
       go-api: ${{ steps.outputs.outputs.go-api }}
       dashboard: ${{ steps.outputs.outputs.dashboard }}
@@ -55,7 +55,7 @@ jobs:
             go_ingester=true
             rust_preprocessor=true
             python_ml_worker=true
-            gold_builder=true
+            enrichment=true
             rust_inference=true
             go_api=true
             dashboard=true
@@ -65,7 +65,7 @@ jobs:
               go_ingester=true
               rust_preprocessor=true
               python_ml_worker=true
-              gold_builder=true
+              enrichment=true
               rust_inference=true
               go_api=true
               dashboard=true
@@ -74,7 +74,7 @@ jobs:
           echo "go-ingester=$go_ingester" >> "$GITHUB_OUTPUT"
           echo "rust-preprocessor=$rust_preprocessor" >> "$GITHUB_OUTPUT"
           echo "python-ml-worker=$python_ml_worker" >> "$GITHUB_OUTPUT"
-          echo "gold-builder=$gold_builder" >> "$GITHUB_OUTPUT"
+          echo "enrichment=$enrichment" >> "$GITHUB_OUTPUT"
           echo "rust-inference=$rust_inference" >> "$GITHUB_OUTPUT"
           echo "go-api=$go_api" >> "$GITHUB_OUTPUT"
           echo "dashboard=$dashboard" >> "$GITHUB_OUTPUT"
@@ -118,16 +118,16 @@ jobs:
       ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
     secrets: inherit
 
-  release-gold-builder:
-    name: Build & Release gold-builder
+  release-enrichment:
+    name: Build & Release enrichment
     needs: changes
-    if: ${{ needs.changes.outputs.gold-builder == 'true' && (github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository)) }}
+    if: ${{ needs.changes.outputs.enrichment == 'true' && (github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository)) }}
     uses: ./.github/workflows/release-image.yml
     with:
-      image-name: aurora-gold-builder
+      image-name: aurora-enrichment
       context: ./apps
-      dockerfile: ./apps/python-gold-builder/Dockerfile
-      cache-scope: gold-builder
+      dockerfile: ./apps/python-enrichment/Dockerfile
+      cache-scope: enrichment
       ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
     secrets: inherit
 

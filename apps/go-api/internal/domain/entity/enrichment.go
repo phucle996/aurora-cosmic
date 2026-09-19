@@ -102,27 +102,6 @@ type EnrichmentControlOverview struct {
 	Runtime *EnrichmentRuntimeStatus `json:"runtime,omitempty"`
 }
 
-// EnrichmentLineageLookup identifies one upstream Silver product whose downstream
-// Gold materialization must be verified.
-type EnrichmentLineageLookup struct {
-	SourceProductID string `json:"source_product_id"`
-	SilverObjectKey string `json:"silver_object_key,omitempty"`
-}
-
-type EnrichmentLineageResolveRequest struct {
-	Inputs []EnrichmentLineageLookup `json:"inputs"`
-}
-
-// EnrichmentLineageResolution is evidence from a committed Gold manifest, never an
-// inference from the number of objects in the Silver tier.
-type EnrichmentLineageResolution struct {
-	SourceProductID string   `json:"source_product_id"`
-	SilverObjectKey string   `json:"silver_object_key,omitempty"`
-	Status          string   `json:"status"`
-	SnapshotID      string   `json:"snapshot_id,omitempty"`
-	Datasets        []string `json:"datasets,omitempty"`
-}
-
 // EnrichmentSnapshotInput is the immutable Silver lineage reference recorded in a
 // committed Gold manifest.
 type EnrichmentSnapshotInput struct {
@@ -145,6 +124,14 @@ type EnrichmentArtifact struct {
 	ContentSHA256 string `json:"content_sha256"`
 	ParquetSHA256 string `json:"parquet_sha256"`
 	SizeBytes     int64  `json:"size_bytes"`
+}
+
+// EnrichmentCompletenessContract is recorded by the builder with every new
+// research-ready snapshot. Legacy partial snapshots deliberately lack it.
+type EnrichmentCompletenessContract struct {
+	Policy               string   `json:"policy"`
+	RequiredProductKinds []string `json:"required_product_kinds"`
+	RequiredCatalogs     []string `json:"required_catalogs"`
 }
 
 // EnrichmentSnapshotDetail is authored by the Gold builder materializer. It is the
@@ -175,38 +162,4 @@ type EnrichmentSnapshotSummary struct {
 	LastModified string `json:"last_modified"`
 	CreatedAt    string `json:"created_at"`
 	Status       string `json:"status"`
-}
-
-// EnrichmentCompletenessContract is recorded by the builder with every new
-// research-ready snapshot. Legacy partial snapshots deliberately lack it.
-type EnrichmentCompletenessContract struct {
-	Policy               string   `json:"policy"`
-	RequiredProductKinds []string `json:"required_product_kinds"`
-	RequiredCatalogs     []string `json:"required_catalogs"`
-}
-
-type EnrichmentParquetColumn struct {
-	Name     string `json:"name"`
-	Path     string `json:"path"`
-	Type     string `json:"type"`
-	Nullable bool   `json:"nullable"`
-	Repeated bool   `json:"repeated"`
-}
-
-type EnrichmentArtifactPreviewQuery struct {
-	Offset       int
-	Limit        int
-	Search       string
-	FilterColumn string
-	FilterValue  string
-}
-
-type EnrichmentArtifactDetail struct {
-	SnapshotID    string                    `json:"snapshot_id"`
-	Artifact      EnrichmentArtifact        `json:"artifact"`
-	Schema        []EnrichmentParquetColumn `json:"schema"`
-	Preview       []map[string]any          `json:"preview"`
-	PreviewOffset int                       `json:"preview_offset"`
-	PreviewLimit  int                       `json:"preview_limit"`
-	MatchedRows   int                       `json:"matched_rows"`
 }

@@ -27,10 +27,12 @@ func RegisterRoutes(engine *gin.Engine, module *Module) {
 	engine.GET("/api/v1/enrichment/control", module.EnrichmentControlHandler.GetControlOverview)
 	engine.POST("/api/v1/enrichment/control/start", module.EnrichmentControlHandler.Start)
 	engine.POST("/api/v1/enrichment/control/stop", module.EnrichmentControlHandler.Stop)
-	engine.POST("/api/v1/enrichment/lineage/resolve", module.EnrichmentControlHandler.ResolveLineage)
 	engine.GET("/api/v1/enrichment/snapshots", module.EnrichmentControlHandler.ListSnapshots)
 	engine.GET("/api/v1/enrichment/snapshots/:snapshot_id", module.EnrichmentControlHandler.Snapshot)
-	engine.GET("/api/v1/enrichment/snapshots/:snapshot_id/artifacts/:dataset/:sector", module.EnrichmentControlHandler.Artifact)
+	// Lineage workflow routes
+	if module.LineageHandler != nil {
+		engine.POST("/api/v1/lineage/trace", module.LineageHandler.TraceLineage)
+	}
 	if module.EventsHandler != nil {
 		engine.GET("/api/v1/events", module.EventsHandler.Stream)
 	}

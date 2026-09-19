@@ -1,1 +1,0 @@
-"""AURORA application namespace."""

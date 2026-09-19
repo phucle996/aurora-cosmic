@@ -30,7 +30,7 @@ ClickHouse stores query projections under the `aurora` database:
 - `aurora.lightcurves` & `aurora.lightcurve_samples_v1`: Exact visualization plot samples sourced from verified Silver LC Parquet.
 
 ### Data Factory Pipeline History & Review Workflow
-- `aurora.pipeline_runs_v1`: Lifecycle and throughput execution facts recorded by `gold-builder`.
+- `aurora.pipeline_runs_v1`: Lifecycle and throughput execution facts recorded by `enrichment`.
 - `aurora.pipeline_batches_v1`: Detailed batch-level metrics (input records, candidate rows, artifact count).
 - `aurora.pipeline_component_events_v1`: Individual hop component transition events.
 - `aurora.candidate_training_cohort_v1`: Reviewable labels and curated training supervisor cohort.
