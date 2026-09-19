@@ -23,6 +23,11 @@ func (h *PreprocessingHandler) Start(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid preprocessing start request"})
 		return
 	}
+	request.TicketID = strings.TrimSpace(request.TicketID)
+	if request.TicketID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ticket_id is required"})
+		return
+	}
 	mode := strings.ToLower(strings.TrimSpace(request.Mode))
 	if mode == "continuous" {
 		mode = "stream"
@@ -46,7 +51,7 @@ func (h *PreprocessingHandler) Start(c *gin.Context) {
 		status := http.StatusServiceUnavailable
 		if strings.Contains(err.Error(), "still active") {
 			status = http.StatusConflict
-		} else if strings.Contains(err.Error(), "must be") || strings.Contains(err.Error(), "not supported") {
+		} else if strings.Contains(err.Error(), "must be") || strings.Contains(err.Error(), "not supported") || strings.Contains(err.Error(), "is required") {
 			status = http.StatusBadRequest
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
@@ -71,14 +76,32 @@ func (h *PreprocessingHandler) Query(c *gin.Context) {
 	}
 	var run any
 	if graph.Run != nil {
-		run = gin.H{"job_id": graph.Run.JobID, "status": graph.Run.Status, "mode": graph.Run.Mode, "worker_count": graph.Run.WorkerCount, "ingest_run_id": graph.Run.IngestRunID, "prefix": graph.Run.Prefix, "started_at": graph.Run.StartedAt.Format(time.RFC3339), "updated_at": graph.Run.UpdatedAt.Format(time.RFC3339), "error": graph.Run.Error}
+		run = gin.H{
+			"ticket_id":     graph.Run.TicketID,
+			"status":        graph.Run.Status,
+			"mode":          graph.Run.Mode,
+			"worker_count":  graph.Run.WorkerCount,
+			"ingest_run_id": graph.Run.IngestRunID,
+			"prefix":        graph.Run.Prefix,
+			"started_at":    graph.Run.StartedAt.Format(time.RFC3339),
+			"updated_at":    graph.Run.UpdatedAt.Format(time.RFC3339),
+			"error":         graph.Run.Error,
+		}
 	}
 	progress := gin.H{"bronze_total": graph.Progress.BronzeTotal, "bronze_bytes": graph.Progress.BronzeBytes, "bronze_completed": graph.Progress.BronzeCompleted, "bronze_pending": graph.Progress.BronzePending, "bronze_failed": graph.Progress.BronzeFailed, "bronze_observed": graph.Progress.BronzeObserved, "bronze_lightcurves": graph.Progress.BronzeLightCurves, "bronze_target_pixels": graph.Progress.BronzeTargetPixels, "silver_total": graph.Progress.SilverTotal, "silver_bytes": graph.Progress.SilverBytes, "silver_lightcurves": graph.Progress.SilverLightCurves, "silver_target_pixels": graph.Progress.SilverTargetPixels, "gold_total": graph.Progress.GoldTotal, "gold_bytes": graph.Progress.GoldBytes, "footprint_observed": graph.Progress.FootprintObserved, "checkpoint_total": graph.Progress.CheckpointTotal, "checkpoint_completed": graph.Progress.CheckpointCompleted, "checkpoint_pending": graph.Progress.CheckpointPending, "checkpoint_failed": graph.Progress.CheckpointFailed, "completed_lightcurves": graph.Progress.CompletedLightCurves, "completed_target_pixels": graph.Progress.CompletedTargetPixels, "backlog_pending": graph.Progress.BacklogPending, "backlog_ack_pending": graph.Progress.BacklogAckPending, "items_to_process": graph.Progress.ItemsToProcess, "observed_at": graph.Progress.ObservedAt.Format(time.RFC3339)}
-	c.JSON(http.StatusOK, gin.H{"source": graph.Source, "observation_scope": graph.ObservationScope, "status": graph.Status, "observed_at": graph.ObservedAt.Format(time.RFC3339), "run": run, "progress": progress, "runtime": graph.Runtime, "hops": hops, "edges": edges})
+	c.JSON(http.StatusOK, gin.H{"status": graph.Status, "observed_at": graph.ObservedAt.Format(time.RFC3339), "run": run, "progress": progress, "runtime": graph.Runtime, "hops": hops, "edges": edges})
 }
 
 func (h *PreprocessingHandler) Stop(c *gin.Context) {
-	job, err := h.preprocessing.Stop(c.Request.Context(), strings.TrimSpace(c.Param("job_id")))
+	ticketID := strings.TrimSpace(c.Param("ticket_id"))
+	if ticketID == "" {
+		ticketID = strings.TrimSpace(c.Param("job_id"))
+	}
+	if ticketID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ticket_id is required"})
+		return
+	}
+	job, err := h.preprocessing.Stop(c.Request.Context(), ticketID)
 	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return

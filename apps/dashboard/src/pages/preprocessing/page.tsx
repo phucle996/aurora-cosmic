@@ -78,7 +78,7 @@ export default function PreprocessingPage(): JSX.Element {
           if (mounted) {
             const normalized = normalizePreprocessingGraph(next);
             setGraph(normalized);
-            if (normalized.run?.job_id) setPreprocessingJob(normalized.run);
+            if (normalized.run?.ticket_id) setPreprocessingJob(normalized.run);
             setObservationError(null);
           }
         })
@@ -95,7 +95,7 @@ export default function PreprocessingPage(): JSX.Element {
       const message = event as MessageEvent<string>;
       try {
         const update = JSON.parse(message.data) as { payload?: PreprocessingJob; status?: string };
-        if (update.payload?.job_id) setPreprocessingJob(update.payload);
+        if (update.payload?.ticket_id) setPreprocessingJob(update.payload);
       } catch {
         // Fallback on graph polling
       }
@@ -137,12 +137,12 @@ export default function PreprocessingPage(): JSX.Element {
   };
 
   const stopPreprocessing = async (): Promise<void> => {
-    if (!activeRun?.job_id) return;
+    if (!activeRun?.ticket_id) return;
     setStopBusy(true);
     setObservationError(null);
     try {
       const job = await apiFetch<PreprocessingJob>(
-        `/v1/preprocessing/jobs/${encodeURIComponent(activeRun.job_id)}/stop`,
+        `/v1/preprocessing/tickets/${encodeURIComponent(activeRun.ticket_id)}/stop`,
         {
           method: 'POST',
         }

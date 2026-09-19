@@ -115,13 +115,13 @@ func (fakeMonitoring) Query(context.Context, entity.MonitoringWindow, string) ([
 type fakePreprocessing struct{}
 
 func (fakePreprocessing) Query(context.Context) (*entity.PreprocessingGraph, error) {
-	return &entity.PreprocessingGraph{Source: "prometheus", Status: "not_observed", Hops: []entity.PreprocessingHop{}, Edges: []entity.PreprocessingEdge{}}, nil
+	return &entity.PreprocessingGraph{Status: "not_observed", Hops: []entity.PreprocessingHop{}, Edges: []entity.PreprocessingEdge{}}, nil
 }
 func (fakePreprocessing) Start(context.Context, entity.PreprocessingStartRequest) (*entity.PreprocessingControlJob, error) {
-	return &entity.PreprocessingControlJob{JobID: "preprocess-job-test", Status: "running", Mode: "stream"}, nil
+	return &entity.PreprocessingControlJob{TicketID: "preprocess-job-test", Status: "running", Mode: "stream"}, nil
 }
 func (fakePreprocessing) Stop(context.Context, string) (*entity.PreprocessingControlJob, error) {
-	return &entity.PreprocessingControlJob{JobID: "preprocess-job-test", Status: "cancelling", Mode: "stream"}, nil
+	return &entity.PreprocessingControlJob{TicketID: "preprocess-job-test", Status: "cancelling", Mode: "stream"}, nil
 }
 func (fakePreprocessing) ObserveRuntime(entity.PreprocessingRuntimeEvent) {}
 
@@ -310,7 +310,16 @@ func TestMonitoringTabValidation(t *testing.T) {
 }
 
 func TestPreprocessingStart(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/preprocessing/jobs", strings.NewReader(`{"mode":"batch","worker_count":2}`))
+	// Missing ticket_id must fail with 400
+	reqMissing := httptest.NewRequest(http.MethodPost, "/api/v1/preprocessing/jobs", strings.NewReader(`{"mode":"batch","worker_count":2}`))
+	reqMissing.Header.Set("Content-Type", "application/json")
+	recMissing := httptest.NewRecorder()
+	newTestRouter().ServeHTTP(recMissing, reqMissing)
+	if recMissing.Code != http.StatusBadRequest {
+		t.Fatalf("preprocessing start without ticket_id returned HTTP %d, expected 400", recMissing.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/preprocessing/jobs", strings.NewReader(`{"ticket_id":"preprocess-job-test","mode":"batch","worker_count":2}`))
 	req.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	newTestRouter().ServeHTTP(recorder, req)

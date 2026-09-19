@@ -18,7 +18,8 @@ use crate::worker;
 #[serde(deny_unknown_fields)]
 struct PreprocessingControlCommand {
     action: String,
-    job_id: String,
+    #[serde(alias = "job_id")]
+    ticket_id: String,
     #[serde(default = "default_mode")]
     mode: String,
     #[serde(default)]
@@ -108,13 +109,13 @@ pub async fn run(config: Config) -> Result<()> {
     if config.control.autostart {
         let command = PreprocessingControlCommand {
             action: "start".to_string(),
-            job_id: format!("preprocess-autostart-{}", uuid::Uuid::new_v4()),
+            ticket_id: format!("preprocess-autostart-{}", uuid::Uuid::new_v4()),
             mode: "stream".to_string(),
             worker_count: Some(deps.consumer.workers),
         };
         let run_cancel = cancel.child_token();
         worker_task = Some(start_run(deps.clone(), command.clone(), run_cancel.clone()).await?);
-        active_run = Some((command.job_id, run_cancel));
+        active_run = Some((command.ticket_id, run_cancel));
     }
 
     let shutdown_timeout = config.consumer.shutdown_timeout_secs;
@@ -139,28 +140,28 @@ pub async fn run(config: Config) -> Result<()> {
                 match command.action.as_str() {
                     "start" => {
                         if worker_task.is_some() {
-                            tracing::warn!(job_id = %command.job_id, "Preprocessing run already active");
+                            tracing::warn!(ticket_id = %command.ticket_id, "Preprocessing run already active");
                             continue;
                         }
                         let run_cancel = cancel.child_token();
                         match start_run(deps.clone(), command.clone(), run_cancel.clone()).await {
                             Ok(task) => {
                                 worker_task = Some(task);
-                                active_run = Some((command.job_id, run_cancel));
+                                active_run = Some((command.ticket_id, run_cancel));
                             }
-                            Err(error) => tracing::warn!(job_id = %command.job_id, error = %error, "Rejected preprocessing start command"),
+                            Err(error) => tracing::warn!(ticket_id = %command.ticket_id, error = %error, "Rejected preprocessing start command"),
                         }
                     }
                     "stop" => {
-                        let Some((active_job_id, run_cancel)) = active_run.as_ref() else {
-                            tracing::warn!(job_id = %command.job_id, "No preprocessing run to stop");
+                        let Some((active_ticket_id, run_cancel)) = active_run.as_ref() else {
+                            tracing::warn!(ticket_id = %command.ticket_id, "No preprocessing run to stop");
                             continue;
                         };
-                        if active_job_id != &command.job_id {
-                            tracing::warn!(job_id = %command.job_id, active_job_id, "Ignoring stop for a non-active preprocessing run");
+                        if active_ticket_id != &command.ticket_id {
+                            tracing::warn!(ticket_id = %command.ticket_id, active_ticket_id, "Ignoring stop for a non-active preprocessing run");
                             continue;
                         }
-                        update_run_status(&deps, active_job_id, "DRAINING", None).await?;
+                        update_run_status(&deps, active_ticket_id, "DRAINING", None).await?;
                         run_cancel.cancel();
                     }
                     _ => tracing::warn!(action = %command.action, "Unsupported preprocessing control action"),
@@ -217,7 +218,7 @@ async fn start_run(
     let now = chrono::Utc::now().to_rfc3339();
     let checkpoint = PreprocessingRunCheckpoint {
         schema_version: 2,
-        run_id: command.job_id.clone(),
+        run_id: command.ticket_id.clone(),
         status: "RUNNING".to_string(),
         mode: command.mode.clone(),
         started_at: now.clone(),
@@ -229,7 +230,7 @@ async fn start_run(
         .put_json_object(
             &deps.bucket,
             "checkpoints/preprocessing/current.json",
-            &serde_json::json!({"active_run_id": command.job_id}),
+            &serde_json::json!({"active_run_id": command.ticket_id}),
         )
         .await?;
     deps.minio
@@ -253,7 +254,7 @@ async fn start_run(
             Arc::clone(&deps.metrics),
             &command.mode,
             deps.runtime.clone(),
-            &command.job_id,
+            &command.ticket_id,
         )
         .await;
         let (status, error) = match result {
@@ -261,8 +262,8 @@ async fn start_run(
             Ok(()) => ("COMPLETED", None),
             Err(error) => ("FAILED", Some(error.to_string())),
         };
-        if let Err(error) = update_run_status(&deps, &command.job_id, status, error).await {
-            tracing::error!(job_id = %command.job_id, error = %error, "Failed to persist preprocessing run terminal state");
+        if let Err(error) = update_run_status(&deps, &command.ticket_id, status, error).await {
+            tracing::error!(ticket_id = %command.ticket_id, error = %error, "Failed to persist preprocessing run terminal state");
         }
     }))
 }

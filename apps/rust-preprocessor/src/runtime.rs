@@ -17,7 +17,7 @@ pub const SUBJECT: &str = "aurora.v1.preprocessing.runtime";
 #[derive(Clone, Serialize)]
 pub struct RuntimeEvent {
     pub event: String,
-    pub job_id: String,
+    pub ticket_id: String,
     pub worker_id: String,
     pub worker_state: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -47,7 +47,7 @@ impl RuntimeReporter {
     pub fn emit(
         &self,
         event: impl Into<String>,
-        job_id: &str,
+        ticket_id: &str,
         worker_id: &str,
         worker_state: &str,
         product_kind: Option<String>,
@@ -60,7 +60,7 @@ impl RuntimeReporter {
             .sender
             .try_send(RuntimeEvent {
                 event: event.into(),
-                job_id: job_id.to_string(),
+                ticket_id: ticket_id.to_string(),
                 worker_id: worker_id.to_string(),
                 worker_state: worker_state.to_string(),
                 product_kind,

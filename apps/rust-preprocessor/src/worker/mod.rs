@@ -53,7 +53,7 @@ pub async fn process_message(
     img_cfg: ImageConfig,
     metrics: Arc<Metrics>,
     runtime: RuntimeReporter,
-    job_id: String,
+    ticket_id: String,
     worker_id: String,
     ack_progress_interval: Duration,
     _permit: Option<tokio::sync::OwnedSemaphorePermit>,
@@ -77,7 +77,7 @@ pub async fn process_message(
     });
 
     process_message_inner(
-        msg, minio, jetstream, tmp_dir, lc_cfg, img_cfg, metrics, runtime, job_id, worker_id,
+        msg, minio, jetstream, tmp_dir, lc_cfg, img_cfg, metrics, runtime, ticket_id, worker_id,
     )
     .await;
     progress_cancel.cancel();
@@ -94,7 +94,7 @@ async fn process_message_inner(
     img_cfg: ImageConfig,
     metrics: Arc<Metrics>,
     runtime: RuntimeReporter,
-    job_id: String,
+    ticket_id: String,
     worker_id: String,
 ) {
     let subject = msg.subject.clone();
@@ -119,7 +119,7 @@ async fn process_message_inner(
             let _ = msg.ack_with(AckKind::Term).await;
             runtime.emit(
                 "file_failed",
-                &job_id,
+                &ticket_id,
                 &worker_id,
                 "failed",
                 None,
@@ -143,7 +143,7 @@ async fn process_message_inner(
     let runtime_started = Instant::now();
     runtime.emit(
         "file_started",
-        &job_id,
+        &ticket_id,
         &worker_id,
         "processing",
         Some(runtime_kind.clone()),
@@ -191,7 +191,7 @@ async fn process_message_inner(
                     event_id.clone(),
                     delivery_attempt,
                     &runtime,
-                    &job_id,
+                    &ticket_id,
                     &worker_id,
                     &runtime_kind,
                     &runtime_key,
@@ -216,7 +216,7 @@ async fn process_message_inner(
             let _ = msg.ack_with(AckKind::Term).await;
             runtime.emit(
                 "file_completed",
-                &job_id,
+                &ticket_id,
                 &worker_id,
                 "idle",
                 Some(runtime_kind.clone()),
@@ -264,7 +264,7 @@ async fn process_message_inner(
                     observation.set_recovered();
                     runtime.emit(
                         "file_completed",
-                        &job_id,
+                        &ticket_id,
                         &worker_id,
                         "idle",
                         Some(runtime_kind.clone()),
@@ -334,7 +334,7 @@ async fn process_message_inner(
                 observation.set_recovered();
                 runtime.emit(
                     "file_completed",
-                    &job_id,
+                    &ticket_id,
                     &worker_id,
                     "idle",
                     Some(runtime_kind.clone()),
@@ -375,7 +375,7 @@ async fn process_message_inner(
             event_id.clone(),
             delivery_attempt,
             &runtime,
-            &job_id,
+            &ticket_id,
             &worker_id,
             &runtime_kind,
             &runtime_key,
@@ -397,7 +397,7 @@ async fn process_message_inner(
     );
     runtime.emit(
         "stage_changed",
-        &job_id,
+        &ticket_id,
         &worker_id,
         "processing",
         Some(runtime_kind.clone()),
@@ -431,7 +431,7 @@ async fn process_message_inner(
                 event_id.clone(),
                 delivery_attempt,
                 &runtime,
-                &job_id,
+                &ticket_id,
                 &worker_id,
                 &runtime_kind,
                 &runtime_key,
@@ -446,7 +446,7 @@ async fn process_message_inner(
     // Step 6: Upload Silver
     runtime.emit(
         "stage_changed",
-        &job_id,
+        &ticket_id,
         &worker_id,
         "processing",
         Some(runtime_kind.clone()),
@@ -476,7 +476,7 @@ async fn process_message_inner(
             event_id.clone(),
             delivery_attempt,
             &runtime,
-            &job_id,
+            &ticket_id,
             &worker_id,
             &runtime_kind,
             &runtime_key,
@@ -505,7 +505,7 @@ async fn process_message_inner(
     // Step 7: Lineage Commit & Eviction Eligibility
     runtime.emit(
         "stage_changed",
-        &job_id,
+        &ticket_id,
         &worker_id,
         "processing",
         Some(runtime_kind.clone()),
@@ -591,7 +591,7 @@ async fn process_message_inner(
     // Publish Silver ready event to NATS
     runtime.emit(
         "stage_changed",
-        &job_id,
+        &ticket_id,
         &worker_id,
         "processing",
         Some(runtime_kind.clone()),
@@ -622,7 +622,7 @@ async fn process_message_inner(
 
     runtime.emit(
         "stage_changed",
-        &job_id,
+        &ticket_id,
         &worker_id,
         "processing",
         Some(runtime_kind.clone()),
@@ -636,7 +636,7 @@ async fn process_message_inner(
     if let Err(e) = msg.ack().await {
         runtime.emit(
             "file_failed",
-            &job_id,
+            &ticket_id,
             &worker_id,
             "failed",
             Some(runtime_kind),
@@ -656,7 +656,7 @@ async fn process_message_inner(
         observation.set_success();
         runtime.emit(
             "file_completed",
-            &job_id,
+            &ticket_id,
             &worker_id,
             "idle",
             Some(runtime_kind),
@@ -761,7 +761,7 @@ async fn handle_failure(
     event_id: String,
     delivery_attempt: i64,
     runtime: &RuntimeReporter,
-    job_id: &str,
+    ticket_id: &str,
     worker_id: &str,
     product_kind: &str,
     object_key: &str,
@@ -811,7 +811,7 @@ async fn handle_failure(
     }
     runtime.emit(
         "file_failed",
-        job_id,
+        ticket_id,
         worker_id,
         "failed",
         Some(product_kind.to_string()),

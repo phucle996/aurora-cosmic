@@ -29,7 +29,7 @@ pub async fn run_pool(
     metrics: Arc<Metrics>,
     mode: &str,
     runtime: RuntimeReporter,
-    job_id: &str,
+    ticket_id: &str,
 ) -> Result<()> {
     // The ingester creates AURORA_BRONZE lazily when it publishes the first
     // product. Keep the preprocessor alive while that happens instead of
@@ -68,7 +68,7 @@ pub async fn run_pool(
     for worker_id in worker_slots.lock().await.iter() {
         runtime.emit(
             "worker_spawned",
-            job_id,
+            ticket_id,
             worker_id,
             "idle",
             None,
@@ -205,7 +205,7 @@ pub async fn run_pool(
                     let metrics_ref = metrics.clone();
                     let runtime_ref = runtime.clone();
                     let ack_progress_interval_ref = ack_progress_interval;
-                    let job_id_ref = job_id.to_string();
+                    let ticket_id_ref = ticket_id.to_string();
                     let slots_ref = Arc::clone(&worker_slots);
                     let large_staging_slots_ref = Arc::clone(&large_staging_slots);
 
@@ -263,13 +263,13 @@ pub async fn run_pool(
                             img_config,
                             metrics_ref,
                             runtime_ref.clone(),
-                            job_id_ref.clone(),
+                            ticket_id_ref.clone(),
                             worker_id.clone(),
                             ack_progress_interval_ref,
                             large_staging_permit,
                         )
                         .await;
-                        runtime_ref.emit("worker_idle", &job_id_ref, &worker_id, "idle", None, None, Some("waiting".to_string()), None, None);
+                        runtime_ref.emit("worker_idle", &ticket_id_ref, &worker_id, "idle", None, None, Some("waiting".to_string()), None, None);
                         slots_ref.lock().await.push(worker_id);
                         drop(task_permit);
                     });
@@ -300,7 +300,7 @@ pub async fn run_pool(
     for index in 1..=cfg.workers {
         runtime.emit(
             "worker_stopped",
-            job_id,
+            ticket_id,
             &format!("preprocess-{index:02}"),
             "stopped",
             None,

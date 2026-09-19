@@ -19,7 +19,9 @@ func RegisterRoutes(engine *gin.Engine, module *Module) {
 		engine.POST("/api/v1/data-factory/tickets", module.TicketHandler.CreateTicket)
 	}
 	engine.POST("/api/v1/preprocessing/jobs", module.PreprocessingHandler.Start)
-	engine.POST("/api/v1/preprocessing/jobs/:job_id/stop", module.PreprocessingHandler.Stop)
+	engine.POST("/api/v1/preprocessing/tickets", module.PreprocessingHandler.Start)
+	engine.POST("/api/v1/preprocessing/jobs/:ticket_id/stop", module.PreprocessingHandler.Stop)
+	engine.POST("/api/v1/preprocessing/tickets/:ticket_id/stop", module.PreprocessingHandler.Stop)
 	engine.GET("/api/v1/gold/control", module.GoldControlHandler.Query)
 	engine.POST("/api/v1/gold/control/start", module.GoldControlHandler.Start)
 	engine.POST("/api/v1/gold/control/stop", module.GoldControlHandler.Stop)

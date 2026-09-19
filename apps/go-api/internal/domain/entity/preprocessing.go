@@ -11,22 +11,22 @@ type PreprocessingStartRequest struct {
 }
 
 type PreprocessingControlJob struct {
-	JobID       string
-	Status      string
-	Mode        string
-	WorkerCount int
-	IngestRunID string
-	Prefix      string
-	StartedAt   time.Time
-	UpdatedAt   time.Time
-	Error       string
+	TicketID    string    `json:"ticket_id"`
+	Status      string    `json:"status"`
+	Mode        string    `json:"mode"`
+	WorkerCount int       `json:"worker_count"`
+	IngestRunID string    `json:"ingest_run_id"`
+	Prefix      string    `json:"prefix"`
+	StartedAt   time.Time `json:"started_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	Error       string    `json:"error"`
 }
 
 // PreprocessingRuntimeEvent is the compact, ephemeral event published by the
 // Rust worker pool on Core NATS. It deliberately has no cadence-level data.
 type PreprocessingRuntimeEvent struct {
 	Event       string    `json:"event"`
-	JobID       string    `json:"job_id"`
+	TicketID    string    `json:"ticket_id"`
 	WorkerID    string    `json:"worker_id"`
 	WorkerState string    `json:"worker_state"`
 	ProductKind string    `json:"product_kind,omitempty"`
@@ -273,13 +273,11 @@ type PreprocessingEdge struct {
 }
 
 type PreprocessingGraph struct {
-	Source           string
-	ObservationScope string
-	Status           string
-	ObservedAt       time.Time
-	Run              *PreprocessingControlJob
-	Progress         PreprocessingProgress
-	Runtime          PreprocessingRuntimeSnapshot
-	Hops             []PreprocessingHop
-	Edges            []PreprocessingEdge
+	Status     string
+	ObservedAt time.Time
+	Run        *PreprocessingControlJob
+	Progress   PreprocessingProgress
+	Runtime    PreprocessingRuntimeSnapshot
+	Hops       []PreprocessingHop
+	Edges      []PreprocessingEdge
 }

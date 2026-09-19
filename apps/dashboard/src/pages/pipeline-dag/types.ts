@@ -121,7 +121,6 @@ export type HopNodeData = Hop & { onSelect?: () => void };
 
 export type PreprocessingGraph = {
   status: HopStatus;
-  observation_scope: string;
   observed_at: string;
   run?: PreprocessingJob | null;
   runtime: {
@@ -230,7 +229,6 @@ export function normalizePreprocessingGraph(value: Partial<PreprocessingGraph> |
   const runtime = value?.runtime;
   return {
     status: value?.status ?? 'not_observed',
-    observation_scope: value?.observation_scope ?? 'not_observed',
     observed_at: value?.observed_at ?? '',
     run: value?.run ?? null,
     runtime: {
@@ -246,7 +244,7 @@ export function normalizePreprocessingGraph(value: Partial<PreprocessingGraph> |
 }
 
 export type PreprocessingJob = {
-  job_id: string;
+  ticket_id: string;
   status: string;
   mode: string;
   worker_count: number;

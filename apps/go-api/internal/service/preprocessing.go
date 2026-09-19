@@ -20,7 +20,6 @@ import (
 	domainService "go-api/internal/domain/service"
 	"go-api/internal/provider"
 
-	"github.com/google/uuid"
 	natsio "github.com/nats-io/nats.go"
 	"github.com/parquet-go/parquet-go"
 )
@@ -40,68 +39,6 @@ const (
 	maxCheckpointPoints            = 1_200
 )
 
-type preprocessingMetric struct {
-	key   string
-	query string
-}
-
-// Danh sách các metrics PromQL giám sát Rust Preprocessor
-var preprocessingMetrics = []preprocessingMetric{
-	{key: "inflight", query: "aurora_preprocessor_inflight_workers"},
-	{key: "queue", query: "aurora_preprocessor_queue_depth"},
-	{key: "backlog_pending", query: "aurora_preprocessor_backlog_pending"},
-	{key: "backlog_ack_pending", query: "aurora_preprocessor_backlog_ack_pending"},
-	{key: "throughput", query: "sum(rate(aurora_preprocessor_products_total{status=\"success\"}[2m]))"},
-	{key: "errors", query: "sum(rate(aurora_preprocessor_errors_total[2m]))"},
-	{key: "last_success", query: "max(aurora_preprocessor_last_success_timestamp_seconds)"},
-	{key: "lc_input_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"input\"}[2m]))"},
-	{key: "lc_output_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"output\"}[2m]))"},
-	{key: "lc_quality_removed_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"quality_removed\"}[2m]))"},
-	{key: "lc_invalid_removed_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"invalid_removed\"}[2m]))"},
-	{key: "lc_nonfinite_removed_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"nonfinite_removed\"}[2m]))"},
-	{key: "lc_nonpositive_removed_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"nonpositive_time_removed\"}[2m]))"},
-	{key: "lc_outlier_removed_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"outlier_removed\"}[2m]))"},
-	{key: "lc_sigma_clip_3_4_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"sigma_clip_3_4_removed\"}[2m]))"},
-	{key: "lc_sigma_clip_4_5_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"sigma_clip_4_5_removed\"}[2m]))"},
-	{key: "lc_sigma_clip_ge_5_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"sigma_clip_ge_5_removed\"}[2m]))"},
-	{key: "tpf_input_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"target_pixel\",outcome=\"input\"}[2m]))"},
-	{key: "tpf_output_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"target_pixel\",outcome=\"output\"}[2m]))"},
-	{key: "tpf_quality_removed_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"target_pixel\",outcome=\"quality_removed\"}[2m]))"},
-	{key: "tpf_invalid_removed_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"target_pixel\",outcome=\"invalid_removed\"}[2m]))"},
-	{key: "tpf_nonfinite_removed_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"target_pixel\",outcome=\"nonfinite_removed\"}[2m]))"},
-	{key: "tpf_nonpositive_removed_rate", query: "sum(rate(aurora_preprocessor_science_samples_total{kind=\"target_pixel\",outcome=\"nonpositive_time_removed\"}[2m]))"},
-	{key: "lc_input_total", query: "sum(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"input\"})"},
-	{key: "lc_quality_removed_total", query: "sum(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"quality_removed\"})"},
-	{key: "lc_nonfinite_removed_total", query: "sum(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"nonfinite_removed\"})"},
-	{key: "lc_nonpositive_removed_total", query: "sum(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"nonpositive_time_removed\"})"},
-	{key: "lc_sigma_clip_3_4_total", query: "sum(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"sigma_clip_3_4_removed\"})"},
-	{key: "lc_sigma_clip_4_5_total", query: "sum(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"sigma_clip_4_5_removed\"})"},
-	{key: "lc_sigma_clip_ge_5_total", query: "sum(aurora_preprocessor_science_samples_total{kind=\"lightcurve\",outcome=\"sigma_clip_ge_5_removed\"})"},
-	{key: "tpf_input_total", query: "sum(aurora_preprocessor_science_samples_total{kind=\"target_pixel\",outcome=\"input\"})"},
-	{key: "tpf_quality_removed_total", query: "sum(aurora_preprocessor_science_samples_total{kind=\"target_pixel\",outcome=\"quality_removed\"})"},
-	{key: "tpf_nonfinite_removed_total", query: "sum(aurora_preprocessor_science_samples_total{kind=\"target_pixel\",outcome=\"nonfinite_removed\"})"},
-	{key: "tpf_nonpositive_removed_total", query: "sum(aurora_preprocessor_science_samples_total{kind=\"target_pixel\",outcome=\"nonpositive_time_removed\"})"},
-	{key: "tpf_finite_pixel_fraction", query: "max(aurora_preprocessor_finite_pixel_fraction{kind=\"target_pixel\"})"},
-	{key: "lc_scatter_before_p50", query: "histogram_quantile(0.50, sum by (le) (rate(aurora_preprocessor_lc_normalized_scatter_ppm_bucket{phase=\"before_clip\"}[15m])))"},
-	{key: "lc_scatter_before_p95", query: "histogram_quantile(0.95, sum by (le) (rate(aurora_preprocessor_lc_normalized_scatter_ppm_bucket{phase=\"before_clip\"}[15m])))"},
-	{key: "lc_scatter_after_p50", query: "histogram_quantile(0.50, sum by (le) (rate(aurora_preprocessor_lc_normalized_scatter_ppm_bucket{phase=\"after_clip\"}[15m])))"},
-	{key: "lc_scatter_after_p95", query: "histogram_quantile(0.95, sum by (le) (rate(aurora_preprocessor_lc_normalized_scatter_ppm_bucket{phase=\"after_clip\"}[15m])))"},
-	{key: "lc_sigma_clip_fraction_p95", query: "histogram_quantile(0.95, sum by (le) (rate(aurora_preprocessor_lc_sigma_clip_fraction_bucket[15m])))"},
-	{key: "tpf_finite_pixel_fraction_p05", query: "histogram_quantile(0.05, sum by (le) (rate(aurora_preprocessor_tpf_finite_pixel_fraction_bucket[15m])))"},
-	{key: "tpf_pixel_input_rate", query: "sum(rate(aurora_preprocessor_tpf_normalization_pixels_total{outcome=\"input\"}[2m]))"},
-	{key: "tpf_pixel_retained_rate", query: "sum(rate(aurora_preprocessor_tpf_normalization_pixels_total{outcome=\"retained\"}[2m]))"},
-	{key: "tpf_pixel_nonfinite_rate", query: "sum(rate(aurora_preprocessor_tpf_normalization_pixels_total{outcome=\"nonfinite_input\"}[2m]))"},
-	{key: "tpf_pixel_invalid_reference_rate", query: "sum(rate(aurora_preprocessor_tpf_normalization_pixels_total{outcome=\"invalid_reference\"}[2m]))"},
-	{key: "tpf_scatter_p50", query: "histogram_quantile(0.50, sum by (le) (rate(aurora_preprocessor_tpf_pixel_scatter_mad_ppm_bucket{quantile=\"p50\"}[15m])))"},
-	{key: "tpf_scatter_p95", query: "histogram_quantile(0.95, sum by (le) (rate(aurora_preprocessor_tpf_pixel_scatter_mad_ppm_bucket{quantile=\"p95\"}[15m])))"},
-	{key: "tpf_reference_drift_p95", query: "histogram_quantile(0.95, sum by (le) (rate(aurora_preprocessor_tpf_reference_drift_ppm_bucket{quantile=\"p95\"}[15m])))"},
-	{key: "tpf_boundary_jump_p95", query: "histogram_quantile(0.95, sum by (le) (rate(aurora_preprocessor_tpf_chunk_boundary_jump_ppm_bucket{quantile=\"p95\"}[15m])))"},
-	{key: "bronze_bytes_rate", query: "sum(rate(aurora_preprocessor_bytes_total{stage=\"bronze\"}[2m]))"},
-	{key: "silver_bytes_rate", query: "sum(rate(aurora_preprocessor_bytes_total{stage=\"silver\"}[2m]))"},
-	{key: "lc_duration_p95", query: "histogram_quantile(0.95, sum by (le) (rate(aurora_preprocessor_processing_duration_seconds_bucket{kind=\"lightcurve\"}[5m])))"},
-	{key: "tpf_duration_p95", query: "histogram_quantile(0.95, sum by (le) (rate(aurora_preprocessor_processing_duration_seconds_bucket{kind=\"target_pixel\"}[5m])))"},
-}
-
 // ============================================================================
 // PREPROCESSING SERVICE (Dịch vụ điều phối & giám sát tiền xử lý FITS -> Silver/Gold)
 // ============================================================================
@@ -110,10 +47,9 @@ var preprocessingMetrics = []preprocessingMetric{
 // 2. Dựng đồ thị luồng xử lý (DAG Pipeline Hops: Bronze -> Decode -> Transform -> Silver -> Checkpoint -> Lineage -> Event -> ACK).
 // 3. Quét bất đồng bộ tiến độ checkpoint từ MinIO (`checkpoints/preprocessing/objects/...`).
 type PreprocessingService struct {
-	prometheus         repo.PrometheusQuerier          // Truy vấn metrics telemetry từ Prometheus
-	nats               *nats.Client                    // Kết nối NATS client trực tiếp để gửi lệnh và quan sát stream
-	publisher          provider.EventPublisher         // Phát sự kiện workflow
-	objects            provider.ObjectStorage          // Đọc checkpoint từ MinIO S3
+	nats               *nats.Client            // Kết nối NATS client trực tiếp để gửi lệnh và quan sát stream
+	publisher          provider.EventPublisher // Phát sự kiện workflow
+	objects            provider.ObjectStorage  // Đọc checkpoint từ MinIO S3
 	observeSilverFunc  func(ctx context.Context) (repo.SilverEventStreamSnapshot, error)
 	observeBronzeFunc  func(ctx context.Context) (repo.BronzeConsumerSnapshot, error)
 	runtimeMu          sync.RWMutex                    // Khóa đồng bộ dữ liệu runtime trong RAM
@@ -141,13 +77,12 @@ type silverCheckpointEvidence struct {
 	Attempts      int64
 }
 
-// NewPreprocessingService khởi tạo PreprocessingService
-func NewPreprocessingService(prometheus repo.PrometheusQuerier, natsClient *nats.Client, publisher provider.EventPublisher, objects provider.ObjectStorage) domainService.Preprocessing {
+// NewPreprocessingService khởi tạo PreprocessingService hoàn toàn dựa trên NATS runtime events và MinIO checkpoints
+func NewPreprocessingService(natsClient *nats.Client, publisher provider.EventPublisher, objects provider.ObjectStorage) domainService.Preprocessing {
 	return &PreprocessingService{
-		prometheus: prometheus,
-		nats:       natsClient,
-		publisher:  publisher,
-		objects:    objects,
+		nats:      natsClient,
+		publisher: publisher,
+		objects:   objects,
 	}
 }
 
@@ -220,22 +155,22 @@ func optionalTime(value *time.Time) time.Time {
 // ============================================================================
 // Start gửi lệnh khởi động chế độ tiền xử lý (Stream hoặc Batch) tới Rust Preprocessor.
 func (s *PreprocessingService) Start(ctx context.Context, request entity.PreprocessingStartRequest) (*entity.PreprocessingControlJob, error) {
-	// 1. Kiểm tra xem đã có job nào đang chạy chưa
+	// 1. Kiểm tra xem đã có ticket nào đang chạy chưa
 	s.runtimeMu.RLock()
 	if s.runtimeJob != nil && (s.runtimeJob.Status == "running" || s.runtimeJob.Status == "accepted" || s.runtimeJob.Status == "cancelling") {
-		activeJobID := s.runtimeJob.JobID
+		activeTicketID := s.runtimeJob.TicketID
 		s.runtimeMu.RUnlock()
-		return nil, fmt.Errorf("preprocessing job %s is still active", activeJobID)
+		return nil, fmt.Errorf("preprocessing ticket %s is still active", activeTicketID)
 	}
 	s.runtimeMu.RUnlock()
 
-	// 2. Tạo đối tượng job điều khiển mới
-	jobID := strings.TrimSpace(request.TicketID)
-	if jobID == "" {
-		jobID = fmt.Sprintf("RUN-%s-%s", time.Now().UTC().Format("20060102"), strings.ToUpper(uuid.NewString()[:4]))
+	// 2. Tạo đối tượng ticket điều khiển mới
+	ticketID := strings.TrimSpace(request.TicketID)
+	if ticketID == "" {
+		return nil, errors.New("ticket_id is required")
 	}
 	job := &entity.PreprocessingControlJob{
-		JobID:       jobID,
+		TicketID:    ticketID,
 		Status:      "accepted",
 		Mode:        request.Mode,
 		WorkerCount: request.WorkerCount,
@@ -248,14 +183,14 @@ func (s *PreprocessingService) Start(ctx context.Context, request entity.Preproc
 	// 3. Đóng gói và phát lệnh qua dispatcher
 	command, err := json.Marshal(struct {
 		Action      string `json:"action"`
-		JobID       string `json:"job_id"`
+		TicketID    string `json:"ticket_id"`
 		Mode        string `json:"mode"`
 		IngestRunID string `json:"ingest_run_id,omitempty"`
 		Prefix      string `json:"prefix,omitempty"`
 		WorkerCount int    `json:"worker_count"`
 	}{
 		Action:      "start",
-		JobID:       job.JobID,
+		TicketID:    job.TicketID,
 		Mode:        job.Mode,
 		IngestRunID: job.IngestRunID,
 		Prefix:      job.Prefix,
@@ -277,27 +212,21 @@ func (s *PreprocessingService) Start(ctx context.Context, request entity.Preproc
 	s.completionTimes = nil
 	s.runtimeMu.Unlock()
 
-	if s.publisher != nil {
-		topic := "preprocessing"
-		if job.JobID != "" {
-			topic = "preprocessing:" + job.JobID
-		}
-		data, _ := json.Marshal(map[string]any{
-			"type":        "workflow",
-			"topic":       topic,
-			"workflow":    "preprocessing",
-			"status":      job.Status,
-			"job_id":      job.JobID,
-			"ticket_id":   job.JobID,
-			"occurred_at": job.UpdatedAt,
-			"payload":     job,
-		})
-		_ = s.publisher.Publish(ctx, topic, provider.Event{
-			Type:  "workflow",
-			Topic: topic,
-			Data:  data,
-		})
-	}
+	topic := "preprocessing:" + job.TicketID
+	data, _ := json.Marshal(map[string]any{
+		"type":        "workflow",
+		"topic":       topic,
+		"workflow":    "preprocessing",
+		"status":      job.Status,
+		"ticket_id":   job.TicketID,
+		"occurred_at": job.UpdatedAt,
+		"payload":     job,
+	})
+	_ = s.publisher.Publish(ctx, topic, provider.Event{
+		Type:  "workflow",
+		Topic: topic,
+		Data:  data,
+	})
 	return job, nil
 }
 
@@ -387,19 +316,20 @@ func (s *PreprocessingService) ObserveRuntime(event entity.PreprocessingRuntimeE
 // ============================================================================
 // HÀM DỪNG TIỀN XỬ LÝ (Stop Preprocessing)
 // ============================================================================
-// Stop gửi lệnh dừng an toàn tới Rust Preprocessor worker.
-func (s *PreprocessingService) Stop(ctx context.Context, jobID string) (*entity.PreprocessingControlJob, error) {
+// Stop gửi lệnh dừng an toàn tới Rust Preprocessor worker theo ticketID.
+func (s *PreprocessingService) Stop(ctx context.Context, ticketID string) (*entity.PreprocessingControlJob, error) {
+	ticketID = strings.TrimSpace(ticketID)
 	s.runtimeMu.Lock()
-	if s.runtimeJob != nil && s.runtimeJob.JobID != jobID {
+	if s.runtimeJob != nil && s.runtimeJob.TicketID != ticketID {
 		s.runtimeMu.Unlock()
-		return nil, fmt.Errorf("preprocessing job is not active")
+		return nil, fmt.Errorf("preprocessing ticket %s is not active", ticketID)
 	}
 
 	var job entity.PreprocessingControlJob
 	if s.runtimeJob != nil {
 		job = *s.runtimeJob
 	} else {
-		job = entity.PreprocessingControlJob{JobID: jobID, Mode: "stream", StartedAt: time.Now().UTC()}
+		job = entity.PreprocessingControlJob{TicketID: ticketID, Mode: "stream", StartedAt: time.Now().UTC()}
 	}
 
 	if job.Status == "completed" || job.Status == "failed" || job.Status == "canceled" || job.Status == "cancelled" {
@@ -414,16 +344,16 @@ func (s *PreprocessingService) Stop(ctx context.Context, jobID string) (*entity.
 
 	// Gửi lệnh stop qua NATS
 	command, err := json.Marshal(struct {
-		Action string `json:"action"`
-		JobID  string `json:"job_id"`
-	}{Action: "stop", JobID: jobID})
+		Action   string `json:"action"`
+		TicketID string `json:"ticket_id"`
+	}{Action: "stop", TicketID: ticketID})
 	if err != nil {
 		return nil, fmt.Errorf("encode preprocessing stop command: %w", err)
 	}
 
 	if err := s.nats.Publish(ctx, "aurora.v1.preprocessing.control", command); err != nil {
 		s.runtimeMu.Lock()
-		if s.runtimeJob != nil && s.runtimeJob.JobID == job.JobID {
+		if s.runtimeJob != nil && s.runtimeJob.TicketID == job.TicketID {
 			s.runtimeJob.Status = "running"
 			s.runtimeJob.UpdatedAt = time.Now().UTC()
 		}
@@ -431,27 +361,21 @@ func (s *PreprocessingService) Stop(ctx context.Context, jobID string) (*entity.
 		return nil, fmt.Errorf("dispatch preprocessing stop command: %w", err)
 	}
 
-	if s.publisher != nil {
-		topic := "preprocessing"
-		if job.JobID != "" {
-			topic = "preprocessing:" + job.JobID
-		}
-		data, _ := json.Marshal(map[string]any{
-			"type":        "workflow",
-			"topic":       topic,
-			"workflow":    "preprocessing",
-			"status":      job.Status,
-			"job_id":      job.JobID,
-			"ticket_id":   job.JobID,
-			"occurred_at": job.UpdatedAt,
-			"payload":     &job,
-		})
-		_ = s.publisher.Publish(ctx, topic, provider.Event{
-			Type:  "workflow",
-			Topic: topic,
-			Data:  data,
-		})
-	}
+	topic := "preprocessing:" + job.TicketID
+	data, _ := json.Marshal(map[string]any{
+		"type":        "workflow",
+		"topic":       topic,
+		"workflow":    "preprocessing",
+		"status":      job.Status,
+		"ticket_id":   job.TicketID,
+		"occurred_at": job.UpdatedAt,
+		"payload":     &job,
+	})
+	_ = s.publisher.Publish(ctx, topic, provider.Event{
+		Type:  "workflow",
+		Topic: topic,
+		Data:  data,
+	})
 	return &job, nil
 }
 
@@ -495,19 +419,19 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 						StartedAt   time.Time `json:"started_at"`
 						UpdatedAt   time.Time `json:"updated_at"`
 					}
-					if json.Unmarshal(runData, &checkpoint) == nil && checkpoint.RunID != "" && (runtimeJob == nil || runtimeJob.JobID == checkpoint.RunID) {
+					if json.Unmarshal(runData, &checkpoint) == nil && checkpoint.RunID != "" && (runtimeJob == nil || runtimeJob.TicketID == checkpoint.RunID) {
 						durableStatus := strings.ToLower(checkpoint.Status)
-						if runtimeJob != nil && runtimeJob.JobID == checkpoint.RunID && runtimeJob.Status == "cancelling" && durableStatus == "running" {
+						if runtimeJob != nil && runtimeJob.TicketID == checkpoint.RunID && runtimeJob.Status == "cancelling" && durableStatus == "running" {
 							// Giữ nguyên trạng thái cancelling trong RAM trong khi worker đang drain
 						} else {
-								cpMode := strings.ToLower(strings.TrimSpace(checkpoint.Mode))
-								if cpMode == "continuous" {
-									cpMode = "stream"
-								}
-								runtimeJob = &entity.PreprocessingControlJob{
-									JobID:       checkpoint.RunID,
-									Status:      durableStatus,
-									Mode:        cpMode,
+							cpMode := strings.ToLower(strings.TrimSpace(checkpoint.Mode))
+							if cpMode == "continuous" {
+								cpMode = "stream"
+							}
+							runtimeJob = &entity.PreprocessingControlJob{
+								TicketID:    checkpoint.RunID,
+								Status:      durableStatus,
+								Mode:        cpMode,
 								IngestRunID: checkpoint.IngestRunID,
 								Prefix:      checkpoint.Prefix,
 								WorkerCount: checkpoint.WorkerCount,
@@ -535,63 +459,25 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 		runtime.DesiredWorkers = runtimeJob.WorkerCount
 	}
 
-	// 2. Truy vấn song song metrics từ Prometheus
-	observations := make(map[string][]entity.MonitoringPoint, len(preprocessingMetrics))
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	var queryErrors int
-
-	if s.prometheus != nil {
-		start := end.Add(-preprocessingObservationWindow)
-		for _, metric := range preprocessingMetrics {
-			metric := metric
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				points, err := s.prometheus.QueryRange(ctx, metric.query, start, end, 30*time.Second)
-				mu.Lock()
-				defer mu.Unlock()
-				if err != nil {
-					queryErrors++
-					return
-				}
-				finitePoints := make([]entity.MonitoringPoint, 0, len(points))
-				for _, point := range points {
-					if math.IsNaN(point.Value) || math.IsInf(point.Value, 0) {
-						continue
-					}
-					finitePoints = append(finitePoints, point)
-				}
-				if len(finitePoints) > 0 {
-					observations[metric.key] = finitePoints
-				}
-			}()
-		}
-	}
-	wg.Wait()
-
-	// 3. Trích xuất giá trị quan sát gần nhất
-	values := make(map[string]float64, len(observations))
+	// 2. Trích xuất giá trị quan sát từ in-memory soft state (NATS runtime) và MinIO checkpoints
+	observations := make(map[string][]entity.MonitoringPoint)
+	values := make(map[string]float64)
 	observed := false
-	for key, points := range observations {
-		if len(points) == 0 {
-			continue
-		}
-		observed = true
-		values[key] = lastPoint(points).Value
-	}
+
 	if !runtime.ObservedAt.IsZero() {
 		values["throughput"] = runtime.Throughput
 		values["inflight"] = float64(runtime.Processing)
+		values["errors"] = float64(runtime.Failed)
+		observed = true
+		observations["throughput"] = []entity.MonitoringPoint{
+			{Timestamp: float64(end.Unix()), Value: runtime.Throughput},
+		}
+	}
+	if runtimeProgress.BronzeObserved || runtimeProgress.FootprintObserved || runtimeProgress.CheckpointTotal > 0 {
 		observed = true
 	}
 
-	runtimeProgress.BacklogPending = int(values["backlog_pending"])
-	runtimeProgress.BacklogAckPending = int(values["backlog_ack_pending"])
 	runtimeProgress.ItemsToProcess = runtimeProgress.BronzePending
-	if runtimeProgress.ItemsToProcess == 0 {
-		runtimeProgress.ItemsToProcess = runtimeProgress.BacklogPending + runtimeProgress.BacklogAckPending
-	}
 	if runtimeProgress.ItemsToProcess == 0 && runtimeProgress.CheckpointPending > 0 {
 		runtimeProgress.ItemsToProcess = runtimeProgress.CheckpointPending
 	}
@@ -654,18 +540,18 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 	s.runtimeMu.Unlock()
 
 	// 6. Phát sự kiện SSE khi hoàn tất tác vụ batch
-	if stateChangedJob != nil && s.publisher != nil {
+	if stateChangedJob != nil {
 		topic := "preprocessing"
-		if stateChangedJob.JobID != "" {
-			topic = "preprocessing:" + stateChangedJob.JobID
+		ticketID := stateChangedJob.TicketID
+		if ticketID != "" {
+			topic = "preprocessing:" + ticketID
 		}
 		data, _ := json.Marshal(map[string]any{
 			"type":        "workflow",
 			"topic":       topic,
 			"workflow":    "preprocessing",
 			"status":      stateChangedJob.Status,
-			"job_id":      stateChangedJob.JobID,
-			"ticket_id":   stateChangedJob.JobID,
+			"ticket_id":   ticketID,
 			"occurred_at": stateChangedJob.UpdatedAt,
 			"payload":     stateChangedJob,
 		})
@@ -677,15 +563,13 @@ func (s *PreprocessingService) Query(ctx context.Context) (*entity.Preprocessing
 	}
 
 	return &entity.PreprocessingGraph{
-		Source:           "prometheus",
-		ObservationScope: "preprocessor_service",
-		Status:           status,
-		ObservedAt:       end,
-		Run:              runtimeJob,
-		Progress:         runtimeProgress,
-		Runtime:          runtime,
-		Hops:             hops,
-		Edges:            edges,
+		Status:     status,
+		ObservedAt: end,
+		Run:        runtimeJob,
+		Progress:   runtimeProgress,
+		Runtime:    runtime,
+		Hops:       hops,
+		Edges:      edges,
 	}, nil
 }
 
@@ -1169,25 +1053,24 @@ func (s *PreprocessingService) refreshCheckpointProgress(ctx context.Context) {
 	}
 	s.progressAt = time.Now().UTC()
 	s.progressRefreshing = false
-	jobID := ""
+	ticketID := ""
 	if s.runtimeJob != nil {
-		jobID = s.runtimeJob.JobID
+		ticketID = s.runtimeJob.TicketID
 	}
 	observedAt := s.progressAt
 	s.runtimeMu.Unlock()
 
-	if s.publisher != nil && (checkpointInventoryRead || bronzeInventoryRead || silverInventoryRead) {
+	if checkpointInventoryRead || bronzeInventoryRead || silverInventoryRead {
 		topic := "preprocessing"
-		if jobID != "" {
-			topic = "preprocessing:" + jobID
+		if ticketID != "" {
+			topic = "preprocessing:" + ticketID
 		}
 		data, _ := json.Marshal(map[string]any{
 			"type":        "workflow",
 			"topic":       topic,
 			"workflow":    "preprocessing",
 			"status":      "evidence_refreshed",
-			"job_id":      jobID,
-			"ticket_id":   jobID,
+			"ticket_id":   ticketID,
 			"occurred_at": observedAt,
 			"payload": map[string]any{
 				"science_counts_observed": scienceCountsObserved,
@@ -1333,11 +1216,6 @@ func quantileFloat64(values []float64, q float64) float64 {
 	}
 	weight := position - float64(lower)
 	return ordered[lower]*(1-weight) + ordered[upper]*weight
-}
-
-func lastPoint(points []entity.MonitoringPoint) entity.MonitoringPoint {
-	sort.Slice(points, func(i, j int) bool { return points[i].Timestamp < points[j].Timestamp })
-	return points[len(points)-1]
 }
 
 // preprocessingStatus tính toán trạng thái hoạt động dựa trên metrics
