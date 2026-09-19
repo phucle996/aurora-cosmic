@@ -270,11 +270,30 @@ func TestCandidateScientificReviewRoute(t *testing.T) {
 }
 
 func TestMonitoringTabValidation(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/monitoring?tab=not-a-component", nil)
+	// Rejects invalid component / tab
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/monitoring?component=not-a-component", nil)
 	recorder := httptest.NewRecorder()
 	newTestRouter().ServeHTTP(recorder, req)
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("monitoring endpoint returned HTTP %d, expected 400", recorder.Code)
+	}
+
+	// Accepts valid component and returns component field without silly source: prometheus
+	reqValid := httptest.NewRequest(http.MethodGet, "/api/v1/monitoring?component=go-api", nil)
+	recorderValid := httptest.NewRecorder()
+	newTestRouter().ServeHTTP(recorderValid, reqValid)
+	if recorderValid.Code != http.StatusOK {
+		t.Fatalf("monitoring endpoint returned HTTP %d, expected 200: %s", recorderValid.Code, recorderValid.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(recorderValid.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal monitoring response: %v", err)
+	}
+	if _, hasSource := resp["source"]; hasSource {
+		t.Fatalf("monitoring response must not contain source field, got %#v", resp["source"])
+	}
+	if resp["component"] != "go-api" {
+		t.Fatalf("expected component 'go-api', got %#v", resp["component"])
 	}
 }
 

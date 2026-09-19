@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { AlertCircle, Database } from 'lucide-react';
 
@@ -27,12 +27,18 @@ export default function LakehousePage(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
 
   const [cursorHistory, setCursorHistory] = useState<Record<number, string>>({ 1: '' });
+  const inFlightRef = useRef<Set<string>>(new Set());
 
   const loadTier = useCallback(async (tierPrefix: string, cursor = '', _targetPage = 1) => {
+    const query = `/v1/storage?prefix=${encodeURIComponent(tierPrefix)}&limit=${PAGE_SIZE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+    if (inFlightRef.current.has(query)) {
+      return;
+    }
+    inFlightRef.current.add(query);
+
     setLoading(true);
     setError(null);
     try {
-      const query = `/v1/storage?prefix=${encodeURIComponent(tierPrefix)}&limit=${PAGE_SIZE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
       const data = await apiFetch<StorageListing>(query);
       if (tierPrefix.startsWith('bronze')) setBronzeData(data);
       else if (tierPrefix.startsWith('silver')) setSilverData(data);
@@ -40,40 +46,15 @@ export default function LakehousePage(): JSX.Element {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load storage data');
     } finally {
+      inFlightRef.current.delete(query);
       setLoading(false);
     }
   }, []);
 
-  // Initial load all 3 tiers concurrently with robust error isolation
+  // Only load the initial active tab (gold) on mount; do not eagerly fetch all 3 tiers.
   useEffect(() => {
-    let mounted = true;
-    setLoading(true);
-    setError(null);
-
-    Promise.allSettled([
-      apiFetch<StorageListing>(`/v1/storage?prefix=bronze/&limit=${PAGE_SIZE}`),
-      apiFetch<StorageListing>(`/v1/storage?prefix=silver/&limit=${PAGE_SIZE}`),
-      apiFetch<StorageListing>(`/v1/storage?prefix=gold/&limit=${PAGE_SIZE}`),
-    ]).then(([bronzeRes, silverRes, goldRes]) => {
-      if (!mounted) return;
-      if (bronzeRes.status === 'fulfilled' && bronzeRes.value) setBronzeData(bronzeRes.value);
-      if (silverRes.status === 'fulfilled' && silverRes.value) setSilverData(silverRes.value);
-      if (goldRes.status === 'fulfilled' && goldRes.value) setGoldData(goldRes.value);
-      const unavailableTiers = [
-        bronzeRes.status === 'rejected' ? 'Bronze' : null,
-        silverRes.status === 'rejected' ? 'Silver' : null,
-        goldRes.status === 'rejected' ? 'Gold' : null,
-      ].filter((tier): tier is string => tier !== null);
-      if (unavailableTiers.length > 0) {
-        setError(`Unable to observe inventory: ${unavailableTiers.join(', ')}`);
-      }
-      setLoading(false);
-    });
-
-    return () => {
-      mounted = false;
-    };
-  }, []);
+    void loadTier('gold/', '', 1);
+  }, [loadTier]);
 
   const handleTabChange = (tab: string) => {
     const nextTab = tab as 'bronze' | 'silver' | 'gold';
@@ -82,7 +63,16 @@ export default function LakehousePage(): JSX.Element {
     setCursorHistory({ 1: '' });
     const prefix = `${nextTab}/`;
     setCurrentPrefix(prefix);
-    void loadTier(prefix, '', 1);
+
+    // Only load if the tab data has not been fetched yet
+    const alreadyLoaded =
+      (nextTab === 'bronze' && bronzeData !== null) ||
+      (nextTab === 'silver' && silverData !== null) ||
+      (nextTab === 'gold' && goldData !== null);
+
+    if (!alreadyLoaded) {
+      void loadTier(prefix, '', 1);
+    }
   };
 
   const handleSearchOrFilter = (targetPrefix: string) => {

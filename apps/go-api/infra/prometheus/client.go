@@ -2,90 +2,78 @@ package prometheus
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
-
-	"go-api/internal/domain/entity"
 )
 
+// Client handles low-level HTTP communication with the Prometheus server.
 type Client struct {
 	Endpoint string
 	HTTP     *http.Client
 }
 
+// NewClient initializes a Prometheus HTTP client.
 func NewClient(endpoint string) *Client {
-	return &Client{Endpoint: strings.TrimRight(endpoint, "/"), HTTP: &http.Client{Timeout: 12 * time.Second}}
+	if endpoint == "" {
+		endpoint = "http://127.0.0.1:9090"
+	}
+	return &Client{
+		Endpoint: strings.TrimRight(endpoint, "/"),
+		HTTP:     &http.Client{Timeout: 15 * time.Second},
+	}
 }
 
-func (p *Client) QueryRange(ctx context.Context, expression string, start, end time.Time, step time.Duration) ([]entity.MonitoringPoint, error) {
-	if p == nil || p.Endpoint == "" {
+// Ping checks if the Prometheus server is reachable and healthy.
+func (c *Client) Ping(ctx context.Context) error {
+	if c == nil || c.Endpoint == "" {
+		return fmt.Errorf("Prometheus endpoint is not configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.Endpoint+"/-/healthy", nil)
+	if err != nil {
+		return fmt.Errorf("create Prometheus ping request: %w", err)
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return fmt.Errorf("Prometheus ping failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("Prometheus ping returned HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// Get performs a GET request against an API path on Prometheus and returns the raw response body.
+func (c *Client) Get(ctx context.Context, apiPath string, params url.Values) ([]byte, error) {
+	if c == nil || c.Endpoint == "" {
 		return nil, fmt.Errorf("Prometheus endpoint is not configured")
 	}
-	queryURL, err := url.Parse(p.Endpoint + "/api/v1/query_range")
+	queryURL, err := url.Parse(c.Endpoint + apiPath)
 	if err != nil {
 		return nil, fmt.Errorf("parse Prometheus endpoint: %w", err)
 	}
-	values := queryURL.Query()
-	values.Set("query", expression)
-	values.Set("start", strconv.FormatInt(start.Unix(), 10))
-	values.Set("end", strconv.FormatInt(end.Unix(), 10))
-	values.Set("step", strconv.FormatInt(int64(step/time.Second), 10))
-	queryURL.RawQuery = values.Encode()
+	if len(params) > 0 {
+		queryURL.RawQuery = params.Encode()
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, queryURL.String(), nil)
 	if err != nil {
-		return nil, fmt.Errorf("create Prometheus query: %w", err)
+		return nil, fmt.Errorf("create Prometheus query request: %w", err)
 	}
-	resp, err := p.HTTP.Do(req)
+	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("Prometheus request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read Prometheus response: %w", err)
+	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Prometheus returned HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("Prometheus returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	var payload struct {
-		Status string `json:"status"`
-		Data   struct {
-			Result []struct {
-				Metric map[string]string   `json:"metric"`
-				Values [][]json.RawMessage `json:"values"`
-			} `json:"result"`
-		} `json:"data"`
-		ErrorType string `json:"errorType"`
-		Error     string `json:"error"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return nil, fmt.Errorf("decode Prometheus response: %w", err)
-	}
-	if payload.Status != "success" {
-		return nil, fmt.Errorf("Prometheus query failed: %s: %s", payload.ErrorType, payload.Error)
-	}
-	if len(payload.Data.Result) == 0 {
-		return []entity.MonitoringPoint{}, nil
-	}
-	if len(payload.Data.Result) != 1 {
-		return nil, fmt.Errorf("Prometheus query returned %d series; monitoring queries must aggregate labels explicitly", len(payload.Data.Result))
-	}
-	labels := payload.Data.Result[0].Metric
-	points := make([]entity.MonitoringPoint, 0, len(payload.Data.Result[0].Values))
-	for _, pair := range payload.Data.Result[0].Values {
-		if len(pair) != 2 {
-			continue
-		}
-		var timestamp float64
-		var rawValue string
-		if json.Unmarshal(pair[0], &timestamp) != nil || json.Unmarshal(pair[1], &rawValue) != nil {
-			continue
-		}
-		value, err := strconv.ParseFloat(rawValue, 64)
-		if err == nil {
-			points = append(points, entity.MonitoringPoint{Timestamp: timestamp, Value: value, Labels: labels})
-		}
-	}
-	return points, nil
+	return body, nil
 }

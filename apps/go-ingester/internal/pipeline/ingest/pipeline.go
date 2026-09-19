@@ -379,7 +379,6 @@ func (p *Pipeline) IngestManifest(ctx context.Context, m *model.Manifest) (*mode
 						Error:           ctx.Err(),
 					}
 				default:
-					break
 				}
 
 				if res.Status == "" {

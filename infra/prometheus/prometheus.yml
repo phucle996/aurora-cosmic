@@ -33,11 +33,6 @@ scrape_configs:
     static_configs:
       - targets: ['127.0.0.1:8086']
 
-  - job_name: 'aurora-systemd'
-    metrics_path: /metrics
-    static_configs:
-      - targets: ['127.0.0.1:9580']
-
   - job_name: 'aurora-minio'
     metrics_path: /minio/v2/metrics/cluster
     static_configs:

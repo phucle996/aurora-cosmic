@@ -144,11 +144,12 @@ func (c *Controller) Cancel(ticketID string) (*Execution, error) {
 	if c.active == nil || ticketID == "" || c.active.TicketID != ticketID {
 		return nil, ErrTicketNotFound
 	}
-	if c.active.Status == "planning" {
+	switch c.active.Status {
+	case "planning":
 		c.active.Status = "cancelling"
 		c.active.UpdatedAt = time.Now().UTC()
 		c.active.cancel()
-	} else if c.active.Status == "running" {
+	case "running":
 		c.active.Status = "draining"
 		c.active.UpdatedAt = time.Now().UTC()
 		c.active.drainOnce.Do(func() { close(c.active.drain) })

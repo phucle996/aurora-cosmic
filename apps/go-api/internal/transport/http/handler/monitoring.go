@@ -39,15 +39,18 @@ func (h *MonitoringHandler) Query(c *gin.Context) {
 	}
 
 	window := entity.MonitoringWindow{Duration: duration, Step: step}
-	tab := strings.TrimSpace(c.Query("tab"))
-	if tab == "" {
-		tab = "all"
+	componentID := strings.TrimSpace(c.Query("component"))
+	if componentID == "" {
+		componentID = strings.TrimSpace(c.Query("tab"))
 	}
-	if !isMonitoringTab(tab) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown monitoring tab"})
+	if componentID == "" {
+		componentID = "all"
+	}
+	if !isMonitoringComponent(componentID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown monitoring component"})
 		return
 	}
-	components, err := h.monitoring.Query(c.Request.Context(), window, tab)
+	components, err := h.monitoring.Query(c.Request.Context(), window, componentID)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Prometheus monitoring is unavailable"})
 		return
@@ -91,8 +94,8 @@ func (h *MonitoringHandler) Query(c *gin.Context) {
 
 	end := time.Now().UTC()
 	c.JSON(http.StatusOK, gin.H{
-		"source":       "prometheus",
-		"tab":          tab,
+		"component":    componentID,
+		"tab":          componentID,
 		"range":        window.Duration.String(),
 		"start":        end.Add(-window.Duration).Format(time.RFC3339),
 		"end":          end.Format(time.RFC3339),
@@ -101,8 +104,8 @@ func (h *MonitoringHandler) Query(c *gin.Context) {
 	})
 }
 
-func isMonitoringTab(tab string) bool {
-	switch tab {
+func isMonitoringComponent(id string) bool {
+	switch id {
 	case "all",
 		"go-ingester",
 		"rust-preprocessor",
@@ -110,7 +113,6 @@ func isMonitoringTab(tab string) bool {
 		"rust-inference",
 		"gold-builder",
 		"go-api",
-		"dashboard",
 		"minio",
 		"nats",
 		"clickhouse":

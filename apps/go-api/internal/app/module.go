@@ -88,11 +88,12 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	if readinessService == nil {
 		return nil, fmt.Errorf("service ReadinessService is nil")
 	}
-	monitoringService := service.NewMonitoringService(infra.Prometheus)
+	prometheusQuerier := provider.NewPrometheusQueryBase(infra.Prometheus)
+	monitoringService := service.NewMonitoringService(prometheusQuerier)
 	if monitoringService == nil {
 		return nil, fmt.Errorf("service MonitoringService is nil")
 	}
-	preprocessingService := service.NewPreprocessingServiceWithEventsAndObjects(infra.Prometheus, infra.NATS, eventBroker, objectRepo)
+	preprocessingService := service.NewPreprocessingServiceWithEventsAndObjects(prometheusQuerier, infra.NATS, eventBroker, objectRepo)
 	if preprocessingService == nil {
 		return nil, fmt.Errorf("service PreprocessingService is nil")
 	}

@@ -1,32 +1,124 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
-import { Activity, RadioTower } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 
-import HealthSection from './sections/HealthSection';
+import { apiFetch } from '@/lib/api';
+
+import { FleetNavigator } from './sections/FleetNavigator';
+import { MonitoringHero } from './sections/MonitoringHero';
+import { TelemetryGrid } from './sections/TelemetryGrid';
+import { TelemetryHeader } from './sections/TelemetryHeader';
+import {
+  components,
+  timeRanges,
+  type MonitoringResponse,
+  type MonitoringStatus,
+} from './types';
 
 export default function MonitoringPage(): JSX.Element {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedComponent = searchParams.get('component') ?? searchParams.get('tab') ?? components[0].id;
+  const activeComponent = components.some((c) => c.id === requestedComponent) ? requestedComponent : components[0].id;
+  const requestedRange = searchParams.get('range') ?? '1h';
+  const activeRange = timeRanges.find((range) => range.id === requestedRange) ?? timeRanges[1];
+
+  const [response, setResponse] = useState<MonitoringResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [autoRefresh, setAutoRefresh] = useState<'off' | '15s' | '30s' | '60s'>('30s');
+  const [componentStatuses, setComponentStatuses] = useState<Record<string, MonitoringStatus>>({});
+
+  const requestSequence = useRef(0);
+
+  const componentMeta = useMemo(
+    () => components.find((c) => c.id === activeComponent) ?? components[0],
+    [activeComponent],
+  );
+  const selected = response?.components[0];
+  const displayedMeta = components.find((c) => c.id === selected?.id) ?? componentMeta;
+
+  const load = useCallback(async (): Promise<void> => {
+    const requestID = ++requestSequence.current;
+    setLoading(true);
+    setError(null);
+    try {
+      const payload = await apiFetch<MonitoringResponse>(
+        `/v1/monitoring?component=${encodeURIComponent(activeComponent)}&range=${encodeURIComponent(activeRange.id)}&step=${activeRange.step}`,
+      );
+      if (requestID === requestSequence.current) {
+        setResponse(payload);
+        if (payload.components.length > 0) {
+          setComponentStatuses((prev) => {
+            const next = { ...prev };
+            for (const comp of payload.components) {
+              next[comp.id] = comp.status;
+            }
+            return next;
+          });
+        }
+      }
+    } catch (requestError) {
+      if (requestID === requestSequence.current) {
+        setError(requestError instanceof Error ? requestError.message : 'Prometheus telemetry query failed');
+      }
+    } finally {
+      if (requestID === requestSequence.current) setLoading(false);
+    }
+  }, [activeComponent, activeRange.id, activeRange.step]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useEffect(() => {
+    if (autoRefresh === 'off') return;
+    const intervalMs = autoRefresh === '15s' ? 15000 : autoRefresh === '30s' ? 30000 : 60000;
+    const timer = setInterval(() => {
+      void load();
+    }, intervalMs);
+    return () => clearInterval(timer);
+  }, [autoRefresh, load]);
+
+  const updateQuery = (key: 'component' | 'range', value: string): void => {
+    const next = new URLSearchParams(searchParams);
+    next.set(key, value);
+    if (key === 'component') {
+      next.delete('tab');
+    }
+    setSearchParams(next);
+  };
+
   return (
     <div className="space-y-5 pb-6">
-      <section className="relative overflow-hidden border border-border/70 bg-card px-4 py-5 shadow-sm sm:px-6">
-        <div className="pointer-events-none absolute inset-0 opacity-[0.18] [background-image:linear-gradient(to_right,var(--border)_1px,transparent_1px),linear-gradient(to_bottom,var(--border)_1px,transparent_1px)] [background-size:28px_28px]" />
-        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="min-w-0">
-            <div className="mb-3 flex items-center gap-2 font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-primary">
-              <RadioTower className="size-4" aria-hidden="true" />
-              Observatory / Prometheus signal plane
-            </div>
-            <h2 className="font-heading text-2xl font-semibold tracking-tight md:text-3xl">Monitoring</h2>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              Quan sát pipeline, platform services và systemd workloads từ metric series do backend cung cấp.
-            </p>
-          </div>
-          <div className="flex w-fit items-center gap-2 border border-border/70 bg-background/60 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
-            <Activity className="size-3.5 text-primary" />
-            Source / Prometheus
-          </div>
-        </div>
-      </section>
+      <MonitoringHero />
 
-      <HealthSection />
+      <FleetNavigator
+        activeTab={activeComponent}
+        selectedStatus={selected?.status}
+        componentStatuses={componentStatuses}
+        onSelectComponent={(componentId) => updateQuery('component', componentId)}
+      />
+
+      <TelemetryHeader
+        groupName={displayedMeta.group}
+        componentName={selected?.name ?? componentMeta.label}
+        containerName={selected?.container}
+        status={selected?.status}
+        activeRangeId={activeRange.id}
+        autoRefresh={autoRefresh}
+        loading={loading}
+        onRangeChange={(rangeId) => updateQuery('range', rangeId)}
+        onAutoRefreshChange={setAutoRefresh}
+        onRefresh={() => void load()}
+      />
+
+      <TelemetryGrid
+        selected={selected}
+        loading={loading}
+        error={error}
+        componentLabel={displayedMeta.label}
+        onRetry={() => void load()}
+      />
     </div>
   );
 }

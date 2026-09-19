@@ -180,7 +180,7 @@ func TestGetModelEvaluationReadsVerifiedEvidence(t *testing.T) {
 	prefix := "models/evaluations/candidate/eval-cand-v1-test/"
 	objects.objects[prefix+"metrics.json"] = metrics
 	objects.objects[prefix+"threshold.json"] = threshold
-	objects.objects[prefix+"manifest.json"] = []byte(fmt.Sprintf(`{"evaluation_run_id":"eval-cand-v1-test","training_run_id":"train-test","model_version":"1.0.0","golden_cohort_id":"golden-test","recent_cohort_id":"recent-test","evaluation_policy_version":"candidate-evaluation-v1","threshold_policy_version":"candidate-threshold-max-f1-v1","decision_threshold":0.63,"threshold_sha256":"%x","metrics_sha256":"%x","created_at":"2026-09-02T00:00:00Z"}`, thresholdSHA, metricsSHA))
+	objects.objects[prefix+"manifest.json"] = fmt.Appendf(nil, `{"evaluation_run_id":"eval-cand-v1-test","training_run_id":"train-test","model_version":"1.0.0","golden_cohort_id":"golden-test","recent_cohort_id":"recent-test","evaluation_policy_version":"candidate-evaluation-v1","threshold_policy_version":"candidate-threshold-max-f1-v1","decision_threshold":0.63,"threshold_sha256":"%x","metrics_sha256":"%x","created_at":"2026-09-02T00:00:00Z"}`, thresholdSHA, metricsSHA)
 	objects.objects["models/registry/candidate/model-a/manifest.json"] = []byte(`{"model_id":"model-a","training_run_id":"train-test","training_run_manifest_sha256":"train-sha","evaluation_run_id":"eval-cand-v1-test","evaluation_run_manifest_sha256":"eval-sha","gold_snapshot_id":"gold-v1-test","gold_manifest_sha256":"gold-sha","split_id":"split-test","dataset_view_version":"candidate-ml-view-v2","dataset_view_fingerprint":"dataset-sha"}`)
 
 	evaluation, err := NewModelsService(objects, nil, readyTrainingAnalytics{}).GetModelEvaluation(context.Background(), "runtime-a")

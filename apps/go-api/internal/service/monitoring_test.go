@@ -36,7 +36,7 @@ func (f *fakeMonitoringPrometheus) QueryRange(_ context.Context, query string, _
 	return []entity.MonitoringPoint{{Timestamp: 1, Value: 2}}, nil
 }
 
-func TestMonitoringQuerySelectsOneTabAndReturnsMetricSeries(t *testing.T) {
+func TestMonitoringQuerySelectsOneComponentAndReturnsMetricSeries(t *testing.T) {
 	prometheus := &fakeMonitoringPrometheus{}
 	service := NewMonitoringService(prometheus)
 	components, err := service.Query(context.Background(), entity.MonitoringWindow{Duration: time.Hour, Step: time.Minute}, "go-api")
@@ -46,9 +46,9 @@ func TestMonitoringQuerySelectsOneTabAndReturnsMetricSeries(t *testing.T) {
 	if len(components) != 1 || components[0].ID != "go-api" {
 		t.Fatalf("expected only go-api component, got %#v", components)
 	}
-	expectedMetrics := 4 + len(systemdMetrics("aurora-go-api.service"))
+	expectedMetrics := 4 // throughput, duration_p95, errors, inflight
 	if len(components[0].Metrics) != expectedMetrics {
-		t.Fatalf("expected %d Go API business and resource metrics, got %d", expectedMetrics, len(components[0].Metrics))
+		t.Fatalf("expected %d Go API operational metrics, got %d", expectedMetrics, len(components[0].Metrics))
 	}
 	if components[0].Status != "up" {
 		t.Fatalf("expected component status up, got %q", components[0].Status)
@@ -68,12 +68,18 @@ func TestMonitoringContractUsesHealthAndNonDuplicatedOperationalSignals(t *testi
 		if component.HealthQuery == "" {
 			t.Fatalf("component %q has no health query", component.ID)
 		}
+		if !strings.HasPrefix(component.HealthQuery, "max(up{") {
+			t.Fatalf("component %q health query must use native prometheus up scraper, got %q", component.ID, component.HealthQuery)
+		}
 		seenKeys := make(map[string]bool, len(component.Metrics))
 		for _, metric := range component.Metrics {
 			if seenKeys[metric.Key] {
 				t.Fatalf("component %q has duplicate metric key %q", component.ID, metric.Key)
 			}
 			seenKeys[metric.Key] = true
+			if strings.Contains(metric.Query, "aurora_systemd_") || strings.Contains(metric.Query, "aurora_host_") {
+				t.Fatalf("component %q still contains systemd or host cgroup query: %s", component.ID, metric.Query)
+			}
 		}
 	}
 
@@ -98,48 +104,48 @@ func TestMonitoringContractUsesHealthAndNonDuplicatedOperationalSignals(t *testi
 	}
 }
 
-func TestProcessHopsExposePerServiceResourceAccounting(t *testing.T) {
-	units := map[string]string{
-		"go-ingester":       "aurora-go-ingester.service",
-		"rust-preprocessor": "aurora-rust-preprocessor.service",
-		"python-ml-worker":  "aurora-python-ml-worker.service",
-		"rust-inference":    "aurora-rust-inference.service",
-		"gold-builder":      "aurora-gold-builder.service",
-		"go-api":            "aurora-go-api.service",
-		"dashboard":         "aurora-dashboard.service",
+func TestComponentsExposeTailoredDomainMetrics(t *testing.T) {
+	// Verify each service exposes only its tailored domain metrics
+	expectedKeys := map[string][]string{
+		"go-ingester":        {"throughput", "duration_p95", "errors", "inflight", "queue", "bytes"},
+		"rust-preprocessor":  {"throughput", "duration_p95", "errors", "inflight", "queue", "backlog", "bytes"},
+		"python-ml-worker":   {"throughput", "duration_p95", "errors", "inflight", "queue", "gpu_available", "gpu_utilization", "gpu_memory_used", "gpu_memory_total"},
+		"rust-inference":     {"throughput", "duration_p95", "errors", "inflight", "queue", "rows"},
+		"gold-builder":       {"throughput", "duration_p95", "errors", "deferred", "inflight", "queue", "rows"},
+		"go-api":             {"throughput", "duration_p95", "errors", "inflight"},
+		"minio":              {"requests", "ttfb_p95", "inflight", "errors", "traffic_in", "traffic_out", "usage", "objects", "offline_drives"},
+		"nats":               {"inbound", "outbound", "connections", "cpu", "memory", "pending_bytes"},
+		"clickhouse":         {"queries", "duration", "failed_queries", "active_queries", "memory"},
 	}
-	required := []string{"memory", "memory_total", "cpu_cores", "cpu_cores_total", "disk_read", "disk_write"}
-	unitScoped := map[string]bool{"memory": true, "cpu_cores": true, "disk_read": true, "disk_write": true}
+
+	if len(components) != len(expectedKeys) {
+		t.Fatalf("expected %d components, got %d", len(expectedKeys), len(components))
+	}
 
 	for _, component := range components {
-		unit, ok := units[component.ID]
-		if !ok {
-			continue
+		expected, exists := expectedKeys[component.ID]
+		if !exists {
+			t.Fatalf("unexpected component %q in registry", component.ID)
 		}
-		metrics := make(map[string]metricSpec, len(component.Metrics))
-		for _, metric := range component.Metrics {
-			if metric.Key == "restarts" {
-				t.Errorf("component %q still exposes the host-specific process restart metric", component.ID)
-			}
-			metrics[metric.Key] = metric
+		actualKeys := make(map[string]bool, len(component.Metrics))
+		for _, m := range component.Metrics {
+			actualKeys[m.Key] = true
 		}
-		for _, key := range required {
-			metric, exists := metrics[key]
-			if !exists {
-				t.Errorf("component %q is missing resource metric %q", component.ID, key)
-				continue
+		for _, key := range expected {
+			if !actualKeys[key] {
+				t.Errorf("component %q missing expected metric %q", component.ID, key)
 			}
-			if unitScoped[key] && !strings.Contains(metric.Query, `unit="`+unit+`"`) {
-				t.Errorf("component %q metric %q is not scoped to unit %q: %s", component.ID, key, unit, metric.Query)
-			}
+		}
+		if len(component.Metrics) != len(expected) {
+			t.Errorf("component %q expected %d metrics, got %d", component.ID, len(expected), len(component.Metrics))
 		}
 	}
 }
 
-func TestMonitoringQueryRejectsUnknownTab(t *testing.T) {
+func TestMonitoringQueryRejectsUnknownComponent(t *testing.T) {
 	service := NewMonitoringService(&fakeMonitoringPrometheus{})
 	if _, err := service.Query(context.Background(), entity.MonitoringWindow{Duration: time.Hour, Step: time.Minute}, "unknown"); err == nil {
-		t.Fatal("expected unknown monitoring tab to fail")
+		t.Fatal("expected unknown monitoring component to fail")
 	}
 }
 
