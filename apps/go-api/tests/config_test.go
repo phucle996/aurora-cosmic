@@ -16,7 +16,7 @@ func setDummyEnv() {
 	os.Setenv("MINIO_BUCKET", "aurora")
 	os.Setenv("MINIO_ACCESS_KEY", "test-access-key")
 	os.Setenv("MINIO_SECRET_KEY", "test-secret-key")
-	os.Setenv("AURORA_CLICKHOUSE_ENDPOINT", "http://clickhouse:8123")
+	os.Setenv("AURORA_CLICKHOUSE_TCP_ADDR", "clickhouse:9004")
 	os.Setenv("AURORA_CLICKHOUSE_DATABASE", "aurora")
 	os.Setenv("AURORA_CLICKHOUSE_USER", "aurora")
 	os.Setenv("AURORA_CLICKHOUSE_PASSWORD", "aurora-dev-password")

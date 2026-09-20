@@ -38,7 +38,7 @@ type PrometheusConfig struct {
 }
 
 type ClickHouseConfig struct {
-	Endpoint string
+	TCPAddr  string
 	Database string
 	User     string
 	Password string
@@ -95,11 +95,6 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
-	clickHouseEndpoint, err := requireEnv("AURORA_CLICKHOUSE_ENDPOINT")
-	if err != nil {
-		return nil, err
-	}
-
 	clickHouseDatabase, err := requireEnv("AURORA_CLICKHOUSE_DATABASE")
 	if err != nil {
 		return nil, err
@@ -140,7 +135,7 @@ func Load() (*Config, error) {
 			SecretKey:        minioSecretKey,
 		},
 		ClickHouse: ClickHouseConfig{
-			Endpoint: clickHouseEndpoint,
+			TCPAddr:  getenvOrDefault("AURORA_CLICKHOUSE_TCP_ADDR", "127.0.0.1:9004"),
 			Database: clickHouseDatabase,
 			User:     clickHouseUser,
 			Password: clickHousePassword,

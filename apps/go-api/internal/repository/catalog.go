@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -46,25 +45,31 @@ func (r *CatalogClickHouse) UpsertObjects(ctx context.Context, objects []repo.Ca
 		return nil
 	}
 
-	var sb strings.Builder
-	sb.WriteString("INSERT INTO aurora.lakehouse_objects (tier, object_key, size_bytes, etag, sector, tic_id, product_type, last_modified) VALUES ")
-
-	first := true
-	for _, obj := range objects {
-		if !first {
-			sb.WriteString(", ")
-		}
-		first = false
-
-		cleanEtag := quoteSQL(obj.ETag)
-		cleanKey := quoteSQL(obj.ObjectKey)
-		timeStr := obj.LastModified.UTC().Format("2006-01-02 15:04:05")
-
-		sb.WriteString(fmt.Sprintf("('%s', '%s', %d, '%s', %d, %d, '%s', '%s')",
-			quoteSQL(obj.Tier), cleanKey, obj.SizeBytes, cleanEtag, obj.Sector, obj.TICID, quoteSQL(obj.ProductType), timeStr))
+	batch, err := r.client.PrepareBatch(ctx, "INSERT INTO aurora.lakehouse_objects (tier, object_key, size_bytes, etag, sector, tic_id, product_type, last_modified)")
+	if err != nil {
+		return fmt.Errorf("prepare catalog objects batch: %w", err)
 	}
 
-	return r.client.Exec(ctx, sb.String())
+	for _, obj := range objects {
+		cleanEtag := strings.Trim(obj.ETag, "\"")
+		if err := batch.Append(
+			obj.Tier,
+			obj.ObjectKey,
+			obj.SizeBytes,
+			cleanEtag,
+			obj.Sector,
+			obj.TICID,
+			obj.ProductType,
+			obj.LastModified.UTC(),
+		); err != nil {
+			return fmt.Errorf("append to catalog objects batch: %w", err)
+		}
+	}
+
+	if err := batch.Send(); err != nil {
+		return fmt.Errorf("send catalog objects batch: %w", err)
+	}
+	return nil
 }
 
 var (
@@ -118,44 +123,27 @@ func ParseCatalogObject(key string, size int64, etag string, modTime time.Time) 
 	}
 }
 
-type countResponse struct {
-	Data []struct {
-		Total      string `json:"total"`
-		TotalBytes string `json:"total_bytes"`
-	} `json:"data"`
-}
-
 func (r *CatalogClickHouse) CountObjects(ctx context.Context, tier string) (int64, int64, error) {
 	if !validTier(tier) {
 		return 0, 0, fmt.Errorf("unsupported lakehouse tier %q", tier)
 	}
-	query := fmt.Sprintf("SELECT toString(count()) AS total, toString(sum(size_bytes)) AS total_bytes FROM aurora.lakehouse_objects FINAL WHERE tier = '%s' FORMAT JSON", quoteSQL(tier))
-	data, err := r.client.Query(ctx, query)
-	if err != nil {
+	var total, totalBytes int64
+	row := r.client.QueryRow(ctx, "SELECT toInt64(count()), toInt64(coalesce(sum(size_bytes), 0)) FROM aurora.lakehouse_objects FINAL WHERE tier = ?", tier)
+	if err := row.Scan(&total, &totalBytes); err != nil {
 		return 0, 0, err
 	}
-
-	var resp countResponse
-	if err := json.Unmarshal(data, &resp); err != nil || len(resp.Data) == 0 {
-		return 0, 0, nil
-	}
-
-	total, _ := strconv.ParseInt(resp.Data[0].Total, 10, 64)
-	totalBytes, _ := strconv.ParseInt(resp.Data[0].TotalBytes, 10, 64)
 	return total, totalBytes, nil
 }
 
-type listResponse struct {
-	Data []struct {
-		Tier         string `json:"tier"`
-		ObjectKey    string `json:"object_key"`
-		SizeBytes    string `json:"size_bytes"`
-		ETag         string `json:"etag"`
-		Sector       int32  `json:"sector"`
-		TICID        string `json:"tic_id"`
-		ProductType  string `json:"product_type"`
-		LastModified string `json:"last_modified"`
-	} `json:"data"`
+type catalogObjectRow struct {
+	Tier         string    `ch:"tier"`
+	ObjectKey    string    `ch:"object_key"`
+	SizeBytes    int64     `ch:"size_bytes"`
+	ETag         string    `ch:"etag"`
+	Sector       int32     `ch:"sector"`
+	TICID        int64     `ch:"tic_id"`
+	ProductType  string    `ch:"product_type"`
+	LastModified time.Time `ch:"last_modified"`
 }
 
 func (r *CatalogClickHouse) ListObjects(ctx context.Context, tier, prefix string, page, limit int) ([]repo.CatalogObject, int64, int64, error) {
@@ -170,57 +158,44 @@ func (r *CatalogClickHouse) ListObjects(ctx context.Context, tier, prefix string
 	}
 	offset := (page - 1) * limit
 
-	whereClause := fmt.Sprintf("tier = '%s'", quoteSQL(tier))
+	whereClause := "tier = ?"
+	args := []any{tier}
 	if prefix != "" && prefix != tier && prefix != tier+"/" {
-		cleanPrefix := quoteSQL(prefix)
-		whereClause += fmt.Sprintf(" AND object_key LIKE '%s%%'", cleanPrefix)
+		whereClause += " AND object_key LIKE ?"
+		args = append(args, prefix+"%")
 	}
 
-	// 1. Get total and sum in 1ms
-	countQuery := fmt.Sprintf("SELECT toString(count()) AS total, toString(sum(size_bytes)) AS total_bytes FROM aurora.lakehouse_objects FINAL WHERE %s FORMAT JSON", whereClause)
-	countData, err := r.client.Query(ctx, countQuery)
-	if err != nil {
-		return nil, 0, 0, err
-	}
-
-	var countResp countResponse
-	_ = json.Unmarshal(countData, &countResp)
+	// 1. Get total and sum
+	countQuery := fmt.Sprintf("SELECT toInt64(count()), toInt64(coalesce(sum(size_bytes), 0)) FROM aurora.lakehouse_objects FINAL WHERE %s", whereClause)
 	var total, totalBytes int64
-	if len(countResp.Data) > 0 {
-		total, _ = strconv.ParseInt(countResp.Data[0].Total, 10, 64)
-		totalBytes, _ = strconv.ParseInt(countResp.Data[0].TotalBytes, 10, 64)
+	if err := r.client.QueryRow(ctx, countQuery, args...).Scan(&total, &totalBytes); err != nil {
+		return nil, 0, 0, err
 	}
 
 	if total == 0 {
 		return []repo.CatalogObject{}, 0, 0, nil
 	}
 
-	// 2. Fetch paginated objects in 1ms
-	dataQuery := fmt.Sprintf("SELECT tier, object_key, toString(size_bytes) AS size_bytes, etag, sector, toString(tic_id) AS tic_id, product_type, toString(last_modified) AS last_modified FROM aurora.lakehouse_objects FINAL WHERE %s ORDER BY last_modified DESC LIMIT %d OFFSET %d FORMAT JSON", whereClause, limit, offset)
-	dataBytes, err := r.client.Query(ctx, dataQuery)
-	if err != nil {
-		return nil, 0, 0, err
+	// 2. Fetch paginated objects
+	dataQuery := fmt.Sprintf("SELECT tier, object_key, size_bytes, etag, sector, tic_id, product_type, last_modified FROM aurora.lakehouse_objects FINAL WHERE %s ORDER BY last_modified DESC LIMIT ? OFFSET ?", whereClause)
+	fetchArgs := append(append([]any(nil), args...), limit, offset)
+
+	var rows []catalogObjectRow
+	if err := r.client.Select(ctx, &rows, dataQuery, fetchArgs...); err != nil {
+		return nil, 0, 0, fmt.Errorf("select catalog objects: %w", err)
 	}
 
-	var listResp listResponse
-	if err := json.Unmarshal(dataBytes, &listResp); err != nil {
-		return nil, 0, 0, err
-	}
-
-	results := make([]repo.CatalogObject, len(listResp.Data))
-	for i, row := range listResp.Data {
-		sb, _ := strconv.ParseInt(row.SizeBytes, 10, 64)
-		tic, _ := strconv.ParseInt(row.TICID, 10, 64)
-		modTime, _ := time.Parse("2006-01-02 15:04:05", row.LastModified)
+	results := make([]repo.CatalogObject, len(rows))
+	for i, row := range rows {
 		results[i] = repo.CatalogObject{
 			Tier:         row.Tier,
 			ObjectKey:    row.ObjectKey,
-			SizeBytes:    sb,
+			SizeBytes:    row.SizeBytes,
 			ETag:         row.ETag,
 			Sector:       row.Sector,
-			TICID:        tic,
+			TICID:        row.TICID,
 			ProductType:  row.ProductType,
-			LastModified: modTime,
+			LastModified: row.LastModified,
 		}
 	}
 
@@ -234,12 +209,4 @@ func validTier(tier string) bool {
 	default:
 		return false
 	}
-}
-
-// quoteSQL escapes a ClickHouse single-quoted string. Queries are still built
-// locally because the HTTP client does not expose parameter binding; every
-// external string therefore passes through this single implementation.
-func quoteSQL(value string) string {
-	value = strings.ReplaceAll(value, "\\", "\\\\")
-	return strings.ReplaceAll(value, "'", "\\'")
 }

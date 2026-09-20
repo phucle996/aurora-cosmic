@@ -2,9 +2,8 @@ package repository
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"strings"
+	"time"
 
 	"go-api/infra/clickhouse"
 	"go-api/internal/domain/entity"
@@ -38,55 +37,91 @@ func (r *PredictionProjectionClickHouse) ExistingPredictionIDs(ctx context.Conte
 	if err != nil {
 		return nil, err
 	}
-	literals := make([]string, 0, len(ids))
-	for _, id := range ids {
-		literals = append(literals, "'"+strings.ReplaceAll(id, "'", "''")+"'")
+	var existingIDs []string
+	query := fmt.Sprintf("SELECT prediction_id FROM %s WHERE prediction_id IN (?)", table)
+	if err := r.client.Select(ctx, &existingIDs, query, ids); err != nil {
+		return nil, fmt.Errorf("select existing prediction IDs: %w", err)
 	}
-	body, err := r.client.Query(ctx, fmt.Sprintf(
-		"SELECT prediction_id FROM %s WHERE prediction_id IN (%s) FORMAT JSON",
-		table,
-		strings.Join(literals, ","),
-	))
-	if err != nil {
-		return nil, err
-	}
-	var response struct {
-		Data []struct {
-			PredictionID string `json:"prediction_id"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, fmt.Errorf("decode existing prediction IDs: %w", err)
-	}
-	for _, row := range response.Data {
-		existing[row.PredictionID] = struct{}{}
+	for _, id := range existingIDs {
+		existing[id] = struct{}{}
 	}
 	return existing, nil
 }
 
-func insertJSONEachRow[T any](ctx context.Context, client *clickhouse.Client, table string, rows []T) error {
+func (r *PredictionProjectionClickHouse) InsertCandidatePredictions(ctx context.Context, rows []entity.CandidatePredictionProjection) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	var payload strings.Builder
-	payload.WriteString("INSERT INTO ")
-	payload.WriteString(table)
-	payload.WriteString(" FORMAT JSONEachRow\n")
-	for _, row := range rows {
-		encoded, err := json.Marshal(row)
-		if err != nil {
-			return fmt.Errorf("encode %s projection row: %w", table, err)
-		}
-		payload.Write(encoded)
-		payload.WriteByte('\n')
+	batch, err := r.client.PrepareBatch(ctx, `INSERT INTO candidate_predictions (
+		prediction_id, source_product_id, tic_id, sector, raw_logit,
+		candidate_score, decision_threshold, above_threshold, model_version,
+		registered_model_id, gold_snapshot_id, runtime_validation_id,
+		runtime_package_id, predicted_at
+	)`)
+	if err != nil {
+		return fmt.Errorf("prepare candidate_predictions batch: %w", err)
 	}
-	return client.Exec(ctx, payload.String())
-}
-
-func (r *PredictionProjectionClickHouse) InsertCandidatePredictions(ctx context.Context, rows []entity.CandidatePredictionProjection) error {
-	return insertJSONEachRow(ctx, r.client, "candidate_predictions", rows)
+	for _, row := range rows {
+		predictedAt, _ := time.Parse("2006-01-02 15:04:05", row.PredictedAt)
+		if err := batch.Append(
+			row.PredictionID,
+			row.SourceProductID,
+			row.TICID,
+			int32(row.Sector),
+			row.RawLogit,
+			row.CandidateScore,
+			row.DecisionThreshold,
+			row.AboveThreshold,
+			row.ModelVersion,
+			row.RegisteredModelID,
+			row.GoldSnapshotID,
+			row.RuntimeValidation,
+			row.RuntimePackageID,
+			predictedAt,
+		); err != nil {
+			return fmt.Errorf("append to candidate_predictions batch: %w", err)
+		}
+	}
+	if err := batch.Send(); err != nil {
+		return fmt.Errorf("send candidate_predictions batch: %w", err)
+	}
+	return nil
 }
 
 func (r *PredictionProjectionClickHouse) InsertAnomalyPredictions(ctx context.Context, rows []entity.AnomalyPredictionProjection) error {
-	return insertJSONEachRow(ctx, r.client, "anomaly_predictions", rows)
+	if len(rows) == 0 {
+		return nil
+	}
+	batch, err := r.client.PrepareBatch(ctx, `INSERT INTO anomaly_predictions (
+		prediction_id, source_product_id, tic_id, sector, reconstruction_mse,
+		decision_threshold, above_threshold, model_version, registered_model_id,
+		gold_snapshot_id, runtime_validation_id, runtime_package_id, predicted_at
+	)`)
+	if err != nil {
+		return fmt.Errorf("prepare anomaly_predictions batch: %w", err)
+	}
+	for _, row := range rows {
+		predictedAt, _ := time.Parse("2006-01-02 15:04:05", row.PredictedAt)
+		if err := batch.Append(
+			row.PredictionID,
+			row.SourceProductID,
+			row.TICID,
+			int32(row.Sector),
+			row.ReconstructionMSE,
+			row.DecisionThreshold,
+			row.AboveThreshold,
+			row.ModelVersion,
+			row.RegisteredModelID,
+			row.GoldSnapshotID,
+			row.RuntimeValidation,
+			row.RuntimePackageID,
+			predictedAt,
+		); err != nil {
+			return fmt.Errorf("append to anomaly_predictions batch: %w", err)
+		}
+	}
+	if err := batch.Send(); err != nil {
+		return fmt.Errorf("send anomaly_predictions batch: %w", err)
+	}
+	return nil
 }

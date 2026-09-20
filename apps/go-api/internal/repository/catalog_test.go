@@ -11,9 +11,3 @@ func TestParseCatalogObjectKeepsUnknownSectorUnscoped(t *testing.T) {
 		t.Fatalf("unknown sector was fabricated as %d", object.Sector)
 	}
 }
-
-func TestQuoteSQLEscapesBackslashAndQuote(t *testing.T) {
-	if got := quoteSQL(`a\\b'c`); got != `a\\\\b\'c` {
-		t.Fatalf("unsafe SQL escaping: %q", got)
-	}
-}

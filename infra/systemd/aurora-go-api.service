@@ -13,7 +13,7 @@ Environment=MINIO_ENDPOINT=http://127.0.0.1:9000
 Environment=NATS_URL=nats://127.0.0.1:4222
 Environment=PROMETHEUS_URL=http://127.0.0.1:9090
 Environment=INGESTER_CONTROL_URL=http://127.0.0.1:8087
-Environment=AURORA_CLICKHOUSE_ENDPOINT=http://127.0.0.1:8123
+Environment=AURORA_CLICKHOUSE_TCP_ADDR=127.0.0.1:9004
 ExecStart=%h/.local/go/bin/go run ./cmd/aurora-api
 Restart=on-failure
 RestartSec=3

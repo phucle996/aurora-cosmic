@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"testing"
 
 	"go-api/infra/clickhouse"
@@ -93,23 +94,52 @@ func TestUnmarshalClickHouseTargetsJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unmarshal error: %v", err)
 	}
-	ticID := toInt64(response.Data[0].TICID)
+	ticID := testToInt64(response.Data[0].TICID)
 	if ticID != 318707089 {
 		t.Fatalf("Expected TICID 318707089, got %d", ticID)
 	}
 	if response.Data[0].Sector != 42 {
 		t.Fatalf("Expected Sector 42, got %d", response.Data[0].Sector)
 	}
-	if !toBool(response.Data[0].CandidateAboveThreshold) {
+	if !testToBool(response.Data[0].CandidateAboveThreshold) {
 		t.Fatalf("Expected CandidateAboveThreshold true")
 	}
 	t.Logf("Successfully unmarshaled: TICID=%d, Sector=%d", ticID, response.Data[0].Sector)
 }
 
+func testToInt64(v any) int64 {
+	switch val := v.(type) {
+	case float64:
+		return int64(val)
+	case int:
+		return int64(val)
+	case string:
+		n, _ := strconv.ParseInt(val, 10, 64)
+		return n
+	default:
+		return 0
+	}
+}
+
+func testToBool(v any) bool {
+	switch val := v.(type) {
+	case bool:
+		return val
+	case float64:
+		return val != 0
+	case string:
+		return val == "true" || val == "1"
+	default:
+		return false
+	}
+}
+
+
+
 func TestLiveClickHouseListTargets(t *testing.T) {
-	client := clickhouse.NewClient("http://localhost:8123", "aurora", "aurora", "aurora-dev-password")
-	if err := client.Ping(context.Background()); err != nil {
-		t.Skipf("ClickHouse not reachable, skipping live test: %v", err)
+	client, err := clickhouse.NewClient("127.0.0.1:9004", "aurora", "aurora", "aurora-dev-password")
+	if err != nil || client.Ping(context.Background()) != nil {
+		t.Skipf("ClickHouse TCP not reachable, skipping live test: %v", err)
 	}
 
 	repo := NewTargetClickHouse(client)
@@ -127,6 +157,28 @@ func TestLiveClickHouseListTargets(t *testing.T) {
 		return
 	}
 	t.Logf("Got total=%d, items=%d, first TICID=%d", page.Count, len(page.Items), page.Items[0].TICID)
+}
+
+func TestLiveClickHouseGetTarget(t *testing.T) {
+	client, err := clickhouse.NewClient("127.0.0.1:9004", "aurora", "aurora", "aurora-dev-password")
+	if err != nil || client.Ping(context.Background()) != nil {
+		t.Skipf("ClickHouse TCP not reachable, skipping live test: %v", err)
+	}
+
+	repo := NewTargetClickHouse(client)
+	detail, err := repo.GetTarget(context.Background(), 117516398, 1, "")
+	if err != nil {
+		t.Fatalf("Live GetTarget error: %v", err)
+	}
+	if detail.Target.TICID != 117516398 {
+		t.Fatalf("Expected TICID 117516398, got %d", detail.Target.TICID)
+	}
+	if !detail.Target.HasLightcurve || detail.Target.LightcurvePoints <= 0 {
+		t.Fatalf("Expected HasLightcurve=true with points, got %v (%d points)", detail.Target.HasLightcurve, detail.Target.LightcurvePoints)
+	}
+	if detail.Target.PipelineStatus != "ingested" {
+		t.Fatalf("Expected PipelineStatus 'ingested', got %q", detail.Target.PipelineStatus)
+	}
 }
 
 func TestApplyTrainingReadinessPolicy(t *testing.T) {

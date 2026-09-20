@@ -2,55 +2,55 @@ package entity
 
 // Candidate đại diện cho một kết quả dự đoán ứng viên ngoại hành tinh từ mô hình ML (Candidate Vetting CNN).
 type Candidate struct {
-	PredictionID    string  `json:"prediction_id"`
-	SourceProductID string  `json:"source_product_id"`
-	TICID           int64   `json:"tic_id"`
-	Sector          int     `json:"sector"`
-	RawLogit        float64 `json:"raw_logit"`
-	CandidateScore  float64 `json:"candidate_score"`
-	Threshold       float64 `json:"decision_threshold"`
-	AboveThreshold  bool    `json:"above_threshold"`
-	ModelVersion    string  `json:"model_version"`
-	RegisteredModel string  `json:"registered_model_id"`
-	SnapshotID      string  `json:"gold_snapshot_id"`
-	ValidationID    string  `json:"runtime_validation_id"`
-	RuntimePkgID    string  `json:"runtime_package_id"`
-	PredictedAt     string  `json:"predicted_at"`
+	PredictionID    string  `json:"prediction_id" ch:"prediction_id"`
+	SourceProductID string  `json:"source_product_id" ch:"source_product_id"`
+	TICID           int64   `json:"tic_id" ch:"tic_id"`
+	Sector          int32   `json:"sector" ch:"sector"`
+	RawLogit        float64 `json:"raw_logit" ch:"raw_logit"`
+	CandidateScore  float64 `json:"candidate_score" ch:"candidate_score"`
+	Threshold       float64 `json:"decision_threshold" ch:"decision_threshold"`
+	AboveThreshold  bool    `json:"above_threshold" ch:"above_threshold"`
+	ModelVersion    string  `json:"model_version" ch:"model_version"`
+	RegisteredModel string  `json:"registered_model_id" ch:"registered_model_id"`
+	SnapshotID      string  `json:"gold_snapshot_id" ch:"gold_snapshot_id"`
+	ValidationID    string  `json:"runtime_validation_id" ch:"runtime_validation_id"`
+	RuntimePkgID    string  `json:"runtime_package_id" ch:"runtime_package_id"`
+	PredictedAt     string  `json:"predicted_at" ch:"predicted_at"`
 }
 
 // CandidateEvidence chứa 31 đặc trưng trắc quang và danh mục sao TIC phục vụ kiểm tra chéo khoa học.
 type CandidateEvidence struct {
-	LineageID                  string  `json:"lineage_id"`
-	FeatureVersion             string  `json:"feature_version"`
-	FeatureFingerprint         string  `json:"feature_fingerprint"`
-	NPoints                    int64   `json:"n_points"`
-	TimeSpan                   float64 `json:"time_span"`
-	MedianCadence              float64 `json:"median_cadence"`
-	MaxGap                     float64 `json:"max_gap"`
-	FluxMean                   float64 `json:"flux_mean"`
-	FluxStd                    float64 `json:"flux_std"`
-	FluxAmplitude              float64 `json:"flux_amplitude"`
-	FluxRMS                    float64 `json:"flux_rms"`
-	MedianFluxErr              float64 `json:"median_flux_err"`
-	BLSAvailable               bool    `json:"bls_available"`
-	BLSPeriod                  float64 `json:"bls_period"`
-	BLSDuration                float64 `json:"bls_duration"`
-	BLSTransitTime             float64 `json:"bls_transit_time"`
-	BLSDepth                   float64 `json:"bls_depth"`
-	BLSPower                   float64 `json:"bls_power"`
-	PixelMADMedian             float64 `json:"pixel_mad_median"`
-	VariabilityPeakFraction    float64 `json:"variability_peak_fraction"`
-	TransitEvidenceAvailable   bool    `json:"transit_evidence_available"`
-	TransitDeficitSum          float64 `json:"transit_deficit_sum"`
-	TransitDeficitCenterOffset float64 `json:"transit_deficit_center_offset"`
-	TICAvailable               bool    `json:"tic_available"`
-	TMag                       float64 `json:"tmag"`
-	Teff                       float64 `json:"teff"`
-	StellarRadius              float64 `json:"stellar_radius"`
-	StellarMass                float64 `json:"stellar_mass"`
-	LogG                       float64 `json:"logg"`
-	MatchedTOIID               string  `json:"matched_toi_id"`
-	TOIMatchStatus             string  `json:"toi_match_status"`
+	LineageID                  string  `json:"lineage_id" ch:"lineage_id"`
+	FeatureVersion             string  `json:"feature_version" ch:"feature_version"`
+	FeatureFingerprint         string  `json:"feature_fingerprint" ch:"feature_fingerprint"`
+	NPoints                    int64   `json:"n_points" ch:"n_points"`
+	TimeSpan                   float64 `json:"time_span" ch:"time_span"`
+	MedianCadence              float64 `json:"median_cadence" ch:"median_cadence"`
+	MaxGap                     float64 `json:"max_gap" ch:"max_gap"`
+	FluxMean                   float64 `json:"flux_mean" ch:"flux_mean"`
+	FluxStd                    float64 `json:"flux_std" ch:"flux_std"`
+	FluxAmplitude              float64 `json:"flux_amplitude" ch:"flux_amplitude"`
+	FluxRMS                    float64 `json:"flux_rms" ch:"flux_rms"`
+	MedianFluxErr              float64 `json:"median_flux_err" ch:"median_flux_err"`
+	BLSAvailable               bool    `json:"bls_available" ch:"bls_available"`
+	BLSPeriod                  float64 `json:"bls_period" ch:"bls_period"`
+	BLSDuration                float64 `json:"bls_duration" ch:"bls_duration"`
+	BLSTransitTime             float64 `json:"bls_transit_time" ch:"bls_transit_time"`
+	BLSDepth                   float64 `json:"bls_depth" ch:"bls_depth"`
+	BLSPower                   float64 `json:"bls_power" ch:"bls_power"`
+	PixelMADMedian             float64 `json:"pixel_mad_median" ch:"pixel_mad_median"`
+	VariabilityPeakFraction    float64 `json:"variability_peak_fraction" ch:"variability_peak_fraction"`
+	TransitEvidenceAvailable   bool    `json:"transit_evidence_available" ch:"transit_evidence_available"`
+	TransitDeficitSum          float64 `json:"transit_deficit_sum" ch:"transit_deficit_sum"`
+	TransitDeficitCenterOffset float64 `json:"transit_deficit_center_offset" ch:"transit_deficit_center_offset"`
+	TICAvailable               bool    `json:"tic_available" ch:"tic_available"`
+	TMag                       float64 `json:"tmag" ch:"tmag"`
+	Teff                       float64 `json:"teff" ch:"teff"`
+	StellarRadius              float64 `json:"stellar_radius" ch:"stellar_radius"`
+	StellarMass                float64 `json:"stellar_mass" ch:"stellar_mass"`
+	LogG                       float64 `json:"logg" ch:"logg"`
+	MatchedTOIID               string  `json:"matched_toi_id" ch:"matched_toi_id"`
+	TOIMatchStatus             string  `json:"toi_match_status" ch:"toi_match_status"`
 }
 
 // HZFluxBoundaries định nghĩa ranh giới thông lượng bức xạ của vùng có thể sống được (Habitable Zone).
@@ -105,16 +105,16 @@ type HabitabilityAssessment struct {
 // CandidateReview là phán quyết thẩm định khoa học của chuyên gia đối với một ứng viên.
 // Tách biệt hoàn toàn khỏi nhãn huấn luyện và không làm biến đổi dữ liệu Gold.
 type CandidateReview struct {
-	SnapshotID      string `json:"-"`
-	PredictionID    string `json:"-"`
-	SourceProductID string `json:"-"`
-	TICID           int64  `json:"-"`
-	Sector          int    `json:"-"`
-	Decision        string `json:"decision"`
-	ReviewStatus    string `json:"review_status"`
-	Reviewer        string `json:"reviewer"`
-	Note            string `json:"note"`
-	UpdatedAt       string `json:"updated_at"`
+	SnapshotID      string `json:"-" ch:"snapshot_id"`
+	PredictionID    string `json:"-" ch:"prediction_id"`
+	SourceProductID string `json:"-" ch:"source_product_id"`
+	TICID           int64  `json:"-" ch:"tic_id"`
+	Sector          int32  `json:"-" ch:"sector"`
+	Decision        string `json:"decision" ch:"scientific_decision"`
+	ReviewStatus    string `json:"review_status" ch:"review_status"`
+	Reviewer        string `json:"reviewer" ch:"reviewer"`
+	Note            string `json:"note" ch:"review_note"`
+	UpdatedAt       string `json:"updated_at" ch:"updated_at"`
 }
 
 // CandidateDetail là entity tổng hợp chi tiết một ứng viên, dùng cho endpoint GET /candidates/:prediction_id

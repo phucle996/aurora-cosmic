@@ -3,80 +3,90 @@ package clickhouse
 import (
 	"context"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
-	"strings"
 	"time"
+
+	clickhouse_driver "github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 type Client struct {
-	Endpoint string
-	Database string
-	Username string
-	Password string
-	HTTP     *http.Client
+	Conn driver.Conn
 }
 
-func NewClient(endpoint, database, username, password string) *Client {
-	if endpoint == "" {
-		endpoint = "http://clickhouse:8123"
+func NewClient(addr, database, username, password string) (*Client, error) {
+	if addr == "" {
+		addr = "127.0.0.1:9004"
 	}
 	if database == "" {
 		database = "aurora"
 	}
-	return &Client{Endpoint: endpoint, Database: database, Username: username, Password: password, HTTP: &http.Client{Timeout: 30 * time.Second}}
+	conn, err := clickhouse_driver.Open(&clickhouse_driver.Options{
+		Addr: []string{addr},
+		Auth: clickhouse_driver.Auth{
+			Database: database,
+			Username: username,
+			Password: password,
+		},
+		DialTimeout:     5 * time.Second,
+		MaxOpenConns:    20,
+		MaxIdleConns:    5,
+		ConnMaxLifetime: 10 * time.Minute,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("open clickhouse connection: %w", err)
+	}
+	return &Client{Conn: conn}, nil
+}
+
+func NewClientWithConn(conn driver.Conn) *Client {
+	return &Client{Conn: conn}
+}
+
+func (c *Client) Select(ctx context.Context, dest any, query string, args ...any) error {
+	if c == nil || c.Conn == nil {
+		return fmt.Errorf("clickhouse connection is unavailable")
+	}
+	return c.Conn.Select(ctx, dest, query, args...)
+}
+
+func (c *Client) Exec(ctx context.Context, query string, args ...any) error {
+	if c == nil || c.Conn == nil {
+		return fmt.Errorf("clickhouse connection is unavailable")
+	}
+	return c.Conn.Exec(ctx, query, args...)
+}
+
+func (c *Client) Query(ctx context.Context, query string, args ...any) (driver.Rows, error) {
+	if c == nil || c.Conn == nil {
+		return nil, fmt.Errorf("clickhouse connection is unavailable")
+	}
+	return c.Conn.Query(ctx, query, args...)
+}
+
+func (c *Client) QueryRow(ctx context.Context, query string, args ...any) driver.Row {
+	if c == nil || c.Conn == nil {
+		return nil
+	}
+	return c.Conn.QueryRow(ctx, query, args...)
+}
+
+func (c *Client) PrepareBatch(ctx context.Context, query string, opts ...driver.PrepareBatchOption) (driver.Batch, error) {
+	if c == nil || c.Conn == nil {
+		return nil, fmt.Errorf("clickhouse connection is unavailable")
+	}
+	return c.Conn.PrepareBatch(ctx, query, opts...)
 }
 
 func (c *Client) Ping(ctx context.Context) error {
-	_, err := c.Query(ctx, "SELECT 1 FORMAT JSON")
-	return err
+	if c == nil || c.Conn == nil {
+		return fmt.Errorf("clickhouse connection is unavailable")
+	}
+	return c.Conn.Ping(ctx)
 }
 
-func (c *Client) Query(ctx context.Context, query string) ([]byte, error) {
-	reqURL := fmt.Sprintf("%s/?database=%s&query=%s", c.Endpoint, url.QueryEscape(c.Database), url.QueryEscape(query))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("build ClickHouse request: %w", err)
+func (c *Client) Close() error {
+	if c == nil || c.Conn == nil {
+		return nil
 	}
-	if c.Username != "" {
-		req.SetBasicAuth(c.Username, c.Password)
-	}
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("ClickHouse connection failed: %w", err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read ClickHouse response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("ClickHouse returned HTTP %d: %s", resp.StatusCode, string(body))
-	}
-	return body, nil
-}
-
-func (c *Client) Exec(ctx context.Context, query string) error {
-	reqURL := fmt.Sprintf("%s/?database=%s", c.Endpoint, url.QueryEscape(c.Database))
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, strings.NewReader(query))
-	if err != nil {
-		return fmt.Errorf("build ClickHouse exec request: %w", err)
-	}
-	if c.Username != "" {
-		req.SetBasicAuth(c.Username, c.Password)
-	}
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return fmt.Errorf("ClickHouse exec connection failed: %w", err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("read ClickHouse exec response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("ClickHouse exec returned HTTP %d: %s", resp.StatusCode, string(body))
-	}
-	return nil
+	return c.Conn.Close()
 }

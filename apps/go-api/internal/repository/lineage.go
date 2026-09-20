@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -17,14 +16,6 @@ type LineageClickHouse struct {
 
 func NewLineageClickHouse(client *clickhouse.Client) repo.LineageRepository {
 	return &LineageClickHouse{client: client}
-}
-
-type clickHouseLineageRow struct {
-	SourceProductID string   `json:"source_product_id"`
-	SilverObjectKey string   `json:"silver_object_key"`
-	SnapshotID      string   `json:"snapshot_id"`
-	Datasets        []string `json:"datasets"`
-	Status          string   `json:"status"`
 }
 
 func (r *LineageClickHouse) TraceLineage(ctx context.Context, lookups []entity.LineageLookup) ([]entity.LineageResolution, error) {
@@ -44,11 +35,11 @@ func (r *LineageClickHouse) TraceLineage(ctx context.Context, lookups []entity.L
 		}
 		if sourceID != "" {
 			bySource[sourceID] = append(bySource[sourceID], index)
-			sourceIDs = append(sourceIDs, "'"+escapeSQL(sourceID)+"'")
+			sourceIDs = append(sourceIDs, sourceID)
 		}
 		if silverKey != "" {
 			bySilverKey[silverKey] = append(bySilverKey[silverKey], index)
-			silverKeys = append(silverKeys, "'"+escapeSQL(silverKey)+"'")
+			silverKeys = append(silverKeys, silverKey)
 		}
 	}
 
@@ -57,11 +48,14 @@ func (r *LineageClickHouse) TraceLineage(ctx context.Context, lookups []entity.L
 	}
 
 	predicates := make([]string, 0, 2)
+	var args []any
 	if len(sourceIDs) > 0 {
-		predicates = append(predicates, fmt.Sprintf("source_product_id IN (%s)", strings.Join(sourceIDs, ", ")))
+		predicates = append(predicates, "source_product_id IN (?)")
+		args = append(args, sourceIDs)
 	}
 	if len(silverKeys) > 0 {
-		predicates = append(predicates, fmt.Sprintf("silver_object_key IN (%s)", strings.Join(silverKeys, ", ")))
+		predicates = append(predicates, "silver_object_key IN (?)")
+		args = append(args, silverKeys)
 	}
 
 	// CTE-first query: trace the latest committed Gold snapshot for each requested Silver input
@@ -84,22 +78,14 @@ func (r *LineageClickHouse) TraceLineage(ctx context.Context, lookups []entity.L
 		datasets,
 		status
 	FROM matched_inputs
-	WHERE rank = 1
-	FORMAT JSON`, strings.Join(predicates, " OR "))
+	WHERE rank = 1`, strings.Join(predicates, " OR "))
 
-	body, err := r.client.Query(ctx, query)
-	if err != nil {
+	var rows []entity.GoldLineageInput
+	if err := r.client.Select(ctx, &rows, query, args...); err != nil {
 		return nil, fmt.Errorf("query gold lineage inputs: %w", err)
 	}
 
-	var response struct {
-		Data []clickHouseLineageRow `json:"data"`
-	}
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, fmt.Errorf("decode gold lineage inputs: %w", err)
-	}
-
-	for _, row := range response.Data {
+	for _, row := range rows {
 		matchedIndices := append([]int(nil), bySource[row.SourceProductID]...)
 		matchedIndices = append(matchedIndices, bySilverKey[row.SilverObjectKey]...)
 		for _, index := range matchedIndices {

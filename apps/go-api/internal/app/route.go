@@ -11,16 +11,14 @@ func RegisterRoutes(engine *gin.Engine, module *Module) {
 
 	engine.GET("/api/v1/system", module.SystemHandler.System)
 	engine.GET("/api/v1/monitoring", module.MonitoringHandler.Query)
-	if module.DAGAggregationHandler != nil {
-		engine.GET("/api/v1/dag/hops/:hop_id", module.DAGAggregationHandler.QueryHop)
-		engine.GET("/api/v1/dag/graph", module.DAGAggregationHandler.QueryGraph)
-	}
-	if module.TicketHandler != nil {
-		engine.GET("/api/v1/data-factory/runs", module.TicketHandler.List)
-		engine.GET("/api/v1/data-factory/runs/:run_id", module.TicketHandler.Detail)
-		engine.GET("/api/v1/data-factory/tickets", module.TicketHandler.ListTickets)
-		engine.POST("/api/v1/data-factory/tickets", module.TicketHandler.CreateTicket)
-	}
+	engine.GET("/api/v1/dag/hops/:hop_id", module.DAGAggregationHandler.QueryHop)
+	engine.GET("/api/v1/dag/graph", module.DAGAggregationHandler.QueryGraph)
+
+	engine.GET("/api/v1/data-factory/tickets", module.TicketHandler.List)
+	engine.POST("/api/v1/data-factory/tickets", module.TicketHandler.Create)
+	engine.GET("/api/v1/data-factory/runs", module.TicketHandler.ListRuns)
+	engine.GET("/api/v1/data-factory/runs/:run_id", module.TicketHandler.Detail)
+
 	engine.POST("/api/v1/preprocessing/tickets", module.PreprocessingHandler.Start)
 	engine.POST("/api/v1/preprocessing/tickets/:ticket_id/stop", module.PreprocessingHandler.Stop)
 	// Enrichment workflow routes
@@ -30,12 +28,10 @@ func RegisterRoutes(engine *gin.Engine, module *Module) {
 	engine.GET("/api/v1/enrichment/snapshots", module.EnrichmentControlHandler.ListSnapshots)
 	engine.GET("/api/v1/enrichment/snapshots/:snapshot_id", module.EnrichmentControlHandler.Snapshot)
 	// Lineage workflow routes
-	if module.LineageHandler != nil {
-		engine.POST("/api/v1/lineage/trace", module.LineageHandler.TraceLineage)
-	}
-	if module.EventsHandler != nil {
-		engine.GET("/api/v1/events", module.EventsHandler.Stream)
-	}
+	engine.POST("/api/v1/lineage/trace", module.LineageHandler.TraceLineage)
+	engine.GET("/api/v1/lineage/ledger", module.LineageHandler.Ledger)
+
+	engine.GET("/api/v1/events", module.EventsHandler.Stream)
 	engine.GET("/api/v1/ingest/status", module.IngestHandler.Status)
 	engine.GET("/api/v1/storage", module.IngestHandler.Storage)
 	engine.POST("/api/v1/ingest/jobs", module.IngestHandler.Start)

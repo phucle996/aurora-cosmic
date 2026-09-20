@@ -3,6 +3,7 @@ Description=AURORA native development application stack (100% systemd)
 Wants=aurora-minio.service
 Wants=aurora-minio-init.service
 Wants=aurora-nats.service
+Wants=aurora-nats-exporter.service
 Wants=aurora-clickhouse.service
 Wants=aurora-clickhouse-init.service
 Wants=aurora-prometheus.service

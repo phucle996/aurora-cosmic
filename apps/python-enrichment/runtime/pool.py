@@ -366,6 +366,8 @@ class WorkerPool:
                 step_index=2,
                 step_name="PAIRING",
             )
+            paired_count = sum(event.product_kind == "LIGHT_CURVE" for event in events)
+            self.metrics.record_pairing(paired_count)
 
             # 3. Synchronize immutable external catalogs (TIC & TOI)
             await self.set_worker_state(
@@ -405,12 +407,21 @@ class WorkerPool:
             }
             await self.report_status_cb(batch_control, "CATALOG_SYNCING")
 
+            catalog_sync_start = time.perf_counter()
             catalog_result = await asyncio.to_thread(
                 sync_catalogs_for_tics,
                 self.store,
                 self.config.minio_bucket,
                 tic_ids,
             )
+            catalog_elapsed = time.perf_counter() - catalog_sync_start
+            self.metrics.record_catalog_sync(
+                catalog_result.tic_records,
+                catalog_result.toi_records,
+                catalog_elapsed,
+                cache_hit=catalog_result.cache_hit,
+            )
+
             self.catalog_sync = {
                 "mode": "ON_DEMAND",
                 "state": "READY",
@@ -452,6 +463,19 @@ class WorkerPool:
                 catalog_result.catalogs,
             )
 
+            # Record phase metrics from build candidate execution
+            self.metrics.record_step("lc_features", result.lc_feature_duration_seconds, result.lightcurve_feature_rows)
+            self.metrics.record_step("bls", result.lc_feature_duration_seconds, result.bls_evidence_rows)
+            if result.bls_evidence_rows > 0:
+                self.metrics.bls_candidates.inc(result.bls_evidence_rows)
+            self.metrics.record_step("tpf_vetting", result.tpf_duration_seconds, result.target_pixel_evidence_rows)
+            if result.target_pixel_evidence_rows > 0:
+                self.metrics.tpf_transit_evidence.inc(result.target_pixel_evidence_rows)
+            self.metrics.record_step("candidate", result.assembly_duration_seconds, result.row_count)
+            if result.row_count > 0:
+                self.metrics.candidates_assembled.inc(result.row_count)
+            self.metrics.record_parquet_write(result.parquet_duration_seconds, result.parquet_bytes)
+
             # 5. Indexing snapshot projections into ClickHouse (in ProcessPool)
             await self.set_worker_state(
                 worker_id,
@@ -464,12 +488,15 @@ class WorkerPool:
                 step_index=6,
                 step_name="INDEX",
             )
+            ch_index_start = time.perf_counter()
             indexed_rows = await asyncio.get_running_loop().run_in_executor(
                 self.build_executor,
                 _project_candidate_clickhouse,
                 self.config,
                 result,
             )
+            ch_index_elapsed = time.perf_counter() - ch_index_start
+            self.metrics.record_clickhouse_index(ch_index_elapsed, indexed_rows)
 
             # 6. Commit snapshot and record durable pipeline run history
             completed_at = datetime.now(timezone.utc)

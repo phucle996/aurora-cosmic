@@ -20,6 +20,8 @@ UNITS: Final = (
     "aurora-go-api.service",
     "aurora-go-ingester.service",
     "aurora-enrichment.service",
+    "aurora-nats.service",
+    "aurora-nats-exporter.service",
     "aurora-python-ml-worker.service",
     "aurora-rust-inference.service",
     "aurora-rust-preprocessor.service",

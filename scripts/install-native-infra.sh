@@ -69,4 +69,16 @@ if ! command -v clickhouse >/dev/null 2>&1; then
 fi
 echo "--> ClickHouse: $(clickhouse --version | head -n1)"
 
+# 6. Prometheus NATS Exporter
+if ! command -v prometheus-nats-exporter >/dev/null 2>&1; then
+    echo "--> Downloading Prometheus NATS Exporter (v0.20.2)..."
+    TMP_EXP="$(mktemp -d)"
+    curl -fsSL "https://github.com/nats-io/prometheus-nats-exporter/releases/download/v0.20.2/prometheus-nats-exporter-v0.20.2-linux-x86_64.tar.gz" | tar -xz -C "${TMP_EXP}"
+    mv "${TMP_EXP}/prometheus-nats-exporter" "${BIN_DIR}/prometheus-nats-exporter"
+    chmod +x "${BIN_DIR}/prometheus-nats-exporter"
+    rm -rf "${TMP_EXP}"
+fi
+echo "--> NATS Exporter: $(prometheus-nats-exporter -version 2>&1 | head -n1)"
+
 echo "==> All AURORA infrastructure binaries are ready in ${BIN_DIR}!"
+

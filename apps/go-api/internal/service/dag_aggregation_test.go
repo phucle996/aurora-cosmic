@@ -210,7 +210,7 @@ func TestDAGAggregationObserveRuntimeDiscardsMismatchedTicket(t *testing.T) {
 			Status:   "running",
 		},
 	}
-	svc := NewDAGAggregationService(ctrl, nil, nil, nil)
+	svc := NewDAGAggregationService(nil, nil, nil, ctrl)
 
 	// Event with mismatched ticket should be dropped
 	svc.ObserveRuntime(entity.PreprocessingRuntimeEvent{
@@ -281,7 +281,7 @@ func TestDAGAggregationQueryCumulativePrometheusMetrics(t *testing.T) {
 		},
 	}
 
-	svc := NewDAGAggregationService(ctrl, prom, nil, nil)
+	svc := NewDAGAggregationService(nil, prom, nil, ctrl)
 	graph, err := svc.QueryGraph(context.Background(), "", "")
 	if err != nil {
 		t.Fatalf("unexpected QueryGraph error: %v", err)
@@ -313,35 +313,24 @@ func TestDAGAggregationQueryCumulativePrometheusMetrics(t *testing.T) {
 	}
 }
 
-type fakeTicketRepository struct {
-	runDetail *entity.FactoryRunDetail
+type fakeDAGRepository struct {
+	evidence *entity.DAGRunEvidence
 }
 
-func (f *fakeTicketRepository) ListRuns(context.Context, string, int) ([]entity.FactoryRun, error) {
-	return nil, nil
-}
-func (f *fakeTicketRepository) GetRun(context.Context, string) (*entity.FactoryRunDetail, error) {
-	return f.runDetail, nil
-}
-func (f *fakeTicketRepository) ListTickets(context.Context, int) ([]entity.FactoryTicket, error) {
-	return nil, nil
-}
-func (f *fakeTicketRepository) CreateTicket(context.Context, string, string) (*entity.FactoryTicket, error) {
-	return nil, nil
+func (f *fakeDAGRepository) GetRunEvidence(context.Context, string) (*entity.DAGRunEvidence, error) {
+	return f.evidence, nil
 }
 
 func TestDAGAggregationGoldHopsWithTicketEvidence(t *testing.T) {
-	ticketRepo := &fakeTicketRepository{
-		runDetail: &entity.FactoryRunDetail{
-			Run: entity.FactoryRun{
-				RunID:          "ticket-gold-001",
-				Status:         "COMPLETED",
-				InputRecords:   420,
-				OutputRows:     418,
-				IndexedRows:    418,
-				LastSnapshotID: "gold-snap-1234",
-			},
-			ScientificEvidence: &entity.FactoryScientificEvidence{
+	dagRepo := &fakeDAGRepository{
+		evidence: &entity.DAGRunEvidence{
+			RunID:          "ticket-gold-001",
+			Status:         "COMPLETED",
+			InputRecords:   420,
+			OutputRows:     418,
+			IndexedRows:    418,
+			LastSnapshotID: "gold-snap-1234",
+			ScientificEvidence: &entity.ScientificEvidence{
 				LCFeatures: &entity.LCFeatureEvidence{
 					Rows:          418,
 					TotalCadences: 80000,
@@ -357,7 +346,7 @@ func TestDAGAggregationGoldHopsWithTicketEvidence(t *testing.T) {
 		},
 	}
 
-	svc := NewDAGAggregationService(nil, nil, nil, ticketRepo)
+	svc := NewDAGAggregationService(dagRepo, nil, nil, nil)
 
 	// Test gold-pairing
 	hopPairing, err := svc.AggregateHopMetrics(context.Background(), "ticket-gold-001", "gold-pairing")

@@ -48,13 +48,25 @@ func NewEnrichmentControlService(objects provider.ObjectStorage, publisher provi
 //     and catalog synchronization status (TIC/TOI cache hits, snapshot IDs).
 func (s *EnrichmentControlService) GetControlOverview(ctx context.Context) (*entity.EnrichmentControlOverview, error) {
 	// 1. Fetch persisted operator control state from durable object storage.
+	var control entity.EnrichmentControlState
 	data, err := s.objects.GetObject(ctx, enrichmentControlKey)
 	if err != nil {
-		return nil, fmt.Errorf("read enrichment control: %w", err)
-	}
-
-	var control entity.EnrichmentControlState
-	if err := json.Unmarshal(data, &control); err != nil {
+		if errors.Is(err, provider.ErrObjectNotFound) || strings.Contains(err.Error(), "object not found") {
+			control = entity.EnrichmentControlState{
+				SchemaVersion:    1,
+				Mode:             "STREAM",
+				MaxBatchRecords:  maxEnrichmentBatchSize,
+				IdleFlushSeconds: minEnrichmentIdleFlush * 3,
+				UpdatedAt:        time.Now().UTC(),
+			}
+			payload, marshalErr := json.MarshalIndent(control, "", "  ")
+			if marshalErr == nil {
+				_ = s.objects.PutObject(ctx, enrichmentControlKey, payload, "application/json")
+			}
+		} else {
+			return nil, fmt.Errorf("read enrichment control: %w", err)
+		}
+	} else if err := json.Unmarshal(data, &control); err != nil {
 		return nil, fmt.Errorf("decode enrichment control: %w", err)
 	}
 
@@ -155,13 +167,20 @@ func (s *EnrichmentControlService) Start(ctx context.Context, request entity.Enr
 //  3. Emits a pause_requested event on the topic.
 func (s *EnrichmentControlService) Stop(ctx context.Context) (*entity.EnrichmentCommandResult, error) {
 	// 1. Read existing control state from storage to retain current operational configuration.
+	var previous entity.EnrichmentControlState
 	data, err := s.objects.GetObject(ctx, enrichmentControlKey)
 	if err != nil {
-		return nil, fmt.Errorf("read enrichment control: %w", err)
-	}
-
-	var previous entity.EnrichmentControlState
-	if err := json.Unmarshal(data, &previous); err != nil {
+		if errors.Is(err, provider.ErrObjectNotFound) || strings.Contains(err.Error(), "object not found") {
+			previous = entity.EnrichmentControlState{
+				SchemaVersion:    1,
+				Mode:             "STREAM",
+				MaxBatchRecords:  maxEnrichmentBatchSize,
+				IdleFlushSeconds: minEnrichmentIdleFlush * 3,
+			}
+		} else {
+			return nil, fmt.Errorf("read enrichment control: %w", err)
+		}
+	} else if err := json.Unmarshal(data, &previous); err != nil {
 		return nil, fmt.Errorf("decode enrichment control: %w", err)
 	}
 

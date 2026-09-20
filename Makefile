@@ -8,6 +8,7 @@ SYSTEMD_UNITS := \
 	infra/systemd/aurora-minio.service \
 	infra/systemd/aurora-minio-init.service \
 	infra/systemd/aurora-nats.service \
+	infra/systemd/aurora-nats-exporter.service \
 	infra/systemd/aurora-clickhouse.service \
 	infra/systemd/aurora-clickhouse-init.service \
 	infra/systemd/aurora-prometheus.service \

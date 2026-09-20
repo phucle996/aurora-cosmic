@@ -12,7 +12,6 @@ import (
 
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/repo"
-	domainService "go-api/internal/domain/service"
 	"go-api/internal/provider"
 )
 
@@ -21,14 +20,19 @@ const (
 	dagTraceLimit    = 50
 )
 
+// PreprocessingJobReader reads the active preprocessing job state without depending on the lifecycle controller.
+type PreprocessingJobReader interface {
+	GetActiveJob(ctx context.Context) (*entity.PreprocessingControlJob, error)
+}
+
 // DAGAggregationService handles visual data aggregation for DAG hops/steps on-demand.
 // It is fully decoupled from the core workflow execution and serves charts and telemetry
 // tailored to the requested step and ticket timeline.
 type DAGAggregationService struct {
-	preprocessing domainService.Preprocessing
-	prometheus    repo.PrometheusQuerier
-	objects       provider.ObjectStorage
-	ticketRepo    repo.TicketRepository
+	dagRepo    repo.DAGRepository
+	prometheus repo.PrometheusQuerier
+	objects    provider.ObjectStorage
+	jobReader  PreprocessingJobReader
 
 	runtimeMu       sync.RWMutex
 	runtime         entity.PreprocessingRuntimeSnapshot
@@ -36,19 +40,19 @@ type DAGAggregationService struct {
 }
 
 // NewDAGAggregationService creates a new visual DAG aggregation service.
-func NewDAGAggregationService(preprocessing domainService.Preprocessing, prometheus repo.PrometheusQuerier, objects provider.ObjectStorage, ticketRepo repo.TicketRepository) *DAGAggregationService {
+func NewDAGAggregationService(dagRepo repo.DAGRepository, prometheus repo.PrometheusQuerier, objects provider.ObjectStorage, jobReader PreprocessingJobReader) *DAGAggregationService {
 	return &DAGAggregationService{
-		preprocessing: preprocessing,
-		prometheus:    prometheus,
-		objects:       objects,
-		ticketRepo:    ticketRepo,
+		dagRepo:    dagRepo,
+		prometheus: prometheus,
+		objects:    objects,
+		jobReader:  jobReader,
 	}
 }
 
 // ObserveRuntime receives real-time worker events from NATS and maintains the live visual worker pool and trace.
 func (s *DAGAggregationService) ObserveRuntime(event entity.PreprocessingRuntimeEvent) {
-	if event.TicketID != "" && s.preprocessing != nil {
-		if activeJob, err := s.preprocessing.GetActiveJob(context.Background()); err == nil && activeJob != nil && activeJob.TicketID != "" {
+	if event.TicketID != "" && s.jobReader != nil {
+		if activeJob, err := s.jobReader.GetActiveJob(context.Background()); err == nil && activeJob != nil && activeJob.TicketID != "" {
 			if activeJob.TicketID != event.TicketID {
 				return
 			}
@@ -151,8 +155,8 @@ func (s *DAGAggregationService) ObserveRuntime(event entity.PreprocessingRuntime
 // worker pool snapshot comes from the lightweight in-memory Observer.
 func (s *DAGAggregationService) QueryGraph(ctx context.Context, stage string, ticketID string) (*entity.DAGGraph, error) {
 	var runtimeJob *entity.PreprocessingControlJob
-	if s.preprocessing != nil {
-		runtimeJob, _ = s.preprocessing.GetActiveJob(ctx)
+	if s.jobReader != nil {
+		runtimeJob, _ = s.jobReader.GetActiveJob(ctx)
 	}
 
 	s.runtimeMu.RLock()
@@ -301,9 +305,9 @@ func (s *DAGAggregationService) QueryGraph(ctx context.Context, stage string, ti
 		"gold-pairing", "gold-catalog", "gold-lc-features", "gold-bls",
 		"gold-tpf-evidence", "gold-candidate", "gold-parquet", "gold-index", "gold-commit",
 	}
-	var ticketDetail *entity.FactoryRunDetail
-	if ticketID != "" && s.ticketRepo != nil {
-		ticketDetail, _ = s.ticketRepo.GetRun(ctx, ticketID)
+	var evidence *entity.DAGRunEvidence
+	if ticketID != "" && s.dagRepo != nil {
+		evidence, _ = s.dagRepo.GetRunEvidence(ctx, ticketID)
 	}
 
 	for _, id := range goldHopIDs {
@@ -321,17 +325,17 @@ func (s *DAGAggregationService) QueryGraph(ctx context.Context, stage string, ti
 			Telemetry:   make(map[string][]entity.MonitoringPoint),
 			Details:     make(map[string]string),
 		}
-		if ticketDetail != nil {
-			ghop.Status = strings.ToLower(ticketDetail.Run.Status)
-			ghop.Metrics["input_records"] = float64(ticketDetail.Run.InputRecords)
-			ghop.Metrics["output_rows"] = float64(ticketDetail.Run.OutputRows)
-			ghop.Metrics["indexed_rows"] = float64(ticketDetail.Run.IndexedRows)
-			ghop.Metrics["completed_batches"] = float64(ticketDetail.Run.CompletedBatches)
-			if ticketDetail.Run.LastSnapshotID != "" {
-				ghop.Details["snapshot_id"] = ticketDetail.Run.LastSnapshotID
+		if evidence != nil {
+			ghop.Status = strings.ToLower(evidence.Status)
+			ghop.Metrics["input_records"] = float64(evidence.InputRecords)
+			ghop.Metrics["output_rows"] = float64(evidence.OutputRows)
+			ghop.Metrics["indexed_rows"] = float64(evidence.IndexedRows)
+			ghop.Metrics["completed_batches"] = float64(evidence.CompletedBatches)
+			if evidence.LastSnapshotID != "" {
+				ghop.Details["snapshot_id"] = evidence.LastSnapshotID
 			}
-			ghop.Details["ticket_id"] = ticketDetail.Run.RunID
-			for _, comp := range ticketDetail.Components {
+			ghop.Details["ticket_id"] = evidence.RunID
+			for _, comp := range evidence.Components {
 				if comp.ComponentID == id || comp.ComponentID == "gold-features" {
 					if comp.Status != "" {
 						ghop.Status = strings.ToLower(comp.Status)
@@ -347,35 +351,23 @@ func (s *DAGAggregationService) QueryGraph(ctx context.Context, stage string, ti
 					}
 				}
 			}
-			if id == "gold-pairing" {
+			switch id {
+			case "gold-pairing":
 				ghop.Metrics["readiness_observed"] = 1
-				ghop.Metrics["ready_lightcurves"] = float64(ticketDetail.Run.InputRecords)
-				ghop.Metrics["pending_lightcurves"] = float64(ticketDetail.Run.InputRecords)
-				ghop.Metrics["tpf_contexts"] = float64(ticketDetail.Run.InputRecords)
-				ghop.Metrics["max_batch_records"] = float64(ticketDetail.Run.MaxBatchRecords)
-			} else if id == "gold-catalog" {
+				ghop.Metrics["ready_lightcurves"] = float64(evidence.InputRecords)
+				ghop.Metrics["pending_lightcurves"] = float64(evidence.InputRecords)
+				ghop.Metrics["tpf_contexts"] = float64(evidence.InputRecords)
+				ghop.Metrics["max_batch_records"] = float64(evidence.MaxBatchRecords)
+			case "gold-catalog":
 				ghop.Metrics["catalog_observed"] = 1
-				ghop.Metrics["catalog_target_count"] = float64(ticketDetail.Run.InputRecords)
-				ghop.Metrics["tic_records"] = float64(ticketDetail.Run.InputRecords)
-				ghop.Metrics["toi_records"] = float64(ticketDetail.Run.InputRecords)
+				ghop.Metrics["catalog_target_count"] = float64(evidence.InputRecords)
+				ghop.Metrics["tic_records"] = float64(evidence.InputRecords)
+				ghop.Metrics["toi_records"] = float64(evidence.InputRecords)
 				ghop.Metrics["catalog_cache_hit"] = 1
 				ghop.Details["catalog_state"] = "COMPLETED"
 				ghop.Details["catalog_mode"] = "RESOLVED"
-			} else if id == "gold-lc-features" && ticketDetail.ScientificEvidence != nil {
-				ghop.LCFeatureEvidence = ticketDetail.ScientificEvidence.LCFeatures
-			} else if id == "gold-bls" && ticketDetail.ScientificEvidence != nil {
-				ghop.BLSSearchEvidence = ticketDetail.ScientificEvidence.BLSSearch
-			} else if id == "gold-tpf-evidence" && ticketDetail.ScientificEvidence != nil {
-				ghop.TPFSpatialEvidence = ticketDetail.ScientificEvidence.TPFSpatial
-			} else if id == "gold-candidate" && ticketDetail.ScientificEvidence != nil {
-				ghop.CandidateAssemblyEvidence = ticketDetail.ScientificEvidence.CandidateAssembly
-			} else if id == "gold-parquet" && ticketDetail.ScientificEvidence != nil {
-				ghop.GoldMaterializationEvidence = ticketDetail.ScientificEvidence.GoldMaterialization
-			} else if id == "gold-index" && ticketDetail.ScientificEvidence != nil {
-				ghop.GoldProjectionEvidence = ticketDetail.ScientificEvidence.GoldProjection
-			} else if id == "gold-commit" && ticketDetail.ScientificEvidence != nil {
-				ghop.GoldCommitEvidence = ticketDetail.ScientificEvidence.GoldCommit
-				if ticketDetail.Run.LastSnapshotID != "" {
+			case "gold-commit":
+				if evidence.LastSnapshotID != "" {
 					ghop.Metrics["committed_snapshots"] = 1
 				}
 			}
@@ -385,7 +377,8 @@ func (s *DAGAggregationService) QueryGraph(ctx context.Context, stage string, ti
 			if enrichmentRuntime.LastSnapshotID != "" {
 				ghop.Details["snapshot_id"] = enrichmentRuntime.LastSnapshotID
 			}
-			if id == "gold-pairing" {
+			switch id {
+			case "gold-pairing":
 				ghop.Metrics["readiness_observed"] = 1
 				ghop.Metrics["ready_lightcurves"] = float64(enrichmentRuntime.Readiness.ReadyLightcurves)
 				ghop.Metrics["missing_tpf"] = float64(enrichmentRuntime.Readiness.MissingTPF)
@@ -397,7 +390,7 @@ func (s *DAGAggregationService) QueryGraph(ctx context.Context, stage string, ti
 				if control != nil {
 					ghop.Metrics["max_batch_records"] = float64(control.MaxBatchRecords)
 				}
-			} else if id == "gold-catalog" {
+			case "gold-catalog":
 				ghop.Metrics["catalog_observed"] = 1
 				ghop.Metrics["catalog_target_count"] = float64(enrichmentRuntime.Readiness.ReadyLightcurves)
 				ghop.Metrics["tic_records"] = float64(enrichmentRuntime.CatalogSync.TICRecords)
@@ -409,7 +402,7 @@ func (s *DAGAggregationService) QueryGraph(ctx context.Context, stage string, ti
 				}
 				ghop.Details["catalog_state"] = enrichmentRuntime.CatalogSync.State
 				ghop.Details["catalog_mode"] = "LIVE_SYNC"
-			} else {
+			default:
 				ghop.Metrics["input_records"] = float64(enrichmentRuntime.Readiness.ReadyLightcurves)
 				ghop.Metrics["output_rows"] = float64(enrichmentRuntime.Readiness.ReadyLightcurves)
 				if id == "gold-tpf-evidence" {
@@ -424,6 +417,110 @@ func (s *DAGAggregationService) QueryGraph(ctx context.Context, stage string, ti
 				}
 				if id == "gold-commit" && enrichmentRuntime.LastSnapshotID != "" {
 					ghop.Metrics["committed_snapshots"] = 1
+				}
+			}
+		}
+
+		// Query Prometheus telemetry for this Gold Hop
+		if s.prometheus != nil {
+			stepDur := time.Duration(math.Max(15, end.Sub(start).Seconds()/60)) * time.Second
+			switch id {
+			case "gold-pairing":
+				if pts, err := s.prometheus.QueryRange(ctx, fmt.Sprintf(`sum(increase(aurora_enrichment_paired_pairs_total[%s]))`, window), start, end, stepDur); err == nil && len(pts) > 0 {
+					ghop.Metrics["output_rows"] = pts[len(pts)-1].Value
+					ghop.Metrics["input_records"] = pts[len(pts)-1].Value * 2
+					ghop.Telemetry["output_rows"] = pts
+					ghop.Telemetry["input_records"] = pts
+				}
+				if pts, err := s.prometheus.QueryRange(ctx, fmt.Sprintf(`sum(rate(aurora_enrichment_step_duration_seconds_sum{step="pairing"}[%s])) / clamp_min(sum(rate(aurora_enrichment_step_duration_seconds_count{step="pairing"}[%s])), 0.001) * 1000`, window, window), start, end, stepDur); err == nil && len(pts) > 0 {
+					ghop.Metrics["duration_ms"] = pts[len(pts)-1].Value
+					ghop.Telemetry["duration_ms"] = pts
+				}
+			case "gold-catalog":
+				if pts, err := s.prometheus.QueryRange(ctx, fmt.Sprintf(`sum(increase(aurora_enrichment_catalog_records_total[%s]))`, window), start, end, stepDur); err == nil && len(pts) > 0 {
+					ghop.Metrics["input_records"] = pts[len(pts)-1].Value
+					ghop.Metrics["output_rows"] = pts[len(pts)-1].Value
+					ghop.Telemetry["output_rows"] = pts
+				}
+				if pts, err := s.prometheus.QueryRange(ctx, fmt.Sprintf(`sum(rate(aurora_enrichment_catalog_sync_duration_seconds_sum[%s])) / clamp_min(sum(rate(aurora_enrichment_catalog_sync_duration_seconds_count[%s])), 0.001) * 1000`, window, window), start, end, stepDur); err == nil && len(pts) > 0 {
+					ghop.Metrics["duration_ms"] = pts[len(pts)-1].Value
+					ghop.Telemetry["duration_ms"] = pts
+				}
+			case "gold-lc-features":
+				if pts, err := s.prometheus.QueryRange(ctx, fmt.Sprintf(`sum(increase(aurora_enrichment_step_records_total{step="lc_features"}[%s]))`, window), start, end, stepDur); err == nil && len(pts) > 0 {
+					ghop.Metrics["input_records"] = pts[len(pts)-1].Value
+					ghop.Metrics["output_rows"] = pts[len(pts)-1].Value
+					ghop.Telemetry["output_rows"] = pts
+				}
+				if pts, err := s.prometheus.QueryRange(ctx, fmt.Sprintf(`sum(rate(aurora_enrichment_step_duration_seconds_sum{step="lc_features"}[%s])) / clamp_min(sum(rate(aurora_enrichment_step_duration_seconds_count{step="lc_features"}[%s])), 0.001) * 1000`, window, window), start, end, stepDur); err == nil && len(pts) > 0 {
+					ghop.Metrics["duration_ms"] = pts[len(pts)-1].Value
+					ghop.Telemetry["duration_ms"] = pts
+				}
+			case "gold-bls":
+				if pts, err := s.prometheus.QueryRange(ctx, fmt.Sprintf(`sum(increase(aurora_enrichment_bls_candidates_detected_total[%s]))`, window), start, end, stepDur); err == nil && len(pts) > 0 {
+					ghop.Metrics["output_rows"] = pts[len(pts)-1].Value
+					ghop.Telemetry["output_rows"] = pts
+				}
+				if pts, err := s.prometheus.QueryRange(ctx, fmt.Sprintf(`sum(rate(aurora_enrichment_step_duration_seconds_sum{step="bls"}[%s])) / clamp_min(sum(rate(aurora_enrichment_step_duration_seconds_count{step="bls"}[%s])), 0.001) * 1000`, window, window), start, end, stepDur); err == nil && len(pts) > 0 {
+					ghop.Metrics["duration_ms"] = pts[len(pts)-1].Value
+					ghop.Telemetry["duration_ms"] = pts
+				}
+			case "gold-tpf-evidence":
+				if pts, err := s.prometheus.QueryRange(ctx, fmt.Sprintf(`sum(increase(aurora_enrichment_tpf_transit_evidence_total[%s]))`, window), start, end, stepDur); err == nil && len(pts) > 0 {
+					ghop.Metrics["output_rows"] = pts[len(pts)-1].Value
+					ghop.Telemetry["output_rows"] = pts
+				}
+				if pts, err := s.prometheus.QueryRange(ctx, fmt.Sprintf(`sum(rate(aurora_enrichment_step_duration_seconds_sum{step="tpf_vetting"}[%s])) / clamp_min(sum(rate(aurora_enrichment_step_duration_seconds_count{step="tpf_vetting"}[%s])), 0.001) * 1000`, window, window), start, end, stepDur); err == nil && len(pts) > 0 {
+					ghop.Metrics["duration_ms"] = pts[len(pts)-1].Value
+					ghop.Telemetry["duration_ms"] = pts
+				}
+			case "gold-candidate":
+				if pts, err := s.prometheus.QueryRange(ctx, fmt.Sprintf(`sum(increase(aurora_enrichment_candidate_assembled_total[%s]))`, window), start, end, stepDur); err == nil && len(pts) > 0 {
+					ghop.Metrics["input_records"] = pts[len(pts)-1].Value
+					ghop.Metrics["output_rows"] = pts[len(pts)-1].Value
+					ghop.Telemetry["output_rows"] = pts
+				}
+				if pts, err := s.prometheus.QueryRange(ctx, fmt.Sprintf(`sum(rate(aurora_enrichment_step_duration_seconds_sum{step="candidate"}[%s])) / clamp_min(sum(rate(aurora_enrichment_step_duration_seconds_count{step="candidate"}[%s])), 0.001) * 1000`, window, window), start, end, stepDur); err == nil && len(pts) > 0 {
+					ghop.Metrics["duration_ms"] = pts[len(pts)-1].Value
+					ghop.Telemetry["duration_ms"] = pts
+				}
+			case "gold-parquet":
+				if pts, err := s.prometheus.QueryRange(ctx, fmt.Sprintf(`sum(increase(aurora_enrichment_parquet_bytes_total[%s]))`, window), start, end, stepDur); err == nil && len(pts) > 0 {
+					ghop.Metrics["parquet_bytes"] = pts[len(pts)-1].Value
+					ghop.Metrics["output_rows"] = pts[len(pts)-1].Value
+					ghop.Telemetry["output_rows"] = pts
+				}
+				if pts, err := s.prometheus.QueryRange(ctx, fmt.Sprintf(`sum(rate(aurora_enrichment_parquet_write_duration_seconds_sum[%s])) / clamp_min(sum(rate(aurora_enrichment_parquet_write_duration_seconds_count[%s])), 0.001) * 1000`, window, window), start, end, stepDur); err == nil && len(pts) > 0 {
+					ghop.Metrics["duration_ms"] = pts[len(pts)-1].Value
+					ghop.Telemetry["duration_ms"] = pts
+				}
+			case "gold-index":
+				if pts, err := s.prometheus.QueryRange(ctx, fmt.Sprintf(`sum(increase(aurora_enrichment_clickhouse_indexed_rows_total[%s]))`, window), start, end, stepDur); err == nil && len(pts) > 0 {
+					ghop.Metrics["output_rows"] = pts[len(pts)-1].Value
+					ghop.Metrics["indexed_rows"] = pts[len(pts)-1].Value
+					ghop.Telemetry["output_rows"] = pts
+					ghop.Telemetry["indexed_rows"] = pts
+				}
+				if pts, err := s.prometheus.QueryRange(ctx, fmt.Sprintf(`sum(rate(aurora_enrichment_clickhouse_index_duration_seconds_sum[%s])) / clamp_min(sum(rate(aurora_enrichment_clickhouse_index_duration_seconds_count[%s])), 0.001) * 1000`, window, window), start, end, stepDur); err == nil && len(pts) > 0 {
+					ghop.Metrics["duration_ms"] = pts[len(pts)-1].Value
+					ghop.Telemetry["duration_ms"] = pts
+				}
+			case "gold-commit":
+				if pts, err := s.prometheus.QueryRange(ctx, fmt.Sprintf(`sum(increase(aurora_enrichment_snapshot_commits_total[%s]))`, window), start, end, stepDur); err == nil && len(pts) > 0 {
+					ghop.Metrics["output_rows"] = pts[len(pts)-1].Value
+					ghop.Telemetry["output_rows"] = pts
+				}
+				if pts, err := s.prometheus.QueryRange(ctx, fmt.Sprintf(`sum(increase(aurora_gold_batches_total{status="success"}[%s]))`, window), start, end, stepDur); err == nil && len(pts) > 0 {
+					ghop.Metrics["completed_batches"] = pts[len(pts)-1].Value
+				}
+				if pts, err := s.prometheus.QueryRange(ctx, fmt.Sprintf(`sum(rate(aurora_gold_batch_duration_seconds_sum{status="success"}[%s])) / clamp_min(sum(rate(aurora_gold_batch_duration_seconds_count{status="success"}[%s])), 0.001) * 1000`, window, window), start, end, stepDur); err == nil && len(pts) > 0 {
+					ghop.Metrics["duration_ms"] = pts[len(pts)-1].Value
+					ghop.Telemetry["duration_ms"] = pts
+				}
+			}
+			if ghop.Metrics["output_rows"] > 0 || ghop.Metrics["input_records"] > 0 {
+				if ghop.Status == "not_observed" {
+					ghop.Status = "completed"
 				}
 			}
 		}
@@ -761,23 +858,23 @@ func (s *DAGAggregationService) AggregateHopMetrics(ctx context.Context, ticketI
 	case "ack":
 		s.aggregateAckHop(ctx, hop, start, end, window)
 	case "gold-pairing":
-		s.aggregateGoldPairingHop(ctx, hop, ticketID, start, end, window)
+		s.aggregateGoldPairingHop(ctx, hop, ticketID, start, end)
 	case "gold-catalog":
-		s.aggregateGoldCatalogHop(ctx, hop, ticketID, start, end, window)
+		s.aggregateGoldCatalogHop(ctx, hop, ticketID)
 	case "gold-lc-features":
-		s.aggregateGoldLCFeaturesHop(ctx, hop, ticketID, start, end, window)
+		s.aggregateGoldLCFeaturesHop(ctx, hop, ticketID)
 	case "gold-bls":
-		s.aggregateGoldBLSHop(ctx, hop, ticketID, start, end, window)
+		s.aggregateGoldBLSHop(ctx, hop, ticketID)
 	case "gold-tpf-evidence":
-		s.aggregateGoldTPFEvidenceHop(ctx, hop, ticketID, start, end, window)
+		s.aggregateGoldTPFEvidenceHop(ctx, hop, ticketID)
 	case "gold-candidate":
-		s.aggregateGoldCandidateHop(ctx, hop, ticketID, start, end, window)
+		s.aggregateGoldCandidateHop(ctx, hop, ticketID)
 	case "gold-parquet":
-		s.aggregateGoldParquetHop(ctx, hop, ticketID, start, end, window)
+		s.aggregateGoldParquetHop(ctx, hop, ticketID)
 	case "gold-index":
-		s.aggregateGoldIndexHop(ctx, hop, ticketID, start, end, window)
+		s.aggregateGoldIndexHop(ctx, hop, ticketID)
 	case "gold-commit":
-		s.aggregateGoldCommitHop(ctx, hop, ticketID, start, end, window)
+		s.aggregateGoldCommitHop(ctx, hop, ticketID)
 	default:
 		s.queryMetric(ctx, hop, "throughput", `sum(rate(aurora_preprocessor_products_total{status="success"}[1m]))`, start, end)
 	}
@@ -1444,13 +1541,13 @@ func (s *DAGAggregationService) getEnrichmentOverview(ctx context.Context) (*ent
 	return control, runtime
 }
 
-func (s *DAGAggregationService) getTicketRunDetail(ctx context.Context, ticketID string) *entity.FactoryRunDetail {
-	if s.ticketRepo == nil || strings.TrimSpace(ticketID) == "" {
+func (s *DAGAggregationService) getRunEvidence(ctx context.Context, ticketID string) *entity.DAGRunEvidence {
+	if s.dagRepo == nil || strings.TrimSpace(ticketID) == "" {
 		return nil
 	}
-	detail, err := s.ticketRepo.GetRun(ctx, strings.TrimSpace(ticketID))
-	if err == nil && detail != nil {
-		return detail
+	evidence, err := s.dagRepo.GetRunEvidence(ctx, strings.TrimSpace(ticketID))
+	if err == nil && evidence != nil {
+		return evidence
 	}
 	return nil
 }
@@ -1549,24 +1646,24 @@ func deriveGoldHopStatus(hopID string, runtime *entity.EnrichmentRuntimeStatus) 
 	return "not_observed"
 }
 
-func (s *DAGAggregationService) aggregateGoldCommon(ctx context.Context, hop *entity.DAGHop, ticketID string) (*entity.FactoryRunDetail, *entity.EnrichmentControlState, *entity.EnrichmentRuntimeStatus) {
-	detail := s.getTicketRunDetail(ctx, ticketID)
+func (s *DAGAggregationService) aggregateGoldCommon(ctx context.Context, hop *entity.DAGHop, ticketID string) (*entity.DAGRunEvidence, *entity.EnrichmentControlState, *entity.EnrichmentRuntimeStatus) {
+	detail := s.getRunEvidence(ctx, ticketID)
 	control, runtime := s.getEnrichmentOverview(ctx)
 
 	if detail != nil {
-		hop.Status = strings.ToLower(detail.Run.Status)
-		hop.Metrics["input_records"] = float64(detail.Run.InputRecords)
-		hop.Metrics["output_rows"] = float64(detail.Run.OutputRows)
-		hop.Metrics["indexed_rows"] = float64(detail.Run.IndexedRows)
-		hop.Metrics["completed_batches"] = float64(detail.Run.CompletedBatches)
-		if detail.Run.LastSnapshotID != "" {
-			hop.Details["snapshot_id"] = detail.Run.LastSnapshotID
+		hop.Status = strings.ToLower(detail.Status)
+		hop.Metrics["input_records"] = float64(detail.InputRecords)
+		hop.Metrics["output_rows"] = float64(detail.OutputRows)
+		hop.Metrics["indexed_rows"] = float64(detail.IndexedRows)
+		hop.Metrics["completed_batches"] = float64(detail.CompletedBatches)
+		if detail.LastSnapshotID != "" {
+			hop.Details["snapshot_id"] = detail.LastSnapshotID
 		}
-		hop.Details["ticket_id"] = detail.Run.RunID
-		hop.Details["run_status"] = detail.Run.Status
+		hop.Details["ticket_id"] = detail.RunID
+		hop.Details["run_status"] = detail.Status
 
-		for _, comp := range detail.Components {
-			if comp.ComponentID == hop.ID || (strings.HasPrefix(hop.ID, "gold-") && comp.ComponentID == "gold-features") {
+		for compID, comp := range detail.Components {
+			if compID == hop.ID || (strings.HasPrefix(hop.ID, "gold-") && compID == "gold-features") {
 				if comp.Status != "" {
 					hop.Status = strings.ToLower(comp.Status)
 				}
@@ -1597,14 +1694,14 @@ func (s *DAGAggregationService) aggregateGoldCommon(ctx context.Context, hop *en
 	return detail, control, runtime
 }
 
-func (s *DAGAggregationService) aggregateGoldPairingHop(ctx context.Context, hop *entity.DAGHop, ticketID string, start, end time.Time, window string) {
+func (s *DAGAggregationService) aggregateGoldPairingHop(ctx context.Context, hop *entity.DAGHop, ticketID string, start, end time.Time) {
 	detail, control, runtime := s.aggregateGoldCommon(ctx, hop, ticketID)
 	if detail != nil {
 		hop.Metrics["readiness_observed"] = 1
-		hop.Metrics["ready_lightcurves"] = float64(detail.Run.InputRecords)
-		hop.Metrics["pending_lightcurves"] = float64(detail.Run.InputRecords)
-		hop.Metrics["tpf_contexts"] = float64(detail.Run.InputRecords)
-		hop.Metrics["max_batch_records"] = float64(detail.Run.MaxBatchRecords)
+		hop.Metrics["ready_lightcurves"] = float64(detail.InputRecords)
+		hop.Metrics["pending_lightcurves"] = float64(detail.InputRecords)
+		hop.Metrics["tpf_contexts"] = float64(detail.InputRecords)
+		hop.Metrics["max_batch_records"] = float64(detail.MaxBatchRecords)
 	} else if runtime != nil {
 		hop.Metrics["readiness_observed"] = 1
 		hop.Metrics["ready_lightcurves"] = float64(runtime.Readiness.ReadyLightcurves)
@@ -1619,13 +1716,13 @@ func (s *DAGAggregationService) aggregateGoldPairingHop(ctx context.Context, hop
 	s.queryMetric(ctx, hop, "throughput", `sum(rate(aurora_preprocessor_products_total{status="success"}[1m]))`, start, end)
 }
 
-func (s *DAGAggregationService) aggregateGoldCatalogHop(ctx context.Context, hop *entity.DAGHop, ticketID string, start, end time.Time, window string) {
+func (s *DAGAggregationService) aggregateGoldCatalogHop(ctx context.Context, hop *entity.DAGHop, ticketID string) {
 	detail, _, runtime := s.aggregateGoldCommon(ctx, hop, ticketID)
 	if detail != nil {
 		hop.Metrics["catalog_observed"] = 1
-		hop.Metrics["catalog_target_count"] = float64(detail.Run.InputRecords)
-		hop.Metrics["tic_records"] = float64(detail.Run.InputRecords)
-		hop.Metrics["toi_records"] = float64(detail.Run.InputRecords)
+		hop.Metrics["catalog_target_count"] = float64(detail.InputRecords)
+		hop.Metrics["tic_records"] = float64(detail.InputRecords)
+		hop.Metrics["toi_records"] = float64(detail.InputRecords)
 		hop.Metrics["catalog_cache_hit"] = 1
 		hop.Details["catalog_state"] = "COMPLETED"
 		hop.Details["catalog_mode"] = "RESOLVED"
@@ -1642,21 +1739,21 @@ func (s *DAGAggregationService) aggregateGoldCatalogHop(ctx context.Context, hop
 	}
 }
 
-func (s *DAGAggregationService) aggregateGoldLCFeaturesHop(ctx context.Context, hop *entity.DAGHop, ticketID string, start, end time.Time, window string) {
+func (s *DAGAggregationService) aggregateGoldLCFeaturesHop(ctx context.Context, hop *entity.DAGHop, ticketID string) {
 	detail, _, _ := s.aggregateGoldCommon(ctx, hop, ticketID)
 	if detail != nil && detail.ScientificEvidence != nil {
 		hop.LCFeatureEvidence = detail.ScientificEvidence.LCFeatures
 	}
 }
 
-func (s *DAGAggregationService) aggregateGoldBLSHop(ctx context.Context, hop *entity.DAGHop, ticketID string, start, end time.Time, window string) {
+func (s *DAGAggregationService) aggregateGoldBLSHop(ctx context.Context, hop *entity.DAGHop, ticketID string) {
 	detail, _, _ := s.aggregateGoldCommon(ctx, hop, ticketID)
 	if detail != nil && detail.ScientificEvidence != nil {
 		hop.BLSSearchEvidence = detail.ScientificEvidence.BLSSearch
 	}
 }
 
-func (s *DAGAggregationService) aggregateGoldTPFEvidenceHop(ctx context.Context, hop *entity.DAGHop, ticketID string, start, end time.Time, window string) {
+func (s *DAGAggregationService) aggregateGoldTPFEvidenceHop(ctx context.Context, hop *entity.DAGHop, ticketID string) {
 	detail, _, runtime := s.aggregateGoldCommon(ctx, hop, ticketID)
 	if detail != nil && detail.ScientificEvidence != nil {
 		hop.TPFSpatialEvidence = detail.ScientificEvidence.TPFSpatial
@@ -1666,43 +1763,39 @@ func (s *DAGAggregationService) aggregateGoldTPFEvidenceHop(ctx context.Context,
 	}
 }
 
-func (s *DAGAggregationService) aggregateGoldCandidateHop(ctx context.Context, hop *entity.DAGHop, ticketID string, start, end time.Time, window string) {
+func (s *DAGAggregationService) aggregateGoldCandidateHop(ctx context.Context, hop *entity.DAGHop, ticketID string) {
 	detail, _, _ := s.aggregateGoldCommon(ctx, hop, ticketID)
 	if detail != nil && detail.ScientificEvidence != nil {
 		hop.CandidateAssemblyEvidence = detail.ScientificEvidence.CandidateAssembly
 	}
 }
 
-func (s *DAGAggregationService) aggregateGoldParquetHop(ctx context.Context, hop *entity.DAGHop, ticketID string, start, end time.Time, window string) {
+func (s *DAGAggregationService) aggregateGoldParquetHop(ctx context.Context, hop *entity.DAGHop, ticketID string) {
 	detail, _, runtime := s.aggregateGoldCommon(ctx, hop, ticketID)
 	if detail != nil {
 		if detail.ScientificEvidence != nil {
 			hop.GoldMaterializationEvidence = detail.ScientificEvidence.GoldMaterialization
 		}
-		artifactCount := int64(0)
-		for _, b := range detail.Batches {
-			artifactCount += b.ArtifactCount
-		}
-		hop.Metrics["gold_artifacts"] = float64(artifactCount)
+		hop.Metrics["gold_artifacts"] = float64(detail.CompletedBatches)
 	} else if runtime != nil {
 		hop.Metrics["gold_artifacts"] = float64(runtime.ActiveBuilds)
 	}
 }
 
-func (s *DAGAggregationService) aggregateGoldIndexHop(ctx context.Context, hop *entity.DAGHop, ticketID string, start, end time.Time, window string) {
+func (s *DAGAggregationService) aggregateGoldIndexHop(ctx context.Context, hop *entity.DAGHop, ticketID string) {
 	detail, _, _ := s.aggregateGoldCommon(ctx, hop, ticketID)
 	if detail != nil && detail.ScientificEvidence != nil {
 		hop.GoldProjectionEvidence = detail.ScientificEvidence.GoldProjection
 	}
 }
 
-func (s *DAGAggregationService) aggregateGoldCommitHop(ctx context.Context, hop *entity.DAGHop, ticketID string, start, end time.Time, window string) {
+func (s *DAGAggregationService) aggregateGoldCommitHop(ctx context.Context, hop *entity.DAGHop, ticketID string) {
 	detail, _, runtime := s.aggregateGoldCommon(ctx, hop, ticketID)
 	if detail != nil {
 		if detail.ScientificEvidence != nil {
 			hop.GoldCommitEvidence = detail.ScientificEvidence.GoldCommit
 		}
-		if detail.Run.LastSnapshotID != "" {
+		if detail.LastSnapshotID != "" {
 			hop.Metrics["committed_snapshots"] = 1
 		}
 	} else if runtime != nil {

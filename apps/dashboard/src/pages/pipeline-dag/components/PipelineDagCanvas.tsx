@@ -42,27 +42,27 @@ const BRANCHED_POSITIONS: Record<string, { x: number; y: number }> = {
   lineage: { x: 2700, y: 420 },
   event: { x: 3080, y: 420 },
   ack: { x: 3460, y: 80 },
-  'gold-pairing': { x: 3460, y: 1050 },
-  'gold-catalog': { x: 3000, y: 1400 },
-  'gold-lc-features': { x: 3460, y: 1400 },
-  'gold-bls': { x: 3460, y: 1750 },
-  'gold-tpf-evidence': { x: 3920, y: 1750 },
-  'gold-candidate': { x: 3460, y: 2100 },
-  'gold-parquet': { x: 3000, y: 2100 },
-  'gold-index': { x: 2540, y: 2100 },
-  'gold-commit': { x: 2080, y: 2100 },
+  'gold-pairing': { x: 3460, y: 500 },
+  'gold-catalog': { x: 3880, y: 180 },
+  'gold-lc-features': { x: 3880, y: 500 },
+  'gold-bls': { x: 4260, y: 500 },
+  'gold-tpf-evidence': { x: 4260, y: 780 },
+  'gold-candidate': { x: 4660, y: 500 },
+  'gold-parquet': { x: 5060, y: 500 },
+  'gold-index': { x: 5460, y: 500 },
+  'gold-commit': { x: 5860, y: 500 },
 };
 
 const ENRICHMENT_BRANCHED_POSITIONS: Record<string, { x: number; y: number }> = {
   'gold-pairing': { x: 50, y: 350 },
-  'gold-catalog': { x: 420, y: 80 },
-  'gold-lc-features': { x: 420, y: 350 },
-  'gold-bls': { x: 800, y: 350 },
-  'gold-tpf-evidence': { x: 800, y: 620 },
-  'gold-candidate': { x: 1220, y: 350 },
-  'gold-parquet': { x: 1620, y: 350 },
-  'gold-index': { x: 2020, y: 350 },
-  'gold-commit': { x: 2420, y: 350 },
+  'gold-catalog': { x: 450, y: 100 },
+  'gold-lc-features': { x: 450, y: 350 },
+  'gold-bls': { x: 850, y: 350 },
+  'gold-tpf-evidence': { x: 850, y: 600 },
+  'gold-candidate': { x: 1250, y: 350 },
+  'gold-parquet': { x: 1650, y: 350 },
+  'gold-index': { x: 2050, y: 350 },
+  'gold-commit': { x: 2450, y: 350 },
 };
 
 function nodePosition(index: number, layout: DagLayout, id?: string, isEnrichmentOnly?: boolean): { x: number; y: number } {
@@ -188,7 +188,8 @@ export function PipelineDagCanvas({
 }): JSX.Element {
   const canvasRef = useRef<HTMLDivElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
-  const canvasHeight = layout === 'branched' ? 2450 : Math.max(680, Math.ceil(hops.length / 4) * 250 + 100);
+  const isEnrichmentOnly = useMemo(() => hops.length > 0 && hops.every((hop) => hop.id.startsWith('gold-')), [hops]);
+  const canvasHeight = layout === 'branched' ? (isEnrichmentOnly ? 850 : 1100) : Math.max(680, Math.ceil(hops.length / 4) * 250 + 100);
   const openHop = useCallback((id: string): void => {
     onSelectHop(id);
   }, [onSelectHop]);
@@ -203,8 +204,8 @@ export function PipelineDagCanvas({
   );
 
   const positions = useMemo(
-    () => new Map(hops.map((hop, index) => [hop.id, nodePosition(index, layout, hop.id)])),
-    [hops, layout]
+    () => new Map(hops.map((hop, index) => [hop.id, nodePosition(index, layout, hop.id, isEnrichmentOnly)])),
+    [hops, layout, isEnrichmentOnly]
   );
 
   const initialNodes = useMemo(

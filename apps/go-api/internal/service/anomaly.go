@@ -58,7 +58,7 @@ func (s *AnomalyService) GetAnomalyDetail(ctx context.Context, predictionID stri
 	}
 	if explanation.PredictionID != anomaly.PredictionID || explanation.GoldSnapshotID != anomaly.SnapshotID ||
 		explanation.SourceProductID != anomaly.SourceProductID || explanation.TICID != anomaly.TICID ||
-		int(explanation.Sector) != anomaly.Sector || explanation.RuntimePackageID != anomaly.RuntimePkgID ||
+		int32(explanation.Sector) != anomaly.Sector || explanation.RuntimePackageID != anomaly.RuntimePkgID ||
 		explanation.RuntimeValidationID != anomaly.ValidationID || explanation.RegisteredModelID != anomaly.RegisteredModel ||
 		explanation.AboveThreshold != anomaly.AboveThreshold {
 		return nil, fmt.Errorf("anomaly explanation identity does not match prediction")

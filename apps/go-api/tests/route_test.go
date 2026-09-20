@@ -159,6 +159,16 @@ func (fakeLineage) TraceLineage(_ context.Context, inputs []entity.LineageLookup
 	return make([]entity.LineageResolution, 0, len(inputs)), nil
 }
 
+func (fakeLineage) GetLedger(_ context.Context, query entity.LineageLedgerQuery) (*entity.LineageLedgerResponse, error) {
+	return &entity.LineageLedgerResponse{
+		Items:     []entity.LineageRecord{},
+		Inventory: entity.LineageInventory{},
+		Total:     0,
+		Page:      query.Page,
+		PageSize:  query.PageSize,
+	}, nil
+}
+
 type fakeIngest struct{}
 
 func (fakeIngest) Status(context.Context) (*entity.IngestStatus, error) {
@@ -187,11 +197,27 @@ func (fakeIngest) Cancel(context.Context, string) (*entity.IngestControlJob, err
 	return &entity.IngestControlJob{TicketID: "ingest-job-test", Status: "draining"}, nil
 }
 
+type fakeTicket struct{}
+
+func (fakeTicket) ListTickets(context.Context, int) ([]entity.RunnerTicket, error) {
+	return []entity.RunnerTicket{}, nil
+}
+func (fakeTicket) CreateTicket(context.Context, string, string) (*entity.RunnerTicket, error) {
+	return &entity.RunnerTicket{TicketID: "ticket-test"}, nil
+}
+func (fakeTicket) ListRuns(context.Context, string, int) ([]entity.PipelineRun, error) {
+	return []entity.PipelineRun{}, nil
+}
+func (fakeTicket) Detail(context.Context, string) (*entity.PipelineRunDetail, error) {
+	return &entity.PipelineRunDetail{Run: entity.PipelineRun{RunID: "run-test"}}, nil
+}
+
 var _ service.Candidate = fakeCandidate{}
 var _ service.Anomaly = fakeAnomaly{}
 var _ service.Target = fakeTarget{}
 var _ service.Lakehouse = fakeLakehouse{}
 var _ service.EnrichmentControl = fakeEnrichmentControl{}
+var _ service.Ticket = fakeTicket{}
 
 func newTestRouter() http.Handler {
 	return app.NewRouter(&config.Config{
@@ -207,14 +233,16 @@ func newTestRouter() http.Handler {
 		PreprocessingHandler:     handler.NewPreprocessingHandler(fakePreprocessing{}),
 		EnrichmentControlHandler: handler.NewEnrichmentControlHandler(fakeEnrichmentControl{}),
 		LineageHandler:           handler.NewLineageHandler(fakeLineage{}),
+		TicketHandler:            handler.NewTicketHandler(fakeTicket{}),
 		IngestHandler:            handler.NewIngestHandler(fakeIngest{}),
 		LakehouseHandler:         handler.NewLakehouseHandler(fakeLakehouse{}),
+		EventsHandler:            handler.NewEventsHandler(provider.NewSSEBroker()),
 	}, provider.NewMetrics())
 }
 
 func TestRouterEndpoints(t *testing.T) {
 	router := newTestRouter()
-	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/dag/hops/bronze", "/api/v1/dag/hops/gold-pairing", "/api/v1/dag/hops/gold-commit", "/api/v1/dag/graph", "/api/v1/dag/graph?stage=enrichment", "/api/v1/dag/graph?stage=preprocessing", "/api/v1/enrichment/control", "/api/v1/enrichment/snapshots", "/api/v1/enrichment/snapshots/gold-v1-test", "/api/v1/ingest/status", "/api/v1/storage?prefix=bronze/&limit=10", "/api/v1/lakehouse/objects?prefix=bronze/&limit=10", "/api/v1/lakehouse/preview?key=test.txt", "/api/v1/targets", "/api/v1/targets/101?sector=42", "/api/v1/candidates?snapshot_id=gold-v1-test", "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", "/api/v1/lightcurves?tic_id=101&sector=42", "/api/v1/models/training-cohort/review-queue?snapshot_id=gold-v1-test"} {
+	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/dag/hops/bronze", "/api/v1/dag/hops/gold-pairing", "/api/v1/dag/hops/gold-commit", "/api/v1/dag/graph", "/api/v1/dag/graph?stage=enrichment", "/api/v1/dag/graph?stage=preprocessing", "/api/v1/data-factory/runs", "/api/v1/data-factory/tickets", "/api/v1/enrichment/control", "/api/v1/enrichment/snapshots", "/api/v1/enrichment/snapshots/gold-v1-test", "/api/v1/lineage/ledger", "/api/v1/ingest/status", "/api/v1/storage?prefix=bronze/&limit=10", "/api/v1/lakehouse/objects?prefix=bronze/&limit=10", "/api/v1/lakehouse/preview?key=test.txt", "/api/v1/targets", "/api/v1/targets/101?sector=42", "/api/v1/candidates?snapshot_id=gold-v1-test", "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", "/api/v1/lightcurves?tic_id=101&sector=42", "/api/v1/models/training-cohort/review-queue?snapshot_id=gold-v1-test"} {
 		req := httptest.NewRequest(http.MethodGet, endpoint, nil)
 		recorder := httptest.NewRecorder()
 		router.ServeHTTP(recorder, req)
@@ -226,7 +254,6 @@ func TestRouterEndpoints(t *testing.T) {
 		}
 	}
 }
-
 
 func TestEnrichmentControlStartAndStop(t *testing.T) {
 	router := newTestRouter()
@@ -426,12 +453,23 @@ func TestCORSHeaders(t *testing.T) {
 
 func TestLineageTraceRoute(t *testing.T) {
 	router := newTestRouter()
+
+	// 1. Direct slice format []LineageLookup
+	reqDirect := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/trace", strings.NewReader(`[{"source_product_id":"source-1"}]`))
+	reqDirect.Header.Set("Content-Type", "application/json")
+	recDirect := httptest.NewRecorder()
+	router.ServeHTTP(recDirect, reqDirect)
+	if recDirect.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for direct slice, got %d", recDirect.Code)
+	}
+
+	// 2. Wrapped object format {"inputs": [...]} is rejected without backward compatibility hack
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/lineage/trace", strings.NewReader(`{"inputs":[{"source_product_id":"source-1"}]}`))
 	req.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, req)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK, got %d", recorder.Code)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request for wrapped object, got %d", recorder.Code)
 	}
 
 	// Verify legacy route is removed and returns 404
@@ -443,4 +481,3 @@ func TestLineageTraceRoute(t *testing.T) {
 		t.Fatalf("expected 404 Not Found for removed legacy route, got %d", legacyRecorder.Code)
 	}
 }
-

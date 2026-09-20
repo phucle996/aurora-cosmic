@@ -1,19 +1,19 @@
 package entity
 
 type Anomaly struct {
-	PredictionID      string  `json:"prediction_id"`
-	SourceProductID   string  `json:"source_product_id"`
-	TICID             int64   `json:"tic_id"`
-	Sector            int     `json:"sector"`
-	ReconstructionMSE float64 `json:"reconstruction_mse"`
-	Threshold         float64 `json:"decision_threshold"`
-	AboveThreshold    bool    `json:"above_threshold"`
-	ModelVersion      string  `json:"model_version"`
-	RegisteredModel   string  `json:"registered_model_id"`
-	SnapshotID        string  `json:"gold_snapshot_id"`
-	ValidationID      string  `json:"runtime_validation_id"`
-	RuntimePkgID      string  `json:"runtime_package_id"`
-	PredictedAt       string  `json:"predicted_at"`
+	PredictionID      string  `json:"prediction_id" ch:"prediction_id"`
+	SourceProductID   string  `json:"source_product_id" ch:"source_product_id"`
+	TICID             int64   `json:"tic_id" ch:"tic_id"`
+	Sector            int32   `json:"sector" ch:"sector"`
+	ReconstructionMSE float64 `json:"reconstruction_mse" ch:"reconstruction_mse"`
+	Threshold         float64 `json:"decision_threshold" ch:"decision_threshold"`
+	AboveThreshold    bool    `json:"above_threshold" ch:"above_threshold"`
+	ModelVersion      string  `json:"model_version" ch:"model_version"`
+	RegisteredModel   string  `json:"registered_model_id" ch:"registered_model_id"`
+	SnapshotID        string  `json:"gold_snapshot_id" ch:"gold_snapshot_id"`
+	ValidationID      string  `json:"runtime_validation_id" ch:"runtime_validation_id"`
+	RuntimePkgID      string  `json:"runtime_package_id" ch:"runtime_package_id"`
+	PredictedAt       string  `json:"predicted_at" ch:"predicted_at"`
 }
 
 type AnomalyDetail struct {

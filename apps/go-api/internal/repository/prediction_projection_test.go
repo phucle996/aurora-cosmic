@@ -2,26 +2,67 @@ package repository
 
 import (
 	"context"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"go-api/infra/clickhouse"
 	"go-api/internal/domain/entity"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-func TestPredictionProjectionClickHouseReadsExactExistingIDs(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.Contains(r.URL.Query().Get("query"), "FROM candidate_predictions") {
-			t.Fatalf("unexpected query: %s", r.URL.Query().Get("query"))
-		}
-		_, _ = io.WriteString(w, `{"data":[{"prediction_id":"pred-cand-v1-existing"}]}`)
-	}))
-	defer server.Close()
+type fakeProjectionConn struct {
+	driver.Conn
+	selectFn       func(ctx context.Context, dest any, query string, args ...any) error
+	prepareBatchFn func(ctx context.Context, query string, opts ...driver.PrepareBatchOption) (driver.Batch, error)
+}
 
-	repository := NewPredictionProjectionClickHouse(clickhouse.NewClient(server.URL, "aurora", "", ""))
+func (f *fakeProjectionConn) Select(ctx context.Context, dest any, query string, args ...any) error {
+	if f.selectFn != nil {
+		return f.selectFn(ctx, dest, query, args...)
+	}
+	return nil
+}
+
+func (f *fakeProjectionConn) PrepareBatch(ctx context.Context, query string, opts ...driver.PrepareBatchOption) (driver.Batch, error) {
+	if f.prepareBatchFn != nil {
+		return f.prepareBatchFn(ctx, query, opts...)
+	}
+	return nil, nil
+}
+
+type fakeBatch struct {
+	driver.Batch
+	appended [][]any
+	sent     bool
+}
+
+func (b *fakeBatch) Append(v ...any) error {
+	b.appended = append(b.appended, v)
+	return nil
+}
+
+func (b *fakeBatch) Send() error {
+	b.sent = true
+	return nil
+}
+
+func TestPredictionProjectionClickHouseReadsExactExistingIDs(t *testing.T) {
+	fake := &fakeProjectionConn{
+		selectFn: func(ctx context.Context, dest any, query string, args ...any) error {
+			if !strings.Contains(query, "FROM candidate_predictions") {
+				t.Fatalf("unexpected query: %s", query)
+			}
+			idsPtr, ok := dest.(*[]string)
+			if !ok {
+				t.Fatalf("dest is not *[]string")
+			}
+			*idsPtr = []string{"pred-cand-v1-existing"}
+			return nil
+		},
+	}
+
+	repository := NewPredictionProjectionClickHouse(clickhouse.NewClientWithConn(fake))
 	existing, err := repository.ExistingPredictionIDs(
 		context.Background(),
 		"candidate_vetting",
@@ -35,19 +76,18 @@ func TestPredictionProjectionClickHouseReadsExactExistingIDs(t *testing.T) {
 	}
 }
 
-func TestPredictionProjectionClickHouseWritesJSONEachRow(t *testing.T) {
-	var inserted string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Fatal(err)
-		}
-		inserted = string(body)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
+func TestPredictionProjectionClickHouseWritesBatch(t *testing.T) {
+	batch := &fakeBatch{}
+	fake := &fakeProjectionConn{
+		prepareBatchFn: func(ctx context.Context, query string, opts ...driver.PrepareBatchOption) (driver.Batch, error) {
+			if !strings.Contains(query, "INSERT INTO candidate_predictions") {
+				t.Fatalf("unexpected prepare batch query: %s", query)
+			}
+			return batch, nil
+		},
+	}
 
-	repository := NewPredictionProjectionClickHouse(clickhouse.NewClient(server.URL, "aurora", "", ""))
+	repository := NewPredictionProjectionClickHouse(clickhouse.NewClientWithConn(fake))
 	err := repository.InsertCandidatePredictions(context.Background(), []entity.CandidatePredictionProjection{{
 		PredictionID: "pred-cand-v1-new", SourceProductID: "source-1", TICID: 1,
 		Sector: 2, CandidateScore: 0.8, DecisionThreshold: 0.6,
@@ -58,9 +98,13 @@ func TestPredictionProjectionClickHouseWritesJSONEachRow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(inserted, "INSERT INTO candidate_predictions FORMAT JSONEachRow\n") ||
-		!strings.Contains(inserted, `"prediction_id":"pred-cand-v1-new"`) ||
-		!strings.Contains(inserted, `"predicted_at":"2026-09-03 01:02:03"`) {
-		t.Fatalf("unexpected insert payload: %s", inserted)
+	if !batch.sent {
+		t.Fatalf("expected batch to be sent")
+	}
+	if len(batch.appended) != 1 {
+		t.Fatalf("expected 1 row appended, got %d", len(batch.appended))
+	}
+	if batch.appended[0][0] != "pred-cand-v1-new" {
+		t.Fatalf("unexpected first argument: %v", batch.appended[0][0])
 	}
 }

@@ -65,9 +65,9 @@ Each sub-project owns its `.env.example` in its application directory:
 
 ## 5. Go API data access
 
-The Go API reads ClickHouse from `AURORA_CLICKHOUSE_ENDPOINT` and `AURORA_CLICKHOUSE_DATABASE`. Browser CORS is restricted to the exact origin in `AURORA_CORS_ALLOWED_ORIGIN`; wildcard origins are rejected.
+The Go API reads ClickHouse via native binary TCP from `AURORA_CLICKHOUSE_TCP_ADDR` (default `127.0.0.1:9004`) and `AURORA_CLICKHOUSE_DATABASE`. Browser CORS is restricted to the exact origin in `AURORA_CORS_ALLOWED_ORIGIN`; wildcard origins are rejected.
 
-ClickHouse HTTP access uses `AURORA_CLICKHOUSE_USER` and `AURORA_CLICKHOUSE_PASSWORD`. The Compose development defaults are intentionally explicit so a network request cannot silently fall back to the disabled `default` account.
+ClickHouse native TCP access uses `AURORA_CLICKHOUSE_USER` and `AURORA_CLICKHOUSE_PASSWORD`. The Compose development defaults are intentionally explicit so a network request cannot silently fall back to the disabled `default` account.
 
 The analytical endpoints return `503 Service Unavailable` when ClickHouse is unreachable. They never return fabricated candidate, anomaly, target, or lightcurve records.
 

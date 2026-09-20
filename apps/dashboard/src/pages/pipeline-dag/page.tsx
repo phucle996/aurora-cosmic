@@ -3,7 +3,6 @@ import type { JSX } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
-  Clock3,
   Database,
   Factory,
   GitBranch,
@@ -15,7 +14,6 @@ import { useSearchParams } from 'react-router-dom';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import type { GoldControlOverview } from '@/pages/enrichment/types';
 import { RunnerTicketBar } from '@/components/RunnerTicketBar';
 import { useRunnerTicket } from '@/lib/session';
@@ -70,12 +68,6 @@ function hopStatus(value?: string, fallback: HopStatus = 'not_observed'): HopSta
   if (status === 'failed' || status === 'error') return 'failed';
   if (status === 'running' || status === 'draining' || status === 'idle' || status === 'catalog_syncing' || status === 'frozen') return status;
   return fallback;
-}
-
-function time(value?: string): string {
-  if (!value) return '—';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('en-US');
 }
 
 function formatBytes(value: number): string {
@@ -332,13 +324,13 @@ export default function PipelineDagPage(): JSX.Element {
   const bronzeKpiValue = isHistorical
     ? `${(historicalRun?.run?.input_records ?? 0).toLocaleString()} Inputs`
     : bronzeCount > 0
-    ? `${bronzeCount.toLocaleString()} FITS`
-    : 'Standby';
+      ? `${bronzeCount.toLocaleString()} FITS`
+      : 'Standby';
   const bronzeKpiDetail = isHistorical
     ? 'Historical source scope'
     : bronzeCount > 0
-    ? `${bronzePending.toLocaleString()} pending · ${formatBytes(bronzeBytes)}`
-    : 'Bronze telemetry verified';
+      ? `${bronzePending.toLocaleString()} pending · ${formatBytes(bronzeBytes)}`
+      : 'Bronze telemetry verified';
 
   // 3. Silver Preprocessing KPI
   const silverTotal = graph?.progress?.silver_total ?? 0;
@@ -347,8 +339,8 @@ export default function PipelineDagPage(): JSX.Element {
   const silverKpiValue = isHistorical
     ? `${(historicalRun?.run?.completed_batches ?? 0).toLocaleString()} Batches`
     : silverTotal > 0
-    ? `${silverTotal.toLocaleString()} Artifacts`
-    : (graph?.status?.toUpperCase() ?? 'IDLE');
+      ? `${silverTotal.toLocaleString()} Artifacts`
+      : (graph?.status?.toUpperCase() ?? 'IDLE');
   const silverKpiDetail = isHistorical
     ? 'Silver verified footprint'
     : `${lcCount.toLocaleString()} Lightcurves · ${tpfCount.toLocaleString()} TPFs`;
@@ -468,7 +460,6 @@ export default function PipelineDagPage(): JSX.Element {
         />
       )}
 
-      {historicalRun ? <PhaseLedger detail={historicalRun} /> : null}
       <HopDetailDrawer
         selectedHop={selectedHop}
         ticketID={effectiveTicketID}
@@ -505,88 +496,5 @@ function Stat({
         {detail}
       </p>
     </div>
-  );
-}
-
-function PhaseLedger({ detail }: { detail: FactoryRunDetail }): JSX.Element {
-  return (
-    <Card className="rounded-none border-border/80 shadow-none">
-      <CardHeader className="border-b border-border/70 pb-3">
-        <div className="flex items-end justify-between">
-          <div>
-            <CardTitle className="flex items-center gap-2 text-sm">
-              <GitBranch className="size-4 text-primary" />
-              Phase history ledger
-            </CardTitle>
-            <CardDescription>
-              Chronological sequence of component phase events for the selected runner ticket.
-            </CardDescription>
-          </div>
-          <span className="font-mono text-[10px] text-muted-foreground">
-            {detail.components.length} events
-          </span>
-        </div>
-      </CardHeader>
-      <CardContent className="p-0">
-        {detail.components.length === 0 ? (
-          <div className="p-8 text-center text-xs text-muted-foreground">
-            No component phase events recorded for this runner ticket.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-sm">
-              <thead className="border-b bg-muted/30 text-left font-mono text-[9px] uppercase text-muted-foreground">
-                <tr>
-                  <th className="p-3">Occurred</th>
-                  <th className="p-3">Phase</th>
-                  <th className="p-3">State</th>
-                  <th className="p-3 text-right">Input</th>
-                  <th className="p-3 text-right">Output</th>
-                  <th className="p-3 text-right">Indexed</th>
-                  <th className="p-3">Evidence</th>
-                </tr>
-              </thead>
-              <tbody>
-                {detail.components.map((event, index) => (
-                  <tr
-                    key={`${event.component_id}-${event.occurred_at}-${index}`}
-                    className="border-b border-border/60 last:border-0"
-                  >
-                    <td className="p-3 font-mono text-[10px] text-muted-foreground">
-                      <Clock3 className="mr-1 inline size-3" />
-                      {time(event.occurred_at)}
-                    </td>
-                    <td className="p-3 font-mono text-xs">{event.component_id}</td>
-                    <td className="p-3">
-                      <Badge
-                        variant={
-                          /FAILED|ERROR/.test(event.status)
-                            ? 'destructive'
-                            : /COMPLETED/.test(event.status)
-                            ? 'default'
-                            : 'secondary'
-                        }
-                        className="rounded-none font-mono text-[9px]"
-                      >
-                        {event.status}
-                      </Badge>
-                    </td>
-                    <td className="p-3 text-right tabular-nums">{event.input_records.toLocaleString()}</td>
-                    <td className="p-3 text-right tabular-nums">{event.output_rows.toLocaleString()}</td>
-                    <td className="p-3 text-right tabular-nums">{event.indexed_rows.toLocaleString()}</td>
-                    <td
-                      className="max-w-64 truncate p-3 font-mono text-[10px] text-muted-foreground"
-                      title={event.error || event.snapshot_id}
-                    >
-                      {event.error || event.snapshot_id || '—'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </CardContent>
-    </Card>
   );
 }

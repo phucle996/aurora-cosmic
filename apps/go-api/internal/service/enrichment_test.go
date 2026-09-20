@@ -148,11 +148,19 @@ func TestEnrichmentControlPersistedControlRejectsInvalidWithoutFallback(t *testi
 	}
 }
 
-func TestEnrichmentControlGetOverviewFailsWhenNoControlExists(t *testing.T) {
-	// With no control file at all, GetControlOverview must fail (no silent fallback).
-	service := NewEnrichmentControlService(&memoryEnrichmentObjects{data: map[string][]byte{}}, nil)
-	if _, err := service.GetControlOverview(context.Background()); err == nil {
-		t.Fatal("expected error when no control file exists")
+func TestEnrichmentControlAutoSeedsWhenNoControlExists(t *testing.T) {
+	// With no control file at all, GetControlOverview auto-seeds default control.
+	objects := &memoryEnrichmentObjects{data: map[string][]byte{}}
+	service := NewEnrichmentControlService(objects, nil)
+	overview, err := service.GetControlOverview(context.Background())
+	if err != nil {
+		t.Fatalf("expected auto-seed on absent control file, got err=%v", err)
+	}
+	if overview.Control.Mode != "STREAM" {
+		t.Fatalf("expected default STREAM mode, got %s", overview.Control.Mode)
+	}
+	if len(objects.data[enrichmentControlKey]) == 0 {
+		t.Fatal("expected control document to be seeded into storage")
 	}
 }
 
@@ -199,3 +207,4 @@ func TestEnrichmentListSnapshotsReturnsManifestSummaries(t *testing.T) {
 		t.Fatalf("unexpected summaries: %#v", summaries)
 	}
 }
+

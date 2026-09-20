@@ -1,7 +1,6 @@
 [Unit]
 Description=AURORA native development application stack
-Requires=aurora-infra.service
-After=aurora-infra.service
+Wants=aurora-nats-exporter.service
 Wants=aurora-go-ingester.service
 Wants=aurora-rust-preprocessor.service
 Wants=aurora-python-ml-worker.service

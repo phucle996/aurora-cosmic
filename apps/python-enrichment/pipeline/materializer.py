@@ -8,6 +8,7 @@ import io
 import json
 from pathlib import Path
 import tempfile
+import time
 from typing import Any, Dict, Iterable, List, Sequence
 
 import numpy as np
@@ -54,6 +55,11 @@ class EnrichmentBuildResult:
     bls_evidence_rows: int = 0
     target_pixel_evidence_rows: int = 0
     catalog_enriched_rows: int = 0
+    lc_feature_duration_seconds: float = 0.0
+    tpf_duration_seconds: float = 0.0
+    assembly_duration_seconds: float = 0.0
+    parquet_duration_seconds: float = 0.0
+    parquet_bytes: int = 0
 
 
 
@@ -327,6 +333,7 @@ class EnrichmentBuilder:
                 "Research-ready Gold requires verified immutable catalog snapshots: "
                 + ", ".join(missing_catalogs)
             )
+        lc_start = time.perf_counter()
         if precomputed_lc_features is not None:
             lc_features_by_source = dict(precomputed_lc_features)
             for event in lc_events:
@@ -339,6 +346,8 @@ class EnrichmentBuilder:
                 event.source_product_id: self._lightcurve_features(event)
                 for event in lc_events
             }
+        lc_duration = time.perf_counter() - lc_start
+
         lc_by_key: Dict[tuple[Any, ...], list[tuple[SilverEvent, Any]]] = {}
         for event in lc_events:
             features = lc_features_by_source[event.source_product_id]
@@ -398,6 +407,7 @@ class EnrichmentBuilder:
             producer="python-enrichment",
         )
 
+        tpf_start = time.perf_counter()
         tpf_rows: List[Dict[str, Any]] = []
         evidence_by_lightcurve: Dict[str, Dict[str, Any]] = {}
         for event in tpf_events:
@@ -422,7 +432,9 @@ class EnrichmentBuilder:
             evidence_by_lightcurve[lightcurve_event.source_product_id] = (
                 self._candidate_tpf_evidence(tpf_row)
             )
+        tpf_duration = time.perf_counter() - tpf_start
 
+        assembly_start = time.perf_counter()
         candidate_rows: List[Dict[str, Any]] = []
         for event in lc_events:
             features = lc_features_by_source[event.source_product_id]
@@ -439,7 +451,9 @@ class EnrichmentBuilder:
 
         # Keep the result deterministic even when multiple TPFs pair to one LC.
         candidate_rows.sort(key=lambda row: str(row.get("source_product_id", "")))
+        assembly_duration = time.perf_counter() - assembly_start
 
+        parquet_start = time.perf_counter()
         artifact_records: List[Dict[str, Any]] = []
         with tempfile.TemporaryDirectory(prefix="aurora-gold-") as temp_dir:
             artifact_records.extend(
@@ -452,6 +466,8 @@ class EnrichmentBuilder:
                     temp_dir,
                 )
             )
+        parquet_duration = time.perf_counter() - parquet_start
+        parquet_bytes = sum(int(record.get("size_bytes") or 0) for record in artifact_records)
 
         dataset_row_counts = {
             dataset: sum(
@@ -521,6 +537,11 @@ class EnrichmentBuilder:
             catalog_enriched_rows=sum(
                 bool(row.get("tic_available")) for row in candidate_rows
             ),
+            lc_feature_duration_seconds=lc_duration,
+            tpf_duration_seconds=tpf_duration,
+            assembly_duration_seconds=assembly_duration,
+            parquet_duration_seconds=parquet_duration,
+            parquet_bytes=parquet_bytes,
         )
 
     def _candidate_row_from_features(

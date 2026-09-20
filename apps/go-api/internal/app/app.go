@@ -64,8 +64,12 @@ func (a *App) Start(ctx context.Context) error {
 }
 
 func New(cfg *config.Config, log *slog.Logger) (*App, error) {
+	chClient, err := clickhouse.NewClient(cfg.ClickHouse.TCPAddr, cfg.ClickHouse.Database, cfg.ClickHouse.User, cfg.ClickHouse.Password)
+	if err != nil {
+		return nil, fmt.Errorf("initialize clickhouse client: %w", err)
+	}
 	infra := Infrastructure{
-		ClickHouse:      clickhouse.NewClient(cfg.ClickHouse.Endpoint, cfg.ClickHouse.Database, cfg.ClickHouse.User, cfg.ClickHouse.Password),
+		ClickHouse:      chClient,
 		MinIO:           minio.NewClient(cfg.MinIO.Endpoint, cfg.MinIO.Bucket, cfg.MinIO.AccessKey, cfg.MinIO.SecretKey),
 		PredictionMinIO: minio.NewClient(cfg.MinIO.Endpoint, cfg.MinIO.PredictionBucket, cfg.MinIO.AccessKey, cfg.MinIO.SecretKey),
 		NATS:            nats.NewClient(cfg.NATS.URL),

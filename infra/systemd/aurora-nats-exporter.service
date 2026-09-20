@@ -1,0 +1,15 @@
+[Unit]
+Description=AURORA Prometheus NATS Exporter (native)
+After=aurora-nats.service
+Requires=aurora-nats.service
+PartOf=aurora.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/prometheus-nats-exporter -port 7777 -varz -connz -subz -jsz=all http://127.0.0.1:8222
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGINT
+
+[Install]
+WantedBy=aurora.target
