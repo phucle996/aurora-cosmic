@@ -310,3 +310,31 @@ func (h *ModelNewHandler) ControlTraining(c *gin.Context) {
 
 	c.JSON(http.StatusOK, result)
 }
+
+// GetActiveTraining retrieves the current soft state (progress, metrics, logs) for an active training run.
+func (h *ModelNewHandler) GetActiveTraining(c *gin.Context) {
+	ticketID := strings.TrimSpace(c.Query("ticket_id"))
+	if ticketID != "" && (!ticketIDPattern.MatchString(ticketID) || len(ticketID) > 128) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid ticket_id format"})
+		return
+	}
+
+	state, err := h.model.GetActiveTraining(c.Request.Context(), ticketID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if state == nil {
+		c.JSON(http.StatusOK, gin.H{
+			"active": false,
+			"state":  nil,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"active": state.Status == "running" || state.Status == "queued" || state.Status == "cancelling",
+		"state":  state,
+	})
+}

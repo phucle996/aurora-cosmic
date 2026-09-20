@@ -237,3 +237,56 @@ func TestModelNewService_ControlTraining(t *testing.T) {
 	})
 }
 
+func TestModelNewService_ActiveTrainingSoftState(t *testing.T) {
+	ctx := context.Background()
+	svc := NewModelNewService(&memoryModelNewObjects{}, nil, &fakeModelNewRepo{})
+
+	// 1. Initially empty
+	state, err := svc.GetActiveTraining(ctx, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state != nil {
+		t.Fatalf("expected nil state, got %+v", state)
+	}
+
+	// 2. Observe progress for a job
+	err = svc.ObserveTrainingProgress(ctx, map[string]any{
+		"ticket_id":        "RUN-100",
+		"task":             "candidate_vetting",
+		"status":           "running",
+		"phase":            "training",
+		"progress_percent": 40.0,
+		"current_epoch":    2,
+		"total_epochs":     10,
+		"best_epoch":       1,
+		"best_val_loss":    0.35,
+		"train_loss":       0.40,
+		"val_loss":         0.35,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 3. Observe log
+	err = svc.ObserveTrainingLog(ctx, "RUN-100", entity.TrainingLogEntry{
+		Message: "Epoch 2 completed",
+		Level:   "info",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 4. Query active training
+	active, err := svc.GetActiveTraining(ctx, "RUN-100")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if active == nil {
+		t.Fatal("expected active state, got nil")
+	}
+	if active.TicketID != "RUN-100" || active.CurrentEpoch != 2 || len(active.Logs) != 1 || len(active.LossHistory) != 1 {
+		t.Fatalf("unexpected state: %+v", active)
+	}
+}
+

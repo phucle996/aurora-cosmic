@@ -318,6 +318,7 @@ func NewModule(infra Infrastructure) (*Module, error) {
 		Broker:            eventBroker,
 		DAGAggregation:    dagAggregationService,
 		ChampionInference: inferenceService,
+		ModelNew:          modelNewService,
 	})
 
 	natsStream := stream.New(stream.Config{

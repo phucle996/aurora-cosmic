@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from aurora_ml.config import Config
+from config import Config
 
 
 def set_dummy_env():
@@ -13,29 +13,19 @@ def set_dummy_env():
     os.environ["MINIO_ACCESS_KEY"] = "minioadmin"
     os.environ["MINIO_SECRET_KEY"] = "minioadmin"
     os.environ["NATS_URL"] = "nats://nats:4222"
-    os.environ["AURORA_ML_DEVICE"] = "cuda"
-    os.environ["AURORA_ML_BATCH_SIZE"] = "32"
-    os.environ["AURORA_ML_MAX_VRAM_MB"] = "3500"
 
 
 def test_valid_config():
     set_dummy_env()
     cfg = Config()
-    assert cfg.device == "cuda"
-    assert cfg.batch_size == 32
+    assert cfg.env == "development"
+    assert cfg.minio_bucket == "aurora"
+    assert cfg.nats_url == "nats://nats:4222"
+    assert cfg.metrics_addr == "0.0.0.0:8083"
 
 
 def test_missing_env():
     set_dummy_env()
     del os.environ["AURORA_ENV"]
-    with pytest.raises(ValueError, match="Missing required environment variable"):
+    with pytest.raises(ValueError, match="Missing required environment variable 'AURORA_ENV'"):
         Config()
-
-
-def test_compute_worker_accepts_auto_or_cpu_policy():
-    set_dummy_env()
-    os.environ["AURORA_ML_DEVICE"] = "auto"
-    assert Config().device == "auto"
-
-    os.environ["AURORA_ML_DEVICE"] = "cpu"
-    assert Config().device == "cpu"

@@ -68,3 +68,41 @@ type TrainingControlResult struct {
 	Status    string `json:"status"` // "dispatched"
 	Timestamp string `json:"timestamp"`
 }
+
+// LossPoint captures epoch-level loss progression for real-time visualization.
+type LossPoint struct {
+	Epoch     int     `json:"epoch"`
+	TrainLoss float64 `json:"train_loss"`
+	ValLoss   float64 `json:"val_loss"`
+	IsBest    bool    `json:"is_best"`
+}
+
+// TrainingLogEntry represents an in-flight log line streamed from the worker.
+type TrainingLogEntry struct {
+	Timestamp string `json:"timestamp"`
+	Message   string `json:"message"`
+	Level     string `json:"level"` // "info", "warn", "error", "success"
+}
+
+// TrainingActiveState represents the in-memory soft state of an active or recent training run.
+type TrainingActiveState struct {
+	TicketID        string             `json:"ticket_id"`
+	Task            string             `json:"task"`
+	SnapshotCount   int                `json:"snapshot_count"`
+	BaseModelID     string             `json:"base_model_id,omitempty"`
+	ComputeTarget   string             `json:"compute_target"`
+	Status          string             `json:"status"` // "queued", "running", "completed", "failed", "cancelled"
+	Phase           string             `json:"phase"`  // "queued", "worker_acknowledged", "loading_gold", "preparing_dataset", "training", "evaluating", "packaging_runtime", "completed", "failed", "cancelled"
+	ProgressPercent float64            `json:"progress_percent"`
+	CurrentEpoch    int                `json:"current_epoch"`
+	TotalEpochs     int                `json:"total_epochs"`
+	BestEpoch       int                `json:"best_epoch"`
+	BestValLoss     float64            `json:"best_val_loss"`
+	TrainLoss       float64            `json:"train_loss"`
+	ValLoss         float64            `json:"val_loss"`
+	LossHistory     []LossPoint        `json:"loss_history"`
+	Logs            []TrainingLogEntry `json:"logs"`
+	StartedAt       int64              `json:"started_at"` // Unix millisecond timestamp for frontend
+	UpdatedAt       string             `json:"updated_at"`
+	Error           string             `json:"error,omitempty"`
+}

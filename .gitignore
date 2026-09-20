@@ -24,6 +24,8 @@ env/
 .coverage
 htmlcov/
 *.egg-info/
+dist/
+build/
 .uv/
 
 # Rust
@@ -58,5 +60,6 @@ scratch/
 .runtime/
 aurora-api
 checkpoints/
+evaluations/
 
 

@@ -127,6 +127,76 @@ export default function TrainingLabPage(): JSX.Element {
     void loadAvailableSnapshots();
   }, [loadAvailableSnapshots]);
 
+  // Rehydrate active training state from backend soft state on mount
+  useEffect(() => {
+    let active = true;
+    apiFetch<{
+      active: boolean;
+      state?: {
+        ticket_id: string;
+        task: string;
+        snapshot_count: number;
+        base_model_id?: string;
+        compute_target?: 'cpu' | 'gpu';
+        status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+        phase?: string;
+        progress_percent?: number;
+        current_epoch?: number;
+        total_epochs?: number;
+        best_epoch?: number;
+        best_val_loss?: number;
+        train_loss?: number;
+        val_loss?: number;
+        loss_history?: Array<{ epoch: number; train_loss: number; val_loss: number; is_best?: boolean }>;
+        logs?: Array<{ timestamp: string; message: string; level?: 'info' | 'warn' | 'error' | 'success' }>;
+        started_at?: number;
+        updated_at?: string;
+        error?: string;
+      };
+    }>('/v1/models/train/active')
+      .then((res) => {
+        if (!active || !res?.active || !res.state) return;
+        const s = res.state;
+        setActiveTraining((prev) => {
+          if (prev && prev.ticketId === s.ticket_id) return prev;
+          return {
+            ticketId: s.ticket_id,
+            task: s.task,
+            snapshotCount: s.snapshot_count,
+            baseModel: s.base_model_id || '',
+            epochs: s.total_epochs || 50,
+            computeTarget: s.compute_target || 'gpu',
+            startedAt: s.started_at ? Number(s.started_at) : Date.now(),
+            status: s.status,
+            phase: s.phase,
+            progressPercent: s.progress_percent,
+            currentEpoch: s.current_epoch,
+            totalEpochs: s.total_epochs,
+            bestEpoch: s.best_epoch,
+            bestValidationLoss: s.best_val_loss,
+            trainLoss: s.train_loss,
+            valLoss: s.val_loss,
+            lossHistory:
+              s.loss_history?.map((pt) => ({
+                epoch: pt.epoch,
+                trainLoss: pt.train_loss,
+                valLoss: pt.val_loss,
+                isBest: pt.is_best,
+              })) || [],
+            logs: s.logs || [],
+            updatedAt: s.updated_at,
+          };
+        });
+      })
+      .catch(() => {
+        // Soft state endpoint is optional or returns no active run
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // Cohort readiness check when selection changes
   useEffect(() => {
     let active = true;
@@ -181,6 +251,7 @@ export default function TrainingLabPage(): JSX.Element {
       const message = event as MessageEvent<string>;
       try {
         const update = JSON.parse(message.data) as {
+          type?: string;
           ticket_id?: string;
           status?: string;
           payload?: {
@@ -195,11 +266,35 @@ export default function TrainingLabPage(): JSX.Element {
             train_loss?: number;
             val_loss?: number;
             occurred_at?: string;
+            level?: 'info' | 'warn' | 'error' | 'success';
+            message?: string;
           };
         };
         if (update.ticket_id !== activeTraining.ticketId) return;
 
         const timeStr = new Date().toLocaleTimeString();
+
+        // Handle streaming log events
+        if (update.status === 'log' || update.type === 'aurora.v1.ml.training.log') {
+          const logMsg = update.payload?.message;
+          if (logMsg) {
+            setActiveTraining((current) => {
+              if (!current || current.ticketId !== update.ticket_id) return current;
+              return {
+                ...current,
+                logs: [
+                  ...(current.logs || []),
+                  {
+                    timestamp: timeStr,
+                    message: logMsg,
+                    level: update.payload?.level || 'info',
+                  },
+                ].slice(-200),
+              };
+            });
+          }
+          return;
+        }
 
         if (update.status === 'failed' || update.status === 'cancelled') {
           const isCancel = update.status === 'cancelled' || update.payload?.error?.includes('CANCELLED');

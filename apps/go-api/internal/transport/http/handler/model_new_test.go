@@ -16,11 +16,12 @@ import (
 )
 
 type fakeModelNewService struct {
-	preflight *entity.TrainingPreflight
-	snapshots []entity.ModelTrainingSnapshot
-	training  *entity.TrainingResult
-	control   *entity.TrainingControlResult
-	err       error
+	preflight   *entity.TrainingPreflight
+	snapshots   []entity.ModelTrainingSnapshot
+	training    *entity.TrainingResult
+	control     *entity.TrainingControlResult
+	activeState *entity.TrainingActiveState
+	err         error
 }
 
 func (f *fakeModelNewService) TrainingPreflight(_ context.Context, _ []string) (*entity.TrainingPreflight, error) {
@@ -47,6 +48,18 @@ func (f *fakeModelNewService) ControlTraining(_ context.Context, spec entity.Tra
 		Action:   spec.Action,
 		Status:   "dispatched",
 	}, f.err
+}
+
+func (f *fakeModelNewService) GetActiveTraining(_ context.Context, _ string) (*entity.TrainingActiveState, error) {
+	return f.activeState, f.err
+}
+
+func (f *fakeModelNewService) ObserveTrainingProgress(_ context.Context, _ map[string]any) error {
+	return f.err
+}
+
+func (f *fakeModelNewService) ObserveTrainingLog(_ context.Context, _ string, _ entity.TrainingLogEntry) error {
+	return f.err
 }
 
 func TestModelNewHandler_TrainingPreflight(t *testing.T) {
@@ -383,6 +396,72 @@ func TestModelNewHandler_ControlTraining(t *testing.T) {
 
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Fatalf("expected 503, got %d", rec.Code)
+		}
+	})
+}
+
+func TestModelNewHandler_GetActiveTraining(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("Invalid ticket_id pattern returns 400", func(t *testing.T) {
+		h := NewModelNewHandler(&fakeModelNewService{})
+		router := gin.New()
+		router.GET("/active", h.GetActiveTraining)
+
+		req := httptest.NewRequest(http.MethodGet, "/active?ticket_id=bad$ticket!", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("No active run returns active: false", func(t *testing.T) {
+		h := NewModelNewHandler(&fakeModelNewService{})
+		router := gin.New()
+		router.GET("/active", h.GetActiveTraining)
+
+		req := httptest.NewRequest(http.MethodGet, "/active", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if body["active"] != false {
+			t.Fatalf("expected active=false, got %v", body["active"])
+		}
+	})
+
+	t.Run("Active run returns 200 with active state", func(t *testing.T) {
+		h := NewModelNewHandler(&fakeModelNewService{
+			activeState: &entity.TrainingActiveState{
+				TicketID: "RUN-001",
+				Status:   "running",
+				Phase:    "training",
+			},
+		})
+		router := gin.New()
+		router.GET("/active", h.GetActiveTraining)
+
+		req := httptest.NewRequest(http.MethodGet, "/active?ticket_id=RUN-001", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if body["active"] != true {
+			t.Fatalf("expected active=true, got %v", body["active"])
 		}
 	})
 }

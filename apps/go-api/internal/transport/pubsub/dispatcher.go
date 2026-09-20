@@ -95,6 +95,15 @@ func (p *NATSPubSub) dispatchMessage(ctx context.Context, msg *nats.Msg) {
 		Data:  data,
 	})
 
+	// Also broadcast to base workflow topic (e.g. "ml") so broad subscribers receive events
+	if workflow != "" && workflow != topic {
+		_ = p.broker.Publish(ctx, workflow, provider.Event{
+			Type:  "workflow",
+			Topic: workflow,
+			Data:  data,
+		})
+	}
+
 	// Also broadcast to unified obj: and ticket: topics if ticketID or jobID is available
 	if ticketID != "" {
 		objTopic := "obj:" + ticketID

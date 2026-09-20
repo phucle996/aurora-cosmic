@@ -59,6 +59,7 @@ func RegisterRoutes(engine *gin.Engine, module *Module) {
 	engine.POST("/api/v1/models/training-cohort/labels", module.ModelsHandler.OverrideTrainingLabel)
 	engine.POST("/api/v1/models/train", module.ModelNewHandler.StartTraining)
 	engine.POST("/api/v1/models/train/control", module.ModelNewHandler.ControlTraining)
+	engine.GET("/api/v1/models/train/active", module.ModelNewHandler.GetActiveTraining)
 	engine.POST("/api/v1/models/deploy", module.ModelsHandler.DeployModel)
 	engine.GET("/api/v1/inference/jobs", module.ModelsHandler.ListInferenceJobs)
 	engine.POST("/api/v1/inference/jobs/:job_id/retry", module.ModelsHandler.RetryInferenceJob)

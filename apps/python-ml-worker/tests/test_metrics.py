@@ -1,6 +1,6 @@
 from prometheus_client import generate_latest
 
-from aurora_ml.observer.metrics import Metrics
+from metrics import Metrics
 
 
 def test_idle_worker_exposes_complete_job_histogram_without_fake_rows() -> None:

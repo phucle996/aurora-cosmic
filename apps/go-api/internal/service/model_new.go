@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 
 	"go-api/infra/nats"
@@ -23,14 +25,20 @@ type ModelNewService struct {
 	objects provider.ObjectStorage
 	nats    *nats.Client
 	repo    repo.ModelNewRepository
+
+	mu          sync.RWMutex
+	activeRuns  map[string]*entity.TrainingActiveState
+	recentOrder []string
 }
 
 // NewModelNewService initializes a new ModelNewService instance.
 func NewModelNewService(objects provider.ObjectStorage, natsClient *nats.Client, modelRepo repo.ModelNewRepository) domainService.ModelNew {
 	return &ModelNewService{
-		objects: objects,
-		nats:    natsClient,
-		repo:    modelRepo,
+		objects:     objects,
+		nats:        natsClient,
+		repo:        modelRepo,
+		activeRuns:  make(map[string]*entity.TrainingActiveState),
+		recentOrder: make([]string, 0),
 	}
 }
 
@@ -108,6 +116,39 @@ func (s *ModelNewService) StartTraining(ctx context.Context, spec entity.StartTr
 		return nil, fmt.Errorf("publish durable request: %w", err)
 	}
 
+	// 3. Register in soft state tracker
+	s.mu.Lock()
+	state := &entity.TrainingActiveState{
+		TicketID:        spec.TicketID,
+		Task:            spec.Task,
+		SnapshotCount:   len(spec.SnapshotIDs),
+		BaseModelID:     spec.BaseModelID,
+		ComputeTarget:   spec.ComputeTarget,
+		Status:          "queued",
+		Phase:           "queued",
+		ProgressPercent: 0,
+		CurrentEpoch:    0,
+		TotalEpochs:     spec.Epochs,
+		LossHistory:     make([]entity.LossPoint, 0),
+		Logs: []entity.TrainingLogEntry{
+			{
+				Timestamp: createdAt,
+				Message:   fmt.Sprintf("Training run %s queued for dispatch (%s branch)", spec.TicketID, spec.ComputeTarget),
+				Level:     "info",
+			},
+		},
+		StartedAt: time.Now().UTC().UnixMilli(),
+		UpdatedAt: createdAt,
+	}
+	s.activeRuns[spec.TicketID] = state
+	s.recentOrder = append(s.recentOrder, spec.TicketID)
+	if len(s.recentOrder) > 50 {
+		evict := s.recentOrder[0]
+		s.recentOrder = s.recentOrder[1:]
+		delete(s.activeRuns, evict)
+	}
+	s.mu.Unlock()
+
 	return &entity.TrainingResult{
 		TicketID:      spec.TicketID,
 		Task:          spec.Task,
@@ -123,7 +164,6 @@ func (s *ModelNewService) StartTraining(ctx context.Context, spec entity.StartTr
 
 // ControlTraining publishes an intervention signal (cancel or checkpoint) for an in-flight training run.
 func (s *ModelNewService) ControlTraining(ctx context.Context, spec entity.TrainingControlSpec) (*entity.TrainingControlResult, error) {
-
 	payload, err := json.Marshal(map[string]string{
 		"ticket_id": spec.TicketID,
 		"action":    spec.Action,
@@ -137,10 +177,187 @@ func (s *ModelNewService) ControlTraining(ctx context.Context, spec entity.Train
 		return nil, fmt.Errorf("publish training control signal: %w", err)
 	}
 
+	// Update in-flight state immediately for fast feedback
+	nowStr := time.Now().UTC().Format(time.RFC3339)
+	s.mu.Lock()
+	if st, ok := s.activeRuns[spec.TicketID]; ok {
+		msg := fmt.Sprintf("Operator issued control action: %s", spec.Action)
+		lvl := "warn"
+		if spec.Action == "cancel" {
+			st.Status = "cancelling"
+		}
+		st.Logs = append(st.Logs, entity.TrainingLogEntry{
+			Timestamp: nowStr,
+			Message:   msg,
+			Level:     lvl,
+		})
+		st.UpdatedAt = nowStr
+	}
+	s.mu.Unlock()
+
 	return &entity.TrainingControlResult{
 		TicketID:  spec.TicketID,
 		Action:    spec.Action,
 		Status:    "dispatched",
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Timestamp: nowStr,
 	}, nil
+}
+
+// GetActiveTraining queries the in-memory soft state for an active training run or latest run.
+func (s *ModelNewService) GetActiveTraining(_ context.Context, ticketID string) (*entity.TrainingActiveState, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	ticketID = strings.TrimSpace(ticketID)
+	if ticketID != "" {
+		if state, exists := s.activeRuns[ticketID]; exists {
+			cp := *state
+			cp.LossHistory = append([]entity.LossPoint(nil), state.LossHistory...)
+			cp.Logs = append([]entity.TrainingLogEntry(nil), state.Logs...)
+			return &cp, nil
+		}
+		return nil, nil
+	}
+
+	// If no ticketID specified, find the latest running or queued run
+	for i := len(s.recentOrder) - 1; i >= 0; i-- {
+		tid := s.recentOrder[i]
+		if state, ok := s.activeRuns[tid]; ok {
+			if state.Status == "running" || state.Status == "queued" || state.Status == "cancelling" {
+				cp := *state
+				cp.LossHistory = append([]entity.LossPoint(nil), state.LossHistory...)
+				cp.Logs = append([]entity.TrainingLogEntry(nil), state.Logs...)
+				return &cp, nil
+			}
+		}
+	}
+
+	// If no active run, return the most recent run
+	if len(s.recentOrder) > 0 {
+		lastID := s.recentOrder[len(s.recentOrder)-1]
+		if state, ok := s.activeRuns[lastID]; ok {
+			cp := *state
+			cp.LossHistory = append([]entity.LossPoint(nil), state.LossHistory...)
+			cp.Logs = append([]entity.TrainingLogEntry(nil), state.Logs...)
+			return &cp, nil
+		}
+	}
+
+	return nil, nil
+}
+
+// ObserveTrainingProgress updates the in-memory soft state when worker telemetry arrives.
+func (s *ModelNewService) ObserveTrainingProgress(_ context.Context, event map[string]any) error {
+	ticketID, _ := event["ticket_id"].(string)
+	ticketID = strings.TrimSpace(ticketID)
+	if ticketID == "" {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state, exists := s.activeRuns[ticketID]
+	if !exists {
+		task, _ := event["task"].(string)
+		state = &entity.TrainingActiveState{
+			TicketID:    ticketID,
+			Task:        task,
+			Status:      "running",
+			Phase:       "training",
+			StartedAt:   time.Now().UTC().UnixMilli(),
+			LossHistory: make([]entity.LossPoint, 0),
+			Logs:        make([]entity.TrainingLogEntry, 0),
+		}
+		s.activeRuns[ticketID] = state
+		s.recentOrder = append(s.recentOrder, ticketID)
+	}
+
+	if st, ok := event["status"].(string); ok && st != "" {
+		state.Status = st
+	}
+	if ph, ok := event["phase"].(string); ok && ph != "" {
+		state.Phase = ph
+	}
+	if p, ok := event["progress_percent"].(float64); ok {
+		state.ProgressPercent = p
+	}
+	if ep, ok := event["current_epoch"].(float64); ok {
+		state.CurrentEpoch = int(ep)
+	} else if ep, ok := event["current_epoch"].(int); ok {
+		state.CurrentEpoch = ep
+	}
+	if tot, ok := event["total_epochs"].(float64); ok {
+		state.TotalEpochs = int(tot)
+	} else if tot, ok := event["total_epochs"].(int); ok {
+		state.TotalEpochs = tot
+	}
+	if bep, ok := event["best_epoch"].(float64); ok {
+		state.BestEpoch = int(bep)
+	} else if bep, ok := event["best_epoch"].(int); ok {
+		state.BestEpoch = bep
+	}
+	if bvl, ok := event["best_val_loss"].(float64); ok {
+		state.BestValLoss = bvl
+	}
+	if tl, ok := event["train_loss"].(float64); ok {
+		state.TrainLoss = tl
+	}
+	if vl, ok := event["val_loss"].(float64); ok {
+		state.ValLoss = vl
+	}
+	if errStr, ok := event["error"].(string); ok && errStr != "" {
+		state.Error = errStr
+	}
+
+	// Append epoch loss history
+	if state.CurrentEpoch > 0 && event["val_loss"] != nil {
+		point := entity.LossPoint{
+			Epoch:     state.CurrentEpoch,
+			TrainLoss: state.TrainLoss,
+			ValLoss:   state.ValLoss,
+			IsBest:    state.CurrentEpoch == state.BestEpoch,
+		}
+		existsIdx := -1
+		for i, lp := range state.LossHistory {
+			if lp.Epoch == point.Epoch {
+				existsIdx = i
+				break
+			}
+		}
+		if existsIdx >= 0 {
+			state.LossHistory[existsIdx] = point
+		} else {
+			state.LossHistory = append(state.LossHistory, point)
+		}
+	}
+
+	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	return nil
+}
+
+// ObserveTrainingLog appends an in-flight log entry from the worker.
+func (s *ModelNewService) ObserveTrainingLog(_ context.Context, ticketID string, entry entity.TrainingLogEntry) error {
+	ticketID = strings.TrimSpace(ticketID)
+	if ticketID == "" {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state, exists := s.activeRuns[ticketID]
+	if !exists {
+		return nil
+	}
+
+	if entry.Timestamp == "" {
+		entry.Timestamp = time.Now().UTC().Format(time.RFC3339)
+	}
+	state.Logs = append(state.Logs, entry)
+	if len(state.Logs) > 200 {
+		state.Logs = state.Logs[len(state.Logs)-200:]
+	}
+	state.UpdatedAt = entry.Timestamp
+	return nil
 }
