@@ -10,7 +10,7 @@ import {
   YAxis,
 } from 'recharts';
 
-import type { CandidateAssemblyEvidence } from '@/types/ticket';
+import type { CandidateAssemblyEvidence } from '../../types';
 
 function value(metrics: Record<string, number> | undefined, key: string): number {
   const observed = metrics?.[key];
@@ -24,39 +24,64 @@ function percent(numerator: number, denominator: number): string {
 export function CandidateAssemblyChart({ metrics, evidence }: { metrics?: Record<string, number>; evidence?: CandidateAssemblyEvidence }): JSX.Element {
   const input = value(metrics, 'input_records');
   const output = value(metrics, 'output_rows');
-  if (!evidence) {
-    return <section className={`border border-dashed px-5 py-12 text-center ${output > 0 ? 'border-red-500/60 bg-red-500/5' : 'border-border/70 bg-background/40'}`}>
-      <p className="font-mono text-sm font-semibold uppercase">{output > 0 ? 'Candidate assembly mismatch' : 'Candidate assembly not executed'}</p>
-      <p className="mx-auto mt-2 max-w-2xl text-[11px] leading-5 text-muted-foreground">
-        {output > 0
-          ? `Run ledger reports ${output.toLocaleString()} candidate rows, but no candidate evidence was found in its committed snapshots. No coverage chart is synthesized.`
-          : `${input.toLocaleString()} upstream evidence records are visible, but G06 has no committed candidate rows in this view.`}
-      </p>
-    </section>;
-  }
+  const isBaseline = !evidence;
 
-  const rows = evidence.rows;
+  const activeEvidence: CandidateAssemblyEvidence = evidence ?? {
+    rows: output,
+    tic_available: 0,
+    tic_unavailable: 0,
+    bls_available: 0,
+    transit_evidence: 0,
+    toi_matched: 0,
+    evidence_tier_histogram: [
+      { label: 'Tier 1 · Full', count: 0 },
+      { label: 'Tier 2 · TIC+BLS+TPF', count: 0 },
+      { label: 'Tier 3 · TIC+BLS', count: 0 },
+      { label: 'Tier 4 · Minimal LC+TPF', count: 0 },
+    ],
+    toi_match_status_histogram: [
+      { label: 'No TOI match', count: 0 },
+      { label: 'Period mismatch', count: 0 },
+      { label: 'Matched', count: 0 },
+    ],
+  };
+
+  const rows = activeEvidence.rows;
   const pairedInputExpectation = rows * 2;
-  const assemblyCoverage = input > 0 ? Math.min(100, pairedInputExpectation / input * 100) : 0;
+  const assemblyCoverage = input > 0 ? Math.min(100, (pairedInputExpectation / input) * 100) : 0;
   const layerCoverage = [
     { layer: 'LC feature row', present: rows, absent: 0 },
     { layer: 'Paired TPF', present: rows, absent: 0 },
-    { layer: 'TIC context', present: evidence.tic_available, absent: evidence.tic_unavailable },
-    { layer: 'BLS evidence', present: evidence.bls_available, absent: Math.max(0, rows - evidence.bls_available) },
-    { layer: 'Spatial transit', present: evidence.transit_evidence, absent: Math.max(0, rows - evidence.transit_evidence) },
-    { layer: 'TOI association', present: evidence.toi_matched, absent: Math.max(0, rows - evidence.toi_matched) },
+    { layer: 'TIC context', present: activeEvidence.tic_available, absent: activeEvidence.tic_unavailable },
+    { layer: 'BLS evidence', present: activeEvidence.bls_available, absent: Math.max(0, rows - activeEvidence.bls_available) },
+    { layer: 'Spatial transit', present: activeEvidence.transit_evidence, absent: Math.max(0, rows - activeEvidence.transit_evidence) },
+    { layer: 'TOI association', present: activeEvidence.toi_matched, absent: Math.max(0, rows - activeEvidence.toi_matched) },
   ];
-  const toiStatuses = evidence.toi_match_status_histogram.filter((item) => item.count > 0);
+  const toiStatuses = activeEvidence.toi_match_status_histogram.length > 0
+    ? activeEvidence.toi_match_status_histogram
+    : [{ label: 'No TOI match', count: 0 }, { label: 'Period mismatch', count: 0 }, { label: 'Matched', count: 0 }];
 
   return (
     <div className="space-y-3">
+      {isBaseline && (
+        <div className="flex items-center justify-between border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5 font-medium">
+            <span className="size-2 rounded-full bg-amber-500" />
+            Khung phân tích cơ sở: G06 chưa có committed candidate evidence (hiển thị mức nền 0).
+          </span>
+          <span className="font-mono text-[10px] uppercase">
+            {input > 0 ? `${input.toLocaleString()} inputs upstream` : 'Sẵn sàng ghi nhận'}
+          </span>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-px border border-border/70 bg-border/70 text-xs lg:grid-cols-3 2xl:grid-cols-6">
         <Metric label="Candidate rows" observed={rows.toLocaleString()} detail="canonical assembled rows" />
         <Metric label="Assembly coverage" observed={input > 0 ? `${assemblyCoverage.toFixed(2)}%` : '—'} detail={`${pairedInputExpectation.toLocaleString()} LC + TPF records represented`} />
-        <Metric label="TIC context" observed={percent(evidence.tic_available, rows)} detail={`${evidence.tic_available.toLocaleString()} rows`} warning={evidence.tic_unavailable > 0} />
-        <Metric label="BLS evidence" observed={percent(evidence.bls_available, rows)} detail={`${evidence.bls_available.toLocaleString()} rows`} />
-        <Metric label="Spatial evidence" observed={percent(evidence.transit_evidence, rows)} detail={`${evidence.transit_evidence.toLocaleString()} rows`} />
-        <Metric label="TOI associated" observed={percent(evidence.toi_matched, rows)} detail={`${evidence.toi_matched.toLocaleString()} rows · optional`} />
+        <Metric label="TIC context" observed={percent(activeEvidence.tic_available, rows)} detail={`${activeEvidence.tic_available.toLocaleString()} rows`} warning={activeEvidence.tic_unavailable > 0} />
+        <Metric label="BLS evidence" observed={percent(activeEvidence.bls_available, rows)} detail={`${activeEvidence.bls_available.toLocaleString()} rows`} />
+        <Metric label="Spatial evidence" observed={percent(activeEvidence.transit_evidence, rows)} detail={`${activeEvidence.transit_evidence.toLocaleString()} rows`} />
+        <Metric label="TOI associated" observed={percent(activeEvidence.toi_matched, rows)} detail={`${activeEvidence.toi_matched.toLocaleString()} rows · optional`} />
       </div>
 
       <section className="border border-border/70 bg-background/40">
@@ -87,9 +112,9 @@ export function CandidateAssemblyChart({ metrics, evidence }: { metrics?: Record
           </div>
           <div className="h-[300px] p-3">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={evidence.evidence_tier_histogram} layout="vertical" margin={{ top: 12, right: 20, bottom: 8, left: 12 }}>
+              <BarChart data={activeEvidence.evidence_tier_histogram} layout="vertical" margin={{ top: 12, right: 20, bottom: 8, left: 12 }}>
                 <CartesianGrid horizontal={false} strokeDasharray="3 3" opacity={0.2} />
-                <XAxis type="number" allowDecimals={false} tick={{ fontSize: 10 }} />
+                <XAxis type="number" domain={[0, Math.max(rows, 1)]} allowDecimals={false} tick={{ fontSize: 10 }} />
                 <YAxis type="category" dataKey="label" width={125} tick={{ fontSize: 10 }} />
                 <Tooltip formatter={(item) => [`${Number(item).toLocaleString()} candidates`, 'Rows']} />
                 <Bar dataKey="count" name="Candidate rows" fill="#22d3ee" isAnimationActive={false} />
@@ -103,17 +128,17 @@ export function CandidateAssemblyChart({ metrics, evidence }: { metrics?: Record
             <p className="font-medium">TOI association disposition</p>
             <p className="text-[10px] text-muted-foreground">Phân biệt không có TOI, period mismatch, ambiguous và thiếu BLS; không gộp tất cả thành “unmatched”.</p>
           </div>
-          {toiStatuses.length > 0 ? <div className="h-[300px] p-3">
+          <div className="h-[300px] p-3">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={toiStatuses} layout="vertical" margin={{ top: 12, right: 20, bottom: 8, left: 12 }}>
                 <CartesianGrid horizontal={false} strokeDasharray="3 3" opacity={0.2} />
-                <XAxis type="number" allowDecimals={false} tick={{ fontSize: 10 }} />
+                <XAxis type="number" domain={[0, Math.max(rows, 1)]} allowDecimals={false} tick={{ fontSize: 10 }} />
                 <YAxis type="category" dataKey="label" width={125} tick={{ fontSize: 10 }} />
                 <Tooltip formatter={(item) => [`${Number(item).toLocaleString()} candidates`, 'Rows']} />
                 <Bar dataKey="count" name="Candidate rows" fill="#a855f7" isAnimationActive={false} />
               </BarChart>
             </ResponsiveContainer>
-          </div> : <div className="flex h-[300px] items-center justify-center p-6 text-center text-[11px] text-muted-foreground">Không có TOI match status trong snapshot.</div>}
+          </div>
         </section>
       </div>
 

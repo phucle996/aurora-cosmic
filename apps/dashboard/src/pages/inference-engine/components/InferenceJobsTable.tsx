@@ -5,7 +5,8 @@ import { Activity, Check, Circle, CircleAlert, Cpu, Database, FileInput, FileOut
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { formatDate, statusVariant, taskLabel, type InferenceJob, type ModelRecord } from '@/types/models';
+import { formatDate, statusVariant, taskLabel, type ModelRecord } from '@/pages/model-registry/types';
+import type { InferenceJob } from '../types';
 
 interface InferenceJobsTableProps {
   models: ModelRecord[];

@@ -10,12 +10,11 @@ import { useSearchParams } from 'react-router-dom';
 
 import { apiBase, apiFetch } from '@/lib/api';
 import { useRunnerTicket } from '@/lib/session';
-import type { FactoryRun } from '@/types/ticket';
 import { RunnerTicketInspector } from './components/RunnerTicketInspector';
 import { TicketHeroBanner } from './components/TicketHeroBanner';
 import { TicketListCard } from './components/TicketListCard';
 import { TicketSummaryStrip } from './components/TicketSummaryStrip';
-import type { TicketRecord } from './types';
+import type { PipelineRun, TicketRecord } from './types';
 import { normalizedStatus, parseTime } from './utils';
 
 const FACTORY_RUN_HISTORY_LIMIT = 100;
@@ -24,7 +23,7 @@ export default function RunnerTicketsPage(): JSX.Element {
   const { createNewTicket, tickets, loadTickets } = useRunnerTicket();
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedRunID = searchParams.get('run_id') ?? '';
-  const [runs, setRuns] = useState<FactoryRun[]>([]);
+  const [runs, setRuns] = useState<PipelineRun[]>([]);
   const [query, setQuery] = useState('');
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
@@ -40,10 +39,10 @@ export default function RunnerTicketsPage(): JSX.Element {
     [searchParams, setSearchParams],
   );
 
-  const loadRuns = useCallback(async (showLoading = true): Promise<FactoryRun[]> => {
+  const loadRuns = useCallback(async (showLoading = true): Promise<PipelineRun[]> => {
     if (showLoading) setLoading(true);
     try {
-      const response = await apiFetch<{ items: FactoryRun[] }>(
+      const response = await apiFetch<{ items: PipelineRun[] }>(
         `/v1/data-factory/runs?limit=${FACTORY_RUN_HISTORY_LIMIT}`,
       );
       const items = response.items ?? [];
@@ -60,7 +59,7 @@ export default function RunnerTicketsPage(): JSX.Element {
 
   // Aggregate ClickHouse tickets and observed stage runs
   const ticketRecords = useMemo<TicketRecord[]>(() => {
-    const map = new Map<string, FactoryRun[]>();
+    const map = new Map<string, PipelineRun[]>();
     for (const run of runs) {
       if (!run.run_id) continue;
       const list = map.get(run.run_id) ?? [];

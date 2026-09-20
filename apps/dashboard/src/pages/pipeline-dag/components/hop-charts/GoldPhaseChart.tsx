@@ -1,6 +1,5 @@
 import type { JSX } from 'react';
 import {
-  Area,
   Bar,
   CartesianGrid,
   ComposedChart,
@@ -12,7 +11,6 @@ import {
   YAxis,
 } from 'recharts';
 
-import { TelemetryUnavailable } from './TelemetryUnavailable';
 import { clock, mergedSeries, type Telemetry } from './telemetry';
 
 type Comparison = 'pairing' | 'retention' | 'assembly' | 'materialization' | 'commit';
@@ -160,13 +158,18 @@ export function GoldPhaseChart({
     })
   );
 
-  const hasAnyMetric = input > 0 || output > 0 || indexed > 0 || batches > 0 || durationMs > 0 || observations.length > 0;
-  if (!hasAnyMetric) {
-    return <TelemetryUnavailable detail="Phase chưa có Prometheus telemetry hoặc event observation." />;
-  }
+  const isBaseline = !(input > 0 || output > 0 || indexed > 0 || batches > 0 || durationMs > 0 || observations.length > 0);
 
   return (
     <div className="space-y-3">
+      {isBaseline && (
+        <div className="flex items-center justify-between border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5 font-medium">
+            <span className="size-2 rounded-full bg-amber-500" />
+            Khung phân tích cơ sở: phase chưa có Prometheus telemetry hoặc event observation (hiển thị mức nền 0).
+          </span>
+        </div>
+      )}
       {/* 4 Primary KPI Cards */}
       <div className="grid grid-cols-2 gap-px border border-border/70 bg-border/70 text-xs lg:grid-cols-4">
         <Metric label={definition.input} observed={input} />

@@ -14,7 +14,7 @@ import {
   YAxis,
 } from 'recharts';
 
-import type { BLSSearchEvidence, QuantileSummary } from '@/types/ticket';
+import type { BLSSearchEvidence, QuantileSummary } from '../../types';
 
 const quantiles: Array<{ key: keyof QuantileSummary; label: string }> = [
   { key: 'p05', label: 'P05' },
@@ -42,31 +42,51 @@ function compact(observed: number): string {
 export function BLSSearchChart({ metrics, evidence }: { metrics?: Record<string, number>; evidence?: BLSSearchEvidence }): JSX.Element {
   const input = value(metrics, 'input_records');
   const output = value(metrics, 'output_rows');
-  if (!evidence) {
-    return <section className={`border border-dashed px-5 py-12 text-center ${output > 0 ? 'border-red-500/60 bg-red-500/5' : 'border-border/70 bg-background/40'}`}>
-      <p className="font-mono text-sm font-semibold uppercase">{output > 0 ? 'BLS evidence mismatch' : 'BLS search not executed'}</p>
-      <p className="mx-auto mt-2 max-w-2xl text-[11px] leading-5 text-muted-foreground">
-        {output > 0
-          ? `Run ledger reports ${output.toLocaleString()} BLS outputs, but no BLS rows were found in its committed snapshots. No distribution is synthesized.`
-          : `${input.toLocaleString()} upstream feature rows are visible, but G04 has no committed BLS search evidence in this view.`}
-      </p>
-    </section>;
-  }
+  const isBaseline = !evidence;
+  const zeroQuantile: QuantileSummary = { min: 0, p05: 0, p25: 0, p50: 0, p75: 0, p95: 0, max: 0 };
+  const activeEvidence: BLSSearchEvidence = evidence ?? {
+    evaluated: input,
+    available: output,
+    unavailable: Math.max(0, input - output),
+    period_days: zeroQuantile,
+    duration_hours: zeroQuantile,
+    depth_ppm: zeroQuantile,
+    power: zeroQuantile,
+    period_histogram: [
+      { label: '< 1 d', count: 0 },
+      { label: '1–3 d', count: 0 },
+      { label: '3–10 d', count: 0 },
+      { label: '10–30 d', count: 0 },
+      { label: '> 30 d', count: 0 },
+    ],
+  };
 
-  const disposition = [{ population: 'Evaluated Light Curves', available: evidence.available, unavailable: evidence.unavailable }];
-  const parameterProfile = quantiles.map(({ key, label }) => ({ quantile: label, period: evidence.period_days[key], duration: evidence.duration_hours[key] }));
-  const signalProfile = quantiles.map(({ key, label }) => ({ quantile: label, depth: evidence.depth_ppm[key], power: evidence.power[key] }));
-  const hasBLS = evidence.available > 0;
+  const disposition = [{ population: 'Evaluated Light Curves', available: activeEvidence.available, unavailable: activeEvidence.unavailable }];
+  const parameterProfile = quantiles.map(({ key, label }) => ({ quantile: label, period: activeEvidence.period_days[key] ?? 0, duration: activeEvidence.duration_hours[key] ?? 0 }));
+  const signalProfile = quantiles.map(({ key, label }) => ({ quantile: label, depth: activeEvidence.depth_ppm[key] ?? 0, power: activeEvidence.power[key] ?? 0 }));
+  const hasBLS = activeEvidence.available > 0;
 
   return (
     <div className="space-y-3">
+      {isBaseline && (
+        <div className="flex items-center justify-between border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5 font-medium">
+            <span className="size-2 rounded-full bg-amber-500" />
+            Khung phân tích cơ sở: G04 chưa có committed BLS evidence (hiển thị mức nền 0).
+          </span>
+          <span className="font-mono text-[10px] uppercase">
+            {input > 0 ? `${input.toLocaleString()} inputs upstream` : 'Sẵn sàng ghi nhận'}
+          </span>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-px border border-border/70 bg-border/70 text-xs lg:grid-cols-3 2xl:grid-cols-6">
-        <Metric label="LC evaluated" observed={evidence.evaluated.toLocaleString()} detail="feature rows inspected" />
-        <Metric label="BLS available" observed={evidence.available.toLocaleString()} detail={percent(evidence.available, evidence.evaluated)} />
-        <Metric label="BLS unavailable" observed={evidence.unavailable.toLocaleString()} detail={percent(evidence.unavailable, evidence.evaluated)} warning={evidence.unavailable > 0} />
-        <Metric label="Best period · P50" observed={hasBLS ? `${compact(evidence.period_days.p50)} d` : '—'} detail={hasBLS ? `P05–P95 ${compact(evidence.period_days.p05)}–${compact(evidence.period_days.p95)} d` : 'no available search'} />
-        <Metric label="Duration · P50" observed={hasBLS ? `${compact(evidence.duration_hours.p50)} h` : '—'} detail={hasBLS ? `P05–P95 ${compact(evidence.duration_hours.p05)}–${compact(evidence.duration_hours.p95)} h` : 'no available search'} />
-        <Metric label="Transit depth · P50" observed={hasBLS ? `${compact(evidence.depth_ppm.p50)} ppm` : '—'} detail={hasBLS ? `power P50 ${compact(evidence.power.p50)}` : 'no available search'} />
+        <Metric label="LC evaluated" observed={activeEvidence.evaluated.toLocaleString()} detail="feature rows inspected" />
+        <Metric label="BLS available" observed={activeEvidence.available.toLocaleString()} detail={percent(activeEvidence.available, activeEvidence.evaluated)} />
+        <Metric label="BLS unavailable" observed={activeEvidence.unavailable.toLocaleString()} detail={percent(activeEvidence.unavailable, activeEvidence.evaluated)} warning={activeEvidence.unavailable > 0} />
+        <Metric label="Best period · P50" observed={hasBLS ? `${compact(activeEvidence.period_days.p50)} d` : '0 d'} detail={hasBLS ? `P05–P95 ${compact(activeEvidence.period_days.p05)}–${compact(activeEvidence.period_days.p95)} d` : 'mức nền baseline'} />
+        <Metric label="Duration · P50" observed={hasBLS ? `${compact(activeEvidence.duration_hours.p50)} h` : '0 h'} detail={hasBLS ? `P05–P95 ${compact(activeEvidence.duration_hours.p05)}–${compact(activeEvidence.duration_hours.p95)} h` : 'mức nền baseline'} />
+        <Metric label="Transit depth · P50" observed={hasBLS ? `${compact(activeEvidence.depth_ppm.p50)} ppm` : '0 ppm'} detail={hasBLS ? `power P50 ${compact(activeEvidence.power.p50)}` : 'mức nền baseline'} />
       </div>
 
       <section className="border border-border/70 bg-background/40">
@@ -78,7 +98,7 @@ export function BLSSearchChart({ metrics, evidence }: { metrics?: Record<string,
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={disposition} layout="vertical" margin={{ top: 12, right: 28, bottom: 8, left: 12 }}>
               <CartesianGrid horizontal={false} strokeDasharray="3 3" opacity={0.2} />
-              <XAxis type="number" domain={[0, Math.max(evidence.evaluated, 1)]} allowDecimals={false} tick={{ fontSize: 10 }} />
+              <XAxis type="number" domain={[0, Math.max(activeEvidence.evaluated, 1)]} allowDecimals={false} tick={{ fontSize: 10 }} />
               <YAxis type="category" dataKey="population" width={125} tick={{ fontSize: 10 }} />
               <Tooltip formatter={(item, name) => [`${Number(item).toLocaleString()} LC`, String(name)]} />
               <Legend />
@@ -89,69 +109,67 @@ export function BLSSearchChart({ metrics, evidence }: { metrics?: Record<string,
         </div>
       </section>
 
-      {hasBLS ? <>
+      <section className="border border-border/70 bg-background/40">
+        <div className="border-b border-border/60 px-3 py-2">
+          <p className="font-medium">Best-period distribution</p>
+          <p className="text-[10px] text-muted-foreground">Histogram đếm nghiệm BLS tốt nhất theo dải chu kỳ; đây chưa phải phân bố chu kỳ hành tinh đã xác nhận.</p>
+        </div>
+        <div className="h-[260px] p-3">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={activeEvidence.period_histogram} margin={{ top: 12, right: 12, bottom: 8, left: 4 }}>
+              <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.2} />
+              <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+              <YAxis allowDecimals={false} width={42} tick={{ fontSize: 10 }} />
+              <Tooltip formatter={(item) => [`${Number(item).toLocaleString()} LC`, 'Best-period solutions']} />
+              <Bar dataKey="count" name="Best-period solutions" fill="#22d3ee" isAnimationActive={false} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </section>
+
+      <div className="grid gap-3 xl:grid-cols-2">
         <section className="border border-border/70 bg-background/40">
           <div className="border-b border-border/60 px-3 py-2">
-            <p className="font-medium">Best-period distribution</p>
-            <p className="text-[10px] text-muted-foreground">Histogram đếm nghiệm BLS tốt nhất theo dải chu kỳ; đây chưa phải phân bố chu kỳ hành tinh đã xác nhận.</p>
+            <p className="font-medium">Period and duration quantile profile</p>
+            <p className="text-[10px] text-muted-foreground">Period dùng trục trái (days), fitted box duration dùng trục phải (hours).</p>
           </div>
-          <div className="h-[260px] p-3">
+          <div className="h-[300px] p-3">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={evidence.period_histogram} margin={{ top: 12, right: 12, bottom: 8, left: 4 }}>
+              <ComposedChart data={parameterProfile} margin={{ top: 12, right: 20, bottom: 8, left: 4 }}>
                 <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.2} />
-                <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-                <YAxis allowDecimals={false} width={42} tick={{ fontSize: 10 }} />
-                <Tooltip formatter={(item) => [`${Number(item).toLocaleString()} LC`, 'Best-period solutions']} />
-                <Bar dataKey="count" name="Best-period solutions" fill="#22d3ee" isAnimationActive={false} />
-              </BarChart>
+                <XAxis dataKey="quantile" tick={{ fontSize: 10 }} />
+                <YAxis yAxisId="period" width={42} tick={{ fontSize: 10 }} label={{ value: 'days', angle: -90, position: 'insideLeft', fontSize: 9 }} />
+                <YAxis yAxisId="duration" orientation="right" width={42} tick={{ fontSize: 10 }} label={{ value: 'hours', angle: 90, position: 'insideRight', fontSize: 9 }} />
+                <Tooltip formatter={(item, name) => [Number(item).toLocaleString(undefined, { maximumFractionDigits: 4 }), String(name)]} />
+                <Legend />
+                <Area yAxisId="period" type="monotone" dataKey="period" name="Best period · days" stroke="#22d3ee" fill="#22d3ee" fillOpacity={0.18} isAnimationActive={false} />
+                <Line yAxisId="duration" type="monotone" dataKey="duration" name="Box duration · hours" stroke="#a855f7" strokeWidth={2.2} dot={{ r: 3 }} isAnimationActive={false} />
+              </ComposedChart>
             </ResponsiveContainer>
           </div>
         </section>
 
-        <div className="grid gap-3 xl:grid-cols-2">
-          <section className="border border-border/70 bg-background/40">
-            <div className="border-b border-border/60 px-3 py-2">
-              <p className="font-medium">Period and duration quantile profile</p>
-              <p className="text-[10px] text-muted-foreground">Period dùng trục trái (days), fitted box duration dùng trục phải (hours).</p>
-            </div>
-            <div className="h-[300px] p-3">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={parameterProfile} margin={{ top: 12, right: 20, bottom: 8, left: 4 }}>
-                  <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.2} />
-                  <XAxis dataKey="quantile" tick={{ fontSize: 10 }} />
-                  <YAxis yAxisId="period" width={42} tick={{ fontSize: 10 }} label={{ value: 'days', angle: -90, position: 'insideLeft', fontSize: 9 }} />
-                  <YAxis yAxisId="duration" orientation="right" width={42} tick={{ fontSize: 10 }} label={{ value: 'hours', angle: 90, position: 'insideRight', fontSize: 9 }} />
-                  <Tooltip formatter={(item, name) => [Number(item).toLocaleString(undefined, { maximumFractionDigits: 4 }), String(name)]} />
-                  <Legend />
-                  <Area yAxisId="period" type="monotone" dataKey="period" name="Best period · days" stroke="#22d3ee" fill="#22d3ee" fillOpacity={0.18} isAnimationActive={false} />
-                  <Line yAxisId="duration" type="monotone" dataKey="duration" name="Box duration · hours" stroke="#a855f7" strokeWidth={2.2} dot={{ r: 3 }} isAnimationActive={false} />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-          </section>
-
-          <section className="border border-border/70 bg-background/40">
-            <div className="border-b border-border/60 px-3 py-2">
-              <p className="font-medium">Signal evidence quantile profile</p>
-              <p className="text-[10px] text-muted-foreground">Depth dùng trục trái (ppm); BLS power dùng trục phải và chỉ có ý nghĩa tương đối trong search.</p>
-            </div>
-            <div className="h-[300px] p-3">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={signalProfile} margin={{ top: 12, right: 20, bottom: 8, left: 4 }}>
-                  <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.2} />
-                  <XAxis dataKey="quantile" tick={{ fontSize: 10 }} />
-                  <YAxis yAxisId="depth" width={52} tickFormatter={(item) => compact(Number(item))} tick={{ fontSize: 10 }} label={{ value: 'ppm', angle: -90, position: 'insideLeft', fontSize: 9 }} />
-                  <YAxis yAxisId="power" orientation="right" width={48} tickFormatter={(item) => compact(Number(item))} tick={{ fontSize: 10 }} label={{ value: 'power', angle: 90, position: 'insideRight', fontSize: 9 }} />
-                  <Tooltip formatter={(item, name) => [Number(item).toLocaleString(undefined, { maximumFractionDigits: 5 }), String(name)]} />
-                  <Legend />
-                  <Line yAxisId="depth" type="monotone" dataKey="depth" name="Transit depth · ppm" stroke="#10b981" strokeWidth={2.2} dot={{ r: 3 }} isAnimationActive={false} />
-                  <Line yAxisId="power" type="monotone" dataKey="power" name="BLS power" stroke="#f97316" strokeWidth={2.2} dot={{ r: 3 }} isAnimationActive={false} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </section>
-        </div>
-      </> : <div className="border border-dashed border-border/70 bg-background/40 px-4 py-8 text-center text-[11px] text-muted-foreground">Không có periodogram BLS khả dụng trong run này; parameter distributions được giữ trống thay vì vẽ các giá trị 0.</div>}
+        <section className="border border-border/70 bg-background/40">
+          <div className="border-b border-border/60 px-3 py-2">
+            <p className="font-medium">Signal evidence quantile profile</p>
+            <p className="text-[10px] text-muted-foreground">Depth dùng trục trái (ppm); BLS power dùng trục phải và chỉ có ý nghĩa tương đối trong search.</p>
+          </div>
+          <div className="h-[300px] p-3">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={signalProfile} margin={{ top: 12, right: 20, bottom: 8, left: 4 }}>
+                <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.2} />
+                <XAxis dataKey="quantile" tick={{ fontSize: 10 }} />
+                <YAxis yAxisId="depth" width={52} tickFormatter={(item) => compact(Number(item))} tick={{ fontSize: 10 }} label={{ value: 'ppm', angle: -90, position: 'insideLeft', fontSize: 9 }} />
+                <YAxis yAxisId="power" orientation="right" width={48} tickFormatter={(item) => compact(Number(item))} tick={{ fontSize: 10 }} label={{ value: 'power', angle: 90, position: 'insideRight', fontSize: 9 }} />
+                <Tooltip formatter={(item, name) => [Number(item).toLocaleString(undefined, { maximumFractionDigits: 5 }), String(name)]} />
+                <Legend />
+                <Line yAxisId="depth" type="monotone" dataKey="depth" name="Transit depth · ppm" stroke="#10b981" strokeWidth={2.2} dot={{ r: 3 }} isAnimationActive={false} />
+                <Line yAxisId="power" type="monotone" dataKey="power" name="BLS power" stroke="#f97316" strokeWidth={2.2} dot={{ r: 3 }} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </section>
+      </div>
 
       <div className="border-l-2 border-primary/50 bg-background/40 px-3 py-2 text-[11px] text-muted-foreground">
         BLS chọn nghiệm có power lớn nhất trên lưới period–duration. Một peak mạnh là bằng chứng tuần hoàn cần vetting tiếp, không phải xác suất hoặc xác nhận ngoại hành tinh.

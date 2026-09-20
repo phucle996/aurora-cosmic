@@ -14,7 +14,7 @@ import {
   YAxis,
 } from 'recharts';
 
-import type { LCFeatureEvidence, QuantileSummary } from '@/types/ticket';
+import type { LCFeatureEvidence, QuantileSummary } from '../../types';
 
 const quantiles: Array<{ key: keyof QuantileSummary; label: string }> = [
   { key: 'p05', label: 'P05' },
@@ -42,46 +42,63 @@ function compact(observed: number): string {
 export function LightCurveFeaturesChart({ metrics, evidence }: { metrics?: Record<string, number>; evidence?: LCFeatureEvidence }): JSX.Element {
   const input = value(metrics, 'input_records');
   const ledgerOutput = value(metrics, 'output_rows');
+  const isBaseline = !evidence;
+  const zeroQuantile: QuantileSummary = { min: 0, p05: 0, p25: 0, p50: 0, p75: 0, p95: 0, max: 0 };
 
-  if (!evidence) {
-    const completedWithoutEvidence = ledgerOutput > 0;
-    return <section className={`border border-dashed px-5 py-12 text-center ${completedWithoutEvidence ? 'border-red-500/60 bg-red-500/5' : 'border-border/70 bg-background/40'}`}>
-      <p className="font-mono text-sm font-semibold uppercase">{completedWithoutEvidence ? 'Scientific evidence mismatch' : 'Feature extraction not executed'}</p>
-      <p className="mx-auto mt-2 max-w-2xl text-[11px] leading-5 text-muted-foreground">
-        {completedWithoutEvidence
-          ? `Run ledger reports ${ledgerOutput.toLocaleString()} G03 outputs, but no candidate-feature rows were found for its committed snapshot IDs. The UI will not synthesize distributions.`
-          : `${input.toLocaleString()} eligible Light Curves are visible upstream, but G03 has not emitted a committed feature snapshot for this view.`}
-      </p>
-    </section>;
-  }
+  const activeEvidence: LCFeatureEvidence = evidence ?? {
+    rows: ledgerOutput,
+    snapshot_count: 0,
+    total_cadences: 0,
+    n_points: zeroQuantile,
+    time_span_days: zeroQuantile,
+    median_cadence_minutes: zeroQuantile,
+    max_gap_minutes: zeroQuantile,
+    flux_std_ppm: zeroQuantile,
+    flux_amplitude_ppm: zeroQuantile,
+    flux_rms_ppm: zeroQuantile,
+    median_flux_err_ppm: zeroQuantile,
+  };
 
-  const emitted = evidence.rows;
+  const emitted = activeEvidence.rows;
   const population = Math.max(input, emitted);
   const rejected = Math.max(0, population - emitted);
   const disposition = [{ phase: 'Feature extraction', emitted, rejected }];
   const fluxProfile = quantiles.map(({ key, label }) => ({
     quantile: label,
-    std: evidence.flux_std_ppm[key],
-    amplitude: evidence.flux_amplitude_ppm[key],
-    rms: evidence.flux_rms_ppm[key],
-    uncertainty: evidence.median_flux_err_ppm[key],
+    std: activeEvidence.flux_std_ppm[key] ?? 0,
+    amplitude: activeEvidence.flux_amplitude_ppm[key] ?? 0,
+    rms: activeEvidence.flux_rms_ppm[key] ?? 0,
+    uncertainty: activeEvidence.median_flux_err_ppm[key] ?? 0,
   }));
   const samplingProfile = quantiles.map(({ key, label }) => ({
     quantile: label,
-    baseline: evidence.time_span_days[key],
-    cadence: evidence.median_cadence_minutes[key],
-    maxGap: evidence.max_gap_minutes[key],
+    baseline: activeEvidence.time_span_days[key] ?? 0,
+    cadence: activeEvidence.median_cadence_minutes[key] ?? 0,
+    maxGap: activeEvidence.max_gap_minutes[key] ?? 0,
   }));
+  const hasFeatures = activeEvidence.rows > 0;
 
   return (
     <div className="space-y-3">
+      {isBaseline && (
+        <div className="flex items-center justify-between border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5 font-medium">
+            <span className="size-2 rounded-full bg-amber-500" />
+            Khung phân tích cơ sở: G03 chưa có committed feature evidence (hiển thị mức nền 0).
+          </span>
+          <span className="font-mono text-[10px] uppercase">
+            {input > 0 ? `${input.toLocaleString()} inputs upstream` : 'Sẵn sàng ghi nhận'}
+          </span>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-px border border-border/70 bg-border/70 text-xs lg:grid-cols-3 2xl:grid-cols-6">
-        <Metric label="Feature rows" observed={emitted.toLocaleString()} detail={`${evidence.snapshot_count.toLocaleString()} snapshots`} />
-        <Metric label="Extraction yield" observed={percent(emitted, population)} detail={`${rejected.toLocaleString()} not emitted`} warning={rejected > 0} />
-        <Metric label="Total cadences" observed={compact(evidence.total_cadences)} detail="across emitted LC" />
-        <Metric label="Cadences / LC · P50" observed={compact(evidence.n_points.p50)} detail={`P05–P95 ${compact(evidence.n_points.p05)}–${compact(evidence.n_points.p95)}`} />
-        <Metric label="Baseline · P50" observed={`${compact(evidence.time_span_days.p50)} d`} detail={`P05–P95 ${compact(evidence.time_span_days.p05)}–${compact(evidence.time_span_days.p95)} d`} />
-        <Metric label="Cadence · P50" observed={`${compact(evidence.median_cadence_minutes.p50)} min`} detail={`max-gap P50 ${compact(evidence.max_gap_minutes.p50)} min`} />
+        <Metric label="Feature rows" observed={emitted.toLocaleString()} detail={`${activeEvidence.snapshot_count.toLocaleString()} snapshots`} />
+        <Metric label="Extraction yield" observed={percent(emitted, population)} detail={`${rejected.toLocaleString()} not emitted`} warning={rejected > 0 && !isBaseline} />
+        <Metric label="Total cadences" observed={compact(activeEvidence.total_cadences)} detail="across emitted LC" />
+        <Metric label="Cadences / LC · P50" observed={hasFeatures ? compact(activeEvidence.n_points.p50) : '0'} detail={hasFeatures ? `P05–P95 ${compact(activeEvidence.n_points.p05)}–${compact(activeEvidence.n_points.p95)}` : 'mức nền baseline'} />
+        <Metric label="Baseline · P50" observed={hasFeatures ? `${compact(activeEvidence.time_span_days.p50)} d` : '0 d'} detail={hasFeatures ? `P05–P95 ${compact(activeEvidence.time_span_days.p05)}–${compact(activeEvidence.time_span_days.p95)} d` : 'mức nền baseline'} />
+        <Metric label="Cadence · P50" observed={hasFeatures ? `${compact(activeEvidence.median_cadence_minutes.p50)} min` : '0 min'} detail={hasFeatures ? `max-gap P50 ${compact(activeEvidence.max_gap_minutes.p50)} min` : 'mức nền baseline'} />
       </div>
 
       <section className="border border-border/70 bg-background/40">

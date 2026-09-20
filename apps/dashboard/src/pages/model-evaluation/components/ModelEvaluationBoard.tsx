@@ -27,7 +27,8 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { apiFetch } from '@/lib/api';
 
-import { formatDate, statusVariant, taskLabel, type ModelEvaluation, type ModelRecord } from '@/types/models';
+import { formatDate, statusVariant, taskLabel, type ModelRecord } from '@/pages/model-registry/types';
+import type { ModelEvaluation } from '../types';
 
 type Props = {
   models: ModelRecord[];

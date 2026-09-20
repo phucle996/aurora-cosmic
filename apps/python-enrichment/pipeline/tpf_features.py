@@ -11,7 +11,7 @@ from typing import Any
 import numpy as np
 import pyarrow.parquet as pq
 
-from aurora_ml.pipeline.evidence import extract_tpf_features_from_silver_cube
+from pipeline.evidence import extract_tpf_features_from_silver_cube
 
 from events import SilverEvent
 from storage.object_store import ObjectStore

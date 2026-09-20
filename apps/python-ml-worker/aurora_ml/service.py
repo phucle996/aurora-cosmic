@@ -19,8 +19,10 @@ from pkg.logger import init_logger
 
 LOGGER = logging.getLogger("aurora-ml-service")
 REQUEST_SUBJECT = "aurora.v1.ml.training.requested"
+CONTROL_SUBJECT = "aurora.v1.ml.training.control"
 COMPLETED_SUBJECT = "aurora.v1.ml.training.completed"
 FAILED_SUBJECT = "aurora.v1.ml.training.failed"
+CANCELLED_SUBJECT = "aurora.v1.ml.training.cancelled"
 PROGRESS_SUBJECT = "aurora.v1.ml.training.progress"
 STREAM_NAME = "AURORA_ML"
 CONSUMER_NAME = "aurora-ml-worker-v1"
@@ -66,11 +68,29 @@ async def _consume(config: Config, metrics: Metrics, stop: asyncio.Event) -> Non
                 # Observation must never invalidate an otherwise reproducible run.
                 LOGGER.warning(
                     "Unable to publish training progress for %s",
-                    value.get("job_id", ""),
+                    value.get("ticket_id", ""),
                     exc_info=True,
                 )
 
         application = TrainingApplication(config, progress=report_progress)
+        control_sub = await nc.subscribe(CONTROL_SUBJECT)
+
+        async def _handle_control():
+            try:
+                async for msg in control_sub.messages:
+                    try:
+                        raw = json.loads(msg.data.decode("utf-8"))
+                        ctrl_ticket_id = str(raw.get("ticket_id", "")).strip()
+                        ctrl_action = str(raw.get("action", "")).strip()
+                        if ctrl_ticket_id and ctrl_action:
+                            LOGGER.info("ML control signal received: ticket=%s action=%s", ctrl_ticket_id, ctrl_action)
+                            application.set_control(ctrl_ticket_id, ctrl_action)
+                    except Exception:
+                        LOGGER.warning("Malformed training control payload", exc_info=True)
+            except asyncio.CancelledError:
+                pass
+
+        control_task = asyncio.create_task(_handle_control())
         subscription = await _ensure_consumer(nc.jetstream())
         LOGGER.info("ML worker consuming durable JetStream subject %s", REQUEST_SUBJECT)
         while not stop.is_set():
@@ -91,7 +111,7 @@ async def _consume(config: Config, metrics: Metrics, stop: asyncio.Event) -> Non
                         PROGRESS_SUBJECT,
                         {
                             "schema_version": 1,
-                            "job_id": request.job_id,
+                            "ticket_id": request.ticket_id,
                             "task": request.task,
                             "status": "running",
                             "phase": "worker_acknowledged",
@@ -100,6 +120,7 @@ async def _consume(config: Config, metrics: Metrics, stop: asyncio.Event) -> Non
                     )
                     with metrics.job("training"):
                         result = await asyncio.to_thread(application.execute, request)
+                    result["ticket_id"] = request.ticket_id
                     await _publish(nc, COMPLETED_SUBJECT, result)
                     for inference_request in result.get("inference_requests", []):
                         await nc.jetstream().publish(
@@ -108,20 +129,30 @@ async def _consume(config: Config, metrics: Metrics, stop: asyncio.Event) -> Non
                         )
                     await message.ack()
                 except Exception as exc:
+                    is_cancelled = "CANCELLED" in str(exc).upper()
+                    ticket_id = str(payload.get("ticket_id") or "")
                     failure = {
                         "schema_version": 1,
-                        "job_id": str(payload.get("training_job_id", "")),
+                        "ticket_id": ticket_id,
                         "task": str(payload.get("task", "")),
-                        "status": "failed",
+                        "status": "cancelled" if is_cancelled else "failed",
                         "error_code": type(exc).__name__,
                         "error": str(exc),
                     }
-                    LOGGER.exception("ML training job failed: %s", failure["job_id"])
-                    await _publish(nc, FAILED_SUBJECT, failure)
+                    if is_cancelled:
+                        LOGGER.info("ML training ticket cancelled by operator: %s", ticket_id)
+                        await _publish(nc, CANCELLED_SUBJECT, failure)
+                    else:
+                        LOGGER.exception("ML training job failed: %s", ticket_id)
+                        await _publish(nc, FAILED_SUBJECT, failure)
                     # The application journals failures. Ack prevents an invalid
                     # scientific request from hot-looping until a human retries it.
                     await message.ack()
     finally:
+        if 'control_task' in locals() and not control_task.done():
+            control_task.cancel()
+        if 'control_sub' in locals() and control_sub is not None:
+            await control_sub.unsubscribe()
         if subscription is not None:
             await subscription.unsubscribe()
         await nc.flush()

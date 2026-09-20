@@ -41,9 +41,7 @@ export function CompressionRatioChart({
   const silverObjects = metric(metrics, 'silver_objects');
   const goldObjects = metric(metrics, 'gold_objects');
 
-  if (!inventoryObserved) {
-    return <div className="border border-dashed border-border/70 bg-background/40 p-6 text-center text-xs text-muted-foreground">Chưa có MinIO inventory snapshot để thực hiện byte accounting.</div>;
-  }
+  const isBaseline = !inventoryObserved;
   if (scope === 'gold') {
     return <GoldFootprint bytes={goldBytes} objects={goldObjects} />;
   }
@@ -78,6 +76,7 @@ export function CompressionRatioChart({
   const coverage = silverObjects > 0 ? observed.length / silverObjects : 0;
 
   return <div className="space-y-3">
+    {isBaseline && <div className="flex items-center justify-between border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground"><span className="flex items-center gap-1.5 font-medium"><span className="size-2 rounded-full bg-amber-500" />Khung phân tích cơ sở: chưa có MinIO inventory snapshot (hiển thị mức nền 0).</span></div>}
     <div className="grid gap-px border border-border/70 bg-border/70 sm:grid-cols-3 xl:grid-cols-6">
       <Metric label="Bronze input" value={formatGB(bronzeBytes)} detail={`${bronzeObjects.toLocaleString()} FITS objects`} />
       <Metric label="Silver output" value={formatGB(silverBytes)} detail={`${silverObjects.toLocaleString()} Parquet objects`} />

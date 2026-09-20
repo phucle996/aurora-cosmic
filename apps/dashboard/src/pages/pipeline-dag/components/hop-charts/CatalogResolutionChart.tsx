@@ -47,14 +47,7 @@ export function CatalogResolutionChart({ metrics, details }: { metrics?: Record<
         <Metric label="Catalog source" observed={cacheHit ? 'CACHE' : targets > 0 ? 'FETCH' : '—'} detail={cacheHit ? 'verified snapshot reuse' : targets > 0 ? 'on-demand retrieval' : 'not observed'} />
       </div>
 
-      {targets === 0 ? (
-        <section className="border border-dashed border-border/70 bg-background/40 px-5 py-12 text-center">
-          <p className="font-mono text-sm font-semibold uppercase">Catalog batch not admitted</p>
-          <p className="mx-auto mt-2 max-w-2xl text-[11px] leading-5 text-muted-foreground">
-            Backend đang trả catalog state {state} với target_count = 0. G02 chưa có mẫu số để tính TIC coverage hay TOI density, nên drawer không dựng biểu đồ 0 giả.
-          </p>
-        </section>
-      ) : (
+      {targets === 0 && <div className="flex items-center justify-between border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground"><span className="flex items-center gap-1.5 font-medium"><span className="size-2 rounded-full bg-amber-500" />Khung phân tích cơ sở: Catalog batch chưa admitted (hiển thị mức nền 0).</span></div>}
         <div className="grid gap-3 xl:grid-cols-2">
           <section className="border border-border/70 bg-background/40">
             <div className="border-b border-border/60 px-3 py-2">
@@ -98,7 +91,6 @@ export function CatalogResolutionChart({ metrics, details }: { metrics?: Record<
             </div>
           </section>
         </div>
-      )}
 
       <section className="grid gap-px border border-border/70 bg-border/70 sm:grid-cols-2">
         <Snapshot label="TIC snapshot" id={details?.tic_snapshot_id} />

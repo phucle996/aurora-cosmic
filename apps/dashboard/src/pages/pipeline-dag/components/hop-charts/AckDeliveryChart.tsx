@@ -44,11 +44,10 @@ export function AckDeliveryChart({ metrics }: { metrics?: Record<string, number>
     { stage: 'ACK floor', positions: acknowledgedPositions, attempts: acknowledgedDeliveries },
   ];
 
-  if (!observed) {
-    return <div className="border border-dashed border-border/70 bg-background/40 p-8 text-center text-xs text-muted-foreground">Durable Bronze consumer chưa trả ACK metadata; UI không suy diễn ACK từ checkpoint hay Silver event.</div>;
-  }
+  const isBaseline = !observed;
 
   return <div className="space-y-3">
+    {isBaseline && <div className="flex items-center justify-between border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground"><span className="flex items-center gap-1.5 font-medium"><span className="size-2 rounded-full bg-amber-500" />Khung phân tích cơ sở: Bronze consumer chưa trả ACK metadata (hiển thị mức nền 0).</span></div>}
     <div className="grid gap-px border border-border/70 bg-border/70 sm:grid-cols-4 xl:grid-cols-8">
       <Metric label="Stream messages" metricValue={streamMessages.toLocaleString()} detail="unique Bronze positions" />
       <Metric label="ACK coverage" metricValue={percent(coverage)} detail={`${acknowledgedPositions.toLocaleString()} positions`} tone={coverage >= 1 ? 'positive' : 'warning'} />

@@ -5,7 +5,6 @@ import {
 } from 'recharts';
 
 import type { Hop } from '../../types';
-import { TelemetryUnavailable } from './TelemetryUnavailable';
 import { clock, mergedSeries, type Telemetry } from './telemetry';
 
 type ScatterPoint = NonNullable<Hop['scatter_points']>[number];
@@ -49,7 +48,7 @@ export function ResidualsDistributionChart({
   const preclipSamples = Math.max(0, metrics?.lc_preclip_samples ?? 0);
   const retainedSamples = Math.max(0, metrics?.lc_retained_samples ?? 0);
   const outliers = Math.max(0, metrics?.lc_outlier_removed ?? 0);
-  if (total === 0 && preclipSamples === 0 && (tpfTransformPoints?.length ?? 0) === 0) return <TelemetryUnavailable detail="Chưa có transform evidence cho phase này." />;
+  const isBaseline = total === 0 && preclipSamples === 0 && (tpfTransformPoints?.length ?? 0) === 0;
 
   const clipRate = ratio(outliers, preclipSamples);
   const retainedRate = ratio(retainedSamples, preclipSamples);
@@ -102,10 +101,11 @@ export function ResidualsDistributionChart({
   const finiteTrend = mergedSeries(telemetry, ['tpf_finite_pixel_fraction']).map((point) => ({ ...point, finite: 100 * Number(point.tpf_finite_pixel_fraction ?? 0) }));
   const hasFiniteTrend = finiteTrend.some((point) => point.finite > 0);
 
-  const series = mergedSeries(telemetry, ['lc_output_rate', 'tpf_output_rate', 'lc_outlier_removed_rate']).map((point) => ({ ...point, outlierRate: Number(point.lc_outlier_removed_rate ?? 0) }));
+  const series: Array<Record<string, number> & { outlierRate: number }> = mergedSeries(telemetry, ['lc_output_rate', 'tpf_output_rate', 'lc_outlier_removed_rate']).map((point) => ({ ...point, outlierRate: Number(point.lc_outlier_removed_rate ?? 0) }));
   const hasActivity = series.some((point) => (showLC && (Number(point.lc_output_rate ?? 0) > 0 || point.outlierRate > 0)) || (showTPF && Number(point.tpf_output_rate ?? 0) > 0));
 
   return <div className="space-y-3">
+    {isBaseline && <div className="flex items-center justify-between border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground"><span className="flex items-center gap-1.5 font-medium"><span className="size-2 rounded-full bg-amber-500" />Khung phân tích cơ sở: chưa có transform evidence (hiển thị mức nền 0).</span></div>}
     {focus !== 'target-pixel' && <div className="grid grid-cols-2 gap-px border border-border/70 bg-border/70 text-xs lg:grid-cols-6">
       <Metric label="Transformed products" value={total.toLocaleString()} detail={focus === 'lightcurve' ? `${lightCurves} LC` : focus === 'target-pixel' ? `${targetPixels} TPF` : `${lightCurves} LC · ${targetPixels} TPF`} />
       {showLC && <>

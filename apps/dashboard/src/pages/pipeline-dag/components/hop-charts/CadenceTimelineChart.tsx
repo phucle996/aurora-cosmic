@@ -1,6 +1,6 @@
 import { type JSX } from 'react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { TelemetryUnavailable } from './TelemetryUnavailable';
+
 import { clock, mergedSeries, type Telemetry } from './telemetry';
 
 function formatBytes(value: number): string {
@@ -11,7 +11,7 @@ function formatBytes(value: number): string {
 
 export function CadenceTimelineChart({ metrics, telemetry }: { mode?: 'stream' | 'batch'; metrics?: Record<string, number>; telemetry?: Telemetry; totalFiles?: number }): JSX.Element {
   const observed = metrics?.inventory_observed === 1;
-  if (!observed) return <TelemetryUnavailable detail="MinIO Bronze inventory chưa sẵn sàng." />;
+  const isBaseline = !observed;
   const data = mergedSeries(telemetry, ['throughput']);
   const hasActiveRate = data.some((point) => Number(point.throughput ?? 0) > 0);
   const total = Math.max(0, metrics?.total_files ?? 0);
@@ -28,6 +28,7 @@ export function CadenceTimelineChart({ metrics, telemetry }: { mode?: 'stream' |
   const states = [{ scope: 'Bronze inventory', checkpointed, pending, failed }];
 
   return <div className="space-y-3">
+    {isBaseline && <div className="flex items-center justify-between border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground"><span className="flex items-center gap-1.5 font-medium"><span className="size-2 rounded-full bg-amber-500" />Khung phân tích cơ sở: MinIO Bronze inventory chưa sẵn sàng (hiển thị mức nền 0).</span></div>}
     <div className="grid gap-px border border-border/70 bg-border/70 sm:grid-cols-3 text-xs"><Metric label="Bronze FITS" value={total.toLocaleString()} /><Metric label="Awaiting Silver" value={pending.toLocaleString()} /><Metric label="Stored footprint" value={formatBytes(metrics?.bronze_bytes ?? 0)} /></div>
     <div className="grid gap-3 lg:grid-cols-[minmax(260px,0.38fr)_minmax(0,0.62fr)]">
       <section className="border border-border/70 bg-background/40"><div className="border-b border-border/60 px-3 py-2"><p className="font-medium">Product modality</p><p className="text-[10px] text-muted-foreground">Durable FITS inventory by scientific product kind.</p></div><div className="h-60"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={modalities} dataKey="value" nameKey="name" innerRadius={46} outerRadius={78} paddingAngle={2} stroke="none" label={({ name, value }) => `${name} · ${value}`}>{modalities.map((item) => <Cell key={item.name} fill={item.fill} />)}</Pie><Tooltip formatter={(item) => `${Number(item).toLocaleString()} FITS`} /></PieChart></ResponsiveContainer></div></section>

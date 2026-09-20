@@ -4,7 +4,7 @@ import { AlertCircle } from 'lucide-react';
 
 import { apiBase, apiFetch } from '@/lib/api';
 import { useRunnerTicket } from '@/lib/session';
-import type { FactoryRunDetail } from '@/types/ticket';
+import type { PipelineRunDetail } from '@/pages/runner-tickets/types';
 import { CONFIG_KEY, loadLocalConfig } from './constants';
 import type { ConnectionState, EventRow, GoldControlOverview, GoldLiveEvent, GoldWorkerTelemetry } from './types';
 import {
@@ -20,7 +20,7 @@ export default function EnrichmentPage(): JSX.Element {
   const { activeTicket, setActiveTicket, tickets } = useRunnerTicket();
   const initialConfig = useMemo(loadLocalConfig, []);
   const [overview, setOverview] = useState<GoldControlOverview | null>(null);
-  const [runDetail, setRunDetail] = useState<FactoryRunDetail | null>(null);
+  const [runDetail, setRunDetail] = useState<PipelineRunDetail | null>(null);
   const [mode, setMode] = useState(initialConfig.mode);
   const [maxBatchRecords, setMaxBatchRecords] = useState(initialConfig.maxBatchRecords);
   const [idleFlushSeconds, setIdleFlushSeconds] = useState(initialConfig.idleFlushSeconds);
@@ -72,7 +72,7 @@ export default function EnrichmentPage(): JSX.Element {
     historyRequestInFlight.current = true;
     setHistoryLoading(true);
     try {
-      setRunDetail(await apiFetch<FactoryRunDetail>(`/v1/data-factory/runs/${encodeURIComponent(commandID)}`));
+      setRunDetail(await apiFetch<PipelineRunDetail>(`/v1/data-factory/runs/${encodeURIComponent(commandID)}`));
     } catch {
       setRunDetail(null);
     } finally {

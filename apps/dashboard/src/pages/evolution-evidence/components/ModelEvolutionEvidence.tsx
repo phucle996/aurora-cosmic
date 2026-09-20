@@ -19,7 +19,9 @@ import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis
 import { Badge } from '@/components/ui/badge';
 import { apiFetch } from '@/lib/api';
 
-import { formatBytes, formatDate, statusVariant, taskLabel, type InferenceJob, type ModelEvaluation, type ModelRecord } from '@/types/models';
+import { formatBytes, formatDate, statusVariant, taskLabel, type ModelRecord } from '@/pages/model-registry/types';
+import type { InferenceJob } from '@/pages/inference-engine/types';
+import type { ModelEvaluation } from '@/pages/model-evaluation/types';
 
 interface ModelEvolutionEvidenceProps {
   model?: ModelRecord;

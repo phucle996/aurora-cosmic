@@ -18,31 +18,10 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
-export type ScientificReviewEvidence = {
-  n_points: number;
-  time_span_days: number;
-  sector_baseline_days: number;
-  sector_coverage_percent: number;
-  largest_gap_hours: number;
-  median_cadence_minutes: number;
-  flux_std_ppm: number;
-  flux_amplitude_ppm: number;
-  median_flux_err_ppm: number;
-  bls_available: boolean;
-  bls_period_days: number;
-  bls_duration_hours: number;
-  bls_transit_time_btjd: number;
-  bls_depth_ppm: number;
-  bls_power: number;
-  variability_peak_fraction: number;
-  transit_evidence_available: boolean;
-  transit_deficit_sum: number;
-  centroid_offset_pixels: number;
-  toi_match_status: string;
-  matched_toi_id: string;
-};
-
-export type LightcurveSeries = { time: number[]; flux: number[] };
+import type { LightcurveSeries, ScientificReviewEvidence } from '../types';
+import { StellarPhysicsPanel } from './StellarPhysicsPanel';
+import { TPFCentroidCutoutMap } from './TPFCentroidCutoutMap';
+export type { LightcurveSeries, ScientificReviewEvidence };
 
 type PhasePoint = { phase: number; flux: number; epoch: number };
 type PhaseBin = { phase: number; flux: number; count: number };
@@ -122,8 +101,11 @@ function useDiagnostics(evidence: ScientificReviewEvidence, lightcurve?: Lightcu
     const depth = (baseline - median(inTransit.map((point) => point.flux))) * 1_000_000;
     const oddDepth = (baseline - median(odd.map((point) => point.flux))) * 1_000_000;
     const evenDepth = (baseline - median(even.map((point) => point.flux))) * 1_000_000;
+    const secondaryPoints = phasePoints.filter((point) => Math.abs(Math.abs(point.phase) - 0.5) <= halfWindow);
+    const secondaryDepth = secondaryPoints.length > 0 ? (baseline - median(secondaryPoints.map((point) => point.flux))) * 1_000_000 : Number.NaN;
     const noise = robustSigma(outTransit.map((point) => point.flux));
     const snr = noise > 0 && inTransit.length > 0 ? (depth / 1_000_000) / (noise / Math.sqrt(inTransit.length)) : Number.NaN;
+    const secondarySnr = noise > 0 && secondaryPoints.length > 0 && Number.isFinite(secondaryDepth) ? (secondaryDepth / 1_000_000) / (noise / Math.sqrt(secondaryPoints.length)) : Number.NaN;
     const observedTransits = new Set(inTransit.map((point) => point.epoch)).size;
     const depthMismatch = evidence.bls_depth_ppm > 0 ? Math.abs(depth - evidence.bls_depth_ppm) / evidence.bls_depth_ppm : Number.NaN;
     const oddEvenMean = (Math.abs(oddDepth) + Math.abs(evenDepth)) / 2;
@@ -153,6 +135,8 @@ function useDiagnostics(evidence: ScientificReviewEvidence, lightcurve?: Lightcu
       depth,
       oddDepth,
       evenDepth,
+      secondaryDepth,
+      secondarySnr,
       snr,
       observedTransits,
       depthMismatch,
@@ -171,6 +155,13 @@ export function ScientificEvidenceWorkspace({ evidence, lightcurve, loading }: {
   const truncated = diagnostics.points.length > 0 && diagnostics.points.length < evidence.n_points;
   const depthTone = threshold(diagnostics.depthMismatch, (value) => value <= 0.2, (value) => value <= 0.5);
   const snrTone = threshold(diagnostics.snr, (value) => value >= 10, (value) => value >= 7);
+  const secondaryTone: EvidenceTone = Number.isFinite(diagnostics.secondarySnr)
+    ? diagnostics.secondarySnr >= 3.0 && diagnostics.secondaryDepth > 500
+      ? 'negative'
+      : diagnostics.secondarySnr >= 2.0 && diagnostics.secondaryDepth > 200
+      ? 'review'
+      : 'positive'
+    : 'neutral';
   const transitCountTone = threshold(diagnostics.observedTransits, (value) => value >= 3, (value) => value >= 2);
   const durationTone = threshold(diagnostics.durationFraction, (value) => value >= 0.005 && value <= 0.1, (value) => value > 0 && value <= 0.15);
   const oddEvenTone = threshold(diagnostics.oddEvenMismatch, (value) => value <= 0.1, (value) => value <= 0.25);
@@ -183,7 +174,7 @@ export function ScientificEvidenceWorkspace({ evidence, lightcurve, loading }: {
   const catalogTone: EvidenceTone = evidence.matched_toi_id
     ? 'positive'
     : evidence.toi_match_status === 'PERIOD_MISMATCH' ? 'negative' : 'review';
-  const transitTabTone = worstTone(depthTone, snrTone, transitCountTone, durationTone, oddEvenTone);
+  const transitTabTone = worstTone(depthTone, snrTone, transitCountTone, durationTone, oddEvenTone, secondaryTone);
   const qualityTabTone = worstTone(loadedTone, coverageTone, gapTone);
   const contextTabTone = worstTone(centroidTone, catalogTone);
 
@@ -194,7 +185,7 @@ export function ScientificEvidenceWorkspace({ evidence, lightcurve, loading }: {
         <TabsList variant="line" className="h-8 rounded-none">
           <TabsTrigger value="transit" className="rounded-none font-mono text-xs"><EvidenceDot tone={transitTabTone} />Transit evidence</TabsTrigger>
           <TabsTrigger value="quality" className="rounded-none font-mono text-xs"><EvidenceDot tone={qualityTabTone} />Signal quality</TabsTrigger>
-          <TabsTrigger value="context" className="rounded-none font-mono text-xs"><EvidenceDot tone={contextTabTone} />Context</TabsTrigger>
+          <TabsTrigger value="context" className="rounded-none font-mono text-xs"><EvidenceDot tone={contextTabTone} />Context & Centroid</TabsTrigger>
         </TabsList>
       </div>
       <EvidenceLegend />
@@ -202,13 +193,17 @@ export function ScientificEvidenceWorkspace({ evidence, lightcurve, loading }: {
       <TabsContent value="transit" className="m-0 p-3">
         {!diagnostics.phaseAvailable ? <EvidenceUnavailable loading={loading} text="Phase-folded evidence chưa khả dụng vì thiếu full Light Curve hoặc BLS ephemeris." /> : <div className="space-y-3">
           {truncated && <div className="border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">Chỉ nhận {diagnostics.points.length.toLocaleString()} / {evidence.n_points.toLocaleString()} cadence; các chẩn đoán phase hiện chưa đầy đủ.</div>}
-          <div className="grid gap-px border border-border/70 bg-border/70 sm:grid-cols-3 lg:grid-cols-6">
+          
+          <StellarPhysicsPanel evidence={evidence} />
+
+          <div className="grid gap-px border border-border/70 bg-border/70 sm:grid-cols-3 lg:grid-cols-7">
             <Metric label="Observed depth" value={`${format(diagnostics.depth)} ppm`} detail={`${(diagnostics.depthMismatch * 100).toFixed(1)}% from BLS`} tone={depthTone} />
             <Metric label="Robust SNR" value={format(diagnostics.snr, 2)} detail="green ≥10 · review 7–10" tone={snrTone} />
             <Metric label="Observed transits" value={format(diagnostics.observedTransits, 0)} detail="green ≥3 · review 2" tone={transitCountTone} />
             <Metric label="Duration / period" value={`${format(diagnostics.durationFraction * 100, 2)}%`} detail={`${format(evidence.bls_duration_hours, 2)} h transit`} tone={durationTone} />
             <Metric label="Odd depth" value={`${format(diagnostics.oddDepth)} ppm`} detail={`${format(diagnostics.oddEvenMismatch * 100, 2)}% odd/even Δ`} tone={oddEvenTone} />
             <Metric label="Even depth" value={`${format(diagnostics.evenDepth)} ppm`} detail="green Δ≤10%" tone={oddEvenTone} />
+            <Metric label="Secondary depth" value={Number.isFinite(diagnostics.secondaryDepth) ? `${format(diagnostics.secondaryDepth)} ppm` : '—'} detail={Number.isFinite(diagnostics.secondarySnr) ? `SNR ${format(diagnostics.secondarySnr, 1)}` : 'Phase ~0.5'} tone={secondaryTone} />
           </div>
           <div className="grid gap-3 2xl:grid-cols-[minmax(0,1.55fr)_minmax(22rem,0.75fr)]">
             <ChartFrame title="Phase-folded Light Curve" subtitle="Mỗi cadence được gấp theo BLS period; vùng xanh là transit window, đường cyan là median theo phase bin.">
@@ -260,18 +255,21 @@ export function ScientificEvidenceWorkspace({ evidence, lightcurve, loading }: {
       </TabsContent>
 
       <TabsContent value="context" className="m-0 p-3">
-        <div className="grid gap-3 lg:grid-cols-3">
-          <ContextCard icon={<Orbit className="size-4" />} title="BLS ephemeris" status={evidence.bls_available ? 'AVAILABLE' : 'UNAVAILABLE'} tone={evidence.bls_available ? 'neutral' : 'review'}>
-            <ContextRow label="Period" value={`${format(evidence.bls_period_days, 5)} d`} /><ContextRow label="Transit epoch" value={evidence.bls_transit_time_btjd ? `${format(evidence.bls_transit_time_btjd, 5)} BTJD` : '—'} /><ContextRow label="Power" value={format(evidence.bls_power, 4)} />
-          </ContextCard>
-          <ContextCard icon={<ShieldAlert className="size-4" />} title="Contamination checks" status={centroidTone === 'negative' ? 'HIGH RISK' : evidence.transit_evidence_available ? 'MEASURED' : 'REVIEW'} tone={centroidTone}>
-            <ContextRow label="Centroid offset" value={evidence.transit_evidence_available ? `${format(evidence.centroid_offset_pixels, 3)} px` : '—'} tone={centroidTone} /><ContextRow label="Transit deficit" value={evidence.transit_evidence_available ? format(evidence.transit_deficit_sum, 5) : '—'} /><ContextRow label="Variability peak" value={`${format(evidence.variability_peak_fraction * 100, 2)}%`} />
-          </ContextCard>
-          <ContextCard icon={<BookOpen className="size-4" />} title="Catalog context" status={evidence.matched_toi_id ? 'TOI MATCH' : evidence.toi_match_status === 'PERIOD_MISMATCH' ? 'MISMATCH' : 'REVIEW'} tone={catalogTone}>
-            <ContextRow label="TOI" value={evidence.matched_toi_id || '—'} /><ContextRow label="Catalog status" value={evidence.toi_match_status || 'Unavailable'} tone={catalogTone} /><p className="mt-3 text-xs leading-5 text-muted-foreground">Không có TOI match không đồng nghĩa với NEGATIVE; đây chỉ là bằng chứng ngữ cảnh.</p>
-          </ContextCard>
+        <div className="space-y-3">
+          <TPFCentroidCutoutMap evidence={evidence} />
+          <div className="grid gap-3 lg:grid-cols-3">
+            <ContextCard icon={<Orbit className="size-4" />} title="BLS ephemeris" status={evidence.bls_available ? 'AVAILABLE' : 'UNAVAILABLE'} tone={evidence.bls_available ? 'neutral' : 'review'}>
+              <ContextRow label="Period" value={`${format(evidence.bls_period_days, 5)} d`} /><ContextRow label="Transit epoch" value={evidence.bls_transit_time_btjd ? `${format(evidence.bls_transit_time_btjd, 5)} BTJD` : '—'} /><ContextRow label="Power" value={format(evidence.bls_power, 4)} />
+            </ContextCard>
+            <ContextCard icon={<ShieldAlert className="size-4" />} title="Contamination checks" status={centroidTone === 'negative' ? 'HIGH RISK' : evidence.transit_evidence_available ? 'MEASURED' : 'REVIEW'} tone={centroidTone}>
+              <ContextRow label="Centroid offset" value={evidence.transit_evidence_available ? `${format(evidence.centroid_offset_pixels, 3)} px` : '—'} tone={centroidTone} /><ContextRow label="Transit deficit" value={evidence.transit_evidence_available ? format(evidence.transit_deficit_sum, 5) : '—'} /><ContextRow label="Variability peak" value={`${format(evidence.variability_peak_fraction * 100, 2)}%`} />
+            </ContextCard>
+            <ContextCard icon={<BookOpen className="size-4" />} title="Catalog context" status={evidence.matched_toi_id ? 'TOI MATCH' : evidence.toi_match_status === 'PERIOD_MISMATCH' ? 'MISMATCH' : 'REVIEW'} tone={catalogTone}>
+              <ContextRow label="TOI" value={evidence.matched_toi_id || '—'} /><ContextRow label="Catalog status" value={evidence.toi_match_status || 'Unavailable'} tone={catalogTone} /><p className="mt-3 text-xs leading-5 text-muted-foreground">Không có TOI match không đồng nghĩa với NEGATIVE; đây chỉ là bằng chứng ngữ cảnh.</p>
+            </ContextCard>
+          </div>
+          <div className="mt-3 flex items-start gap-2 border border-primary/25 bg-primary/5 p-3 text-xs leading-5 text-muted-foreground"><Activity className="mt-0.5 size-4 shrink-0 text-primary" /><span>Periodogram đầy đủ chưa được Gold telemetry lưu lại. Giao diện chỉ trình bày BLS optimum đã quan sát và không dựng các peak giả. Khi backend phát hành periodogram buckets, tab này có thể hiển thị trực tiếp.</span></div>
         </div>
-        <div className="mt-3 flex items-start gap-2 border border-primary/25 bg-primary/5 p-3 text-xs leading-5 text-muted-foreground"><Activity className="mt-0.5 size-4 shrink-0 text-primary" /><span>Periodogram đầy đủ chưa được Gold telemetry lưu lại. Giao diện chỉ trình bày BLS optimum đã quan sát và không dựng các peak giả. Khi backend phát hành periodogram buckets, tab này có thể hiển thị trực tiếp.</span></div>
       </TabsContent>
     </Tabs>
   </div>;

@@ -14,7 +14,7 @@ import {
   YAxis,
 } from 'recharts';
 
-import type { QuantileSummary, TPFSpatialEvidence } from '@/types/ticket';
+import type { QuantileSummary, TPFSpatialEvidence } from '../../types';
 
 const quantiles: Array<{ key: keyof QuantileSummary; label: string }> = [
   { key: 'p05', label: 'P05' },
@@ -42,31 +42,50 @@ function compact(observed: number): string {
 export function TPFSpatialEvidenceChart({ metrics, evidence }: { metrics?: Record<string, number>; evidence?: TPFSpatialEvidence }): JSX.Element {
   const input = value(metrics, 'input_records');
   const output = value(metrics, 'output_rows');
-  if (!evidence) {
-    return <section className={`border border-dashed px-5 py-12 text-center ${output > 0 ? 'border-red-500/60 bg-red-500/5' : 'border-border/70 bg-background/40'}`}>
-      <p className="font-mono text-sm font-semibold uppercase">{output > 0 ? 'TPF evidence mismatch' : 'Spatial vetting not executed'}</p>
-      <p className="mx-auto mt-2 max-w-2xl text-[11px] leading-5 text-muted-foreground">
-        {output > 0
-          ? `Run ledger reports ${output.toLocaleString()} G05 outputs, but no TPF spatial rows were found in its committed snapshots. No distribution is synthesized.`
-          : `${input.toLocaleString()} paired TPF inputs are visible upstream, but G05 has no committed spatial evidence in this view.`}
-      </p>
-    </section>;
-  }
+  const isBaseline = !evidence;
+  const zeroQuantile: QuantileSummary = { min: 0, p05: 0, p25: 0, p50: 0, p75: 0, p95: 0, max: 0 };
+  const activeEvidence: TPFSpatialEvidence = evidence ?? {
+    evaluated: input,
+    available: output,
+    unavailable: Math.max(0, input - output),
+    pixel_mad: zeroQuantile,
+    variability_peak_percent: zeroQuantile,
+    transit_deficit_sum: zeroQuantile,
+    centroid_offset_pixels: zeroQuantile,
+    centroid_offset_histogram: [
+      { label: '< 0.5 px', count: 0 },
+      { label: '0.5–1.5 px', count: 0 },
+      { label: '1.5–3.0 px', count: 0 },
+      { label: '> 3.0 px', count: 0 },
+    ],
+  };
 
-  const availability = [{ population: 'TPF contexts', available: evidence.available, unavailable: evidence.unavailable }];
-  const variabilityProfile = quantiles.map(({ key, label }) => ({ quantile: label, pixelMAD: evidence.pixel_mad[key], peak: evidence.variability_peak_percent[key] }));
-  const transitProfile = quantiles.map(({ key, label }) => ({ quantile: label, offset: evidence.centroid_offset_pixels[key], deficit: evidence.transit_deficit_sum[key] }));
-  const hasTransitEvidence = evidence.available > 0;
+  const availability = [{ population: 'TPF contexts', available: activeEvidence.available, unavailable: activeEvidence.unavailable }];
+  const variabilityProfile = quantiles.map(({ key, label }) => ({ quantile: label, pixelMAD: activeEvidence.pixel_mad[key] ?? 0, peak: activeEvidence.variability_peak_percent[key] ?? 0 }));
+  const transitProfile = quantiles.map(({ key, label }) => ({ quantile: label, offset: activeEvidence.centroid_offset_pixels[key] ?? 0, deficit: activeEvidence.transit_deficit_sum[key] ?? 0 }));
+  const hasTransitEvidence = activeEvidence.available > 0;
 
   return (
     <div className="space-y-3">
+      {isBaseline && (
+        <div className="flex items-center justify-between border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5 font-medium">
+            <span className="size-2 rounded-full bg-amber-500" />
+            Khung phân tích cơ sở: G05 chưa có committed spatial evidence (hiển thị mức nền 0).
+          </span>
+          <span className="font-mono text-[10px] uppercase">
+            {input > 0 ? `${input.toLocaleString()} TPF inputs upstream` : 'Sẵn sàng ghi nhận'}
+          </span>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-px border border-border/70 bg-border/70 text-xs lg:grid-cols-3 2xl:grid-cols-6">
-        <Metric label="TPF evaluated" observed={evidence.evaluated.toLocaleString()} detail="paired spatial contexts" />
-        <Metric label="Transit evidence" observed={evidence.available.toLocaleString()} detail={percent(evidence.available, evidence.evaluated)} />
-        <Metric label="Evidence unavailable" observed={evidence.unavailable.toLocaleString()} detail={percent(evidence.unavailable, evidence.evaluated)} warning={evidence.unavailable > 0} />
-        <Metric label="Centroid offset · P50" observed={hasTransitEvidence ? `${compact(evidence.centroid_offset_pixels.p50)} px` : '—'} detail={hasTransitEvidence ? `P95 ${compact(evidence.centroid_offset_pixels.p95)} px` : 'no transit window'} />
-        <Metric label="Variability peak · P50" observed={`${compact(evidence.variability_peak_percent.p50)}%`} detail="fraction in strongest pixel" />
-        <Metric label="Transit deficit · P50" observed={hasTransitEvidence ? compact(evidence.transit_deficit_sum.p50) : '—'} detail="summed relative flux" />
+        <Metric label="TPF evaluated" observed={activeEvidence.evaluated.toLocaleString()} detail="paired spatial contexts" />
+        <Metric label="Transit evidence" observed={activeEvidence.available.toLocaleString()} detail={percent(activeEvidence.available, activeEvidence.evaluated)} />
+        <Metric label="Evidence unavailable" observed={activeEvidence.unavailable.toLocaleString()} detail={percent(activeEvidence.unavailable, activeEvidence.evaluated)} warning={activeEvidence.unavailable > 0} />
+        <Metric label="Centroid offset · P50" observed={hasTransitEvidence ? `${compact(activeEvidence.centroid_offset_pixels.p50)} px` : '0 px'} detail={hasTransitEvidence ? `P95 ${compact(activeEvidence.centroid_offset_pixels.p95)} px` : 'mức nền baseline'} />
+        <Metric label="Variability peak · P50" observed={`${compact(activeEvidence.variability_peak_percent.p50)}%`} detail="fraction in strongest pixel" />
+        <Metric label="Transit deficit · P50" observed={hasTransitEvidence ? compact(activeEvidence.transit_deficit_sum.p50) : '0'} detail="summed relative flux" />
       </div>
 
       <section className="border border-border/70 bg-background/40">
@@ -78,7 +97,7 @@ export function TPFSpatialEvidenceChart({ metrics, evidence }: { metrics?: Recor
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={availability} layout="vertical" margin={{ top: 12, right: 28, bottom: 8, left: 12 }}>
               <CartesianGrid horizontal={false} strokeDasharray="3 3" opacity={0.2} />
-              <XAxis type="number" domain={[0, Math.max(evidence.evaluated, 1)]} allowDecimals={false} tick={{ fontSize: 10 }} />
+              <XAxis type="number" domain={[0, Math.max(activeEvidence.evaluated, 1)]} allowDecimals={false} tick={{ fontSize: 10 }} />
               <YAxis type="category" dataKey="population" width={100} tick={{ fontSize: 10 }} />
               <Tooltip formatter={(item, name) => [`${Number(item).toLocaleString()} TPF`, String(name)]} />
               <Legend />
@@ -110,7 +129,7 @@ export function TPFSpatialEvidenceChart({ metrics, evidence }: { metrics?: Recor
         </div>
       </section>
 
-      {hasTransitEvidence ? <div className="grid gap-3 xl:grid-cols-2">
+      <div className="grid gap-3 xl:grid-cols-2">
         <section className="border border-border/70 bg-background/40">
           <div className="border-b border-border/60 px-3 py-2">
             <p className="font-medium">Transit-deficit centroid offset</p>
@@ -118,7 +137,7 @@ export function TPFSpatialEvidenceChart({ metrics, evidence }: { metrics?: Recor
           </div>
           <div className="h-[280px] p-3">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={evidence.centroid_offset_histogram} margin={{ top: 12, right: 12, bottom: 8, left: 4 }}>
+              <BarChart data={activeEvidence.centroid_offset_histogram} margin={{ top: 12, right: 12, bottom: 8, left: 4 }}>
                 <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.2} />
                 <XAxis dataKey="label" tick={{ fontSize: 10 }} />
                 <YAxis allowDecimals={false} width={42} tick={{ fontSize: 10 }} />
@@ -149,7 +168,7 @@ export function TPFSpatialEvidenceChart({ metrics, evidence }: { metrics?: Recor
             </ResponsiveContainer>
           </div>
         </section>
-      </div> : <div className="border border-dashed border-border/70 bg-background/40 px-4 py-8 text-center text-[11px] text-muted-foreground">Không có transit-window evidence khả dụng; centroid và deficit distributions được giữ trống thay vì vẽ giá trị 0.</div>}
+      </div>
 
       <div className="border-l-2 border-primary/50 bg-background/40 px-3 py-2 text-[11px] text-muted-foreground">
         Offset nhỏ hỗ trợ giả thuyết tín hiệu nằm gần tâm cutout; offset lớn là dấu hiệu cần kiểm tra nguồn lân cận, không tự động kết luận contamination.

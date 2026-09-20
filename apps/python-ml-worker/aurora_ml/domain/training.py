@@ -21,7 +21,7 @@ SUPPORTED_TASKS = frozenset({TASK_CANDIDATE})
 class TrainingRequest:
     """Explicit, idempotent training request received through JetStream."""
 
-    job_id: str
+    ticket_id: str
     task: str
     gold_snapshot_ids: tuple[str, ...]
     training_mode: str
@@ -34,7 +34,7 @@ class TrainingRequest:
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "TrainingRequest":
-        job_id = str(payload.get("training_job_id", "")).strip()
+        ticket_id = str(payload.get("ticket_id") or "").strip()
         task = str(payload.get("task", TASK_CANDIDATE)).strip()
         raw_ids = payload.get("gold_snapshot_ids") or []
         if isinstance(raw_ids, str):
@@ -55,8 +55,8 @@ class TrainingRequest:
         except (TypeError, ValueError) as exc:
             raise TrainingRequestError("INVALID_HYPERPARAMETERS") from exc
 
-        if not job_id:
-            raise TrainingRequestError("MISSING_TRAINING_JOB_ID")
+        if not ticket_id:
+            raise TrainingRequestError("MISSING_TICKET_ID")
         if task not in SUPPORTED_TASKS:
             raise TrainingRequestError(f"UNSUPPORTED_TRAINING_TASK: {task}")
         if not snapshot_ids:
@@ -70,7 +70,7 @@ class TrainingRequest:
         if epochs < 1 or batch_size < 1 or learning_rate <= 0:
             raise TrainingRequestError("INVALID_HYPERPARAMETERS")
         return cls(
-            job_id=job_id,
+            ticket_id=ticket_id,
             task=task,
             gold_snapshot_ids=snapshot_ids,
             training_mode=training_mode,

@@ -17,6 +17,8 @@ type Module struct {
 	CandidateHandler         *handler.CandidateHandler
 	AnomalyHandler           *handler.AnomalyHandler
 	ModelsHandler            *handler.ModelsHandler
+	ModelNewHandler          *handler.ModelNewHandler
+	LabelingHandler          *handler.LabelingHandler
 	SystemHandler            *handler.SystemHandler
 	MonitoringHandler        *handler.MonitoringHandler
 	DAGAggregationHandler    *handler.DAGAggregationHandler
@@ -167,6 +169,20 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	if modelsHandler == nil {
 		return nil, fmt.Errorf("handler ModelsHandler is nil")
 	}
+
+	modelNewRepo := repository.NewModelNewClickHouse(infra.ClickHouse)
+	if modelNewRepo == nil {
+		return nil, fmt.Errorf("repository ModelNewClickHouse is nil")
+	}
+	modelNewService := service.NewModelNewService(objectRepo, infra.NATS, modelNewRepo)
+	if modelNewService == nil {
+		return nil, fmt.Errorf("service ModelNewService is nil")
+	}
+	modelNewHandler := handler.NewModelNewHandler(modelNewService)
+	if modelNewHandler == nil {
+		return nil, fmt.Errorf("handler ModelNewHandler is nil")
+	}
+
 	predictionProjectionRepo := repository.NewPredictionProjectionClickHouse(infra.ClickHouse)
 	if predictionProjectionRepo == nil {
 		return nil, fmt.Errorf("repository PredictionProjectionClickHouse is nil")
@@ -176,6 +192,22 @@ func NewModule(infra Infrastructure) (*Module, error) {
 		predictionProjectionRepo,
 		infra.PredictionMinIO.Bucket,
 	)
+
+	// =========================================================================
+	// 7b. Labeling Studio Branch (Human-in-the-loop Scientific Supervision)
+	// =========================================================================
+	labelingRepo := repository.NewLabelingClickHouse(infra.ClickHouse)
+	if labelingRepo == nil {
+		return nil, fmt.Errorf("repository LabelingClickHouse is nil")
+	}
+	labelingService := service.NewLabelingService(labelingRepo)
+	if labelingService == nil {
+		return nil, fmt.Errorf("service LabelingService is nil")
+	}
+	labelingHandler := handler.NewLabelingHandler(labelingService)
+	if labelingHandler == nil {
+		return nil, fmt.Errorf("handler LabelingHandler is nil")
+	}
 
 	// =========================================================================
 	// 8. Raw Data Ingest Workflow Branch
@@ -301,6 +333,8 @@ func NewModule(infra Infrastructure) (*Module, error) {
 		CandidateHandler:         candidateHandler,
 		AnomalyHandler:           anomalyHandler,
 		ModelsHandler:            modelsHandler,
+		ModelNewHandler:          modelNewHandler,
+		LabelingHandler:          labelingHandler,
 		SystemHandler:            systemHandler,
 		MonitoringHandler:        monitoringHandler,
 		DAGAggregationHandler:    dagAggregationHandler,

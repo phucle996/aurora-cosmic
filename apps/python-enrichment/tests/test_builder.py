@@ -23,7 +23,7 @@ from runtime.control import (
 )
 from runtime.readiness import MultimodalReadiness
 from storage.object_store import MemoryObjectStore
-from aurora_ml.pipeline.evidence import (
+from pipeline.evidence import (
     compute_tpf_features,
     compute_tpf_features_from_cube,
 )

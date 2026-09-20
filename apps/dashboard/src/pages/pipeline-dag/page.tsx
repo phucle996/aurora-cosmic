@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/button';
 import type { GoldControlOverview } from '@/pages/enrichment/types';
 import { RunnerTicketBar } from '@/components/RunnerTicketBar';
 import { useRunnerTicket } from '@/lib/session';
-import type { FactoryRunDetail } from '@/types/ticket';
+import type { PipelineRunDetail } from '@/pages/runner-tickets/types';
 import { HopDetailDrawer } from './components/HopDetailDrawer';
 import { PipelineDagCanvas, type DagConnection } from './components/PipelineDagCanvas';
 import { normalizePreprocessingGraph, type Hop, type HopStatus, type PreprocessingGraph } from './types';
@@ -84,15 +84,15 @@ export default function PipelineDagPage(): JSX.Element {
   const selectedRunID = searchParams.get('run_id') ?? '';
   const [graph, setGraph] = useState<PreprocessingGraph>();
   const [goldControl, setGoldControl] = useState<GoldControlOverview>();
-  const [historicalRun, setHistoricalRun] = useState<FactoryRunDetail>();
-  const [liveEvidenceRun, setLiveEvidenceRun] = useState<FactoryRunDetail>();
+  const [historicalRun, setHistoricalRun] = useState<PipelineRunDetail>();
+  const [liveEvidenceRun, setLiveEvidenceRun] = useState<PipelineRunDetail>();
   const [selectedHopID, setSelectedHopID] = useState<string>();
   const [drawerPortal, setDrawerPortal] = useState<HTMLElement | null>(null);
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(false);
   const refreshTimer = useRef<number | undefined>(undefined);
-  const liveEvidenceCache = useRef<{ key: string; detail: FactoryRunDetail }>();
+  const liveEvidenceCache = useRef<{ key: string; detail: PipelineRunDetail } | null>(null);
 
   const loadOverview = useCallback(async (showLoading = true): Promise<void> => {
     if (showLoading) setLoading(true);
@@ -103,7 +103,7 @@ export default function PipelineDagPage(): JSX.Element {
       ]);
       setGraph(normalizePreprocessingGraph(nextGraph));
       setGoldControl(nextGoldControl);
-      const liveRunID = nextGoldControl.runtime?.command_id || nextGoldControl.control?.command_id || activeTicket;
+      const liveRunID = nextGoldControl.control?.command_id || activeTicket;
       const committedSnapshotID = nextGoldControl.runtime?.last_snapshot_id ?? '';
       if (liveRunID && committedSnapshotID) {
         const evidenceKey = `${liveRunID}:${committedSnapshotID}`;
@@ -111,7 +111,7 @@ export default function PipelineDagPage(): JSX.Element {
           setLiveEvidenceRun(liveEvidenceCache.current.detail);
         } else {
           try {
-            const detail = await apiFetch<FactoryRunDetail>(`/v1/data-factory/runs/${encodeURIComponent(liveRunID)}`);
+            const detail = await apiFetch<PipelineRunDetail>(`/v1/data-factory/runs/${encodeURIComponent(liveRunID)}`);
             liveEvidenceCache.current = { key: evidenceKey, detail };
             setLiveEvidenceRun(detail);
           } catch {
@@ -119,7 +119,7 @@ export default function PipelineDagPage(): JSX.Element {
           }
         }
       } else {
-        liveEvidenceCache.current = undefined;
+        liveEvidenceCache.current = null;
         setLiveEvidenceRun(undefined);
       }
       setError(undefined);
@@ -140,7 +140,7 @@ export default function PipelineDagPage(): JSX.Element {
       setHistoricalRun(undefined);
     }
     try {
-      setHistoricalRun(await apiFetch<FactoryRunDetail>(`/v1/data-factory/runs/${encodeURIComponent(runID)}`));
+      setHistoricalRun(await apiFetch<PipelineRunDetail>(`/v1/data-factory/runs/${encodeURIComponent(runID)}`));
       setError(undefined);
     } catch (cause) {
       setHistoricalRun(undefined);
@@ -265,7 +265,6 @@ export default function PipelineDagPage(): JSX.Element {
     const liveCatalogRecords = (catalog?.tic_records ?? 0) + (catalog?.toi_records ?? 0);
     const historicalInputs = historicalRun?.run.input_records ?? 0;
     const historicalOutputs = historicalRun?.run.output_rows ?? 0;
-    const evidenceInputs = evidenceRun?.run.input_records ?? 0;
     const evidenceOutputs = evidenceRun?.run.output_rows ?? 0;
     const artifactCount = (evidenceRun?.batches ?? []).reduce((sum, batch) => sum + batch.artifact_count, 0);
 

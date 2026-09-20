@@ -20,7 +20,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from aurora_ml.pipeline.catalogs import (
+from pipeline.catalog_records import (
     CatalogSnapshotManifest,
     TceCatalogRecord,
     TicCatalogRecord,

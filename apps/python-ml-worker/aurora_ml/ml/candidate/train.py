@@ -130,6 +130,7 @@ def train_candidate_model(
     max_vram_mb: int = 0,
     base_model_path: Optional[str] = None,
     progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    control_check: Optional[Callable[[], Optional[str]]] = None,
 ) -> Tuple[TrainingRunManifest, TrainingRunCheckpoint]:
     """Execute Phase 6.2 Candidate Tabular Model Training Run.
 
@@ -338,7 +339,16 @@ def train_candidate_model(
     patience_counter = 0
 
     for epoch in range(1, epochs + 1):
+        if control_check is not None:
+            ctrl = control_check()
+            if ctrl == "cancel":
+                raise CandidateTrainingError("TRAINING_CANCELLED_BY_OPERATOR")
+            elif ctrl == "checkpoint":
+                break
+
         model.train()
+        train_loss_sum = 0.0
+        train_count = 0
         for batch_x, batch_y in train_loader:
             batch_x = batch_x.to(device, non_blocking=True)
             batch_y = batch_y.to(device, non_blocking=True)
@@ -349,8 +359,11 @@ def train_candidate_model(
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
+            train_loss_sum += float(loss.item()) * len(batch_y)
+            train_count += len(batch_y)
 
         scheduler.step()
+        train_loss = train_loss_sum / train_count if train_count > 0 else float("inf")
 
         # Evaluate on VALIDATION split
         model.eval()
@@ -391,9 +404,18 @@ def train_candidate_model(
                     "current_epoch": epoch,
                     "total_epochs": epochs,
                     "best_epoch": best_epoch,
-                    "best_val_loss": best_val_loss,
+                    "best_val_loss": round(best_val_loss, 5),
+                    "train_loss": round(train_loss, 5),
+                    "val_loss": round(val_loss, 5),
                 }
             )
+
+        if control_check is not None:
+            ctrl = control_check()
+            if ctrl == "cancel":
+                raise CandidateTrainingError("TRAINING_CANCELLED_BY_OPERATOR")
+            elif ctrl == "checkpoint":
+                break
 
     # Restore best model state
     if best_model_state is not None:

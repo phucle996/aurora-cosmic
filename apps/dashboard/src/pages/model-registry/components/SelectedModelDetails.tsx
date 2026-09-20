@@ -4,7 +4,7 @@ import { Activity, Check, Circle, CircleAlert, Crown, Database, FileKey2, Finger
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { formatBytes, formatDate, statusVariant, taskLabel, type ModelRecord } from '@/types/models';
+import { formatBytes, formatDate, statusVariant, taskLabel, type ModelRecord } from '../types';
 
 interface SelectedModelDetailsProps {
   selectedModel?: ModelRecord;

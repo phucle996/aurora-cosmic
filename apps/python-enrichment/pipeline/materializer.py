@@ -14,10 +14,10 @@ from typing import Any, Dict, Iterable, List, Sequence
 import numpy as np
 import pyarrow.parquet as pq
 
-from aurora_ml.pipeline.features import extract_features_from_silver
-from aurora_ml.pipeline.catalogs import enrich_candidate
-from aurora_ml.pipeline.gold import GoldSnapshotPlanner
-from aurora_ml.pipeline.gold_materialize import (
+from pipeline.features import extract_features_from_silver
+from pipeline.catalog_records import enrich_candidate
+from pipeline.gold import GoldSnapshotPlanner
+from pipeline.gold_materialize import (
     get_candidate_arrow_schema,
     write_partition_parquet,
 )

@@ -55,7 +55,19 @@ export function CheckpointMetricsChart({
   const anomalies = checkpoints.filter((point) => point.resume_action !== 'reuse_and_ack');
   const schemaVersions = [...new Set(checkpoints.map((point) => point.schema_version).filter((value) => value > 0))];
 
+  const isBaseline = checkpoints.length === 0 && total === 0;
+  const timelineData = completionTimeline.length > 0 ? completionTimeline : [{ timestamp: Date.now(), lightcurve: 0, target_pixel: 0 }];
+  const lifecycleData = lifecycle.length > 0 ? lifecycle : [{ band: '0s–0s', lightcurve: 0, target_pixel: 0 }];
+
   return <div className="space-y-3">
+    {isBaseline && (
+      <div className="flex items-center justify-between border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+        <span className="flex items-center gap-1.5 font-medium">
+          <span className="size-2 rounded-full bg-amber-500" />
+          Khung phân tích cơ sở: chưa có checkpoint inventory (hiển thị mức nền 0).
+        </span>
+      </div>
+    )}
     <div className="grid gap-px border border-border/70 bg-border/70 sm:grid-cols-4 xl:grid-cols-8 text-xs">
       <Metric label="Persisted" value={total.toLocaleString()} detail="checkpoint objects" />
       <Metric label="Completed" value={percent(completed, total)} detail={`${completed.toLocaleString()} records`} />
@@ -67,72 +79,72 @@ export function CheckpointMetricsChart({
       <Metric label="Schema" value={schemaVersions.length === 1 ? `v${schemaVersions[0]}` : `${schemaVersions.length} versions`} detail="checkpoint format" />
     </div>
 
-    {checkpoints.length > 0 ? <>
-      <div className="grid gap-3 xl:grid-cols-2">
-        <ChartPanel title="Durable recovery funnel" subtitle="Mỗi tầng yêu cầu thêm bằng chứng trước khi một redelivery được phép bỏ qua xử lý khoa học.">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={recoveryFunnel} layout="vertical" margin={{ left: 18, right: 28, top: 8, bottom: 8 }}>
-              <CartesianGrid horizontal={false} strokeDasharray="3 3" opacity={0.18} />
-              <XAxis type="number" domain={[0, Math.max(total, 1)]} tick={{ fontSize: 10 }} />
-              <YAxis type="category" dataKey="stage" width={96} tick={{ fontSize: 10 }} />
-              <Tooltip formatter={(value) => `${Number(value).toLocaleString()} checkpoints`} />
-              <Bar dataKey="count" radius={[0, 2, 2, 0]} isAnimationActive={false}>{recoveryFunnel.map((item) => <Cell key={item.stage} fill={item.fill} />)}</Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </ChartPanel>
+    <div className="grid gap-3 xl:grid-cols-2">
+      <ChartPanel title="Durable recovery funnel" subtitle="Mỗi tầng yêu cầu thêm bằng chứng trước khi một redelivery được phép bỏ qua xử lý khoa học.">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={recoveryFunnel} layout="vertical" margin={{ left: 18, right: 28, top: 8, bottom: 8 }}>
+            <CartesianGrid horizontal={false} strokeDasharray="3 3" opacity={0.18} />
+            <XAxis type="number" domain={[0, Math.max(total, 1)]} tick={{ fontSize: 10 }} />
+            <YAxis type="category" dataKey="stage" width={96} tick={{ fontSize: 10 }} />
+            <Tooltip formatter={(value) => `${Number(value).toLocaleString()} checkpoints`} />
+            <Bar dataKey="count" radius={[0, 2, 2, 0]} isAnimationActive={false}>{recoveryFunnel.map((item) => <Cell key={item.stage} fill={item.fill} />)}</Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </ChartPanel>
 
-        <ChartPanel title="Lifecycle elapsed distribution" subtitle="Phân bố thời gian từ lúc tạo checkpoint đến trạng thái bền vững cuối cùng; tách LC và TPF.">
-          {lifecycle.length > 1 ? <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={lifecycle} margin={{ left: 0, right: 12, top: 8, bottom: 8 }}>
-              <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.18} />
-              <XAxis dataKey="band" tick={{ fontSize: 9 }} />
-              <YAxis allowDecimals={false} tick={{ fontSize: 10 }} width={42} />
-              <Tooltip formatter={(value) => `${Number(value).toLocaleString()} checkpoints`} />
-              <Legend wrapperStyle={{ fontSize: 10 }} />
-              <Bar dataKey="lightcurve" name="Light Curve" stackId="kind" fill="#22d3ee" isAnimationActive={false} />
-              <Bar dataKey="target_pixel" name="Target Pixel" stackId="kind" fill="#a855f7" isAnimationActive={false} />
-            </BarChart>
-          </ResponsiveContainer> : <EvidenceNote>Lifecycle elapsed không có độ phân tán đủ để dựng histogram; P50/P95 phía trên vẫn là bằng chứng scalar.</EvidenceNote>}
-        </ChartPanel>
-      </div>
+      <ChartPanel title="Lifecycle elapsed distribution" subtitle="Phân bố thời gian từ lúc tạo checkpoint đến trạng thái bền vững cuối cùng; tách LC và TPF.">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={lifecycleData} margin={{ left: 0, right: 12, top: 8, bottom: 8 }}>
+            <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.18} />
+            <XAxis dataKey="band" tick={{ fontSize: 9 }} />
+            <YAxis allowDecimals={false} tick={{ fontSize: 10 }} width={42} />
+            <Tooltip formatter={(value) => `${Number(value).toLocaleString()} checkpoints`} />
+            <Legend wrapperStyle={{ fontSize: 10 }} />
+            <Bar dataKey="lightcurve" name="Light Curve" stackId="kind" fill="#22d3ee" isAnimationActive={false} />
+            <Bar dataKey="target_pixel" name="Target Pixel" stackId="kind" fill="#a855f7" isAnimationActive={false} />
+          </BarChart>
+        </ResponsiveContainer>
+      </ChartPanel>
+    </div>
 
-      <div className="grid gap-3 xl:grid-cols-[1.35fr_0.65fr]">
-        <ChartPanel title="Durable completion history" subtitle="Checkpoint COMPLETED tích lũy theo thời điểm commit; không dùng throughput Prometheus đã về 0.">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={completionTimeline} margin={{ left: 0, right: 12, top: 8, bottom: 8 }}>
-              <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.18} />
-              <XAxis dataKey="timestamp" tickFormatter={clock} minTickGap={32} tick={{ fontSize: 9 }} />
-              <YAxis allowDecimals={false} tick={{ fontSize: 10 }} width={42} />
-              <Tooltip labelFormatter={(value) => timestampLabel(Number(value))} formatter={(value) => `${Number(value).toLocaleString()} completed`} />
-              <Legend wrapperStyle={{ fontSize: 10 }} />
-              <Area dataKey="lightcurve" name="Light Curve" stackId="completion" stroke="#0891b2" fill="#22d3ee" fillOpacity={0.42} dot={false} isAnimationActive={false} />
-              <Area dataKey="target_pixel" name="Target Pixel" stackId="completion" stroke="#7e22ce" fill="#a855f7" fillOpacity={0.35} dot={false} isAnimationActive={false} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </ChartPanel>
+    <div className="grid gap-3 xl:grid-cols-[1.35fr_0.65fr]">
+      <ChartPanel title="Durable completion history" subtitle="Checkpoint COMPLETED tích lũy theo thời điểm commit; không dùng throughput Prometheus đã về 0.">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={timelineData} margin={{ left: 0, right: 12, top: 8, bottom: 8 }}>
+            <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.18} />
+            <XAxis dataKey="timestamp" tickFormatter={clock} minTickGap={32} tick={{ fontSize: 9 }} />
+            <YAxis allowDecimals={false} tick={{ fontSize: 10 }} width={42} />
+            <Tooltip labelFormatter={(value) => timestampLabel(Number(value))} formatter={(value) => `${Number(value).toLocaleString()} completed`} />
+            <Legend wrapperStyle={{ fontSize: 10 }} />
+            <Area dataKey="lightcurve" name="Light Curve" stackId="completion" stroke="#0891b2" fill="#22d3ee" fillOpacity={0.42} dot={false} isAnimationActive={false} />
+            <Area dataKey="target_pixel" name="Target Pixel" stackId="completion" stroke="#7e22ce" fill="#a855f7" fillOpacity={0.35} dot={false} isAnimationActive={false} />
+          </AreaChart>
+        </ResponsiveContainer>
+      </ChartPanel>
 
-        <ChartPanel title="Recovery decision by product" subtitle="Quyết định do backend trả về sau khi join checkpoint với Silver inventory.">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={recoveryByKind} layout="vertical" margin={{ left: 18, right: 12, top: 8, bottom: 8 }}>
-              <CartesianGrid horizontal={false} strokeDasharray="3 3" opacity={0.18} />
-              <XAxis type="number" allowDecimals={false} tick={{ fontSize: 10 }} />
-              <YAxis type="category" dataKey="kind" width={82} tick={{ fontSize: 9 }} />
-              <Tooltip formatter={(value) => `${Number(value).toLocaleString()} checkpoints`} />
-              <Legend wrapperStyle={{ fontSize: 10 }} />
-              <Bar dataKey="reuse" name="Reuse & ACK" stackId="decision" fill="#10b981" isAnimationActive={false} />
-              <Bar dataKey="verify" name="Verify Silver" stackId="decision" fill="#22d3ee" isAnimationActive={false} />
-              <Bar dataKey="reprocess" name="Reprocess" stackId="decision" fill="#f59e0b" isAnimationActive={false} />
-              <Bar dataKey="terminal" name="Terminal" stackId="decision" fill="#ef4444" isAnimationActive={false} />
-            </BarChart>
-          </ResponsiveContainer>
-        </ChartPanel>
-      </div>
+      <ChartPanel title="Recovery decision by product" subtitle="Quyết định do backend trả về sau khi join checkpoint với Silver inventory.">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={recoveryByKind} layout="vertical" margin={{ left: 18, right: 12, top: 8, bottom: 8 }}>
+            <CartesianGrid horizontal={false} strokeDasharray="3 3" opacity={0.18} />
+            <XAxis type="number" allowDecimals={false} tick={{ fontSize: 10 }} />
+            <YAxis type="category" dataKey="kind" width={82} tick={{ fontSize: 9 }} />
+            <Tooltip formatter={(value) => `${Number(value).toLocaleString()} checkpoints`} />
+            <Legend wrapperStyle={{ fontSize: 10 }} />
+            <Bar dataKey="reuse" name="Reuse & ACK" stackId="decision" fill="#10b981" isAnimationActive={false} />
+            <Bar dataKey="verify" name="Verify Silver" stackId="decision" fill="#22d3ee" isAnimationActive={false} />
+            <Bar dataKey="reprocess" name="Reprocess" stackId="decision" fill="#f59e0b" isAnimationActive={false} />
+            <Bar dataKey="terminal" name="Terminal" stackId="decision" fill="#ef4444" isAnimationActive={false} />
+          </BarChart>
+        </ResponsiveContainer>
+      </ChartPanel>
+    </div>
 
-      {retried > 0 && <AttemptDistribution checkpoints={checkpoints} />}
-      {anomalies.length === 0
+    {retried > 0 && <AttemptDistribution checkpoints={checkpoints} />}
+    {checkpoints.length > 0 && (
+      anomalies.length === 0
         ? <div className="border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-[11px] text-emerald-700 dark:text-emerald-300">Mọi checkpoint quan sát được đều có verified Silver binding và sẵn sàng cho fast-path reuse & ACK.</div>
-        : <CheckpointAnomalies points={anomalies} />}
-    </> : <EvidenceNote>Checkpoint inventory chưa trả product-level evidence; các tổng số bền vững phía trên vẫn được giữ nguyên.</EvidenceNote>}
+        : <CheckpointAnomalies points={anomalies} />
+    )}
   </div>;
 }
 
@@ -168,9 +180,6 @@ function Metric({ label, value, detail }: { label: string; value: string; detail
   return <div className="bg-background p-3"><p className="text-[9px] uppercase tracking-wide text-muted-foreground">{label}</p><p className="mt-1 font-mono text-sm font-semibold text-foreground">{value}</p><p className="mt-0.5 text-[9px] text-muted-foreground">{detail}</p></div>;
 }
 
-function EvidenceNote({ children }: { children: string }): JSX.Element {
-  return <div className="flex min-h-28 items-center justify-center border border-dashed border-border/70 p-6 text-center text-xs text-muted-foreground">{children}</div>;
-}
 
 function buildLifecycleHistogram(points: Checkpoint[]): Array<{ band: string; lightcurve: number; target_pixel: number }> {
   const durations = points.map((point) => point.lifecycle_elapsed_ms).filter((value) => value >= 0);

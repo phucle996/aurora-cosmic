@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
-import type { FactoryRun, FactoryTicket } from '@/types/ticket';
+import type { PipelineRun, RunnerTicket } from '@/pages/runner-tickets/types';
 
 export const ACTIVE_TICKET_STORAGE_KEY = 'aurora.data-factory.active-ticket';
 
@@ -31,15 +31,15 @@ export function setStoredActiveTicket(ticket: string): void {
 }
 
 // Module-level deduplication and cache for the ticket catalog from ClickHouse API
-let cachedTickets: FactoryTicket[] | null = null;
-let ticketsInFlight: Promise<FactoryTicket[]> | null = null;
+let cachedTickets: RunnerTicket[] | null = null;
+let ticketsInFlight: Promise<RunnerTicket[]> | null = null;
 const listeners = new Set<() => void>();
 
 function notifyListeners(): void {
   listeners.forEach((listener) => listener());
 }
 
-export async function fetchTicketCatalog(force = false): Promise<FactoryTicket[]> {
+export async function fetchTicketCatalog(force = false): Promise<RunnerTicket[]> {
   if (!force && cachedTickets !== null) {
     return cachedTickets;
   }
@@ -49,7 +49,7 @@ export async function fetchTicketCatalog(force = false): Promise<FactoryTicket[]
 
   ticketsInFlight = (async () => {
     try {
-      const response = await apiFetch<{ items: FactoryTicket[] }>('/v1/data-factory/tickets?limit=100');
+      const response = await apiFetch<{ items: RunnerTicket[] }>('/v1/data-factory/tickets?limit=100');
       const items = response.items ?? [];
       cachedTickets = items;
       if (items.length > 0) {
@@ -78,17 +78,17 @@ export function useRunnerTicket(): {
   activeTicket: string;
   setActiveTicket: (ticket: string) => void;
   createNewTicket: (description?: string) => string;
-  tickets: FactoryTicket[];
-  loadTickets: () => Promise<FactoryTicket[]>;
+  tickets: RunnerTicket[];
+  loadTickets: () => Promise<RunnerTicket[]>;
   recentTickets: string[];
-  historicalRuns: FactoryRun[];
+  historicalRuns: PipelineRun[];
   loading: boolean;
 } {
   const [activeTicket, setActiveTicketState] = useState<string>(getStoredActiveTicket);
-  const [tickets, setTickets] = useState<FactoryTicket[]>(() => cachedTickets ?? []);
+  const [tickets, setTickets] = useState<RunnerTicket[]>(() => cachedTickets ?? []);
   const [loading, setLoading] = useState(cachedTickets === null);
 
-  const loadTickets = useCallback(async (): Promise<FactoryTicket[]> => {
+  const loadTickets = useCallback(async (): Promise<RunnerTicket[]> => {
     setLoading(true);
     try {
       return await fetchTicketCatalog(true);
@@ -146,7 +146,7 @@ export function useRunnerTicket(): {
     setStoredActiveTicket(fresh);
     setActiveTicketState(fresh);
 
-    void apiFetch<FactoryTicket>('/v1/data-factory/tickets', {
+    void apiFetch<RunnerTicket>('/v1/data-factory/tickets', {
       method: 'POST',
       body: JSON.stringify({ ticket_id: fresh, description }),
     })

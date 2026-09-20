@@ -4,7 +4,7 @@ import { Boxes, CheckCircle2, CircleAlert, Crown, Database, HardDrive, LoaderCir
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { formatBytes, formatDate, statusVariant, taskLabel, type ModelPromotionState, type ModelRecord, type TaskType } from '@/types/models';
+import { formatBytes, formatDate, statusVariant, taskLabel, type ModelPromotionState, type ModelRecord, type TaskType } from '../types';
 
 interface ModelRegistryTableProps {
   models: ModelRecord[];

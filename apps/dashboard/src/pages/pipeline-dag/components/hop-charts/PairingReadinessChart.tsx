@@ -10,7 +10,7 @@ import {
   YAxis,
 } from 'recharts';
 
-import { TelemetryUnavailable } from './TelemetryUnavailable';
+
 
 function value(metrics: Record<string, number> | undefined, key: string): number {
   const observed = metrics?.[key];
@@ -41,9 +41,7 @@ export function PairingReadinessChart({ metrics }: { metrics?: Record<string, nu
   const firstBatchRecords = capacity > 0 ? Math.min(ready, capacity) : ready;
   const batchFill = capacity > 0 ? Math.min(100, firstBatchRecords / capacity * 100) : 0;
 
-  if (value(metrics, 'readiness_observed') !== 1) {
-    return <TelemetryUnavailable detail="Backend chưa trả readiness snapshot cho G01." />;
-  }
+  const isBaseline = value(metrics, 'readiness_observed') !== 1;
 
   const denominator = Math.max(pendingLC, ready + missingTPF);
   const readinessData = [{ phase: 'Pending Light Curves', eligible: ready, blocked: missingTPF }];
@@ -54,6 +52,7 @@ export function PairingReadinessChart({ metrics }: { metrics?: Record<string, nu
 
   return (
     <div className="space-y-3">
+      {isBaseline && <div className="flex items-center justify-between border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground"><span className="flex items-center gap-1.5 font-medium"><span className="size-2 rounded-full bg-amber-500" />Khung phân tích cơ sở: Backend chưa trả readiness snapshot (hiển thị mức nền 0).</span></div>}
       <div className="grid grid-cols-2 gap-px border border-border/70 bg-border/70 text-xs lg:grid-cols-3 2xl:grid-cols-6">
         <Metric label="Pending Light Curves" observed={pendingLC} detail="G01 population" />
         <Metric label="Eligible LC + TPF" observed={ready} detail={percent(ready, denominator)} />

@@ -5,7 +5,7 @@ import hashlib
 import re
 from typing import Any, Dict, Optional
 
-from aurora_ml.pipeline.gold import SilverInputRef
+from pipeline.gold import SilverInputRef
 
 
 class SilverEventError(ValueError):

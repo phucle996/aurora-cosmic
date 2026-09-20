@@ -87,6 +87,13 @@ class TrainingApplication:
         self.config = config
         self.objects = objects or MinioObjectStore(config)
         self.progress = progress
+        self._controls: dict[str, str] = {}
+
+    def set_control(self, ticket_id: str, action: str) -> None:
+        self._controls[ticket_id] = action
+
+    def get_control(self, ticket_id: str) -> str | None:
+        return self._controls.get(ticket_id)
 
     def _progress(
         self,
@@ -100,7 +107,7 @@ class TrainingApplication:
         self.progress(
             {
                 "schema_version": 1,
-                "job_id": request.job_id,
+                "ticket_id": request.ticket_id,
                 "task": request.task,
                 "status": "running",
                 "phase": phase,
@@ -111,7 +118,7 @@ class TrainingApplication:
         )
 
     def _job_dir(self, request: TrainingRequest) -> Path:
-        directory = Path(self.config.work_dir) / "jobs" / request.job_id
+        directory = Path(self.config.work_dir) / "jobs" / request.ticket_id
         directory.mkdir(parents=True, exist_ok=True)
         return directory
 
@@ -120,19 +127,19 @@ class TrainingApplication:
     ) -> None:
         record = {
             "schema_version": 1,
-            "job_id": request.job_id,
+            "ticket_id": request.ticket_id,
             "task": request.task,
             "gold_snapshot_ids": list(request.gold_snapshot_ids),
             "updated_at": _now(),
             **values,
         }
-        store.write_job(request.job_id, record)
+        store.write_job(request.ticket_id, record)
 
     def execute(self, request: TrainingRequest) -> dict[str, Any]:
         existing_store = TrainingStore(
             self.objects, self._job_dir(request), self.config
         )
-        existing = existing_store.read_job(request.job_id)
+        existing = existing_store.read_job(request.ticket_id)
         if existing and existing.get("status") == "COMPLETED":
             return dict(existing.get("result", {}))
         if self.config.device == "cpu" and request.compute_target == "gpu":
@@ -152,10 +159,11 @@ class TrainingApplication:
             )
             result = self._train_and_package(request, loaded, store, job_dir)
         except Exception as exc:
+            is_cancelled = "CANCELLED" in str(exc).upper()
             self._journal(
                 store,
                 request,
-                status="FAILED",
+                status="CANCELLED" if is_cancelled else "FAILED",
                 failed_at=_now(),
                 error_code=type(exc).__name__,
                 error=str(exc),
@@ -223,6 +231,7 @@ class TrainingApplication:
                     20 + 55 * int(epoch["current_epoch"]) / request.epochs,
                     **epoch,
                 ),
+                control_check=lambda: self.get_control(request.ticket_id),
             )
             self._progress(request, "evaluating", 78)
             golden = build_candidate_golden_cohort(loaded.manifest, rows, split)
@@ -360,7 +369,7 @@ class TrainingApplication:
 
         return {
             "status": "completed",
-            "job_id": request.job_id,
+            "ticket_id": request.ticket_id,
             "task": registry_task,
             "gold_snapshot_id": loaded.snapshot_id,
             "gold_snapshot_ids": list(request.gold_snapshot_ids),

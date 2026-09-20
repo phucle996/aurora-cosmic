@@ -101,6 +101,32 @@ func (fakeInference) RetryJob(context.Context, string) (entity.InferenceJobManif
 	return entity.InferenceJobManifest{}, nil, nil
 }
 
+type fakeModelNew struct{}
+
+func (fakeModelNew) TrainingPreflight(context.Context, []string) (*entity.TrainingPreflight, error) {
+	return &entity.TrainingPreflight{Tier: "EXPERIMENTAL"}, nil
+}
+
+func (fakeModelNew) ListTrainingSnapshots(context.Context, int) ([]entity.ModelTrainingSnapshot, error) {
+	return []entity.ModelTrainingSnapshot{}, nil
+}
+
+func (fakeModelNew) StartTraining(context.Context, entity.StartTrainingSpec) (*entity.TrainingResult, error) {
+	return &entity.TrainingResult{
+		TicketID: "train-test-1",
+		Task:     "candidate_vetting",
+		Status:   "queued",
+	}, nil
+}
+
+func (fakeModelNew) ControlTraining(context.Context, entity.TrainingControlSpec) (*entity.TrainingControlResult, error) {
+	return &entity.TrainingControlResult{
+		TicketID: "RUN-TEST-001",
+		Action:   "cancel",
+		Status:   "dispatched",
+	}, nil
+}
+
 type fakeReadiness struct{}
 
 func (fakeReadiness) Check(context.Context) (map[string]string, bool) {
@@ -227,6 +253,7 @@ func newTestRouter() http.Handler {
 		CandidateHandler:         handler.NewCandidateHandler(fakeCandidate{}),
 		AnomalyHandler:           handler.NewAnomalyHandler(fakeAnomaly{}),
 		ModelsHandler:            handler.NewModelsHandler(fakeModels{}, fakeInference{}),
+		ModelNewHandler:          handler.NewModelNewHandler(fakeModelNew{}),
 		SystemHandler:            handler.NewSystemHandler(fakeReadiness{}),
 		MonitoringHandler:        handler.NewMonitoringHandler(fakeMonitoring{}),
 		DAGAggregationHandler:    handler.NewDAGAggregationHandler(fakeDAGAggregation{}),
@@ -242,7 +269,7 @@ func newTestRouter() http.Handler {
 
 func TestRouterEndpoints(t *testing.T) {
 	router := newTestRouter()
-	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/dag/hops/bronze", "/api/v1/dag/hops/gold-pairing", "/api/v1/dag/hops/gold-commit", "/api/v1/dag/graph", "/api/v1/dag/graph?stage=enrichment", "/api/v1/dag/graph?stage=preprocessing", "/api/v1/data-factory/runs", "/api/v1/data-factory/tickets", "/api/v1/enrichment/control", "/api/v1/enrichment/snapshots", "/api/v1/enrichment/snapshots/gold-v1-test", "/api/v1/lineage/ledger", "/api/v1/ingest/status", "/api/v1/storage?prefix=bronze/&limit=10", "/api/v1/lakehouse/objects?prefix=bronze/&limit=10", "/api/v1/lakehouse/preview?key=test.txt", "/api/v1/targets", "/api/v1/targets/101?sector=42", "/api/v1/candidates?snapshot_id=gold-v1-test", "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", "/api/v1/lightcurves?tic_id=101&sector=42", "/api/v1/models/training-cohort/review-queue?snapshot_id=gold-v1-test"} {
+	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/dag/hops/bronze", "/api/v1/dag/hops/gold-pairing", "/api/v1/dag/hops/gold-commit", "/api/v1/dag/graph", "/api/v1/dag/graph?stage=enrichment", "/api/v1/dag/graph?stage=preprocessing", "/api/v1/data-factory/runs", "/api/v1/data-factory/tickets", "/api/v1/enrichment/control", "/api/v1/enrichment/snapshots", "/api/v1/enrichment/snapshots/gold-v1-test", "/api/v1/lineage/ledger", "/api/v1/ingest/status", "/api/v1/storage?prefix=bronze/&limit=10", "/api/v1/lakehouse/objects?prefix=bronze/&limit=10", "/api/v1/lakehouse/preview?key=test.txt", "/api/v1/targets", "/api/v1/targets/101?sector=42", "/api/v1/candidates?snapshot_id=gold-v1-test", "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", "/api/v1/lightcurves?tic_id=101&sector=42", "/api/v1/models/training-cohort/review-queue?snapshot_id=gold-v1-test", "/api/v1/models/training-preflight?snapshot_id=gold-v1-test", "/api/v1/models/snapshots"} {
 		req := httptest.NewRequest(http.MethodGet, endpoint, nil)
 		recorder := httptest.NewRecorder()
 		router.ServeHTTP(recorder, req)
@@ -479,5 +506,35 @@ func TestLineageTraceRoute(t *testing.T) {
 	router.ServeHTTP(legacyRecorder, legacyReq)
 	if legacyRecorder.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 Not Found for removed legacy route, got %d", legacyRecorder.Code)
+	}
+}
+
+func TestModelTrainingControlRoute(t *testing.T) {
+	router := newTestRouter()
+
+	// 1. Valid control request with ticket_id and action
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/models/train/control", strings.NewReader(`{"ticket_id":"RUN-20260921-0001","action":"cancel"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for valid control request, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp["ticket_id"] != "RUN-TEST-001" || resp["status"] != "dispatched" {
+		t.Fatalf("unexpected response payload: %+v", resp)
+	}
+
+	// 2. Reject legacy job_id without ticket_id
+	reqLegacy := httptest.NewRequest(http.MethodPost, "/api/v1/models/train/control", strings.NewReader(`{"job_id":"train-job-001","action":"cancel"}`))
+	reqLegacy.Header.Set("Content-Type", "application/json")
+	recLegacy := httptest.NewRecorder()
+	router.ServeHTTP(recLegacy, reqLegacy)
+	if recLegacy.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request for legacy payload without ticket_id, got %d", recLegacy.Code)
 	}
 }

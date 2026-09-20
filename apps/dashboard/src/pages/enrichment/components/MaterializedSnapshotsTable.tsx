@@ -5,10 +5,10 @@ import { Link } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatDate } from '../constants';
-import type { FactoryBatch } from '@/types/ticket';
+import type { PipelineBatch } from '@/pages/runner-tickets/types';
 
 export interface MaterializedSnapshotsTableProps {
-  batches: FactoryBatch[];
+  batches: PipelineBatch[];
   historyLoading: boolean;
   runStatus?: string;
   copiedId: string | null;

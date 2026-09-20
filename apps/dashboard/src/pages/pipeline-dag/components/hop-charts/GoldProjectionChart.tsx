@@ -12,7 +12,7 @@ import {
   YAxis,
 } from 'recharts';
 
-import type { GoldProjectionEvidence } from '@/types/ticket';
+import type { GoldProjectionEvidence } from '../../types';
 
 function value(metrics: Record<string, number> | undefined, key: string): number {
   const observed = metrics?.[key];
@@ -32,43 +32,81 @@ function compact(observed: number): string {
 export function GoldProjectionChart({ metrics, evidence }: { metrics?: Record<string, number>; evidence?: GoldProjectionEvidence }): JSX.Element {
   const input = value(metrics, 'input_records');
   const ledgerIndexed = value(metrics, 'indexed_rows');
-  if (!evidence || evidence.snapshot_count === 0) {
-    return <section className={`border border-dashed px-5 py-12 text-center ${ledgerIndexed > 0 ? 'border-red-500/60 bg-red-500/5' : 'border-border/70 bg-background/40'}`}>
-      <p className="font-mono text-sm font-semibold uppercase">{ledgerIndexed > 0 ? 'Projection evidence mismatch' : 'Analytical projection not executed'}</p>
-      <p className="mx-auto mt-2 max-w-2xl text-[11px] leading-5 text-muted-foreground">
-        {ledgerIndexed > 0
-          ? `Run ledger reports ${ledgerIndexed.toLocaleString()} indexed rows, but no completed snapshot registry/marker evidence is available. No parity chart is synthesized.`
-          : `${input.toLocaleString()} Gold rows are visible upstream, but G08 has no completed analytical projection in this view.`}
-      </p>
-    </section>;
-  }
+  const isBaseline = !evidence || evidence.snapshot_count === 0;
 
-  const snapshots = evidence.snapshots.map((snapshot) => ({
-    ...snapshot,
-    label: snapshot.snapshot_id.slice(0, 10),
-    samplesPerCandidate: snapshot.actual_candidate_rows > 0 ? snapshot.lightcurve_sample_rows / snapshot.actual_candidate_rows : 0,
-  }));
+  const activeEvidence: GoldProjectionEvidence = isBaseline
+    ? {
+        snapshot_count: 0,
+        registry_ready_snapshots: 0,
+        marker_verified_snapshots: 0,
+        row_parity_snapshots: 0,
+        expected_rows: input,
+        indexed_rows: ledgerIndexed,
+        actual_candidate_rows: 0,
+        lightcurve_sample_rows: 0,
+        training_cohort_rows: 0,
+        snapshots: [],
+        issues: [],
+      }
+    : evidence;
+
+  const snapshots = activeEvidence.snapshots.length > 0
+    ? activeEvidence.snapshots.map((snapshot) => ({
+        ...snapshot,
+        label: snapshot.snapshot_id.slice(0, 10),
+        samplesPerCandidate: snapshot.actual_candidate_rows > 0 ? snapshot.lightcurve_sample_rows / snapshot.actual_candidate_rows : 0,
+      }))
+    : [{
+        snapshot_id: 'baseline',
+        label: 'Baseline',
+        expected_rows: 0,
+        ledger_indexed_rows: 0,
+        registry_indexed_rows: 0,
+        actual_candidate_rows: 0,
+        lightcurve_sample_rows: 0,
+        samplesPerCandidate: 0,
+        training_positive_rows: 0,
+        training_negative_rows: 0,
+        training_unresolved_rows: 0,
+        registry_status: 'NONE',
+        marker_status: 'NONE',
+        manifest_binding_valid: false,
+        row_parity_valid: false,
+      }];
+
   const cohort = [{
     scope: 'Review cohort',
-    positive: evidence.snapshots.reduce((sum, snapshot) => sum + snapshot.training_positive_rows, 0),
-    negative: evidence.snapshots.reduce((sum, snapshot) => sum + snapshot.training_negative_rows, 0),
-    unresolved: evidence.snapshots.reduce((sum, snapshot) => sum + snapshot.training_unresolved_rows, 0),
+    positive: activeEvidence.snapshots.reduce((sum, snapshot) => sum + snapshot.training_positive_rows, 0),
+    negative: activeEvidence.snapshots.reduce((sum, snapshot) => sum + snapshot.training_negative_rows, 0),
+    unresolved: activeEvidence.snapshots.reduce((sum, snapshot) => sum + snapshot.training_unresolved_rows, 0),
   }];
   const gates = [
-    { label: 'Registry READY', observed: evidence.registry_ready_snapshots },
-    { label: 'Projection marker bound', observed: evidence.marker_verified_snapshots },
-    { label: 'Five-way row parity', observed: evidence.row_parity_snapshots },
+    { label: 'Registry READY', observed: activeEvidence.registry_ready_snapshots },
+    { label: 'Projection marker bound', observed: activeEvidence.marker_verified_snapshots },
+    { label: 'Five-way row parity', observed: activeEvidence.row_parity_snapshots },
   ];
 
   return (
     <div className="space-y-3">
+      {isBaseline && (
+        <div className="flex items-center justify-between border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5 font-medium">
+            <span className="size-2 rounded-full bg-amber-500" />
+            Khung phân tích cơ sở: G08 chưa có committed analytical projection (hiển thị mức nền 0).
+          </span>
+          <span className="font-mono text-[10px] uppercase">
+            {input > 0 ? `${input.toLocaleString()} inputs upstream` : 'Sẵn sàng ghi nhận'}
+          </span>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-px border border-border/70 bg-border/70 text-xs lg:grid-cols-3 2xl:grid-cols-6">
-        <Metric label="Expected rows" observed={evidence.expected_rows.toLocaleString()} detail="manifest / registry" />
-        <Metric label="Registry indexed" observed={evidence.indexed_rows.toLocaleString()} detail={percent(evidence.indexed_rows, evidence.expected_rows)} warning={evidence.indexed_rows !== evidence.expected_rows} />
-        <Metric label="Actual queryable rows" observed={evidence.actual_candidate_rows.toLocaleString()} detail={percent(evidence.actual_candidate_rows, evidence.expected_rows)} warning={evidence.actual_candidate_rows !== evidence.expected_rows} />
-        <Metric label="Row parity" observed={percent(evidence.row_parity_snapshots, evidence.snapshot_count)} detail={`${evidence.row_parity_snapshots}/${evidence.snapshot_count} snapshots`} warning={evidence.row_parity_snapshots !== evidence.snapshot_count} />
-        <Metric label="LC plot samples" observed={compact(evidence.lightcurve_sample_rows)} detail={evidence.actual_candidate_rows > 0 ? `${compact(evidence.lightcurve_sample_rows / evidence.actual_candidate_rows)} / candidate` : 'no candidates'} />
-        <Metric label="Review cohort rows" observed={evidence.training_cohort_rows.toLocaleString()} detail="derived projection overlay" />
+        <Metric label="Expected rows" observed={activeEvidence.expected_rows.toLocaleString()} detail="manifest / registry" />
+        <Metric label="Registry indexed" observed={activeEvidence.indexed_rows.toLocaleString()} detail={percent(activeEvidence.indexed_rows, activeEvidence.expected_rows)} warning={activeEvidence.indexed_rows !== activeEvidence.expected_rows && !isBaseline} />
+        <Metric label="Actual queryable rows" observed={activeEvidence.actual_candidate_rows.toLocaleString()} detail={percent(activeEvidence.actual_candidate_rows, activeEvidence.expected_rows)} warning={activeEvidence.actual_candidate_rows !== activeEvidence.expected_rows && !isBaseline} />
+        <Metric label="Row parity" observed={percent(activeEvidence.row_parity_snapshots, activeEvidence.snapshot_count)} detail={`${activeEvidence.row_parity_snapshots}/${activeEvidence.snapshot_count} snapshots`} warning={activeEvidence.row_parity_snapshots !== activeEvidence.snapshot_count && !isBaseline} />
+        <Metric label="LC plot samples" observed={compact(activeEvidence.lightcurve_sample_rows)} detail={activeEvidence.actual_candidate_rows > 0 ? `${compact(activeEvidence.lightcurve_sample_rows / activeEvidence.actual_candidate_rows)} / candidate` : 'mức nền baseline'} />
+        <Metric label="Review cohort rows" observed={activeEvidence.training_cohort_rows.toLocaleString()} detail="derived projection overlay" />
       </div>
 
       <section className="border border-border/70 bg-background/40">
@@ -78,7 +116,7 @@ export function GoldProjectionChart({ metrics, evidence }: { metrics?: Record<st
 
       <section className="border border-border/70 bg-background/40">
         <div className="border-b border-border/60 px-3 py-2"><p className="font-medium">Projection integrity gates</p><p className="text-[10px] text-muted-foreground">Row parity yêu cầu đồng thời batch ledger, manifest/registry expected, registry indexed, marker indexed và actual table rows bằng nhau.</p></div>
-        <div className="grid gap-px bg-border/60 sm:grid-cols-3">{gates.map((gate) => <div key={gate.label} className="bg-background p-3"><div className="flex items-center justify-between gap-2"><span className="text-[10px] font-medium">{gate.label}</span><span className="font-mono text-[10px] font-semibold">{percent(gate.observed, evidence.snapshot_count)}</span></div><div className="mt-2 h-3 border border-border/70 bg-muted/30 p-0.5"><div className={`h-full ${gate.observed === evidence.snapshot_count ? 'bg-emerald-500' : 'bg-red-500'}`} style={{ width: `${evidence.snapshot_count > 0 ? gate.observed / evidence.snapshot_count * 100 : 0}%` }} /></div><p className="mt-1 font-mono text-[9px] text-muted-foreground">{gate.observed}/{evidence.snapshot_count} snapshots</p></div>)}</div>
+        <div className="grid gap-px bg-border/60 sm:grid-cols-3">{gates.map((gate) => <div key={gate.label} className="bg-background p-3"><div className="flex items-center justify-between gap-2"><span className="text-[10px] font-medium">{gate.label}</span><span className="font-mono text-[10px] font-semibold">{percent(gate.observed, activeEvidence.snapshot_count)}</span></div><div className="mt-2 h-3 border border-border/70 bg-muted/30 p-0.5"><div className={`h-full ${gate.observed === activeEvidence.snapshot_count && !isBaseline ? 'bg-emerald-500' : 'bg-amber-500'}`} style={{ width: `${activeEvidence.snapshot_count > 0 ? gate.observed / activeEvidence.snapshot_count * 100 : 0}%` }} /></div><p className="mt-1 font-mono text-[9px] text-muted-foreground">{gate.observed}/{activeEvidence.snapshot_count} snapshots</p></div>)}</div>
       </section>
 
       <div className="grid gap-3 xl:grid-cols-2">
@@ -89,11 +127,11 @@ export function GoldProjectionChart({ metrics, evidence }: { metrics?: Record<st
 
         <section className="border border-border/70 bg-background/40">
           <div className="border-b border-border/60 px-3 py-2"><p className="font-medium">Derived training-cohort disposition</p><p className="text-[10px] text-muted-foreground">Đây là review overlay có thể rebuild, không phải nhãn được ghi ngược vào immutable Candidate Gold.</p></div>
-          {evidence.training_cohort_rows > 0 ? <div className="h-[300px] p-3"><ResponsiveContainer width="100%" height="100%"><BarChart data={cohort} layout="vertical" margin={{ top: 12, right: 24, bottom: 8, left: 12 }}><CartesianGrid horizontal={false} strokeDasharray="3 3" opacity={0.2} /><XAxis type="number" allowDecimals={false} tick={{ fontSize: 10 }} /><YAxis type="category" dataKey="scope" width={90} tick={{ fontSize: 10 }} /><Tooltip formatter={(item, name) => [`${Number(item).toLocaleString()} rows`, String(name)]} /><Legend /><Bar dataKey="positive" name="Positive" stackId="cohort" fill="#10b981" isAnimationActive={false} /><Bar dataKey="negative" name="Negative" stackId="cohort" fill="#ef4444" isAnimationActive={false} /><Bar dataKey="unresolved" name="Unresolved" stackId="cohort" fill="#f59e0b" isAnimationActive={false} /></BarChart></ResponsiveContainer></div> : <div className="flex h-[300px] items-center justify-center p-6 text-center text-[11px] text-muted-foreground">Projection marker chưa ghi cohort rows cho các snapshot này.</div>}
+          <div className="h-[300px] p-3"><ResponsiveContainer width="100%" height="100%"><BarChart data={cohort} layout="vertical" margin={{ top: 12, right: 24, bottom: 8, left: 12 }}><CartesianGrid horizontal={false} strokeDasharray="3 3" opacity={0.2} /><XAxis type="number" domain={[0, Math.max(activeEvidence.training_cohort_rows, 1)]} allowDecimals={false} tick={{ fontSize: 10 }} /><YAxis type="category" dataKey="scope" width={90} tick={{ fontSize: 10 }} /><Tooltip formatter={(item, name) => [`${Number(item).toLocaleString()} rows`, String(name)]} /><Legend /><Bar dataKey="positive" name="Positive" stackId="cohort" fill="#10b981" isAnimationActive={false} /><Bar dataKey="negative" name="Negative" stackId="cohort" fill="#ef4444" isAnimationActive={false} /><Bar dataKey="unresolved" name="Unresolved" stackId="cohort" fill="#f59e0b" isAnimationActive={false} /></BarChart></ResponsiveContainer></div>
         </section>
       </div>
 
-      {evidence.issues.length > 0 && <div className="border-l-2 border-red-500 bg-red-500/5 px-3 py-2 text-[11px] text-red-700 dark:text-red-300">{evidence.issues.join(' · ')}</div>}
+      {activeEvidence.issues.length > 0 && <div className="border-l-2 border-red-500 bg-red-500/5 px-3 py-2 text-[11px] text-red-700 dark:text-red-300">{activeEvidence.issues.join(' · ')}</div>}
     </div>
   );
 }

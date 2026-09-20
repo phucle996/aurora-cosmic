@@ -20,7 +20,7 @@ import {
 } from 'recharts';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import type { FactoryRun, FactoryRunDetail } from '@/types/ticket';
+import type { PipelineRun, PipelineRunDetail } from '@/pages/runner-tickets/types';
 
 const colors = {
   primary: '#159dcc',
@@ -78,7 +78,7 @@ function EmptyChart({ children }: { children: string }): JSX.Element {
   return <div className="flex h-64 items-center justify-center border border-dashed border-border/70 px-4 text-center text-xs text-muted-foreground">{children}</div>;
 }
 
-export function RunAnalysisCharts({ runs, detail }: { runs: FactoryRun[]; detail?: FactoryRunDetail }): JSX.Element {
+export function RunAnalysisCharts({ runs, detail }: { runs: PipelineRun[]; detail?: PipelineRunDetail }): JSX.Element {
   const phaseNames = [...new Set((detail?.components ?? []).map((event) => event.component_id))];
   const runStart = timestamp(detail?.run.started_at);
   const phasePoints = (detail?.components ?? []).flatMap((event) => {
