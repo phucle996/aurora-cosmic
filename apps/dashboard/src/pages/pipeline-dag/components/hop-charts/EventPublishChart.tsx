@@ -15,7 +15,6 @@ import {
   Layers,
   Search,
   CheckCircle2,
-  ShieldCheck,
   Send,
   Server,
   Activity,
@@ -39,10 +38,13 @@ export function EventPublishChart({
   const [page, setPage] = useState(0);
   const pageSize = 8;
 
-  const eligible = value(metrics, 'eligible_artifacts') || materializationPoints.length || 482;
+  const lcPointsCount = materializationPoints.filter((p) => p.product_kind === 'lightcurve' || p.product_kind === 'light_curve').length;
+  const tpfPointsCount = materializationPoints.filter((p) => p.product_kind.includes('target')).length;
+
+  const eligible = value(metrics, 'eligible_artifacts') || materializationPoints.length;
   const emissions = value(metrics, 'event_emissions') || eligible;
-  const lcEligible = value(metrics, 'eligible_lightcurves') || 242;
-  const tpfEligible = value(metrics, 'eligible_target_pixels') || 240;
+  const lcEligible = value(metrics, 'eligible_lightcurves') || lcPointsCount;
+  const tpfEligible = value(metrics, 'eligible_target_pixels') || tpfPointsCount;
   const amplification = value(metrics, 'amplification_factor') || (eligible > 0 ? emissions / eligible : 1.0);
   const consumers = value(metrics, 'event_consumers') || 1;
   const pendingAck = value(metrics, 'nats_pending_ack');
@@ -60,33 +62,18 @@ export function EventPublishChart({
     },
   ];
 
-  // Synthesize rich NATS JetStream event records from materializationPoints
+  // Map NATS JetStream event records directly from actual materializationPoints
   const allEvents = useMemo(() => {
-    if (materializationPoints && materializationPoints.length > 0) {
-      return materializationPoints.map((point) => {
-        const targetId = extractTargetId(point.object_key);
-        const isLC = point.product_kind === 'lightcurve' || point.product_kind === 'light_curve';
-        const num = targetId.replace(/[^0-9]/g, '').padStart(16, '0');
-        return {
-          msgId: `evt_${isLC ? 'lc' : 'tpf'}_${num}`,
-          targetId,
-          isLC,
-          subject: isLC ? 'aurora.v1.silver.lightcurve.ready' : 'aurora.v1.silver.target_pixel.ready',
-          payloadSchema: 'v1.silver.ready',
-          payloadSize: isLC ? '1.24 KB' : '1.38 KB',
-          consumerAck: 'EXPLICIT_ACK',
-          status: 'DELIVERED',
-        };
-      });
+    if (!materializationPoints || materializationPoints.length === 0) {
+      return [];
     }
 
-    return Array.from({ length: 482 }, (_, i) => {
-      const isLC = i < 242;
-      const num = 25155310 + i;
-      const targetId = `TIC ${num}`;
-      const hashId = String(num).padStart(16, '0');
+    return materializationPoints.map((point) => {
+      const targetId = extractTargetId(point.object_key);
+      const isLC = point.product_kind === 'lightcurve' || point.product_kind === 'light_curve';
+      const num = targetId.replace(/[^0-9]/g, '').padStart(16, '0');
       return {
-        msgId: `evt_${isLC ? 'lc' : 'tpf'}_${hashId}`,
+        msgId: `evt_${isLC ? 'lc' : 'tpf'}_${num}`,
         targetId,
         isLC,
         subject: isLC ? 'aurora.v1.silver.lightcurve.ready' : 'aurora.v1.silver.target_pixel.ready',
@@ -281,11 +268,10 @@ export function EventPublishChart({
                   setFilter('all');
                   setPage(0);
                 }}
-                className={`border px-2 py-1 transition-colors ${
-                  filter === 'all'
+                className={`border px-2 py-1 transition-colors ${filter === 'all'
                     ? 'border-primary bg-primary/10 font-semibold text-primary'
                     : 'border-border/60 text-muted-foreground hover:bg-muted/30'
-                }`}
+                  }`}
               >
                 Tất cả ({eligible})
               </button>
@@ -294,11 +280,10 @@ export function EventPublishChart({
                   setFilter('lightcurve');
                   setPage(0);
                 }}
-                className={`border px-2 py-1 transition-colors ${
-                  filter === 'lightcurve'
+                className={`border px-2 py-1 transition-colors ${filter === 'lightcurve'
                     ? 'border-primary bg-primary/10 font-semibold text-primary'
                     : 'border-border/60 text-muted-foreground hover:bg-muted/30'
-                }`}
+                  }`}
               >
                 Light Curve ({lcEligible})
               </button>
@@ -307,11 +292,10 @@ export function EventPublishChart({
                   setFilter('target_pixel');
                   setPage(0);
                 }}
-                className={`border px-2 py-1 transition-colors ${
-                  filter === 'target_pixel'
+                className={`border px-2 py-1 transition-colors ${filter === 'target_pixel'
                     ? 'border-primary bg-primary/10 font-semibold text-primary'
                     : 'border-border/60 text-muted-foreground hover:bg-muted/30'
-                }`}
+                  }`}
               >
                 Target Pixel ({tpfEligible})
               </button>
@@ -401,7 +385,7 @@ export function EventPublishChart({
       </section>
 
       <div className="border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-[11px] text-emerald-700 dark:text-emerald-300">
-        Toàn bộ 482 sự kiện đã được JetStream ghi nhận bền vững và xác nhận qua cơ chế Explicit ACK. Không có message tồn đọng hoặc lỗi phân phát, sẵn sàng kích hoạt giai đoạn Gold downstream.
+        Toàn bộ {emissions.toLocaleString()} sự kiện đã được JetStream ghi nhận bền vững và xác nhận qua cơ chế Explicit ACK. Không có message tồn đọng hoặc lỗi phân phát, sẵn sàng kích hoạt giai đoạn Gold downstream.
       </div>
     </div>
   );
@@ -427,13 +411,12 @@ function MetricCard({
         <span className="truncate">{label}</span>
       </div>
       <p
-        className={`mt-1 font-mono text-sm font-semibold truncate ${
-          highlight === 'emerald'
+        className={`mt-1 font-mono text-sm font-semibold truncate ${highlight === 'emerald'
             ? 'text-emerald-600 dark:text-emerald-400'
             : highlight === 'primary'
-            ? 'text-primary'
-            : 'text-foreground'
-        }`}
+              ? 'text-primary'
+              : 'text-foreground'
+          }`}
       >
         {value}
       </p>

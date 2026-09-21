@@ -36,7 +36,10 @@ export function CheckpointMetricsChart({
   const [page, setPage] = useState(0);
   const pageSize = 8;
 
-  const total = checkpoints.length || Math.max(0, metrics?.checkpoint_total ?? 0) || materializationPoints.length || 482;
+  const lcPointsCount = materializationPoints.filter((p) => p.product_kind === 'lightcurve' || p.product_kind === 'light_curve').length;
+  const tpfPointsCount = materializationPoints.filter((p) => p.product_kind.includes('target')).length;
+
+  const total = checkpoints.length || Math.max(0, metrics?.checkpoint_total ?? 0) || materializationPoints.length;
   const completed = checkpoints.length
     ? checkpoints.filter((point) => point.state === 'COMPLETED').length
     : Math.max(0, metrics?.checkpoint_completed ?? total);
@@ -44,8 +47,8 @@ export function CheckpointMetricsChart({
     ? checkpoints.filter((point) => point.resume_action === 'reuse_and_ack').length
     : Math.max(0, metrics?.resume_ready ?? completed);
   const computeLoss = Math.max(0, metrics?.compute_loss_risk ?? (total - resumeReady));
-  const lcCount = Math.max(0, metrics?.completed_lightcurves ?? metrics?.silver_lightcurves ?? 242);
-  const tpfCount = Math.max(0, metrics?.completed_target_pixels ?? metrics?.silver_target_pixels ?? 240);
+  const lcCount = Math.max(0, metrics?.completed_lightcurves ?? metrics?.silver_lightcurves ?? lcPointsCount);
+  const tpfCount = Math.max(0, metrics?.completed_target_pixels ?? metrics?.silver_target_pixels ?? tpfPointsCount);
 
   const recoveryByKind = [
     { kind: 'Light Curve (1D)', reuse: lcCount, verify: 0, reprocess: 0 },
@@ -59,7 +62,7 @@ export function CheckpointMetricsChart({
     { stage: 'Sẵn Sàng Tái Sử Dụng', count: resumeReady, fill: '#10b981' },
   ];
 
-  // Synthesize rich checkpoint inventory from checkpoints or materializationPoints
+  // Map real checkpoint inventory from checkpoints or materializationPoints
   const allCheckpointRecords = useMemo(() => {
     if (checkpoints && checkpoints.length > 0) {
       return checkpoints.map((ckpt) => {
@@ -98,24 +101,7 @@ export function CheckpointMetricsChart({
       });
     }
 
-    // Default synthesized records for demonstration if both are empty
-    return Array.from({ length: 482 }, (_, i) => {
-      const isLC = i < 242;
-      const num = 25155310 + i;
-      const targetId = `TIC ${num}`;
-      const hashId = String(num).padStart(16, '0');
-      return {
-        id: `ckpt_${isLC ? 'lc' : 'tpf'}_${hashId}`,
-        targetId,
-        isLC,
-        kind: isLC ? 'Light Curve (1D)' : 'Target Pixel (3D)',
-        silverKey: `silver/tess/${isLC ? 'lightcurve' : 'target_pixel'}/sector=001/tic=${num}.parquet`,
-        state: 'COMPLETED',
-        resumeAction: 'reuse_and_ack' as const,
-        attempts: 1,
-        silverVerified: true,
-      };
-    });
+    return [];
   }, [checkpoints, materializationPoints]);
 
   const filteredRecords = useMemo(() => {
@@ -418,7 +404,7 @@ export function CheckpointMetricsChart({
       </section>
 
       <div className="border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-[11px] text-emerald-700 dark:text-emerald-300">
-        Toàn bộ 482 checkpoint đã được khóa nguyên tử trong MinIO S3. Bất kỳ sự cố crash hoặc replay nào từ NATS Bronze đều sẽ được xử lý qua fast-path <code className="font-mono font-semibold">reuse_and_ack</code> mà không cần tính toán lại, bảo toàn 100% tài nguyên cụm worker.
+        Toàn bộ {completed.toLocaleString()} checkpoint đã được khóa nguyên tử trong MinIO S3. Bất kỳ sự cố crash hoặc replay nào từ NATS Bronze đều sẽ được xử lý qua fast-path <code className="font-mono font-semibold">reuse_and_ack</code> mà không cần tính toán lại, bảo toàn 100% tài nguyên cụm worker.
       </div>
     </div>
   );

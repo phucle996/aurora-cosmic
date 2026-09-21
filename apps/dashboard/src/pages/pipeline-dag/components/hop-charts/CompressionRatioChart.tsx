@@ -35,27 +35,30 @@ export function CompressionRatioChart({
   totalFiles?: number;
   materializationPoints?: Hop['materialization_points'];
 }): JSX.Element {
-  const bronzeBytes = metric(metrics, 'bronze_bytes') || 12_316_101_120;
-  const silverBytes = metric(metrics, 'silver_bytes') || 2_122_299_144;
-  const bronzeObjects = metric(metrics, 'bronze_objects') || 482;
-  const silverObjects = metric(metrics, 'silver_objects') || 482;
+  const lcObjects = metric(metrics, 'silver_lightcurves');
+  const tpfObjects = metric(metrics, 'silver_target_pixels');
+  const bronzeObjects = metric(metrics, 'bronze_objects') || totalFiles || (lcObjects + tpfObjects);
+  const silverObjects = metric(metrics, 'silver_objects') || (lcObjects + tpfObjects);
 
-  const lcBronze = metric(metrics, 'lc_bronze_bytes') || 485_084_160;
-  const lcSilver = metric(metrics, 'lc_silver_bytes') || 75_323_788;
-  const tpfBronze = metric(metrics, 'tpf_bronze_bytes') || 11_831_016_960;
-  const tpfSilver = metric(metrics, 'tpf_silver_bytes') || 2_046_975_356;
+  const bronzeBytes = metric(metrics, 'bronze_bytes');
+  const silverBytes = metric(metrics, 'silver_bytes');
+
+  const lcBronze = metric(metrics, 'lc_bronze_bytes');
+  const lcSilver = metric(metrics, 'lc_silver_bytes');
+  const tpfBronze = metric(metrics, 'tpf_bronze_bytes');
+  const tpfSilver = metric(metrics, 'tpf_silver_bytes');
 
   const savedBytes = Math.max(0, bronzeBytes - silverBytes);
-  const reduction = bronzeBytes > 0 ? (savedBytes / bronzeBytes) * 100 : 82.8;
-  const compressionFactor = silverBytes > 0 ? bronzeBytes / silverBytes : 5.8;
+  const reduction = bronzeBytes > 0 ? (savedBytes / bronzeBytes) * 100 : 0;
+  const compressionFactor = silverBytes > 0 ? bronzeBytes / silverBytes : 1.0;
 
   const lcSaved = Math.max(0, lcBronze - lcSilver);
-  const lcReduction = lcBronze > 0 ? (lcSaved / lcBronze) * 100 : 84.5;
-  const lcRatio = lcSilver > 0 ? lcBronze / lcSilver : 6.44;
+  const lcReduction = lcBronze > 0 ? (lcSaved / lcBronze) * 100 : 0;
+  const lcRatio = lcSilver > 0 ? lcBronze / lcSilver : 1.0;
 
   const tpfSaved = Math.max(0, tpfBronze - tpfSilver);
-  const tpfReduction = tpfBronze > 0 ? (tpfSaved / tpfBronze) * 100 : 82.7;
-  const tpfRatio = tpfSilver > 0 ? tpfBronze / tpfSilver : 5.78;
+  const tpfReduction = tpfBronze > 0 ? (tpfSaved / tpfBronze) * 100 : 0;
+  const tpfRatio = tpfSilver > 0 ? tpfBronze / tpfSilver : 1.0;
 
   const comparisonData = [
     {
@@ -176,7 +179,7 @@ export function CompressionRatioChart({
                     <td className="py-2.5 text-emerald-600 dark:text-emerald-400 font-semibold">{formatGB(lcSilver)}</td>
                     <td className="py-2.5 text-foreground">{formatGB(lcSaved)}</td>
                     <td className="py-2.5 font-semibold text-primary">{lcRatio.toFixed(2)}×</td>
-                    <td className="py-2.5 text-right text-emerald-600 dark:text-emerald-400">242/242 (100%)</td>
+                    <td className="py-2.5 text-right text-emerald-600 dark:text-emerald-400">{lcObjects.toLocaleString()}/{lcObjects.toLocaleString()} (100%)</td>
                   </tr>
                   <tr>
                     <td className="py-2.5 font-sans font-medium text-foreground">Target Pixel (3D)</td>
@@ -184,7 +187,7 @@ export function CompressionRatioChart({
                     <td className="py-2.5 text-emerald-600 dark:text-emerald-400 font-semibold">{formatGB(tpfSilver)}</td>
                     <td className="py-2.5 text-foreground">{formatGB(tpfSaved)}</td>
                     <td className="py-2.5 font-semibold text-primary">{tpfRatio.toFixed(2)}×</td>
-                    <td className="py-2.5 text-right text-emerald-600 dark:text-emerald-400">240/240 (100%)</td>
+                    <td className="py-2.5 text-right text-emerald-600 dark:text-emerald-400">{tpfObjects.toLocaleString()}/{tpfObjects.toLocaleString()} (100%)</td>
                   </tr>
                   <tr className="border-t border-border font-bold">
                     <td className="py-2.5 font-sans text-foreground">Tổng Lakehouse</td>
@@ -192,7 +195,7 @@ export function CompressionRatioChart({
                     <td className="py-2.5 text-emerald-600 dark:text-emerald-400">{formatGB(silverBytes)}</td>
                     <td className="py-2.5 text-foreground">{formatGB(savedBytes)}</td>
                     <td className="py-2.5 text-primary">{compressionFactor.toFixed(2)}×</td>
-                    <td className="py-2.5 text-right text-emerald-600 dark:text-emerald-400">482/482 (100%)</td>
+                    <td className="py-2.5 text-right text-emerald-600 dark:text-emerald-400">{silverObjects.toLocaleString()}/{bronzeObjects.toLocaleString()} (100%)</td>
                   </tr>
                 </tbody>
               </table>

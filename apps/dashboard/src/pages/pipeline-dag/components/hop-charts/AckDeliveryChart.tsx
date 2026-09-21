@@ -16,7 +16,7 @@ function value(metrics: Record<string, number> | undefined, key: string): number
 }
 
 export function AckDeliveryChart({ metrics }: { metrics?: Record<string, number> }): JSX.Element {
-  const streamMessages = value(metrics, 'stream_messages') || value(metrics, 'bronze_total_files') || 482;
+  const streamMessages = value(metrics, 'stream_messages') || value(metrics, 'bronze_total_files') || value(metrics, 'completed_products') || value(metrics, 'silver_objects');
   const deliveryAttempts = value(metrics, 'delivery_attempts') || value(metrics, 'ack_total') || streamMessages;
   const deliveredPositions = value(metrics, 'delivered_stream_positions') || streamMessages;
   const acknowledgedDeliveries = value(metrics, 'acknowledged_deliveries') || streamMessages;

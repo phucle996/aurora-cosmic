@@ -42,15 +42,18 @@ export function LineageLedgerChart({
 }): JSX.Element {
   const [filter, setFilter] = useState<'all' | 'lightcurve' | 'target_pixel'>('all');
 
-  const totalCommitted = metric(metrics, 'lineage_committed') || metric(metrics, 'completed_products') || metric(metrics, 'silver_objects') || materializationPoints.length || 482;
+  const lcPointsCount = materializationPoints.filter((p) => p.product_kind === 'lightcurve' || p.product_kind === 'light_curve').length;
+  const tpfPointsCount = materializationPoints.filter((p) => p.product_kind.includes('target')).length;
+
+  const totalCommitted = metric(metrics, 'lineage_committed') || metric(metrics, 'completed_products') || metric(metrics, 'silver_objects') || materializationPoints.length;
   const pending = metric(metrics, 'lineage_pending');
   const dualHashVerified = metric(metrics, 'dual_hash_verified') || totalCommitted;
-  const lcCommitted = metric(metrics, 'silver_lightcurves') || 242;
-  const tpfCommitted = metric(metrics, 'silver_target_pixels') || 240;
+  const lcCommitted = metric(metrics, 'silver_lightcurves') || lcPointsCount;
+  const tpfCommitted = metric(metrics, 'silver_target_pixels') || tpfPointsCount;
 
-  const bronzeBytes = metric(metrics, 'bronze_bytes') || 12_316_101_120;
-  const silverBytes = metric(metrics, 'silver_bytes') || 2_122_299_144;
-  const reductionPct = metric(metrics, 'reduction_pct') || 82.8;
+  const bronzeBytes = metric(metrics, 'bronze_bytes');
+  const silverBytes = metric(metrics, 'silver_bytes');
+  const reductionPct = metric(metrics, 'reduction_pct') || (bronzeBytes > 0 ? (((bronzeBytes - silverBytes) / bronzeBytes) * 100).toFixed(1) : 0);
 
   // Provenance verification funnel
   const funnelData = [
@@ -110,13 +113,13 @@ export function LineageLedgerChart({
         <MetricCard
           label="Phả Hệ Light Curve"
           value={`${lcCommitted.toLocaleString()} LC`}
-          detail="242/242 artifacts liên kết 1:1"
+          detail={`${lcCommitted.toLocaleString()}/${lcCommitted.toLocaleString()} artifacts liên kết 1:1`}
           icon={<Link2 className="size-3.5 text-sky-500" />}
         />
         <MetricCard
           label="Phả Hệ Target Pixel"
           value={`${tpfCommitted.toLocaleString()} TPF`}
-          detail="240/240 cubes liên kết 1:1"
+          detail={`${tpfCommitted.toLocaleString()}/${tpfCommitted.toLocaleString()} cubes liên kết 1:1`}
           icon={<Database className="size-3.5 text-amber-500" />}
         />
         <MetricCard
@@ -231,7 +234,7 @@ export function LineageLedgerChart({
                   : 'border-border/60 text-muted-foreground hover:bg-muted/30'
               }`}
             >
-              Light Curve (242)
+              Light Curve ({lcCommitted.toLocaleString()})
             </button>
             <button
               onClick={() => setFilter('target_pixel')}
@@ -241,7 +244,7 @@ export function LineageLedgerChart({
                   : 'border-border/60 text-muted-foreground hover:bg-muted/30'
               }`}
             >
-              Target Pixel (240)
+              Target Pixel ({tpfCommitted.toLocaleString()})
             </button>
           </div>
         </div>
@@ -302,37 +305,11 @@ export function LineageLedgerChart({
                   );
                 })
               ) : (
-                // Sample realistic rows if live materializationPoints array is empty
-                Array.from({ length: 8 }).map((_, idx) => (
-                  <tr key={idx} className="hover:bg-muted/20">
-                    <td className="py-2 font-semibold text-foreground">TIC {25155310 + idx * 7}</td>
-                    <td className="py-2">
-                      <span className="inline-block px-1.5 py-0.5 text-[9px] rounded font-semibold bg-sky-500/10 text-sky-600 dark:text-sky-400">
-                        {idx % 2 === 0 ? 'LC (1D)' : 'TPF (3D)'}
-                      </span>
-                    </td>
-                    <td className="py-2 max-w-[280px] truncate text-muted-foreground">
-                      silver/tess/{idx % 2 === 0 ? 'lightcurve' : 'target_pixel'}/sector=54/tic={25155310 + idx * 7}.parquet
-                    </td>
-                    <td className="py-2 text-right font-medium text-foreground">
-                      {(18240 + idx * 12).toLocaleString()}
-                    </td>
-                    <td className="py-2 text-right text-emerald-600 dark:text-emerald-400 font-semibold">
-                      {formatBytes(idx % 2 === 0 ? 312000 : 8540000)}
-                    </td>
-                    <td className="py-2 text-center">
-                      <span className="inline-flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">
-                        <CheckCircle2 className="size-3" />
-                        VERIFIED
-                      </span>
-                    </td>
-                    <td className="py-2 text-center">
-                      <span className="inline-block px-1.5 py-0.5 text-[9px] font-bold rounded bg-emerald-500/15 text-emerald-700 dark:text-emerald-300">
-                        COMMITTED
-                      </span>
-                    </td>
-                  </tr>
-                ))
+                <tr>
+                  <td colSpan={7} className="py-6 text-center text-muted-foreground">
+                    Chưa có bản ghi phả hệ nào được tải trong cửa sổ này.
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
