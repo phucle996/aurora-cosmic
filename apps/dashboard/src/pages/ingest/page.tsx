@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, JSX } from 'react';
 import { AlertCircle } from 'lucide-react';
-import { useIngestRuntimeEvents } from './hooks/useIngestRuntimeEvents';
 import { useRunnerTicket } from '@/lib/session';
 import { apiBase, apiFetch } from '@/lib/api';
 

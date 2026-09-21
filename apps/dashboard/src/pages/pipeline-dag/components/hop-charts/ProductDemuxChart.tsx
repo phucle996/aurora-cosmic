@@ -100,8 +100,8 @@ export function ProductDemuxChart({
                   outerRadius={78}
                   paddingAngle={2}
                   stroke="none"
-                  label={({ name, percent }: { name: string; percent?: number }) =>
-                    `${name.split(' ')[0]} · ${((percent ?? 0) * 100).toFixed(0)}%`
+                  label={(props: { name?: string | number; percent?: number }) =>
+                    `${String(props.name ?? '').split(' ')[0]} · ${((props.percent ?? 0) * 100).toFixed(0)}%`
                   }
                 >
                   {streams.map((item) => (

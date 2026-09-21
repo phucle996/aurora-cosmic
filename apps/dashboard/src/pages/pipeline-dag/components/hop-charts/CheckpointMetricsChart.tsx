@@ -10,11 +10,9 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { ShieldCheck, CheckCircle2, AlertTriangle, Cpu } from 'lucide-react';
+import { ShieldCheck, CheckCircle2, Cpu } from 'lucide-react';
 
 import type { Hop } from '../../types';
-
-type Checkpoint = NonNullable<Hop['checkpoint_points']>[number];
 
 export function CheckpointMetricsChart({
   metrics,

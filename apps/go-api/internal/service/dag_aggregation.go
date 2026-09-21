@@ -1356,7 +1356,7 @@ func (s *DAGAggregationService) aggregateSilverHop(ctx context.Context, hop *ent
 	}
 }
 
-func (s *DAGAggregationService) aggregateCheckpointHop(ctx context.Context, hop *entity.DAGHop, start, end time.Time, window string) {
+func (s *DAGAggregationService) aggregateCheckpointHop(ctx context.Context, hop *entity.DAGHop, start, end time.Time, _ string) {
 	s.queryMetric(ctx, hop, "throughput", `sum(rate(aurora_preprocessor_products_total[1m]))`, start, end)
 	s.queryMetric(ctx, hop, "errors", `sum(rate(aurora_preprocessor_products_total{status="failed"}[1m]))`, start, end)
 
@@ -1381,7 +1381,7 @@ func (s *DAGAggregationService) aggregateCheckpointHop(ctx context.Context, hop 
 	hop.Metrics["completed_target_pixels"] = tpf
 }
 
-func (s *DAGAggregationService) aggregateLineageHop(ctx context.Context, hop *entity.DAGHop, start, end time.Time, window string) {
+func (s *DAGAggregationService) aggregateLineageHop(ctx context.Context, hop *entity.DAGHop, start, end time.Time, _ string) {
 	s.queryMetric(ctx, hop, "throughput", `sum(rate(aurora_preprocessor_products_total{status="success"}[1m]))`, start, end)
 
 	s.queryMetric(ctx, hop, "lc_bronze_bytes", `sum(aurora_preprocessor_bytes_total{kind="lightcurve",stage="bronze"})`, start, end)
@@ -1432,7 +1432,7 @@ func (s *DAGAggregationService) aggregateLineageHop(ctx context.Context, hop *en
 	hop.Metrics["inventory_observed"] = 1
 }
 
-func (s *DAGAggregationService) aggregateEventHop(ctx context.Context, hop *entity.DAGHop, start, end time.Time, window string) {
+func (s *DAGAggregationService) aggregateEventHop(ctx context.Context, hop *entity.DAGHop, start, end time.Time, _ string) {
 	s.queryMetric(ctx, hop, "throughput", `sum(rate(aurora_preprocessor_products_total{status="success"}[1m]))`, start, end)
 
 	s.queryMetric(ctx, hop, "completed_lightcurves", `sum(aurora_preprocessor_products_total{kind="lightcurve",status="success"})`, start, end)
@@ -1459,7 +1459,7 @@ func (s *DAGAggregationService) aggregateEventHop(ctx context.Context, hop *enti
 	hop.Metrics["stream_observed"] = 1
 }
 
-func (s *DAGAggregationService) aggregateAckHop(ctx context.Context, hop *entity.DAGHop, start, end time.Time, window string) {
+func (s *DAGAggregationService) aggregateAckHop(ctx context.Context, hop *entity.DAGHop, start, end time.Time, _ string) {
 	s.queryMetric(ctx, hop, "ack_rate", `sum(rate(aurora_preprocessor_products_total{status="success"}[1m]))`, start, end)
 	s.queryMetric(ctx, hop, "completed_lightcurves", `sum(aurora_preprocessor_products_total{kind="lightcurve",status="success"})`, start, end)
 	s.queryMetric(ctx, hop, "completed_target_pixels", `sum(aurora_preprocessor_products_total{kind="target_pixel",status="success"})`, start, end)

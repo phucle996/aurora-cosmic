@@ -12,6 +12,8 @@ jobs:
   release:
     name: Build & Publish Linux Release
     runs-on: ubuntu-latest
+    env:
+      TARBALL_SIZE: ""
     steps:
       - uses: actions/checkout@v4
 

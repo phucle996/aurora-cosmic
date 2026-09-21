@@ -46,7 +46,7 @@ export function AckDeliveryChart({ metrics }: { metrics?: Record<string, number>
         <Metric label="Stream messages" metricValue={streamMessages.toLocaleString()} detail="unique Bronze positions" tone="default" />
         <Metric label="ACK floor coverage" metricValue={percent(coverage)} detail={`${acknowledgedPositions.toLocaleString()} / ${streamMessages.toLocaleString()} confirmed`} tone="positive" />
         <Metric label="Delivery amplification" metricValue={`${deliveryAmplification.toFixed(2)}×`} detail={`${deliveryAttempts.toLocaleString()} attempts / ${deliveredPositions.toLocaleString()} positions`} tone="default" />
-        <Metric label="Stream settlement" metricValue="100% SETTLED" detail="0 redeliveries · 0 pending" tone="positive" />
+        <Metric label="Stream settlement" metricValue="100% SETTLED" detail={`${historicalRedeliveries.toLocaleString()} redeliveries · ${ackPending.toLocaleString()} pending`} tone="positive" />
       </div>
 
       <div className="border border-emerald-500/30 bg-emerald-500/5 px-4 py-3">

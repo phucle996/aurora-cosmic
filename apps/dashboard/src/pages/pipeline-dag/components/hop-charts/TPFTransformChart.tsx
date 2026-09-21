@@ -13,7 +13,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { Activity, CheckCircle2, Grid3X3, Layers, ShieldCheck, Zap } from 'lucide-react';
+import { Activity, CheckCircle2, Grid3X3 } from 'lucide-react';
 
 import type { Hop } from '../../types';
 import { clock, mergedSeries, type Telemetry } from './telemetry';
@@ -295,7 +295,7 @@ export function TPFTransformChart({
                     label={{ value: 'ppm', angle: -90, position: 'insideLeft', fontSize: 9 }}
                   />
                   <Tooltip
-                    formatter={(val, name, entry) => {
+                    formatter={(val, _name, entry) => {
                       const row = entry.payload as (typeof dispersionQuantiles)[number];
                       return [`${Number(val).toLocaleString()} ${row.unit}`, `${row.category}: ${row.description}`];
                     }}

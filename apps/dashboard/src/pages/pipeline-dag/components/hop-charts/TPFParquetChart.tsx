@@ -155,7 +155,7 @@ export function TPFParquetChart({
                     fontSize: '11px',
                     fontFamily: 'monospace',
                   }}
-                  formatter={(val: number) => [`${val} cubes`, 'Số lượng TPF']}
+                  formatter={(val: any) => [`${Number(val ?? 0).toLocaleString()} cubes`, 'Số lượng TPF']}
                 />
                 <Bar dataKey="count" name="Số TPF Cubes" radius={[4, 4, 0, 0]}>
                   {latencyHistogram.map((entry) => (
@@ -292,7 +292,7 @@ export function TPFParquetChart({
                   <tr key={idx} className="hover:bg-muted/20">
                     <td className="py-1.5 font-semibold text-foreground truncate max-w-[300px]">{point.object_key || `artifact-${idx + 1}`}</td>
                     <td className="py-1.5 text-right text-emerald-600 dark:text-emerald-400 font-semibold">{formatBytes(point.size_bytes ?? 0)}</td>
-                    <td className="py-1.5 text-right text-muted-foreground">{point.duration_ms ? `${point.duration_ms.toFixed(1)} ms` : '—'}</td>
+                    <td className="py-1.5 text-right text-muted-foreground">{point.encode_duration_ms ? `${point.encode_duration_ms.toFixed(1)} ms` : '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -311,8 +311,8 @@ export function TPFParquetChart({
           <div className="space-y-1">
             {encodeFailures.map((failure, idx) => (
               <div key={idx} className="rounded border border-rose-500/20 bg-rose-500/10 p-2 text-[10px] font-mono">
-                <span className="font-semibold text-rose-700 dark:text-rose-300">{failure.stage || 'serialize'}: </span>
-                <span className="text-foreground">{failure.error_detail}</span>
+                <span className="font-semibold text-rose-700 dark:text-rose-300">{failure.product_kind || 'tpf'}: </span>
+                <span className="text-foreground">{failure.reason}</span>
               </div>
             ))}
           </div>

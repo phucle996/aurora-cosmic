@@ -34,7 +34,7 @@ export function LCParquetChart({
   metrics,
   telemetry,
   materializationPoints,
-  encodeFailures,
+  encodeFailures: _encodeFailures,
 }: {
   metrics?: Record<string, number>;
   telemetry?: Telemetry;
@@ -120,7 +120,7 @@ export function LCParquetChart({
         <Metric
           label="Dung lượng Parquet"
           value={formatBytes(silverBytes)}
-          detail={bronzeBytes > 0 ? `FITS nguồn ${formatBytes(bronzeBytes)}` : '—'}
+          detail={meanArtifactBytes > 0 ? `TB ${formatBytes(meanArtifactBytes)}/tệp` : bronzeBytes > 0 ? `FITS nguồn ${formatBytes(bronzeBytes)}` : '—'}
         />
         <Metric
           label="Hệ số nén FITS/Parquet"
@@ -170,7 +170,7 @@ export function LCParquetChart({
                     fontSize: '11px',
                     fontFamily: 'monospace',
                   }}
-                  formatter={(val: number) => [`${val} artifacts`, 'Số tệp']}
+                  formatter={(val: any) => [`${Number(val ?? 0).toLocaleString()} artifacts`, 'Số tệp']}
                 />
                 <Bar dataKey="count" name="Số artifact" radius={[4, 4, 0, 0]}>
                   {latencyHistogram.map((entry) => (
@@ -328,7 +328,7 @@ export function LCParquetChart({
                   <tr key={idx} className="hover:bg-muted/20">
                     <td className="py-1.5 font-semibold text-foreground truncate max-w-[300px]">{point.object_key || `artifact-${idx + 1}`}</td>
                     <td className="py-1.5 text-right text-emerald-600 dark:text-emerald-400 font-semibold">{formatBytes(point.size_bytes ?? 0)}</td>
-                    <td className="py-1.5 text-right text-muted-foreground">{point.duration_ms ? `${point.duration_ms.toFixed(1)} ms` : '—'}</td>
+                    <td className="py-1.5 text-right text-muted-foreground">{point.encode_duration_ms ? `${point.encode_duration_ms.toFixed(1)} ms` : '—'}</td>
                   </tr>
                 ))}
               </tbody>
