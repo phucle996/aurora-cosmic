@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { JSX } from 'react';
 import { ArrowLeft, Sparkles, Telescope } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -10,7 +11,7 @@ interface TargetHeaderProps {
   target: Target;
 }
 
-export function TargetHeader({ target }: TargetHeaderProps): JSX.Element {
+export const TargetHeader = memo(function TargetHeader({ target }: TargetHeaderProps): JSX.Element {
   return (
     <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
       <div>
@@ -44,15 +45,15 @@ export function TargetHeader({ target }: TargetHeaderProps): JSX.Element {
           <Telescope />
           {target.matched_toi ? `3D · ${target.matched_toi}` : '3D Simulator'}
         </Button>
-        {target.has_candidate && (
-          <Button asChild className="rounded-none">
-            <Link to={`/research-factory/candidates?prediction_id=${encodeURIComponent(target.candidate_prediction_id)}`}>
-              <Sparkles />
-              Candidate review queue
-            </Link>
-          </Button>
-        )}
+        <Button
+          className="rounded-none"
+          variant="secondary"
+          onClick={() => document.getElementById('catalog-insights-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+        >
+          <Sparkles />
+          Giải tích AI
+        </Button>
       </div>
     </div>
   );
-}
+});

@@ -50,8 +50,7 @@ const dataFactoryItems = [
 ];
 
 const researchFactoryItems = [
-  { path: '/research-factory/discovery', label: 'TESS Target Discovery', detail: 'Find research targets', icon: Target },
-  { path: '/research-factory/candidates', label: 'Candidate Review', detail: 'Rank and adjudicate signals', icon: Sparkles },
+  { path: '/research-factory/discovery', label: 'TESS Target Discovery', detail: 'Find & inspect research targets', icon: Target },
 ];
 
 const aiFactoryItems = [

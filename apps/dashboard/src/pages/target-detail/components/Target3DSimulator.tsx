@@ -1,3 +1,4 @@
+import { memo, useMemo } from 'react';
 import type { JSX } from 'react';
 import { CircleAlert, Rotate3D } from 'lucide-react';
 
@@ -18,7 +19,7 @@ interface Target3DSimulatorProps {
   onTransitSync: (event: TransitSyncEvent) => void;
 }
 
-export function Target3DSimulator({
+export const Target3DSimulator = memo(function Target3DSimulator({
   target,
   hasStellarContext,
   starTeff,
@@ -27,6 +28,14 @@ export function Target3DSimulator({
   planetsList,
   onTransitSync,
 }: Target3DSimulatorProps): JSX.Element {
+  const starObj = useMemo(() => ({
+    name: `TIC ${target.tic_id}`,
+    teff: starTeff,
+    radius: starRadius,
+    mass: stellarMass && stellarMass > 0 ? stellarMass : undefined,
+    mag: target.tess_mag > 0 ? target.tess_mag : undefined,
+  }), [target.tic_id, target.tess_mag, starTeff, starRadius, stellarMass]);
+
   return (
     <Card id="target-system-3d" className="scroll-mt-20 rounded-none border border-border/80 py-0 shadow-none ring-0">
       <CardHeader className="rounded-none border-b border-border/60 bg-muted/10 py-4">
@@ -50,13 +59,7 @@ export function Target3DSimulator({
       <CardContent className="p-0">
         {hasStellarContext ? (
           <OrbitViewer3D
-            star={{
-              name: `TIC ${target.tic_id}`,
-              teff: starTeff,
-              radius: starRadius,
-              mass: stellarMass && stellarMass > 0 ? stellarMass : undefined,
-              mag: target.tess_mag > 0 ? target.tess_mag : undefined,
-            }}
+            star={starObj}
             planets={planetsList}
             height="580px"
             className="rounded-none border-0 shadow-none"
@@ -72,4 +75,4 @@ export function Target3DSimulator({
       </CardContent>
     </Card>
   );
-}
+});

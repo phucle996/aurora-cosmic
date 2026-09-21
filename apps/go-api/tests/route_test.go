@@ -17,21 +17,7 @@ import (
 	"go-api/internal/transport/http/handler"
 )
 
-type fakeCandidate struct{}
 
-func (fakeCandidate) ListCandidates(context.Context, entity.CandidateQuery) (entity.Page[entity.Candidate], error) {
-	return entity.Page[entity.Candidate]{Items: []entity.Candidate{}, Limit: 100}, nil
-}
-func (fakeCandidate) GetCandidate(context.Context, string, string) (*entity.CandidateDetail, error) {
-	return &entity.CandidateDetail{}, nil
-}
-func (fakeCandidate) ReviewCandidate(context.Context, entity.CandidateReviewInput) (*entity.CandidateReview, error) {
-	return &entity.CandidateReview{
-		Decision:     "CONFIRMED",
-		ReviewStatus: "REVIEWED",
-		Reviewer:     "HUMAN_OPERATOR",
-	}, nil
-}
 
 
 type fakeTarget struct{}
@@ -246,7 +232,6 @@ func (fakeTicket) Detail(context.Context, string) (*entity.PipelineRunDetail, er
 	return &entity.PipelineRunDetail{Run: entity.PipelineRun{RunID: "run-test"}}, nil
 }
 
-var _ service.Candidate = fakeCandidate{}
 var _ service.Target = fakeTarget{}
 var _ service.Lakehouse = fakeLakehouse{}
 var _ service.EnrichmentControl = fakeEnrichmentControl{}
@@ -257,7 +242,6 @@ func newTestRouter() http.Handler {
 		CORSAllowedOrigin: "http://localhost:8501",
 	}, &app.Module{
 		TargetHandler:            handler.NewTargetHandler(fakeTarget{}),
-		CandidateHandler:         handler.NewCandidateHandler(fakeCandidate{}),
 		ModelHandler:             handler.NewModelHandler(fakeModel{}),
 		SystemHandler:            handler.NewSystemHandler(fakeReadiness{}),
 		MonitoringHandler:        handler.NewMonitoringHandler(fakeMonitoring{}),
@@ -274,7 +258,7 @@ func newTestRouter() http.Handler {
 
 func TestRouterEndpoints(t *testing.T) {
 	router := newTestRouter()
-	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/dag/hops/bronze", "/api/v1/dag/hops/gold-pairing", "/api/v1/dag/hops/gold-commit", "/api/v1/dag/graph", "/api/v1/dag/graph?stage=enrichment", "/api/v1/dag/graph?stage=preprocessing", "/api/v1/data-factory/runs", "/api/v1/data-factory/tickets", "/api/v1/enrichment/control", "/api/v1/enrichment/snapshots", "/api/v1/enrichment/snapshots/gold-v1-test", "/api/v1/lineage/ledger", "/api/v1/ingest/status", "/api/v1/storage?prefix=bronze/&limit=10", "/api/v1/lakehouse/objects?prefix=bronze/&limit=10", "/api/v1/lakehouse/preview?key=test.txt", "/api/v1/targets", "/api/v1/targets/101/insights?sector=42", "/api/v1/targets/101/observation?sector=42", "/api/v1/candidates?snapshot_id=gold-v1-test", "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", "/api/v1/lightcurves?tic_id=101&sector=42", "/api/v1/models", "/api/v1/inference/jobs", "/api/v1/models/training-preflight?snapshot_id=gold-v1-test", "/api/v1/models/snapshots", "/api/v1/models/train/active"} {
+	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/dag/hops/bronze", "/api/v1/dag/hops/gold-pairing", "/api/v1/dag/hops/gold-commit", "/api/v1/dag/graph", "/api/v1/dag/graph?stage=enrichment", "/api/v1/dag/graph?stage=preprocessing", "/api/v1/data-factory/runs", "/api/v1/data-factory/tickets", "/api/v1/enrichment/control", "/api/v1/enrichment/snapshots", "/api/v1/enrichment/snapshots/gold-v1-test", "/api/v1/lineage/ledger", "/api/v1/ingest/status", "/api/v1/storage?prefix=bronze/&limit=10", "/api/v1/lakehouse/objects?prefix=bronze/&limit=10", "/api/v1/lakehouse/preview?key=test.txt", "/api/v1/targets", "/api/v1/targets/101/insights?sector=42", "/api/v1/targets/101/observation?sector=42", "/api/v1/lightcurves?tic_id=101&sector=42", "/api/v1/models", "/api/v1/inference/jobs", "/api/v1/models/training-preflight?snapshot_id=gold-v1-test", "/api/v1/models/snapshots", "/api/v1/models/train/active"} {
 		req := httptest.NewRequest(http.MethodGet, endpoint, nil)
 		recorder := httptest.NewRecorder()
 		router.ServeHTTP(recorder, req)
@@ -358,55 +342,7 @@ func TestEnrichmentControlStartAndStop(t *testing.T) {
 	}
 }
 
-func TestCandidateDetailExposesSeparatePhysicsAndMLAssessments(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", nil)
-	recorder := httptest.NewRecorder()
-	newTestRouter().ServeHTTP(recorder, req)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("candidate detail returned HTTP %d", recorder.Code)
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("decode candidate detail: %v", err)
-	}
-	if _, ok := payload["planet_physics"].(map[string]any); !ok {
-		t.Fatal("candidate detail is missing planet_physics")
-	}
-	habitability, ok := payload["habitability"].(map[string]any)
-	if !ok {
-		t.Fatal("candidate detail is missing habitability")
-	}
-	if value, exists := habitability["ml_score"]; !exists || value != nil {
-		t.Fatalf("unreleased ML score must be present as null, got %#v", value)
-	}
-}
 
-func TestCandidateScientificReviewRoute(t *testing.T) {
-	req := httptest.NewRequest(
-		http.MethodPut,
-		"/api/v1/candidates/prediction-v1/review",
-		strings.NewReader(`{"snapshot_id":"gold-v1-test","decision":"CONFIRMED","note":"Periodic transit evidence survives vetting."}`),
-	)
-	req.Header.Set("Content-Type", "application/json")
-	recorder := httptest.NewRecorder()
-	newTestRouter().ServeHTTP(recorder, req)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("candidate review returned HTTP %d: %s", recorder.Code, recorder.Body.String())
-	}
-	var payload struct {
-		Status string `json:"status"`
-		Review struct {
-			Decision string `json:"decision"`
-			Reviewer string `json:"reviewer"`
-		} `json:"review"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("decode candidate review response: %v", err)
-	}
-	if payload.Status != "reviewed" || payload.Review.Decision != "CONFIRMED" || payload.Review.Reviewer != "HUMAN_OPERATOR" {
-		t.Fatalf("unexpected candidate review response: %#v", payload)
-	}
-}
 
 func TestMonitoringTabValidation(t *testing.T) {
 	// Rejects invalid component / tab
@@ -474,7 +410,7 @@ func TestRetiredAnomalyRoutesAreNotExposed(t *testing.T) {
 }
 
 func TestCORSHeaders(t *testing.T) {
-	req := httptest.NewRequest(http.MethodOptions, "/api/v1/candidates", nil)
+	req := httptest.NewRequest(http.MethodOptions, "/api/v1/targets", nil)
 	req.Header.Set("Origin", "http://localhost:8501")
 	recorder := httptest.NewRecorder()
 	newTestRouter().ServeHTTP(recorder, req)

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import {
   Activity,
@@ -24,6 +24,137 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { TpfPixelInspector } from './TpfPixelInspector';
 import type { TransitSyncEvent } from './orbit-viewer/types';
 import type { TPFSample } from '@/lib/analytics-types';
+import type { TransitSyncBridge } from '../transit-sync';
+
+interface RawLightCurvePoint {
+  index: number;
+  time: number;
+  flux: number;
+}
+
+interface ChartDataPoint extends RawLightCurvePoint {
+  pixelFlux?: number;
+  pixelElectrons?: number;
+}
+
+interface TransitEpochMarker {
+  id: number;
+  center: number;
+  start: number;
+  end: number;
+  depth: number;
+}
+
+/**
+ * Downsamples time-series data using Min-Max extrema bucketing to ~targetPoints.
+ * Guarantees astronomical transit dips and stellar flares are preserved with 100% exact depth
+ * while reducing SVG DOM node count from 18,000+ down to ~1,200.
+ */
+function downsampleMinMax(data: RawLightCurvePoint[], targetPoints = 1200): RawLightCurvePoint[] {
+  const n = data.length;
+  if (n <= targetPoints) return data;
+
+  const bucketCount = Math.floor(targetPoints / 2);
+  const bucketSize = n / bucketCount;
+  const result: RawLightCurvePoint[] = [];
+
+  for (let b = 0; b < bucketCount; b++) {
+    const start = Math.floor(b * bucketSize);
+    const end = Math.min(n, Math.floor((b + 1) * bucketSize));
+    if (start >= end) continue;
+
+    let minPt = data[start];
+    let maxPt = data[start];
+
+    for (let i = start + 1; i < end; i++) {
+      const pt = data[i];
+      if (pt.flux < minPt.flux) minPt = pt;
+      if (pt.flux > maxPt.flux) maxPt = pt;
+    }
+
+    if (minPt.time < maxPt.time) {
+      result.push(minPt);
+      if (minPt !== maxPt) result.push(maxPt);
+    } else {
+      result.push(maxPt);
+      if (minPt !== maxPt) result.push(minPt);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Memoized SVG LineChart that NEVER re-renders on simulation ticks.
+ * Only re-renders when light curve points or selected pixel change.
+ */
+interface StaticLightCurveChartProps {
+  chartData: ChartDataPoint[];
+  transitEpochs: TransitEpochMarker[];
+}
+
+const StaticLightCurveChart = memo(function StaticLightCurveChart({
+  chartData,
+  transitEpochs,
+}: StaticLightCurveChartProps) {
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <LineChart
+        data={chartData}
+        margin={{ top: 10, right: 15, left: -10, bottom: 0 }}
+      >
+        <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+        <XAxis
+          dataKey="time"
+          tickLine={false}
+          axisLine={{ stroke: 'rgba(255,255,255,0.15)' }}
+          tickFormatter={(val: number) => val.toFixed(1)}
+          domain={['dataMin', 'dataMax']}
+          tick={{ fontSize: 10 }}
+        />
+        <YAxis
+          width={55}
+          tickLine={false}
+          axisLine={{ stroke: 'rgba(255,255,255,0.15)' }}
+          tickFormatter={(val: number) => val.toFixed(4)}
+          domain={['dataMin - 0.001', 'dataMax + 0.001']}
+          tick={{ fontSize: 10 }}
+        />
+        <Tooltip
+          formatter={(value: any) => [Number(value).toFixed(6), 'Aperture Flux']}
+          labelFormatter={(label: any) => `Time: ${Number(label).toFixed(2)} BTJD`}
+          contentStyle={{
+            backgroundColor: 'rgba(15, 23, 42, 0.95)',
+            borderColor: 'rgba(56, 189, 248, 0.4)',
+            fontSize: '11px',
+            fontFamily: 'monospace',
+          }}
+        />
+
+        {/* Measured BLS transit windows */}
+        {transitEpochs.map((epoch) => (
+          <ReferenceArea
+            key={epoch.id}
+            x1={epoch.start}
+            x2={epoch.end}
+            fill="rgba(244, 63, 94, 0.15)"
+            stroke="rgba(244, 63, 94, 0.4)"
+            strokeDasharray="2 2"
+          />
+        ))}
+
+        <Line
+          dataKey="flux"
+          name="Aperture Flux"
+          stroke="#0284c7"
+          dot={false}
+          strokeWidth={1.3}
+          isAnimationActive={false}
+        />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+});
 
 export interface SynchronizedLightCurveProps {
   time: number[];
@@ -33,13 +164,14 @@ export interface SynchronizedLightCurveProps {
   blsDurationDays?: number;
   blsTransitTime?: number; // BTJD from measured BLS ephemeris
   transitInfo?: TransitSyncEvent;
+  syncBridge?: TransitSyncBridge;
   planetName?: string;
   centroidOffset?: number;
   tpf?: TPFSample;
   className?: string;
 }
 
-export function SynchronizedLightCurve({
+export const SynchronizedLightCurve = memo(function SynchronizedLightCurve({
   time,
   flux,
   blsPeriod,
@@ -47,11 +179,28 @@ export function SynchronizedLightCurve({
   blsDurationDays,
   blsTransitTime,
   transitInfo,
+  syncBridge,
   centroidOffset = 0.08,
   tpf,
   className = '',
 }: SynchronizedLightCurveProps): JSX.Element {
+  // Sync Bridge listener (keeps simulation ticks localized without re-rendering parent page)
+  const [internalTransitEvent, setInternalTransitEvent] = useState<TransitSyncEvent | undefined>(
+    syncBridge?.getLatest() ?? transitInfo,
+  );
+
+  useEffect(() => {
+    if (!syncBridge) return;
+    return syncBridge.subscribe((event) => {
+      setInternalTransitEvent(event);
+    });
+  }, [syncBridge]);
+
+  const activeTransitEvent = syncBridge ? internalTransitEvent : transitInfo;
+
   // 1. Full Time Series Data preparation
+  const [selectedPixel, setSelectedPixel] = useState<{ r: number; c: number } | null>({ r: 5, c: 5 });
+
   const timeSeriesData = useMemo(() => {
     const pointCount = Math.min(time?.length ?? 0, flux?.length ?? 0);
     return Array.from({ length: pointCount }, (_, index) => ({
@@ -60,6 +209,11 @@ export function SynchronizedLightCurve({
       flux: flux[index],
     })).filter((point) => Number.isFinite(point.time) && Number.isFinite(point.flux));
   }, [time, flux]);
+
+  // Downsample aperture flux to ~1,200 points to guarantee 60 FPS
+  const chartData = useMemo(() => {
+    return downsampleMinMax(timeSeriesData, 1200);
+  }, [timeSeriesData]);
 
   const minTime = timeSeriesData[0]?.time ?? 0;
   const maxTime = timeSeriesData[timeSeriesData.length - 1]?.time ?? 1;
@@ -87,7 +241,7 @@ export function SynchronizedLightCurve({
     )
       return [];
     const durationDays = blsDurationDays;
-    const epochs: { id: number; center: number; start: number; end: number; depth: number }[] = [];
+    const epochs: TransitEpochMarker[] = [];
 
     // Find first epoch before minTime
     let epochTime = blsTransitTime;
@@ -117,30 +271,30 @@ export function SynchronizedLightCurve({
   // 3. Playhead Position on Full Sector Timeline derived from 3D Simulator (1:1 physical time: 86400s = 1 day)
   const simTime = useMemo(() => {
     if (!timeSeriesData.length) return 0;
-    if (transitInfo?.time == null) {
+    if (activeTransitEvent?.time == null) {
       return transitEpochs[0]?.center ?? minTime;
     }
 
-    const elapsedDays = transitInfo.time / 86400;
+    const elapsedDays = activeTransitEvent.time / 86400;
     const startCenter = blsPeriod && blsPeriod > 0
       ? (transitEpochs[0]?.center ?? minTime)
       : minTime;
     const offset = startCenter - minTime;
     return minTime + (((offset + elapsedDays) % timeSpan) + timeSpan) % timeSpan;
-  }, [timeSeriesData.length, transitInfo?.time, blsPeriod, transitEpochs, minTime, timeSpan]);
+  }, [timeSeriesData.length, activeTransitEvent?.time, blsPeriod, transitEpochs, minTime, timeSpan]);
 
   // Click-to-inspect timeline position when simulator is paused
   const [clickedTime, setClickedTime] = useState<number | null>(null);
-  const lastSimTimeRef = useRef<number>(transitInfo?.time ?? 0);
+  const lastSimTimeRef = useRef<number>(activeTransitEvent?.time ?? 0);
 
   useEffect(() => {
-    if (transitInfo?.time !== undefined && transitInfo.time !== lastSimTimeRef.current) {
-      lastSimTimeRef.current = transitInfo.time;
+    if (activeTransitEvent?.time !== undefined && activeTransitEvent.time !== lastSimTimeRef.current) {
+      lastSimTimeRef.current = activeTransitEvent.time;
       if (clickedTime !== null) {
         setClickedTime(null);
       }
     }
-  }, [transitInfo?.time, clickedTime]);
+  }, [activeTransitEvent?.time, clickedTime]);
 
   const currentTime = clickedTime ?? simTime;
 
@@ -162,9 +316,9 @@ export function SynchronizedLightCurve({
     if (inTransit && epoch) {
       const halfDur = (epoch.end - epoch.start) / 2;
       ratio = halfDur > 0 ? Math.max(0.15, 1 - Math.abs(currentTime - epoch.center) / halfDur) : 1;
-    } else if (transitInfo?.isTransit && clickedTime === null) {
+    } else if (activeTransitEvent?.isTransit && clickedTime === null) {
       inTransit = true;
-      ratio = transitInfo.transitDepthRatio ?? 0.8;
+      ratio = activeTransitEvent.transitDepthRatio ?? 0.8;
     }
 
     // Nearest sample in timeSeriesData
@@ -195,7 +349,7 @@ export function SynchronizedLightCurve({
       activeFlux: nearestFlux,
       cadenceIdx: sampleIdx,
     };
-  }, [currentTime, minTime, timeSpan, timeSeriesData, transitEpochs, transitInfo, clickedTime]);
+  }, [currentTime, minTime, timeSpan, timeSeriesData, transitEpochs, activeTransitEvent, clickedTime]);
 
   // Handler for clicking directly on the chart area to move the scanner line
   const handleChartClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -277,21 +431,25 @@ export function SynchronizedLightCurve({
             blsDepth={blsDepth}
             centroidOffset={tpf?.centroid_offset_pixels ?? centroidOffset}
             tpf={tpf}
+            selectedPixel={selectedPixel}
+            onSelectPixel={setSelectedPixel}
             className="h-full"
           />
 
           {/* RIGHT: FULL SECTOR TIMELINE WITH SCANNER */}
           <div className="flex flex-col justify-between rounded-none border border-border/80 bg-card p-3.5">
-            <div className="flex items-center justify-between border-b border-border/60 pb-2 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 pb-2 text-xs">
               <div className="flex items-center gap-2">
                 <Sparkles className="size-3.5 text-primary" />
                 <span className="font-mono text-xs font-semibold uppercase tracking-wider text-foreground">
                   Chuỗi thời gian Sector (Full Sector Timeline)
                 </span>
               </div>
-              <span className="font-mono text-[11px] text-muted-foreground">
-                Thời gian quét: <strong className="text-foreground">{currentTime.toFixed(2)} BTJD</strong>
-              </span>
+              <div className="flex items-center gap-2.5">
+                <span className="font-mono text-[11px] text-muted-foreground">
+                  Thời gian: <strong className="text-foreground">{currentTime.toFixed(2)} BTJD</strong>
+                </span>
+              </div>
             </div>
 
             {/* CHART VIEW CONTAINER WITH VISIBLE SCANNER LINE OVERLAY */}
@@ -322,7 +480,7 @@ export function SynchronizedLightCurve({
 
               {/* 2. GUARANTEED UNMISTAKABLE SCANNER LASER LINE | */}
               <div
-                className="pointer-events-none absolute top-[8px] bottom-[26px] z-30 flex flex-col items-center transition-all duration-75"
+                className="pointer-events-none absolute top-[8px] bottom-[26px] z-30 flex flex-col items-center will-change-transform"
                 style={{
                   left: `calc(45px + ${scannerFraction} * (100% - 60px))`,
                   transform: 'translateX(-50%)',
@@ -330,89 +488,36 @@ export function SynchronizedLightCurve({
               >
                 {/* Playhead Badge Indicator */}
                 <div
-                  className={`whitespace-nowrap px-2 py-0.5 font-mono text-[10px] font-bold shadow-lg uppercase tracking-wider border ${
-                    isInTransit
+                  className={`whitespace-nowrap px-2 py-0.5 font-mono text-[10px] font-bold shadow-lg uppercase tracking-wider border ${isInTransit
                       ? 'bg-rose-600 text-white border-rose-400 ring-2 ring-rose-500/60 animate-pulse'
                       : 'bg-sky-500 text-slate-950 border-sky-300 ring-2 ring-sky-400/50'
-                  }`}
+                    }`}
                 >
                   {isInTransit ? '▼ IN TRANSIT' : '● SCANNER'}
                 </div>
 
                 {/* Solid Glowing Vertical Laser Line | */}
                 <div
-                  className={`w-[3px] flex-1 ${
-                    isInTransit
+                  className={`w-[3px] flex-1 ${isInTransit
                       ? 'bg-rose-500 shadow-[0_0_12px_#f43f5e,0_0_20px_#f43f5e]'
                       : 'bg-sky-400 shadow-[0_0_10px_#38bdf8,0_0_16px_#38bdf8]'
-                  }`}
+                    }`}
                 />
 
                 {/* Bottom Tracker Dot */}
                 <div
-                  className={`size-3 rounded-full border-2 ${
-                    isInTransit
+                  className={`size-3 rounded-full border-2 ${isInTransit
                       ? 'bg-rose-500 border-white shadow-[0_0_10px_#f43f5e]'
                       : 'bg-sky-400 border-slate-900 shadow-[0_0_10px_#38bdf8]'
-                  }`}
+                    }`}
                 />
               </div>
 
-              {/* RECHARTS SVG CANVAS */}
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart
-                  data={timeSeriesData}
-                  margin={{ top: 10, right: 15, left: -10, bottom: 0 }}
-                >
-                  <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
-                  <XAxis
-                    dataKey="time"
-                    tickLine={false}
-                    axisLine={{ stroke: 'rgba(255,255,255,0.15)' }}
-                    tickFormatter={(val: number) => val.toFixed(1)}
-                    domain={['dataMin', 'dataMax']}
-                    tick={{ fontSize: 10 }}
-                  />
-                  <YAxis
-                    width={55}
-                    tickLine={false}
-                    axisLine={{ stroke: 'rgba(255,255,255,0.15)' }}
-                    tickFormatter={(val: number) => val.toFixed(4)}
-                    domain={['dataMin - 0.001', 'dataMax + 0.001']}
-                    tick={{ fontSize: 10 }}
-                  />
-                  <Tooltip
-                    formatter={(value: any) => [Number(value).toFixed(6), 'Flux']}
-                    labelFormatter={(label: any) => `Time: ${Number(label).toFixed(2)} BTJD`}
-                    contentStyle={{
-                      backgroundColor: 'rgba(15, 23, 42, 0.95)',
-                      borderColor: 'rgba(56, 189, 248, 0.4)',
-                      fontSize: '11px',
-                      fontFamily: 'monospace',
-                    }}
-                  />
-
-                  {/* Measured BLS transit windows */}
-                  {transitEpochs.map((epoch) => (
-                    <ReferenceArea
-                      key={epoch.id}
-                      x1={epoch.start}
-                      x2={epoch.end}
-                      fill="rgba(244, 63, 94, 0.15)"
-                      stroke="rgba(244, 63, 94, 0.4)"
-                      strokeDasharray="2 2"
-                    />
-                  ))}
-
-                  <Line
-                    dataKey="flux"
-                    stroke="#0284c7"
-                    dot={false}
-                    strokeWidth={1.3}
-                    isAnimationActive={false}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
+              {/* MEMOIZED RECHARTS SVG CANVAS - NEVER RE-RENDERS ON SIMULATION TICKS */}
+              <StaticLightCurveChart
+                chartData={chartData}
+                transitEpochs={transitEpochs}
+              />
             </div>
 
             {/* Footer note: interactive hint & stats */}
@@ -460,4 +565,4 @@ export function SynchronizedLightCurve({
       </CardContent>
     </Card>
   );
-}
+});

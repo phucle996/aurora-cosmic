@@ -48,7 +48,7 @@ func TestTargetServiceGetTargetInsightDerivesPhysicsAndInsights(t *testing.T) {
 				EffectiveT:            5800,
 				Radius:                1.1,
 			},
-			Evidence: &entity.CandidateEvidence{
+			Evidence: &entity.TargetEvidence{
 				BLSAvailable: true,
 				BLSPeriod:    10.5,
 				BLSDepth:     0.01,

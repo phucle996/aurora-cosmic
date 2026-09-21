@@ -225,21 +225,20 @@ func (s *TargetService) GetTargetInsight(ctx context.Context, ticID int64, secto
 			aiInsight.BLSTransitTime = &evidence.BLSTransitTime
 		}
 
-		candidate := entity.Candidate{
-			TICID:      target.TICID,
-			Sector:     target.Sector,
-			SnapshotID: target.GoldSnapshotID,
-		}
-		phys, hab := physics.DeriveCandidate(candidate, *evidence)
+		phys, hab := physics.DeriveTargetPhysics(target.TICID, target.Sector, *evidence)
 		aiInsight.SemiMajorAxisAU = phys.SemiMajorAxisAU
 		aiInsight.PlanetRadiusEarth = phys.PlanetRadiusEarth
 		aiInsight.EquilibriumTempK = phys.EquilibriumTemperatureK
 		aiInsight.HZClassification = phys.HZClassification
+		aiInsight.InsolationEarth = phys.InsolationEarth
+		aiInsight.PlanetClassification = phys.PlanetClassification
+		aiInsight.TransitDurationHours = phys.TransitDurationHours
 		aiInsight.Warnings = phys.Warnings
 
 		aiInsight.HabitabilityScore = hab.PhysicsScore
 		aiInsight.HabitabilityConfidence = hab.Confidence
 		aiInsight.HabitabilityTier = hab.Tier
+		aiInsight.HabitabilityComponents = hab.Components
 	}
 
 	return &entity.TargetInsightResponse{

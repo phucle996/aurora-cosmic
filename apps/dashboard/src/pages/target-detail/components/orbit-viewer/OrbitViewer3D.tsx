@@ -74,6 +74,8 @@ export function OrbitViewer3D({
 
   const timeRef = useRef(0);
   const trailsRef = useRef<Record<number, TrailPoint[]>>({});
+  const onTimeUpdateRef = useRef(onTimeUpdate);
+  onTimeUpdateRef.current = onTimeUpdate;
 
   // Physics & Styling
   const stableStar = useMemo<StarParams>(() => ({
@@ -394,7 +396,7 @@ export function OrbitViewer3D({
 
       // Notify Transit Sync Event for Synchronized Light Curve
       const activePlanet = planets[selectedPlanetIndex] ?? planets[0];
-      if (activePlanet && onTimeUpdate && frameAt - previousSyncAt >= 100) {
+      if (activePlanet && onTimeUpdateRef.current && frameAt - previousSyncAt >= 100) {
         const meanAnom = getPlanetMeanAnomaly(activePlanet, timeRef.current);
         const ecc = activePlanet.eccentricity ?? 0.04;
         const periRad = ((activePlanet.periapsisDeg ?? 0) * Math.PI) / 180;
@@ -410,7 +412,7 @@ export function OrbitViewer3D({
           ? 1.0 - Math.pow(Math.abs(phase) / transitThreshold, 2)
           : 0;
 
-        onTimeUpdate({
+        onTimeUpdateRef.current({
           time: timeRef.current,
           phase,
           isTransit,
@@ -441,7 +443,6 @@ export function OrbitViewer3D({
     radius,
     starStyle,
     starfield,
-    onTimeUpdate,
   ]);
 
   const selectedPlanet = planets[selectedPlanetIndex] ?? planets[0];

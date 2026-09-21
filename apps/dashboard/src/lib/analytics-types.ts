@@ -172,6 +172,10 @@ export type TargetAIInsights = {
   habitability_score: number | null;
   habitability_confidence: number;
   habitability_tier: string;
+  habitability_components?: HabitabilityComponent[];
+  insolation_earth: number | null;
+  planet_classification: string;
+  transit_duration_hours: number | null;
   warnings: string[];
 };
 

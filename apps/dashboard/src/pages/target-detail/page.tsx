@@ -6,9 +6,9 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { derivePlanetarySystemFromInsights } from './components/OrbitViewer3D';
 import { SynchronizedLightCurve } from './components/SynchronizedLightCurve';
-import type { TransitSyncEvent } from './components/orbit-viewer/types';
 import { apiFetch } from '@/lib/api';
 import type { TargetInsightResponse, TargetObservationResponse } from '@/lib/analytics-types';
+import { TransitSyncBridge } from './transit-sync';
 
 import { CatalogInsightsCard } from './components/CatalogInsightsCard';
 import { Target3DSimulator } from './components/Target3DSimulator';
@@ -23,7 +23,7 @@ export default function TargetDetailPage(): JSX.Element {
   const [data, setData] = useState<TargetInsightResponse>();
   const [observation, setObservation] = useState<TargetObservationResponse>();
   const [error, setError] = useState<string>();
-  const [transitSync, setTransitSync] = useState<TransitSyncEvent>();
+  const syncBridge = useMemo(() => new TransitSyncBridge(), []);
 
   useEffect(() => {
     if (!ticId) return;
@@ -92,7 +92,7 @@ export default function TargetDetailPage(): JSX.Element {
         starRadius={starRadius}
         stellarMass={stellarMass}
         planetsList={planetsList}
-        onTransitSync={setTransitSync}
+        onTransitSync={syncBridge.emit}
       />
 
       {/* 1. Full-Width Astronomical Catalog & AI Insights */}
@@ -109,7 +109,7 @@ export default function TargetDetailPage(): JSX.Element {
         blsDepth={ai?.bls_depth_fraction ?? undefined}
         blsDurationDays={ai?.bls_duration_days ?? undefined}
         blsTransitTime={ai?.bls_transit_time ?? undefined}
-        transitInfo={transitSync}
+        syncBridge={syncBridge}
         planetName={planetsList[0]?.name || `TIC ${target.tic_id}`}
         centroidOffset={observation?.tpf?.centroid_offset_pixels ?? 0.08}
         tpf={observation?.tpf}

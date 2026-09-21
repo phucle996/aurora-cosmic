@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { JSX } from 'react';
 import { Compass, Database, Sparkles, Star } from 'lucide-react';
 
@@ -14,7 +15,7 @@ interface CatalogInsightsCardProps {
   insights: TargetInsights;
 }
 
-export function CatalogInsightsCard({
+export const CatalogInsightsCard = memo(function CatalogInsightsCard({
   target,
   insights,
 }: CatalogInsightsCardProps): JSX.Element {
@@ -24,7 +25,7 @@ export function CatalogInsightsCard({
     insights.stellar_physics.radius > 0;
 
   return (
-    <Card className="flex flex-col justify-between rounded-none border border-border/80 py-0 shadow-none ring-0">
+    <Card id="catalog-insights-card" className="flex flex-col justify-between rounded-none border border-border/80 py-0 shadow-none ring-0">
       <CardHeader className="rounded-none border-b border-border/60 bg-muted/10 py-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
@@ -89,4 +90,4 @@ export function CatalogInsightsCard({
       </CardContent>
     </Card>
   );
-}
+});

@@ -10,11 +10,12 @@ import (
 	"strings"
 	"testing"
 
-	natsio "github.com/nats-io/nats.go"
 	"go-api/infra/nats"
 	"go-api/internal/domain/entity"
 	"go-api/internal/provider"
 	"go-api/internal/taxonomy"
+
+	natsio "github.com/nats-io/nats.go"
 )
 
 type memoryModelObjects struct {
@@ -357,7 +358,7 @@ func TestModelService_GetModelEvaluation(t *testing.T) {
 	prefix := "models/evaluations/candidate/eval-cand-v1-test/"
 	objects.objects[prefix+"metrics.json"] = metrics
 	objects.objects[prefix+"threshold.json"] = threshold
-	objects.objects[prefix+"manifest.json"] = []byte(fmt.Sprintf(`{"evaluation_run_id":"eval-cand-v1-test","training_run_id":"train-test","model_version":"1.0.0","golden_cohort_id":"golden-test","recent_cohort_id":"recent-test","evaluation_policy_version":"candidate-evaluation-v1","threshold_policy_version":"candidate-threshold-max-f1-v1","decision_threshold":0.63,"threshold_sha256":"%x","metrics_sha256":"%x","created_at":"2026-09-02T00:00:00Z"}`, thresholdSHA, metricsSHA))
+	objects.objects[prefix+"manifest.json"] = fmt.Appendf(nil, `{"evaluation_run_id":"eval-cand-v1-test","training_run_id":"train-test","model_version":"1.0.0","golden_cohort_id":"golden-test","recent_cohort_id":"recent-test","evaluation_policy_version":"candidate-evaluation-v1","threshold_policy_version":"candidate-threshold-max-f1-v1","decision_threshold":0.63,"threshold_sha256":"%x","metrics_sha256":"%x","created_at":"2026-09-02T00:00:00Z"}`, thresholdSHA, metricsSHA)
 
 	svc := NewModelService(objects, nil, &fakeModelRepo{})
 	evaluation, err := svc.GetModelEvaluation(ctx, "runtime-a")
@@ -387,7 +388,7 @@ func TestModelService_GetModelEvolution(t *testing.T) {
 	metricsSHA := sha256.Sum256(metrics)
 	prefix := "models/evaluations/candidate/eval-cand-v1-test/"
 	objects.objects[prefix+"metrics.json"] = metrics
-	objects.objects[prefix+"manifest.json"] = []byte(fmt.Sprintf(`{"evaluation_run_id":"eval-cand-v1-test","training_run_id":"train-test","model_version":"1.0.0","gold_snapshot_id":"gold-snap-1","gold_manifest_sha256":"gold-sha","split_id":"split-1","dataset_view_version":"dv-1","dataset_view_fingerprint":"dv-fp","training_run_manifest_sha256":"train-sha","evaluation_policy":"candidate-evaluation-v1","threshold_policy":"candidate-threshold-max-f1-v1","metrics_sha256":"%x","created_at":"2026-09-02T00:00:00Z"}`, metricsSHA))
+	objects.objects[prefix+"manifest.json"] = fmt.Appendf(nil, `{"evaluation_run_id":"eval-cand-v1-test","training_run_id":"train-test","model_version":"1.0.0","gold_snapshot_id":"gold-snap-1","gold_manifest_sha256":"gold-sha","split_id":"split-1","dataset_view_version":"dv-1","dataset_view_fingerprint":"dv-fp","training_run_manifest_sha256":"train-sha","evaluation_policy":"candidate-evaluation-v1","threshold_policy":"candidate-threshold-max-f1-v1","metrics_sha256":"%x","created_at":"2026-09-02T00:00:00Z"}`, metricsSHA)
 
 	svc := NewModelService(objects, nil, &fakeModelRepo{})
 	evolution, err := svc.GetModelEvolution(ctx, "runtime-a")
@@ -404,5 +405,3 @@ func TestModelService_GetModelEvolution(t *testing.T) {
 		t.Fatalf("expected gate passed to be true")
 	}
 }
-
-

@@ -274,7 +274,7 @@ LIMIT 1`
 	}
 	selectedTarget := targets[0]
 
-	var evidence *entity.CandidateEvidence
+	var evidence *entity.TargetEvidence
 	evidenceQuery := `SELECT
 		lineage_id,
 		lc_feature_version AS feature_version,
@@ -312,7 +312,7 @@ LIMIT 1`
 	ORDER BY source_product_id ASC
 	LIMIT 1`
 
-	var evidences []entity.CandidateEvidence
+	var evidences []entity.TargetEvidence
 	if err := r.client.Select(ctx, &evidences, evidenceQuery, selectedTarget.TICID, int32(selectedTarget.Sector), snapshotID, snapshotID); err == nil && len(evidences) > 0 {
 		evidence = &evidences[0]
 	}

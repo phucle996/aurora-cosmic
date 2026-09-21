@@ -13,9 +13,10 @@ interface InfoProps {
   label: string;
   value: string;
   tooltip?: string;
+  valueClass?: string;
 }
 
-export function Info({ label, value, tooltip }: InfoProps): JSX.Element {
+export function Info({ label, value, tooltip, valueClass }: InfoProps): JSX.Element {
   return (
     <div>
       <dt className="flex items-center gap-1 font-mono text-xs uppercase tracking-[0.06em] text-muted-foreground">
@@ -41,7 +42,7 @@ export function Info({ label, value, tooltip }: InfoProps): JSX.Element {
           </Tooltip>
         )}
       </dt>
-      <dd className="mt-1 font-mono font-medium tabular-nums">{value}</dd>
+      <dd className={`mt-1 font-mono font-medium tabular-nums ${valueClass ?? ''}`}>{value}</dd>
     </div>
   );
 }

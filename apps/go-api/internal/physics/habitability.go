@@ -31,20 +31,21 @@ const (
 )
 
 // ============================================================================
-// HÀM SUY DIỄN ĐẶC TÍNH VẬT LÝ ỨNG VIÊN (Derive Physical Properties)
+// HÀM SUY DIỄN ĐẶC TÍNH VẬT LÝ HỆ HÀNH TINH (Derive Physical Properties)
 // ============================================================================
-// DeriveCandidate chuyển đổi các bằng chứng quan sát từ thuật toán BLS (Box Least Squares)
+// DeriveTargetPhysics chuyển đổi các bằng chứng quan sát từ thuật toán BLS (Box Least Squares)
 // và danh mục sao TIC (TESS Input Catalog) thành các ước lượng vật lý minh bạch.
 //
 // Nguyên tắc: Không bao giờ tự ý bịa/điền bừa (impute) giá trị thiếu, mà sẽ báo cáo
 // mọi giới hạn dữ liệu vào danh sách Warnings.
-func DeriveCandidate(candidate entity.Candidate, evidence entity.CandidateEvidence) (entity.PlanetPhysics, entity.HabitabilityAssessment) {
+func DeriveTargetPhysics(ticID int64, sector int32, evidence entity.TargetEvidence) (entity.PlanetPhysics, entity.HabitabilityAssessment) {
 	// 1. Khởi tạo cấu trúc kết quả vật lý với các giá trị mặc định
 	result := entity.PlanetPhysics{
-		PlanetCandidateID:       candidateID(candidate, evidence),
+		PlanetCandidateID:       targetSignalID(ticID, sector, evidence),
 		ModelVersion:            modelVersion,
 		BondAlbedoAssumption:    bondAlbedo,
 		HZClassification:        "unknown",
+		PlanetClassification:    "unknown",
 		HZFluxBoundaries: entity.HZFluxBoundaries{
 			ConservativeInner: 1.06, // Ranh giới trong vùng bảo thủ (Inner Conservative HZ)
 			ConservativeOuter: 0.36, // Ranh giới ngoài vùng bảo thủ (Outer Conservative HZ)
@@ -131,6 +132,15 @@ func DeriveCandidate(candidate entity.Candidate, evidence entity.CandidateEviden
 		result.HZClassification = classifyHZ(*result.InsolationEarth)
 	}
 
+	// e. Phân loại kích thước hành tinh và thời gian quá cảnh
+	if result.PlanetRadiusEarth != nil {
+		result.PlanetClassification = classifyPlanetSize(*result.PlanetRadiusEarth)
+	}
+	if evidence.BLSDuration > 0 {
+		hours := evidence.BLSDuration * 24.0
+		result.TransitDurationHours = &hours
+	}
+
 	// Trả về kết quả vật lý cùng với bảng đánh giá điểm số Habitability
 	return result, assess(result, evidence)
 }
@@ -139,7 +149,7 @@ func DeriveCandidate(candidate entity.Candidate, evidence entity.CandidateEviden
 // HÀM CHẤM ĐIỂM & ĐÁNH GIÁ KHẢ NĂNG SỐNG ĐƯỢC (Habitability Assessment)
 // ============================================================================
 // assess chấm điểm theo thang 100 điểm với 5 tiêu chí rõ ràng, minh bạch (Explainable).
-func assess(p entity.PlanetPhysics, evidence entity.CandidateEvidence) entity.HabitabilityAssessment {
+func assess(p entity.PlanetPhysics, evidence entity.TargetEvidence) entity.HabitabilityAssessment {
 	assessment := entity.HabitabilityAssessment{
 		AssessmentVersion: assessmentVersion,
 		Status:            "insufficient_data", // Mặc định khi chưa đủ dữ liệu
@@ -280,11 +290,31 @@ func classifyHZ(flux float64) string {
 	return "outside" // Nằm ngoài Habitable Zone
 }
 
-// candidateID tạo mã định danh duy nhất (SHA-256) dựa trên các thuộc tính của tín hiệu ứng viên
-func candidateID(c entity.Candidate, e entity.CandidateEvidence) string {
-	seed := fmt.Sprintf("tic:%d|sector:%d|source:%s|period:%.12g|epoch:%.12g|duration:%.12g|v1", c.TICID, c.Sector, c.SourceProductID, e.BLSPeriod, e.BLSTransitTime, e.BLSDuration)
+// targetSignalID tạo mã định danh duy nhất (SHA-256) dựa trên các thuộc tính của tín hiệu
+func targetSignalID(ticID int64, sector int32, e entity.TargetEvidence) string {
+	seed := fmt.Sprintf("tic:%d|sector:%d|period:%.12g|epoch:%.12g|duration:%.12g|v1", ticID, sector, e.BLSPeriod, e.BLSTransitTime, e.BLSDuration)
 	sum := sha256.Sum256([]byte(seed))
 	return "pc_" + hex.EncodeToString(sum[:12])
+}
+
+// classifyPlanetSize phân loại kích thước hành tinh dựa trên bán kính Trái Đất R_earth
+func classifyPlanetSize(r float64) string {
+	switch {
+	case r <= 0:
+		return "Unknown"
+	case r < 0.8:
+		return "Sub-Earth"
+	case r <= 1.25:
+		return "Earth-size"
+	case r <= 2.0:
+		return "Super-Earth"
+	case r <= 4.0:
+		return "Sub-Neptune"
+	case r <= 10.0:
+		return "Jovian / Gas Giant"
+	default:
+		return "Super-Jupiter"
+	}
 }
 
 // isFinite kiểm tra giá trị số thực không bị NaN hoặc Inf

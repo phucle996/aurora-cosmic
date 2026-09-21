@@ -14,7 +14,6 @@ import (
 // Module encapsulates all application capabilities, workflow handlers, and event consumers.
 type Module struct {
 	TargetHandler            *handler.TargetHandler
-	CandidateHandler         *handler.CandidateHandler
 	ModelHandler             *handler.ModelHandler
 	LabelingHandler          *handler.LabelingHandler
 	SystemHandler            *handler.SystemHandler
@@ -117,21 +116,6 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	}
 
 	// =========================================================================
-	// 5. Candidate Workflow Branch (Vetted Transit Candidates)
-	// =========================================================================
-	candidateRepo := repository.NewCandidateClickHouse(infra.ClickHouse)
-	if candidateRepo == nil {
-		return nil, fmt.Errorf("repository CandidateClickHouse is nil")
-	}
-	candidateService := service.NewCandidateService(candidateRepo)
-	if candidateService == nil {
-		return nil, fmt.Errorf("service CandidateService is nil")
-	}
-	candidateHandler := handler.NewCandidateHandler(candidateService)
-	if candidateHandler == nil {
-		return nil, fmt.Errorf("handler CandidateHandler is nil")
-	}
-
 
 	// =========================================================================
 	// 7. ML Models & Training Branch
@@ -298,7 +282,6 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	// =========================================================================
 	m := &Module{
 		TargetHandler:            targetHandler,
-		CandidateHandler:         candidateHandler,
 		ModelHandler:             modelHandler,
 		LabelingHandler:          labelingHandler,
 
