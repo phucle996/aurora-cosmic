@@ -92,7 +92,7 @@ function renderHopChart(
     case 'event':
       return <EventPublishChart metrics={metrics} materializationPoints={materializationPoints} />;
     case 'ack':
-      return <AckDeliveryChart metrics={metrics} />;
+      return <AckDeliveryChart metrics={metrics} materializationPoints={materializationPoints} />;
     case 'gold-pairing':
       return metrics?.readiness_observed === 1
         ? <PairingReadinessChart metrics={metrics} />

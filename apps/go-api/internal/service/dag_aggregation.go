@@ -1482,6 +1482,8 @@ func (s *DAGAggregationService) aggregateAckHop(ctx context.Context, hop *entity
 	hop.Metrics["delivered_stream_positions"] = total
 	hop.Metrics["acknowledged_deliveries"] = total
 	hop.Metrics["acknowledged_stream_positions"] = total
+	hop.Metrics["acknowledged_lightcurves"] = lc
+	hop.Metrics["acknowledged_target_pixels"] = tpf
 	hop.Metrics["completed_checkpoints"] = total
 	hop.Metrics["ack_total"] = total
 	hop.Metrics["ack_pending"] = 0
@@ -1730,8 +1732,8 @@ func dagHops(values map[string]float64, observations map[string][]entity.Monitor
 		},
 		{
 			ID:          "ack",
-			Label:       "Bronze ACK",
-			Description: "Acknowledge only after durable output",
+			Label:       "Bronze Settlement ACK",
+			Description: "Two-phase commit: Acknowledge Bronze message only after downstream event emission",
 			Contract:    "NATS durable consumer ACK",
 			Input:       "Published event",
 			Output:      "Bronze message ACKed",
@@ -1743,6 +1745,8 @@ func dagHops(values map[string]float64, observations map[string][]entity.Monitor
 				"delivered_stream_positions":    float64(max(int64(progress.BronzeCompleted), progress.BronzeDeliveredStream)),
 				"acknowledged_deliveries":       float64(max(int64(progress.BronzeCompleted), progress.BronzeAckFloorConsumer)),
 				"acknowledged_stream_positions": float64(max(int64(progress.BronzeCompleted), progress.BronzeAckFloorStream)),
+				"acknowledged_lightcurves":      float64(progress.SilverLightCurves),
+				"acknowledged_target_pixels":    float64(progress.SilverTargetPixels),
 				"historical_redeliveries":       float64(max(int64(0), progress.BronzeDeliveredConsumer-progress.BronzeDeliveredStream)),
 				"ack_pending":                   float64(progress.BronzeConsumerAckPending),
 				"pending":                       float64(progress.BronzeConsumerPending),
@@ -1930,7 +1934,7 @@ func dagHops(values map[string]float64, observations map[string][]entity.Monitor
 			hops[i].CheckpointPoints = append([]entity.PreprocessingCheckpointPoint(nil), progress.CheckpointPoints...)
 			hops[i].MaterializationPoints = append([]entity.PreprocessingMaterializationPoint(nil), progress.MaterializationPoints...)
 		}
-		if hops[i].ID == "lineage" || hops[i].ID == "event" {
+		if hops[i].ID == "lineage" || hops[i].ID == "event" || hops[i].ID == "ack" {
 			hops[i].MaterializationPoints = append([]entity.PreprocessingMaterializationPoint(nil), progress.MaterializationPoints...)
 		}
 		if hops[i].ID == "lc-parquet" || hops[i].ID == "tpf-parquet" {
