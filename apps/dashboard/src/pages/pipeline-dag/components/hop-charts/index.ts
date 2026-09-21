@@ -6,6 +6,8 @@ export { TPFQualityWCSChart } from './TPFQualityWCSChart';
 export { ResidualsDistributionChart } from './ResidualsDistributionChart';
 export { LCDetrendChart } from './LCDetrendChart';
 export { TPFTransformChart } from './TPFTransformChart';
+export { LCParquetChart } from './LCParquetChart';
+export { TPFParquetChart } from './TPFParquetChart';
 export { SilverMaterializationChart } from './SilverMaterializationChart';
 export { GoldPhaseChart } from './GoldPhaseChart';
 export { PairingReadinessChart } from './PairingReadinessChart';

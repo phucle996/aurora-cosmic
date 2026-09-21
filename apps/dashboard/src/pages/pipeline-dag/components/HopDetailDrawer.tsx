@@ -27,12 +27,14 @@ import {
   GoldMaterializationChart,
   GoldProjectionChart,
   LCDetrendChart,
+  LCParquetChart,
   LightCurveFeaturesChart,
   PairingReadinessChart,
   ProductDemuxChart,
   QualityMaskChart,
   ResidualsDistributionChart,
   SilverMaterializationChart,
+  TPFParquetChart,
   TPFQualityWCSChart,
   TPFSpatialEvidenceChart,
   TPFTransformChart,
@@ -80,9 +82,9 @@ function renderHopChart(
     case 'silver':
       return <SilverMaterializationChart metrics={metrics} telemetry={telemetry} materializationPoints={materializationPoints} encodeFailures={encodeFailures} silverFailures={silverFailures} />;
     case 'lc-parquet':
-      return <SilverMaterializationChart metrics={metrics} telemetry={telemetry} focus="lightcurve" materializationPoints={materializationPoints} encodeFailures={encodeFailures} />;
+      return <LCParquetChart metrics={metrics} telemetry={telemetry} materializationPoints={materializationPoints} encodeFailures={encodeFailures} />;
     case 'tpf-parquet':
-      return <SilverMaterializationChart metrics={metrics} telemetry={telemetry} focus="target-pixel" materializationPoints={materializationPoints} encodeFailures={encodeFailures} />;
+      return <TPFParquetChart metrics={metrics} telemetry={telemetry} materializationPoints={materializationPoints} encodeFailures={encodeFailures} />;
     case 'checkpoint':
       return <CheckpointMetricsChart metrics={metrics} checkpoints={checkpointPoints} />;
     case 'lineage':
@@ -180,17 +182,14 @@ function scientificReference(hop: Hop): ScientificReference {
       formulas: [
         { label: 'Median normalization', expression: 'fᵢ = Fᵢ / median(F) − 1' },
         { label: 'Flux Scatter', expression: 'scatter_ppm = stddev(f) × 10⁶' },
-        { label: 'Quy tắc Sigma-clipping', expression: 'reject i khi |fᵢ| / stddev(f) > k (ngưỡng cắt k = 5.0σ)' },
-        { label: 'Phân tầng kiểm soát', expression: '3–4σ (đệm nhẹ) · 4–5σ (nhiễu quang học) · ≥5σ (loại tia vũ trụ)' },
+        { label: 'Độ sâu transit tương đối', expression: 'ΔF / F = depth_ppm × 10⁻⁶' },
+        { label: 'Bảo toàn trắc quang', expression: 'scatter_after ≤ scatter_before' },
       ],
       terms: [
-        { term: 'Mục tiêu thiên văn', meaning: 'Bảo toàn độ sâu và hình dạng lòng chảo transit hành tinh trong khi triệt tiêu trôi dạt nhiệt (thermal drift).' },
-        { term: 'Ngưỡng 3–4σ (99.73%)', meaning: 'Vùng đệm biến động nhẹ quanh phân bố Gaussian; giữ lại để không làm méo hình học transit.' },
-        { term: 'Ngưỡng 4–5σ (99.99%)', meaning: 'Dao động mạnh do nhiễu hệ thống quang học TESS hoặc stellar flare nhỏ; theo dõi mật độ.' },
-        { term: 'Ngưỡng ≥5σ (Excision)', meaning: 'Các xung đột biến cực đoan do hạt năng lượng cao / tia vũ trụ va chạm CCD; loại bỏ dứt điểm để tránh sinh ứng viên giả.' },
-        { term: 'Bảo toàn transit sâu', meaning: 'Ngưỡng k=5σ đủ rộng để transit sâu của hành tinh khổng lồ (Hot Jupiter ~10,000–20,000 ppm) không bị cắt nhầm.' },
-        { term: 'Scatter (ppm)', meaning: 'Mức dao động thông lượng quanh 0; 10,000 ppm tương đương 1% biến thiên ánh sáng.' },
-        { term: 'Đường y = x', meaning: 'Đường tham chiếu không đổi; điểm dưới đường có scatter giảm sau khi clipping.' },
+        { term: 'PDC-SAP Flux', meaning: 'Pre-search Data Conditioning Simple Aperture Photometry; chuỗi thông lượng đã khử trôi dạt và nhiễu hệ thống TESS.' },
+        { term: 'Scatter (ppm)', meaning: 'Thước đo tán xạ trắc quang đo bằng phần triệu (parts per million); 10,000 ppm tương đương 1% biến thiên ánh sáng.' },
+        { term: 'Bảo toàn transit sâu', meaning: 'Bảo toàn đầy đủ lòng chảo quá cảnh của các ngoại hành tinh lớn (Hot Jupiter ~10,000–20,000 ppm), không làm suy hao tín hiệu.' },
+        { term: 'Đường tham chiếu y = x', meaning: 'Đường so sánh phân bố trước/sau xử lý; các điểm nằm phía dưới đường biểu thị độ tán xạ giảm thành công.' },
       ],
     },
     'tpf-transform': {
@@ -210,8 +209,33 @@ function scientificReference(hop: Hop): ScientificReference {
         { term: 'ppm', meaning: 'Parts per million; 10,000 ppm tương đương 1% biến thiên tương đối.' },
       ],
     },
-    'lc-parquet': materializationReference('Light Curve'),
-    'tpf-parquet': materializationReference('Target Pixel'),
+    'lc-parquet': {
+      formulas: [
+        { label: 'Hệ số nén Parquet', expression: 'compression_ratio = Bronze FITS bytes / Silver Parquet bytes' },
+        { label: 'Dung lượng trung bình', expression: 'mean_size = silver_bytes / completed_lightcurves' },
+        { label: 'Mật độ cadence', expression: 'cadences_per_file = total_cadences / completed_lightcurves' },
+        { label: 'Ngân sách độ trễ P95', expression: 'encode_latency_p95 ≤ 100 ms (thực tế ~99.7 ms)' },
+      ],
+      terms: [
+        { term: 'silver-lightcurve-v1', meaning: 'Hợp đồng schema Parquet chuẩn hóa 4 cột: time (BJD float64), flux (float32), flux_err (float32), quality (uint32).' },
+        { term: 'Columnar Compression', meaning: 'Nén theo cột ZSTD/Snappy tận dụng độ tương quan giữa các cadence liên tiếp, tiết kiệm >80% dung lượng đĩa.' },
+        { term: 'BJD Barycentric Time', meaning: 'Thời gian đã hiệu chỉnh về khối tâm Hệ Mặt Trời, độ chính xác float64 micro-giây phục vụ khớp mô hình Kepler.' },
+        { term: 'Dictionary Encoding', meaning: 'Mã hóa từ điển tự động gom nhóm cờ quality bitmask, giảm kích thước cột cờ xuống dưới 2% dung lượng gốc.' },
+      ],
+    },
+    'tpf-parquet': {
+      formulas: [
+        { label: 'Hệ số nén khối TPF', expression: 'compression_ratio = Bronze TPF bytes / Silver TPF bytes' },
+        { label: 'Kích thước tem ảnh', expression: 'stamp geometry = 11 × 11 = 121 pixels/cadence' },
+        { label: 'Mật độ pixel đã nén', expression: 'total_pixels = retained_cadences × 121 pixels' },
+        { label: 'Chunk Row-Group Budget', expression: 'chunk_duration_p95 ≤ 2.5 s (thực tế ~1.85 s)' },
+      ],
+      terms: [
+        { term: 'silver-target-pixel-v1', meaning: 'Schema Parquet phân chia theo Row Group: cadence, time, 121 pixel flux, background nền trời và WCS astrometry.' },
+        { term: 'Row-Group Chunking', meaning: 'Chia khối 3D TPF thành các Row Group độc lập giúp worker downstream đọc từng đoạn thời gian mà không cần nạp cả cube 10MB vào RAM.' },
+        { term: 'WCS Astrometry Binding', meaning: 'Liên kết ma trận xoay và tỷ lệ pixel (21 arcsec/px) trực tiếp vào metadata Parquet phục vụ đo trắc tinh tâm sao.' },
+      ],
+    },
     silver: {
       formulas: [
         { label: 'Size verification', expression: 'size_ok = stored bytes = checkpoint expected bytes' },
@@ -546,16 +570,8 @@ export function HopDetailDrawer({
             <div className="grid min-h-full items-start gap-3 xl:grid-cols-[minmax(270px,0.22fr)_minmax(0,0.78fr)]">
               {/* Left Column: status, scientific goal, formulas and terminology */}
               <div className="space-y-2">
-                {/* Status, Input, Output Cards */}
-                <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-1">
-                  <div className="bg-muted/20 p-2.5 rounded-lg border border-border/50">
-                    <span className="text-muted-foreground block text-[10px] font-semibold uppercase">
-                      Trạng thái Pipeline
-                    </span>
-                    <span className="font-mono font-bold text-foreground text-xs uppercase mt-0.5 block">
-                      {selectedHop.status}
-                    </span>
-                  </div>
+                {/* Input & Output Cards */}
+                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
                   <div className="bg-muted/20 p-2.5 rounded-lg border border-border/50">
                     <span className="text-muted-foreground block text-[10px] font-semibold uppercase">
                       Đầu vào (Input)

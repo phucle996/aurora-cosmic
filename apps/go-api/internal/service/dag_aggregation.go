@@ -1120,6 +1120,39 @@ func (s *DAGAggregationService) aggregateLCParquetHop(ctx context.Context, hop *
 	if val, ok := hop.Metrics["completed_lightcurves"]; ok {
 		hop.Metrics["completed_lightcurves"] = math.Round(val)
 	}
+	if hop.Metrics["completed_lightcurves"] == 0 {
+		s.queryMetric(ctx, hop, "completed_lightcurves", `sum(aurora_preprocessor_products_total{kind="lightcurve",status="success"})`, start, end)
+		if val, ok := hop.Metrics["completed_lightcurves"]; ok {
+			hop.Metrics["completed_lightcurves"] = math.Round(val)
+		}
+	}
+	if hop.Metrics["silver_bytes"] == 0 {
+		s.queryMetric(ctx, hop, "silver_bytes", `sum(aurora_preprocessor_bytes_total{stage="silver",kind="lightcurve"})`, start, end)
+	}
+	if hop.Metrics["lc_duration_p95"] == 0 || math.IsNaN(hop.Metrics["lc_duration_p95"]) {
+		s.queryMetric(ctx, hop, "lc_duration_p95", `histogram_quantile(0.95, sum by (le) (aurora_preprocessor_processing_duration_seconds_bucket{kind="lightcurve"}))`, start, end)
+	}
+
+	s.queryMetric(ctx, hop, "bronze_source_bytes", `sum(aurora_preprocessor_bytes_total{stage="bronze",kind="lightcurve"})`, start, end)
+	s.queryMetric(ctx, hop, "lc_rows_total", `sum(aurora_preprocessor_science_samples_total{kind="lightcurve",outcome="output"})`, start, end)
+
+	// Latency histogram distribution buckets
+	s.queryMetric(ctx, hop, "lc_duration_le_0_025", `sum(aurora_preprocessor_processing_duration_seconds_bucket{kind="lightcurve",le="0.025"})`, start, end)
+	s.queryMetric(ctx, hop, "lc_duration_le_0_05", `sum(aurora_preprocessor_processing_duration_seconds_bucket{kind="lightcurve",le="0.05"})`, start, end)
+	s.queryMetric(ctx, hop, "lc_duration_le_0_1", `sum(aurora_preprocessor_processing_duration_seconds_bucket{kind="lightcurve",le="0.1"})`, start, end)
+	s.queryMetric(ctx, hop, "lc_duration_le_0_25", `sum(aurora_preprocessor_processing_duration_seconds_bucket{kind="lightcurve",le="0.25"})`, start, end)
+	s.queryMetric(ctx, hop, "lc_duration_le_0_5", `sum(aurora_preprocessor_processing_duration_seconds_bucket{kind="lightcurve",le="0.5"})`, start, end)
+	s.queryMetric(ctx, hop, "lc_duration_le_2_5", `sum(aurora_preprocessor_processing_duration_seconds_bucket{kind="lightcurve",le="2.5"})`, start, end)
+
+	if hop.Metrics["silver_bytes"] > 0 && hop.Metrics["bronze_source_bytes"] > 0 {
+		hop.Metrics["compression_ratio"] = hop.Metrics["bronze_source_bytes"] / hop.Metrics["silver_bytes"]
+	}
+	if hop.Metrics["completed_lightcurves"] > 0 && hop.Metrics["silver_bytes"] > 0 {
+		hop.Metrics["mean_artifact_bytes"] = hop.Metrics["silver_bytes"] / hop.Metrics["completed_lightcurves"]
+	}
+	if hop.Metrics["completed_lightcurves"] > 0 && hop.Metrics["lc_rows_total"] > 0 {
+		hop.Metrics["mean_rows_per_file"] = hop.Metrics["lc_rows_total"] / hop.Metrics["completed_lightcurves"]
+	}
 }
 
 func (s *DAGAggregationService) aggregateTPFTransformHop(ctx context.Context, hop *entity.DAGHop, start, end time.Time, window string) {
@@ -1167,6 +1200,38 @@ func (s *DAGAggregationService) aggregateTPFParquetHop(ctx context.Context, hop 
 	s.queryMetric(ctx, hop, "tpf_duration_p95", `histogram_quantile(0.95, sum by (le) (rate(aurora_preprocessor_processing_duration_seconds_bucket{kind="target_pixel"}[5m])))`, start, end)
 	s.queryMetric(ctx, hop, "silver_bytes", fmt.Sprintf(`sum(increase(aurora_preprocessor_bytes_total{stage="silver",kind="target_pixel"}[%s]))`, window), start, end)
 	s.queryMetric(ctx, hop, "completed_target_pixels", fmt.Sprintf(`sum(increase(aurora_preprocessor_products_total{kind="target_pixel",status="success"}[%s]))`, window), start, end)
+
+	if val, ok := hop.Metrics["completed_target_pixels"]; ok {
+		hop.Metrics["completed_target_pixels"] = math.Round(val)
+	}
+	if hop.Metrics["completed_target_pixels"] == 0 {
+		s.queryMetric(ctx, hop, "completed_target_pixels", `sum(aurora_preprocessor_products_total{kind="target_pixel",status="success"})`, start, end)
+		if val, ok := hop.Metrics["completed_target_pixels"]; ok {
+			hop.Metrics["completed_target_pixels"] = math.Round(val)
+		}
+	}
+	if hop.Metrics["silver_bytes"] == 0 {
+		s.queryMetric(ctx, hop, "silver_bytes", `sum(aurora_preprocessor_bytes_total{stage="silver",kind="target_pixel"})`, start, end)
+	}
+	if hop.Metrics["tpf_duration_p95"] == 0 || math.IsNaN(hop.Metrics["tpf_duration_p95"]) {
+		s.queryMetric(ctx, hop, "tpf_duration_p95", `histogram_quantile(0.95, sum by (le) (aurora_preprocessor_processing_duration_seconds_bucket{kind="target_pixel"}))`, start, end)
+	}
+
+	s.queryMetric(ctx, hop, "bronze_source_bytes", `sum(aurora_preprocessor_bytes_total{stage="bronze",kind="target_pixel"})`, start, end)
+	s.queryMetric(ctx, hop, "tpf_pixels_total", `sum(aurora_preprocessor_tpf_normalization_pixels_total{outcome="retained"})`, start, end)
+
+	// Latency histogram distribution buckets
+	s.queryMetric(ctx, hop, "tpf_duration_le_0_5", `sum(aurora_preprocessor_processing_duration_seconds_bucket{kind="target_pixel",le="0.5"})`, start, end)
+	s.queryMetric(ctx, hop, "tpf_duration_le_1", `sum(aurora_preprocessor_processing_duration_seconds_bucket{kind="target_pixel",le="1"})`, start, end)
+	s.queryMetric(ctx, hop, "tpf_duration_le_2_5", `sum(aurora_preprocessor_processing_duration_seconds_bucket{kind="target_pixel",le="2.5"})`, start, end)
+	s.queryMetric(ctx, hop, "tpf_duration_le_5", `sum(aurora_preprocessor_processing_duration_seconds_bucket{kind="target_pixel",le="5"})`, start, end)
+
+	if hop.Metrics["silver_bytes"] > 0 && hop.Metrics["bronze_source_bytes"] > 0 {
+		hop.Metrics["compression_ratio"] = hop.Metrics["bronze_source_bytes"] / hop.Metrics["silver_bytes"]
+	}
+	if hop.Metrics["completed_target_pixels"] > 0 && hop.Metrics["silver_bytes"] > 0 {
+		hop.Metrics["mean_artifact_bytes"] = hop.Metrics["silver_bytes"] / hop.Metrics["completed_target_pixels"]
+	}
 }
 
 func (s *DAGAggregationService) aggregateSilverHop(ctx context.Context, hop *entity.DAGHop, start, end time.Time, window string) {
