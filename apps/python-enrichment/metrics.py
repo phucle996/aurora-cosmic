@@ -6,7 +6,17 @@ from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram
 from prometheus_client.exposition import start_http_server
 
 _STATUSES = ("success", "failed", "deferred")
-_STEPS = ("pairing", "catalog", "lc_features", "bls", "tpf_vetting", "candidate", "parquet", "index", "commit")
+_STEPS = (
+    "pairing",
+    "catalog",
+    "lc_features",
+    "bls",
+    "tpf_vetting",
+    "candidate",
+    "parquet",
+    "index",
+    "commit",
+)
 
 
 class Metrics:
@@ -197,7 +207,13 @@ class Metrics:
         if dropped > 0:
             self.pairing_dropped.inc(dropped)
 
-    def record_catalog_sync(self, tic_count: int, toi_count: int, elapsed_seconds: float, cache_hit: bool = False) -> None:
+    def record_catalog_sync(
+        self,
+        tic_count: int,
+        toi_count: int,
+        elapsed_seconds: float,
+        cache_hit: bool = False,
+    ) -> None:
         self.catalog_records.labels(catalog="TIC").inc(max(0, tic_count))
         self.catalog_records.labels(catalog="TOI").inc(max(0, toi_count))
         self.catalog_sync_duration.observe(max(0.0, elapsed_seconds))

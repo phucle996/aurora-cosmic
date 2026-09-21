@@ -27,5 +27,7 @@ def test_valid_config():
 def test_missing_env():
     set_dummy_env()
     del os.environ["AURORA_ENV"]
-    with pytest.raises(ValueError, match="Missing required environment variable 'AURORA_ENV'"):
+    with pytest.raises(
+        ValueError, match="Missing required environment variable 'AURORA_ENV'"
+    ):
         Config()

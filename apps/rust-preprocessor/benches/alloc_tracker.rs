@@ -45,7 +45,8 @@ unsafe impl GlobalAlloc for TrackingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let ptr = System.alloc(layout);
         if !ptr.is_null() {
-            self.allocated_bytes.fetch_add(layout.size(), Ordering::SeqCst);
+            self.allocated_bytes
+                .fetch_add(layout.size(), Ordering::SeqCst);
             self.allocation_count.fetch_add(1, Ordering::SeqCst);
         }
         ptr
@@ -53,7 +54,8 @@ unsafe impl GlobalAlloc for TrackingAllocator {
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         System.dealloc(ptr, layout);
-        self.deallocated_bytes.fetch_add(layout.size(), Ordering::SeqCst);
+        self.deallocated_bytes
+            .fetch_add(layout.size(), Ordering::SeqCst);
         self.deallocation_count.fetch_add(1, Ordering::SeqCst);
     }
 }
@@ -71,8 +73,12 @@ impl AllocSnapshot {
         AllocDiff {
             alloc_count: other.allocation_count.saturating_sub(self.allocation_count),
             bytes_allocated: other.allocated_bytes.saturating_sub(self.allocated_bytes),
-            dealloc_count: other.deallocation_count.saturating_sub(self.deallocation_count),
-            bytes_deallocated: other.deallocated_bytes.saturating_sub(self.deallocated_bytes),
+            dealloc_count: other
+                .deallocation_count
+                .saturating_sub(self.deallocation_count),
+            bytes_deallocated: other
+                .deallocated_bytes
+                .saturating_sub(self.deallocated_bytes),
         }
     }
 }

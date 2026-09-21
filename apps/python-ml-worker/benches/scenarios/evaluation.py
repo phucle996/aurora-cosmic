@@ -16,6 +16,7 @@ from post_train.evaluate import (
     select_candidate_validation_threshold,
 )
 
+
 def run_evaluation_benchmark(
     num_objects: int = 300,
     sweep_iterations: int = 50,
@@ -64,9 +65,7 @@ def run_evaluation_benchmark(
             y_prob = np.random.uniform(0.01, 0.99, size=len(rows)).astype(np.float32)
 
             for _ in range(sweep_iterations):
-                threshold, *_ = select_candidate_validation_threshold(
-                    y_true, y_prob
-                )
+                threshold, *_ = select_candidate_validation_threshold(y_true, y_prob)
                 _ = calculate_candidate_cohort_metrics(y_true, y_prob, threshold)
 
     result = profiler.run(workload)

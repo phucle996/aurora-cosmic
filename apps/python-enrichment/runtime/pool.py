@@ -56,9 +56,7 @@ def _build_candidate_parquet(
     ).build_candidate(events, set_current=True, catalogs=catalogs)
 
 
-def _project_candidate_clickhouse(
-    config: Config, result: EnrichmentBuildResult
-) -> int:
+def _project_candidate_clickhouse(config: Config, result: EnrichmentBuildResult) -> int:
     """Project materialized Gold/Enrichment rows into ClickHouse.
 
     Executed in a background process worker to isolate network I/O and bulk
@@ -464,17 +462,31 @@ class WorkerPool:
             )
 
             # Record phase metrics from build candidate execution
-            self.metrics.record_step("lc_features", result.lc_feature_duration_seconds, result.lightcurve_feature_rows)
-            self.metrics.record_step("bls", result.lc_feature_duration_seconds, result.bls_evidence_rows)
+            self.metrics.record_step(
+                "lc_features",
+                result.lc_feature_duration_seconds,
+                result.lightcurve_feature_rows,
+            )
+            self.metrics.record_step(
+                "bls", result.lc_feature_duration_seconds, result.bls_evidence_rows
+            )
             if result.bls_evidence_rows > 0:
                 self.metrics.bls_candidates.inc(result.bls_evidence_rows)
-            self.metrics.record_step("tpf_vetting", result.tpf_duration_seconds, result.target_pixel_evidence_rows)
+            self.metrics.record_step(
+                "tpf_vetting",
+                result.tpf_duration_seconds,
+                result.target_pixel_evidence_rows,
+            )
             if result.target_pixel_evidence_rows > 0:
                 self.metrics.tpf_transit_evidence.inc(result.target_pixel_evidence_rows)
-            self.metrics.record_step("candidate", result.assembly_duration_seconds, result.row_count)
+            self.metrics.record_step(
+                "candidate", result.assembly_duration_seconds, result.row_count
+            )
             if result.row_count > 0:
                 self.metrics.candidates_assembled.inc(result.row_count)
-            self.metrics.record_parquet_write(result.parquet_duration_seconds, result.parquet_bytes)
+            self.metrics.record_parquet_write(
+                result.parquet_duration_seconds, result.parquet_bytes
+            )
 
             # 5. Indexing snapshot projections into ClickHouse (in ProcessPool)
             await self.set_worker_state(

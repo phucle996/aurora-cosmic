@@ -30,9 +30,7 @@ from post_train.evaluate import (
 from store import SnapshotManifest
 
 
-def generate_candidate_e2e_dataset() -> Tuple[
-    SnapshotManifest, List[Dict[str, Any]]
-]:
+def generate_candidate_e2e_dataset() -> Tuple[SnapshotManifest, List[Dict[str, Any]]]:
     """Generate sample Gold candidate dataset with train, validation, golden, and recent targets."""
     manifest = SnapshotManifest(
         snapshot_id="gold-v1-stage6test",

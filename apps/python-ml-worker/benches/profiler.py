@@ -354,12 +354,8 @@ class MlProfiler:
             user_cpu_seconds=u_cpu,
             system_cpu_seconds=s_cpu,
             cpu_utilization_pct=cpu_util_pct,
-            voluntary_context_switches=max(
-                0, ru_end.ru_nvcsw - ru_start.ru_nvcsw
-            ),
-            involuntary_context_switches=max(
-                0, ru_end.ru_nivcsw - ru_start.ru_nivcsw
-            ),
+            voluntary_context_switches=max(0, ru_end.ru_nvcsw - ru_start.ru_nvcsw),
+            involuntary_context_switches=max(0, ru_end.ru_nivcsw - ru_start.ru_nivcsw),
             major_page_faults=max(0, ru_end.ru_majflt - ru_start.ru_majflt),
             minor_page_faults=max(0, ru_end.ru_minflt - ru_start.ru_minflt),
             gpu=gpu_telemetry,

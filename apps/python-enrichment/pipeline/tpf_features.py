@@ -182,7 +182,9 @@ def extract_tpf_row(
                     flat_pixels = np.asarray(
                         flux_col.values.to_numpy(zero_copy_only=False), dtype=np.float64
                     )
-                    cube[offset:end] = flat_pixels.reshape((batch_size, expected_pixels))
+                    cube[offset:end] = flat_pixels.reshape(
+                        (batch_size, expected_pixels)
+                    )
                 else:
                     flux_values = flux_col.to_pylist()
                     for index, flux in enumerate(flux_values):

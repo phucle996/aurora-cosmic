@@ -11,7 +11,6 @@ import shutil
 from typing import Any, Dict, List, Optional, Tuple
 
 
-
 # --- 1. Model Registry Contracts ---
 class ModelRegistryError(Exception):
     """Base exception for Model Registry failures."""

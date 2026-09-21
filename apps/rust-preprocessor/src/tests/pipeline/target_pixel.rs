@@ -252,4 +252,3 @@ fn test_tpf_determinism() {
     assert_eq!(res1.time, res2.time);
     assert_eq!(res1.flux, res2.flux);
 }
-

@@ -354,4 +354,3 @@ fn quantile_sorted_f32(values: &[f32], q: f32) -> f32 {
         values[lower] * (upper as f32 - position) + values[upper] * (position - lower as f32)
     }
 }
-

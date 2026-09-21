@@ -127,4 +127,3 @@ fn test_e2e_tpf_pipeline_flow() {
     assert_eq!(artifact.schema_version, "silver-target-pixel-v1");
     assert!(artifact.size_bytes > 0);
 }
-
