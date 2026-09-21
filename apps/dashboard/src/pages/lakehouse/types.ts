@@ -297,12 +297,26 @@ export type StorageFITSHeaderCard = {
   comment: string;
 };
 
+export type StorageFITSTableColumn = {
+  name: string;
+  type: string;
+  unit?: string;
+};
+
+export type StorageFITSTablePreview = {
+  total_rows: number;
+  columns: StorageFITSTableColumn[];
+  rows: Record<string, any>[];
+  chart?: { time: number; flux: number; flux_err?: number }[];
+};
+
 export type StorageFITSHDU = {
   index: number;
   name: string;
   type: string;
   cards: StorageFITSHeaderCard[];
   summary: Record<string, string>;
+  table?: StorageFITSTablePreview;
 };
 
 export type StorageFITSPreview = {
