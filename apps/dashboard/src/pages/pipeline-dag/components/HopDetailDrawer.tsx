@@ -29,6 +29,7 @@ import {
   LCDetrendChart,
   LCParquetChart,
   LightCurveFeaturesChart,
+  LineageLedgerChart,
   PairingReadinessChart,
   ProductDemuxChart,
   QualityMaskChart,
@@ -88,7 +89,7 @@ function renderHopChart(
     case 'checkpoint':
       return <CheckpointMetricsChart metrics={metrics} checkpoints={checkpointPoints} />;
     case 'lineage':
-      return <CompressionRatioChart mode={mode} totalFiles={totalFiles} metrics={metrics} materializationPoints={materializationPoints} scope="bronze-silver" />;
+      return <LineageLedgerChart mode={mode} metrics={metrics} materializationPoints={materializationPoints} />;
     case 'event':
       return <EventPublishChart metrics={metrics} />;
     case 'ack':

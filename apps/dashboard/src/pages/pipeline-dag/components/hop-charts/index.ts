@@ -23,4 +23,5 @@ export { CheckpointMetricsChart } from './CheckpointMetricsChart';
 export { EventPublishChart } from './EventPublishChart';
 export { AckDeliveryChart } from './AckDeliveryChart';
 export { CompressionRatioChart } from './CompressionRatioChart';
+export { LineageLedgerChart } from './LineageLedgerChart';
 export { TelemetryUnavailable } from './TelemetryUnavailable';

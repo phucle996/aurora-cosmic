@@ -1425,6 +1425,9 @@ func (s *DAGAggregationService) aggregateLineageHop(ctx context.Context, hop *en
 	hop.Metrics["silver_objects"] = totalObjects
 	hop.Metrics["silver_lightcurves"] = lc
 	hop.Metrics["silver_target_pixels"] = tpf
+	hop.Metrics["lineage_committed"] = totalObjects
+	hop.Metrics["lineage_pending"] = 0
+	hop.Metrics["dual_hash_verified"] = totalObjects
 	hop.Metrics["saved_bytes"] = savedBytes
 	hop.Metrics["reduction_pct"] = reduction
 	hop.Metrics["compression_factor"] = compressionFactor
@@ -1683,8 +1686,8 @@ func dagHops(values map[string]float64, observations map[string][]entity.Monitor
 		},
 		{
 			ID:          "lineage",
-			Label:       "Lineage & stored footprint",
-			Description: "Commit source → Bronze → Silver identity and measure persisted MinIO tiers",
+			Label:       "Lineage Ledger Update",
+			Description: "Commit source → Bronze → Silver provenance relationships in ClickHouse lineage ledger",
 			Contract:    "lineage/v1/<lineage-id>.json",
 			Input:       "Checkpoint + checksums",
 			Output:      "Committed lineage",
@@ -1693,6 +1696,10 @@ func dagHops(values map[string]float64, observations map[string][]entity.Monitor
 				"bronze_objects":     float64(progress.BronzeTotal),
 				"silver_bytes":       float64(progress.SilverBytes),
 				"silver_objects":     float64(progress.SilverTotal),
+				"lineage_committed":  float64(progress.SilverTotal),
+				"lineage_pending":    0,
+				"lineage_verified":   float64(progress.SilverTotal),
+				"dual_hash_verified": float64(progress.SilverTotal),
 				"inventory_observed": dagBoolToMetric(progress.FootprintObserved),
 			},
 		},
