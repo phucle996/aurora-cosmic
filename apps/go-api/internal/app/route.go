@@ -37,6 +37,7 @@ func RegisterRoutes(engine *gin.Engine, module *Module) {
 	engine.POST("/api/v1/ingest/jobs", module.IngestHandler.Start)
 	engine.POST("/api/v1/ingest/jobs/:ticket_id/cancel", module.IngestHandler.Cancel)
 
+	engine.GET("/api/v1/lakehouse/summary", module.LakehouseHandler.Summary)
 	engine.GET("/api/v1/lakehouse/objects", module.LakehouseHandler.List)
 	engine.GET("/api/v1/lakehouse/preview", module.LakehouseHandler.Preview)
 	engine.GET("/api/v1/targets", module.TargetHandler.ListTargets)

@@ -1,20 +1,24 @@
 // Public chart surface for preprocessing graph consumers.
 export { CadenceTimelineChart } from './CadenceTimelineChart';
+export { ProductDemuxChart } from './ProductDemuxChart';
 export { QualityMaskChart } from './QualityMaskChart';
+export { TPFQualityWCSChart } from './TPFQualityWCSChart';
 export { ResidualsDistributionChart } from './ResidualsDistributionChart';
+export { LCDetrendChart } from './LCDetrendChart';
+export { TPFTransformChart } from './TPFTransformChart';
+export { LCParquetChart } from './LCParquetChart';
+export { TPFParquetChart } from './TPFParquetChart';
 export { SilverMaterializationChart } from './SilverMaterializationChart';
 export { GoldPhaseChart } from './GoldPhaseChart';
 export { PairingReadinessChart } from './PairingReadinessChart';
 export { CatalogResolutionChart } from './CatalogResolutionChart';
 export { LightCurveFeaturesChart } from './LightCurveFeaturesChart';
-export { BLSSearchChart } from './BLSSearchChart';
 export { TPFSpatialEvidenceChart } from './TPFSpatialEvidenceChart';
 export { CandidateAssemblyChart } from './CandidateAssemblyChart';
-export { GoldMaterializationChart } from './GoldMaterializationChart';
-export { GoldProjectionChart } from './GoldProjectionChart';
 export { GoldCommitChart } from './GoldCommitChart';
 export { CheckpointMetricsChart } from './CheckpointMetricsChart';
 export { EventPublishChart } from './EventPublishChart';
 export { AckDeliveryChart } from './AckDeliveryChart';
 export { CompressionRatioChart } from './CompressionRatioChart';
+export { LineageLedgerChart } from './LineageLedgerChart';
 export { TelemetryUnavailable } from './TelemetryUnavailable';

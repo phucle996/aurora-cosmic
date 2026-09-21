@@ -10,4 +10,5 @@ import (
 type Lakehouse interface {
 	List(ctx context.Context, query entity.LakehouseListingQuery) (*entity.LakehouseListing, error)
 	Preview(ctx context.Context, query entity.LakehousePreviewQuery) (*entity.LakehousePreviewResponse, error)
+	Summary(ctx context.Context) (*entity.LakehouseSummary, error)
 }

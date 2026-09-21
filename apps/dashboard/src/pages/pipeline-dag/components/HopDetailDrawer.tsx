@@ -15,23 +15,26 @@ import {
 import type { Hop } from '../types';
 import {
   AckDeliveryChart,
-  BLSSearchChart,
   CadenceTimelineChart,
   CandidateAssemblyChart,
   CatalogResolutionChart,
   CheckpointMetricsChart,
-  CompressionRatioChart,
   EventPublishChart,
   GoldCommitChart,
   GoldPhaseChart,
-  GoldMaterializationChart,
-  GoldProjectionChart,
+  LCDetrendChart,
+  LCParquetChart,
   LightCurveFeaturesChart,
+  LineageLedgerChart,
   PairingReadinessChart,
+  ProductDemuxChart,
   QualityMaskChart,
   ResidualsDistributionChart,
   SilverMaterializationChart,
+  TPFParquetChart,
+  TPFQualityWCSChart,
   TPFSpatialEvidenceChart,
+  TPFTransformChart,
 } from './hop-charts';
 
 // Hàm render chart tương ứng với từng Hop id kèm mode, metrics và số tệp cộng dồn
@@ -58,32 +61,33 @@ function renderHopChart(
 ): JSX.Element | null {
   switch (hopId) {
     case 'bronze':
-    case 'route':
       return <CadenceTimelineChart mode={mode} totalFiles={totalFiles} metrics={metrics} telemetry={telemetry} />;
+    case 'route':
+      return <ProductDemuxChart mode={mode} totalFiles={totalFiles} metrics={metrics} telemetry={telemetry} />;
     case 'decode':
       return <QualityMaskChart mode={mode} totalFiles={totalFiles} metrics={metrics} telemetry={telemetry} />;
     case 'lc-quality':
       return <QualityMaskChart mode={mode} totalFiles={totalFiles} metrics={metrics} telemetry={telemetry} modality="lightcurve" />;
     case 'tpf-quality':
-      return <QualityMaskChart mode={mode} totalFiles={totalFiles} metrics={metrics} telemetry={telemetry} modality="target-pixel" />;
+      return <TPFQualityWCSChart mode={mode} totalFiles={totalFiles} metrics={metrics} telemetry={telemetry} />;
     case 'transform':
       return <ResidualsDistributionChart metrics={metrics} telemetry={telemetry} scatterPoints={scatterPoints} tpfTransformPoints={tpfTransformPoints} />;
     case 'lc-transform':
-      return <ResidualsDistributionChart metrics={metrics} telemetry={telemetry} focus="lightcurve" scatterPoints={scatterPoints} />;
+      return <LCDetrendChart metrics={metrics} telemetry={telemetry} scatterPoints={scatterPoints} />;
     case 'tpf-transform':
-      return <ResidualsDistributionChart metrics={metrics} telemetry={telemetry} focus="target-pixel" tpfTransformPoints={tpfTransformPoints} />;
+      return <TPFTransformChart metrics={metrics} telemetry={telemetry} tpfTransformPoints={tpfTransformPoints} />;
     case 'silver':
       return <SilverMaterializationChart metrics={metrics} telemetry={telemetry} materializationPoints={materializationPoints} encodeFailures={encodeFailures} silverFailures={silverFailures} />;
     case 'lc-parquet':
-      return <SilverMaterializationChart metrics={metrics} telemetry={telemetry} focus="lightcurve" materializationPoints={materializationPoints} encodeFailures={encodeFailures} />;
+      return <LCParquetChart metrics={metrics} telemetry={telemetry} materializationPoints={materializationPoints} encodeFailures={encodeFailures} />;
     case 'tpf-parquet':
-      return <SilverMaterializationChart metrics={metrics} telemetry={telemetry} focus="target-pixel" materializationPoints={materializationPoints} encodeFailures={encodeFailures} />;
+      return <TPFParquetChart metrics={metrics} telemetry={telemetry} materializationPoints={materializationPoints} encodeFailures={encodeFailures} />;
     case 'checkpoint':
-      return <CheckpointMetricsChart metrics={metrics} checkpoints={checkpointPoints} />;
+      return <CheckpointMetricsChart metrics={metrics} checkpoints={checkpointPoints} materializationPoints={materializationPoints} />;
     case 'lineage':
-      return <CompressionRatioChart mode={mode} totalFiles={totalFiles} metrics={metrics} materializationPoints={materializationPoints} scope="bronze-silver" />;
+      return <LineageLedgerChart mode={mode} metrics={metrics} materializationPoints={materializationPoints} />;
     case 'event':
-      return <EventPublishChart metrics={metrics} />;
+      return <EventPublishChart metrics={metrics} materializationPoints={materializationPoints} />;
     case 'ack':
       return <AckDeliveryChart metrics={metrics} />;
     case 'gold-pairing':
@@ -95,19 +99,31 @@ function renderHopChart(
         ? <CatalogResolutionChart metrics={metrics} details={details} />
         : <GoldPhaseChart metrics={metrics} telemetry={telemetry} phase={hopId} />;
     case 'gold-lc-features':
-      return <LightCurveFeaturesChart metrics={metrics} evidence={lcFeatureEvidence} />;
     case 'gold-bls':
-      return <BLSSearchChart metrics={metrics} evidence={blsSearchEvidence} />;
+      return (
+        <LightCurveFeaturesChart
+          metrics={metrics}
+          telemetry={telemetry}
+          evidence={lcFeatureEvidence}
+          blsEvidence={blsSearchEvidence}
+        />
+      );
     case 'gold-tpf-evidence':
       return <TPFSpatialEvidenceChart metrics={metrics} evidence={tpfSpatialEvidence} />;
     case 'gold-candidate':
-      return <CandidateAssemblyChart metrics={metrics} evidence={candidateAssemblyEvidence} />;
+      return <CandidateAssemblyChart metrics={metrics} telemetry={telemetry} evidence={candidateAssemblyEvidence} />;
     case 'gold-parquet':
-      return <GoldMaterializationChart metrics={metrics} evidence={goldMaterializationEvidence} />;
     case 'gold-index':
-      return <GoldProjectionChart metrics={metrics} evidence={goldProjectionEvidence} />;
     case 'gold-commit':
-      return <GoldCommitChart metrics={metrics} evidence={goldCommitEvidence} />;
+      return (
+        <GoldCommitChart
+          metrics={metrics}
+          telemetry={telemetry}
+          evidence={goldCommitEvidence}
+          materializationEvidence={goldMaterializationEvidence}
+          projectionEvidence={goldProjectionEvidence}
+        />
+      );
     default:
       return <StageEvidence metrics={metrics} />;
   }
@@ -126,6 +142,28 @@ type ScientificReference = {
 
 function scientificReference(hop: Hop): ScientificReference {
   const references: Record<string, ScientificReference> = {
+    bronze: {
+      formulas: [
+        { label: 'Staged integrity', expression: 'verified = size_bytes > 0 ∧ sha256_match' },
+        { label: 'Footprint ratio', expression: 'stored GiB = Σ file bytes / 2³⁰' },
+      ],
+      terms: [
+        { term: 'Bronze FITS', meaning: 'Tệp FITS thiên văn học thô tải trực tiếp từ NASA MAST hoặc S3 staging.' },
+        { term: 'Checksum Gate', meaning: 'Kiểm tra mã băm SHA-256 bảo đảm tệp nguyên vẹn, không bị hỏng hóc khi truyền nhận.' },
+        { term: 'Awaiting Silver', meaning: 'Số tệp Bronze đang nằm trong vùng đệm chưa được seal thành checkpoint Silver.' },
+      ],
+    },
+    route: {
+      formulas: [
+        { label: 'Demux balance ratio', expression: 'LC split % = LC products / (LC + TPF) × 100%' },
+        { label: 'Dispatch throughput', expression: 'rate = d(LC + TPF) / dt' },
+      ],
+      terms: [
+        { term: 'Product Demux', meaning: 'Đọc FITS header cards (XTENSION, EXTNAME) để phân loại và tách luồng song song.' },
+        { term: 'Light Curve (Stream 03A)', meaning: 'Chuỗi dữ liệu 1D thời gian biểu diễn biến thiên thông lượng ánh sáng của sao.' },
+        { term: 'Target Pixel (Stream 03B)', meaning: 'Mảng ảnh 2D (11×11 pixel postage stamps) phục vụ kiểm định độ dịch chuyển centroid.' },
+      ],
+    },
     'lc-quality': {
       formulas: [
         { label: 'Tỷ lệ giữ lại', expression: 'retention = valid cadences / input cadences × 100%' },
@@ -138,46 +176,76 @@ function scientificReference(hop: Hop): ScientificReference {
     },
     'tpf-quality': {
       formulas: [
-        { label: 'Tỷ lệ giữ lại', expression: 'retention = valid image cadences / input cadences × 100%' },
-        { label: 'Cadence hợp lệ', expression: 'quality = 0 ∧ finite(time) ∧ time > 0' },
+        { label: 'Spatial grid geometry', expression: 'stamp shape = 11 × 11 = 121 px/frame' },
+        { label: 'Finite pixel fraction', expression: 'finite px = finite_count / (N_frames × 121) × 100%' },
+        { label: 'WCS astrometry solution', expression: 'RA/Dec = WCS(x, y, CRVAL, CDELT, PC)' },
       ],
       terms: [
-        { term: 'TPF', meaning: 'Chuỗi ảnh pixel nhỏ quanh một mục tiêu TESS.' },
-        { term: 'Image cadence', meaning: 'Một khung pixel tại một thời điểm quan sát.' },
+        { term: '11×11 Postage Stamp', meaning: 'Ma trận tem ảnh 2 chiều cắt xung quanh tọa độ thiên văn của ngôi sao mục tiêu.' },
+        { term: 'WCS Astrometry', meaning: 'Hệ tọa độ thiên cầu thế giới (World Coordinate System) ánh xạ pixel (x, y) sang thiên kinh RA / thiên vĩ Dec.' },
+        { term: 'Finite Pixel Density', meaning: 'Tỷ lệ điểm ảnh có giá trị số học hữu hạn, không bị dead/null/NaN trên cảm biến CCD.' },
+        { term: 'Aperture Mask', meaning: 'Mặt nạ phân vùng không gian tách biệt giữa ánh sáng sao (Core PSF) và nền trời (Sky Background).' },
       ],
     },
     'lc-transform': {
       formulas: [
         { label: 'Median normalization', expression: 'fᵢ = Fᵢ / median(F) − 1' },
-        { label: 'Scatter', expression: 'scatter_ppm = stddev(f) × 10⁶' },
-        { label: 'Sigma clipping', expression: 'reject i when |fᵢ| / stddev(f) > k' },
+        { label: 'Flux Scatter', expression: 'scatter_ppm = stddev(f) × 10⁶' },
+        { label: 'Ngưỡng Sigma-clipping', expression: '|fᵢ − median(f)| ≤ 3.0σ (giữ cadences; ≥ 5.0σ loại spike)' },
+        { label: 'Độ sâu transit tương đối', expression: 'ΔF / F = depth_ppm × 10⁻⁶' },
+        { label: 'Bảo toàn trắc quang', expression: 'scatter_after ≤ scatter_before' },
       ],
       terms: [
-        { term: 'Scatter', meaning: 'Mức dao động của flux đã chuẩn hoá quanh 0; thấp thường ổn định hơn.' },
-        { term: 'ppm', meaning: 'Parts per million; 10,000 ppm tương đương 1% biến thiên flux.' },
-        { term: 'σ (sigma)', meaning: 'Một độ lệch chuẩn tính trên flux đã chuẩn hoá.' },
-        { term: 'y = x', meaning: 'Đường không đổi; điểm dưới đường có scatter giảm sau clipping.' },
+        { term: 'PDC-SAP Flux', meaning: 'Pre-search Data Conditioning Simple Aperture Photometry; chuỗi thông lượng đã khử trôi dạt và nhiễu hệ thống TESS.' },
+        { term: 'Ngưỡng Sigma (3σ / 5σ)', meaning: '< 3σ bảo toàn lòng chảo transit; 3–5σ vùng đệm kiểm tra; ≥ 5σ loại bỏ tia vũ trụ / spike cực đoan.' },
+        { term: 'Scatter (ppm)', meaning: 'Thước đo tán xạ trắc quang đo bằng phần triệu (parts per million); 10,000 ppm tương đương 1% biến thiên ánh sáng.' },
+        { term: 'Bảo toàn transit sâu', meaning: 'Bảo toàn đầy đủ lòng chảo quá cảnh của các ngoại hành tinh lớn (Hot Jupiter ~10,000–20,000 ppm), không làm suy hao tín hiệu.' },
+        { term: 'Đường tham chiếu y = x', meaning: 'Đường so sánh phân bố trước/sau xử lý; các điểm nằm phía dưới đường biểu thị độ tán xạ giảm thành công.' },
       ],
     },
     'tpf-transform': {
       formulas: [
-        { label: 'Temporal normalization', expression: 'p′ₜⱼ = pₜⱼ / medianₜ(pⱼ) − 1' },
-        { label: 'Finite-pixel fraction', expression: 'finite pixels / total pixels × 100%' },
-        { label: 'Robust pixel scatter', expression: 'scatterⱼ = 1.4826 × medianₜ(|p′ₜⱼ − medianₜ(p′ⱼ)|) × 10⁶ ppm' },
-        { label: 'Reference drift', expression: 'driftⱼ = |median₂(pⱼ) − median₁(pⱼ)| / |median(pⱼ)| × 10⁶ ppm' },
-        { label: 'Chunk-boundary jump', expression: 'jump = medianⱼ(|p′first,j − p′previous-last,j|) × 10⁶ ppm' },
+        { label: 'Chuẩn hóa thông lượng điểm ảnh', expression: "p′ₜᵣ𝒸 = pₜᵣ𝒸 / medianₜ(pₜᵣ𝒸) − 1 (khi median > 0, ngược lại = 0)" },
+        { label: 'Tán xạ trắc quang robust (MAD)', expression: 'MADᵣ𝒸 = 1.4826 × medianₜ(|p′ₜᵣ𝒸 − medianₜ(p′ᵣ𝒸)|) × 10⁶ ppm' },
+        { label: 'Độ trôi đường nền (Temporal Drift)', expression: 'Drift = (|median_half2 − median_half1| / |median_full|) × 10⁶ ppm' },
+        { label: 'Độ gián đoạn nối chunk (Seam Jump)', expression: 'Jump_boundary = |p_chunk2_first − p_chunk1_last| × 10⁶ ppm' },
+        { label: 'Tỷ lệ bảo toàn điểm ảnh (Finite Density)', expression: 'Ratio_finite = N_finite / N_total = 100.0%' },
       ],
       terms: [
-        { term: 'Temporal median', meaning: 'Median theo thời gian của cùng một pixel trong cube.' },
-        { term: 'Finite pixel', meaning: 'Giá trị pixel là số hữu hạn, không phải NaN hoặc ±Inf.' },
-        { term: 'MAD', meaning: 'Median absolute deviation; thước đo scatter bền vững trước outlier.' },
-        { term: 'Reference drift', meaning: 'Mức dịch chuyển median giữa nửa đầu và nửa sau của một chunk.' },
-        { term: 'Boundary jump', meaning: 'Độ gián đoạn flux chuẩn hoá giữa hai chunk liên tiếp.' },
-        { term: 'ppm', meaning: 'Parts per million; 10,000 ppm tương đương 1% biến thiên tương đối.' },
+        { term: 'Temporal Median Reference', meaning: 'Đường nền trung vị thời gian m_rc của từng pixel trong ma trận 11×11 để chuẩn hóa thông lượng.' },
+        { term: 'Pixel Scatter MAD', meaning: 'Độ phân tán trắc quang robust của từng pixel qua chuỗi quan sát, đo lường bằng ppm.' },
+        { term: 'Reference Baseline Drift', meaning: 'Độ trôi dạt đường nền trung vị giữa 2 nửa chuỗi thời gian, đánh giá độ ổn định lâu dài.' },
+        { term: 'Chunk Boundary Jump', meaning: 'Độ lệch quang thông tại ranh giới nối giữa các chunk phân mảnh bộ nhớ của worker preprocessor.' },
+        { term: 'Invalid Reference Floor', meaning: 'Các pixel nền trời có thông lượng trung vị ≤ 0 được đưa về baseline an toàn 0.0 để tránh chia cho 0.' },
       ],
     },
-    'lc-parquet': materializationReference('Light Curve'),
-    'tpf-parquet': materializationReference('Target Pixel'),
+    'lc-parquet': {
+      formulas: [
+        { label: 'Hệ số nén Parquet', expression: 'compression_ratio = Bronze FITS bytes / Silver Parquet bytes' },
+        { label: 'Dung lượng trung bình', expression: 'mean_size = silver_bytes / completed_lightcurves' },
+        { label: 'Mật độ cadence', expression: 'cadences_per_file = total_cadences / completed_lightcurves' },
+        { label: 'Ngân sách độ trễ P95', expression: 'encode_latency_p95 ≤ 100 ms' },
+      ],
+      terms: [
+        { term: 'silver-lightcurve-v1', meaning: 'Hợp đồng schema Parquet chuẩn hóa 4 cột: time (BJD float64), flux (float32), flux_err (float32), quality (uint32).' },
+        { term: 'Columnar Compression', meaning: 'Nén theo cột ZSTD/Snappy tận dụng độ tương quan giữa các cadence liên tiếp, tiết kiệm >80% dung lượng đĩa.' },
+        { term: 'BJD Barycentric Time', meaning: 'Thời gian đã hiệu chỉnh về khối tâm Hệ Mặt Trời, độ chính xác float64 micro-giây phục vụ khớp mô hình Kepler.' },
+        { term: 'Dictionary Encoding', meaning: 'Mã hóa từ điển tự động gom nhóm cờ quality bitmask, giảm kích thước cột cờ xuống dưới 2% dung lượng gốc.' },
+      ],
+    },
+    'tpf-parquet': {
+      formulas: [
+        { label: 'Hệ số nén khối TPF', expression: 'compression_ratio = Bronze TPF bytes / Silver TPF bytes' },
+        { label: 'Kích thước tem ảnh', expression: 'stamp geometry = 11 × 11 = 121 pixels/cadence' },
+        { label: 'Mật độ pixel đã nén', expression: 'total_pixels = retained_cadences × 121 pixels' },
+        { label: 'Chunk Row-Group Budget', expression: 'chunk_duration_p95 ≤ 2.5 s' },
+      ],
+      terms: [
+        { term: 'silver-target-pixel-v1', meaning: 'Schema Parquet phân chia theo Row Group: cadence, time, 121 pixel flux, background nền trời và WCS astrometry.' },
+        { term: 'Row-Group Chunking', meaning: 'Chia khối 3D TPF thành các Row Group độc lập giúp worker downstream đọc từng đoạn thời gian mà không cần nạp cả cube 10MB vào RAM.' },
+        { term: 'WCS Astrometry Binding', meaning: 'Liên kết ma trận xoay và tỷ lệ pixel (21 arcsec/px) trực tiếp vào metadata Parquet phục vụ đo trắc tinh tâm sao.' },
+      ],
+    },
     silver: {
       formulas: [
         { label: 'Size verification', expression: 'size_ok = stored bytes = checkpoint expected bytes' },
@@ -273,20 +341,18 @@ function scientificReference(hop: Hop): ScientificReference {
     },
     'gold-lc-features': {
       formulas: [
-        { label: 'Observation baseline', expression: 'time span = max(time) − min(time)' },
-        { label: 'Median cadence', expression: 'median cadence = median(diff(time))' },
-        { label: 'Largest gap', expression: 'max gap = max(diff(time))' },
         { label: 'Flux scatter', expression: 'σ_flux = sqrt(mean((flux − mean(flux))²))' },
         { label: 'Robust amplitude', expression: 'amplitude = P95(flux) − P05(flux)' },
-        { label: 'Flux RMS', expression: 'RMS = sqrt(mean(flux²))' },
+        { label: 'Search upper bound', expression: 'effective P_max = min(configured P_max, observation baseline / 2)' },
+        { label: 'Best periodic box', expression: '(P*, D*) = arg max power_BLS(P, D)' },
+        { label: 'Transit depth', expression: 'depth = |fitted box depth| × 10⁶ ppm' },
+        { label: 'Observation baseline', expression: 'time span = max(time) − min(time)' },
       ],
       terms: [
-        { term: 'Feature row', meaning: 'Một vector thống kê xác định được trích từ một Silver Light Curve.' },
-        { term: 'Observation baseline', meaning: 'Khoảng thời gian từ cadence đầu đến cadence cuối của Light Curve.' },
-        { term: 'Median cadence', meaning: 'Khoảng thời gian lấy mẫu điển hình giữa hai điểm liên tiếp.' },
-        { term: 'Largest gap', meaning: 'Khoảng trống quan sát lớn nhất; dùng để nhận biết sampling bị gián đoạn.' },
-        { term: 'ppm', meaning: 'Parts per million của normalized flux; 10.000 ppm tương đương biến thiên 1%.' },
-        { term: 'Quantile profile', meaning: 'Các mốc phân vị trên toàn bộ Light Curve của snapshot, không phải chuỗi thời gian.' },
+        { term: '16-dim Morphology', meaning: 'Vector thuộc tính vật lý thiên văn gồm tán xạ thông lượng, thời gian và dạng sóng bậc cao.' },
+        { term: 'BLS Ephemeris', meaning: 'Nghiệm chu kỳ (Period), độ sâu (Depth), độ rộng (Duration) phát hiện từ Box Least Squares.' },
+        { term: 'Peak Power', meaning: 'Độ mạnh tương đối của nghiệm transit trên periodogram tần số.' },
+        { term: 'ppm', meaning: 'Parts per million của normalized flux; 10.000 ppm tương đương sụt giảm 1%.' },
       ],
     },
     'gold-bls': {
@@ -367,15 +433,16 @@ function scientificReference(hop: Hop): ScientificReference {
     },
     'gold-commit': {
       formulas: [
-        { label: 'Immutable commit validity', expression: 'valid = manifest COMMITTED ∧ SHA/fingerprint bound ∧ artifacts intact ∧ row parity ∧ projection READY' },
-        { label: 'Row reconciliation', expression: 'batch candidate_rows = manifest row_count = queryable projection rows' },
-        { label: 'Current activation', expression: 'active = pointer(snapshot, fingerprint, manifest key, manifest SHA) matches snapshot' },
+        { label: 'Row reconciliation', expression: 'batch candidate_rows = manifest row_count = ClickHouse queryable rows' },
+        { label: 'Parquet storage density', expression: 'density = stored bytes / artifact candidate rows' },
+        { label: 'Index parity', expression: 'indexed ClickHouse rows / candidate rows × 100%' },
+        { label: 'Immutable commit validity', expression: 'valid = manifest COMMITTED ∧ SHA256 verified ∧ Parquet intact ∧ projection READY' },
       ],
       terms: [
-        { term: 'Immutable snapshot', meaning: 'Manifest và artifact đã commit theo snapshot ID; không thay đổi khi một snapshot mới trở thành current.' },
-        { term: 'End-to-end verified', meaning: 'Toàn bộ storage, provenance, row accounting và analytical projection cùng vượt qua integrity gate.' },
-        { term: 'Current pointer', meaning: 'Con trỏ activation có thể chuyển sang snapshot mới; HISTORY không có nghĩa snapshot cũ bị lỗi.' },
-        { term: 'Fingerprint binding', meaning: 'Snapshot ID, fingerprint và manifest key trong manifest khớp durable batch ledger.' },
+        { term: 'Gold Parquet', meaning: 'Các phân vùng cột nén Snappy lưu trên MinIO object storage.' },
+        { term: 'ReplacingMergeTree', meaning: 'Bảng ClickHouse phân tích low-latency cho candidate exoplanets.' },
+        { term: 'Manifest SHA', meaning: 'Mã băm SHA-256 ký số snapshot xác thực tính bất biến (immutable).' },
+        { term: 'Three-way Parity', meaning: 'Sự đồng bộ tuyệt đối giữa số hàng trong batch, trong Parquet và trong ClickHouse.' },
       ],
     },
   };
@@ -389,28 +456,36 @@ function scientificReference(hop: Hop): ScientificReference {
   };
 }
 
-function materializationReference(scope: string): ScientificReference {
-  return {
-    formulas: [
-      { label: 'Compression ratio', expression: 'input bytes / output bytes' },
-      { label: 'Mean artifact size', expression: 'total bytes / artifact count' },
-    ],
-    terms: [
-      { term: `${scope} artifact`, meaning: 'Đối tượng Parquet đã ghi xong và được kiểm tra kích thước/checksum.' },
-      { term: 'Compression ratio', meaning: 'Lớn hơn 1 nghĩa là dữ liệu lưu trữ nhỏ hơn đầu vào.' },
-    ],
-  };
-}
 
 function ScientificMethodCard({ hop }: { hop: Hop }): JSX.Element {
   const reference = scientificReference(hop);
-  return <div className="space-y-2 rounded-lg border border-border/60 bg-muted/15 p-3">
-    <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-      <Calculator className="size-3.5 text-primary" /> Phương pháp tính & thuật ngữ
-    </span>
-    {reference.formulas.length > 0 && <div className="space-y-1.5">{reference.formulas.map((formula) => <div key={formula.label} className="border border-border/50 bg-background p-2"><p className="text-[9px] uppercase text-muted-foreground">{formula.label}</p><p className="mt-0.5 overflow-x-auto whitespace-nowrap font-mono text-[11px] text-primary">{formula.expression}</p></div>)}</div>}
-    <dl className="divide-y divide-border/50 border border-border/50 bg-background">{reference.terms.map((item) => <div key={item.term} className="px-2 py-1.5"><dt className="font-mono text-[10px] font-semibold text-foreground">{item.term}</dt><dd className="mt-0.5 text-[10px] leading-4 text-muted-foreground">{item.meaning}</dd></div>)}</dl>
-  </div>;
+  return (
+    <div className="space-y-2 rounded-lg border border-border bg-card p-3 shadow-xs dark:border-border/60 dark:bg-muted/15">
+      <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+        <Calculator className="size-3.5 text-primary" /> Phương pháp tính & thuật ngữ
+      </span>
+      {reference.formulas.length > 0 && (
+        <div className="space-y-1.5">
+          {reference.formulas.map((formula) => (
+            <div key={formula.label} className="rounded border border-border/70 bg-muted/30 p-2 dark:bg-background">
+              <p className="text-[9px] uppercase font-medium text-muted-foreground">{formula.label}</p>
+              <p className="mt-0.5 break-words font-mono text-[11px] font-semibold leading-relaxed text-primary">
+                {formula.expression}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+      <dl className="divide-y divide-border/60 rounded border border-border/70 bg-card overflow-hidden dark:bg-background">
+        {reference.terms.map((item) => (
+          <div key={item.term} className="px-2.5 py-1.5">
+            <dt className="break-words font-mono text-[10px] font-semibold text-foreground">{item.term}</dt>
+            <dd className="mt-0.5 break-words text-[10px] leading-4 text-muted-foreground">{item.meaning}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
 }
 
 export function HopDetailDrawer({
@@ -485,12 +560,7 @@ export function HopDetailDrawer({
               <DrawerTitle className="text-base font-bold flex items-center gap-2">
                 <Workflow className="size-4 text-primary" />
                 {selectedHop ? `Bước ${selectedHop.stepNumber}: ${selectedHop.label}` : 'Chi tiết bước xử lý'}
-                {selectedHop && (
-                  <Badge variant="outline" className="ml-2 font-mono text-[10px] uppercase">
-                    {selectedHop.status}
-                  </Badge>
-                )}
-                <Badge variant="secondary" className="font-mono text-[10px] uppercase">
+                <Badge variant="secondary" className="ml-2 font-mono text-[10px] uppercase">
                   {mode === 'stream' ? 'Stream mode' : 'Batch mode'}
                 </Badge>
               </DrawerTitle>
@@ -510,38 +580,30 @@ export function HopDetailDrawer({
         <div className="min-h-0 flex-1 overflow-y-auto p-3 text-xs md:p-4">
           {selectedHop ? (
             <div className="grid min-h-full items-start gap-3 xl:grid-cols-[minmax(270px,0.22fr)_minmax(0,0.78fr)]">
-              {/* Left Column: status, scientific goal, formulas and terminology */}
+              {/* Left Column: scientific goal, formulas and terminology */}
               <div className="space-y-2">
-                {/* Status, Input, Output Cards */}
-                <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-1">
-                  <div className="bg-muted/20 p-2.5 rounded-lg border border-border/50">
-                    <span className="text-muted-foreground block text-[10px] font-semibold uppercase">
-                      Trạng thái Pipeline
-                    </span>
-                    <span className="font-mono font-bold text-foreground text-xs uppercase mt-0.5 block">
-                      {selectedHop.status}
-                    </span>
-                  </div>
-                  <div className="bg-muted/20 p-2.5 rounded-lg border border-border/50">
+                {/* Input & Output Cards */}
+                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
+                  <div className="bg-card p-2.5 rounded-lg border border-border shadow-xs dark:bg-muted/20 dark:border-border/50">
                     <span className="text-muted-foreground block text-[10px] font-semibold uppercase">
                       Đầu vào (Input)
                     </span>
-                    <span className="font-semibold text-foreground text-xs truncate block mt-0.5" title={selectedHop.input}>
+                    <span className="font-semibold text-foreground text-xs break-words whitespace-normal block mt-0.5" title={selectedHop.input}>
                       {selectedHop.input}
                     </span>
                   </div>
-                  <div className="bg-muted/20 p-2.5 rounded-lg border border-border/50">
+                  <div className="bg-card p-2.5 rounded-lg border border-border shadow-xs dark:bg-muted/20 dark:border-border/50">
                     <span className="text-muted-foreground block text-[10px] font-semibold uppercase">
                       Đầu ra (Output)
                     </span>
-                    <span className="font-semibold text-foreground text-xs truncate block mt-0.5" title={selectedHop.output}>
+                    <span className="font-semibold text-foreground text-xs break-words whitespace-normal block mt-0.5" title={selectedHop.output}>
                       {selectedHop.output}
                     </span>
                   </div>
                 </div>
 
                 {/* Astronomy Goal */}
-                <div className="bg-muted/15 p-3 rounded-lg border border-border/60 space-y-1.5">
+                <div className="bg-card p-3 rounded-lg border border-border shadow-xs dark:bg-muted/15 dark:border-border/60 space-y-2">
                   <span className="text-muted-foreground uppercase tracking-wider text-[10px] font-bold flex items-center gap-1.5">
                     <FileText className="size-3.5 text-primary" /> Mục tiêu Khoa học Thiên văn
                   </span>
@@ -554,7 +616,7 @@ export function HopDetailDrawer({
               </div>
 
               {/* Right Column: large scientific visualizer */}
-              <div className="min-h-[480px] bg-muted/15 p-3 rounded-lg border border-border/80 space-y-3">
+              <div className="min-h-[480px] bg-card p-3 rounded-lg border border-border shadow-xs dark:bg-muted/15 dark:border-border/80 space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/40 pb-2">
                   <div className="flex items-center gap-2 text-foreground font-semibold text-xs">
                     <Activity className="size-4 text-primary" />
@@ -568,7 +630,7 @@ export function HopDetailDrawer({
                   </div>
                 </div>
 
-                  {renderHopChart(selectedHop.id, mode, totalFiles, mergedMetrics, mergedTelemetry, selectedHop.scatter_points, selectedHop.tpf_transform_points, selectedHop.materialization_points, selectedHop.encode_failures, selectedHop.silver_failures, selectedHop.checkpoint_points, selectedHop.details, selectedHop.lc_feature_evidence, selectedHop.bls_search_evidence, selectedHop.tpf_spatial_evidence, selectedHop.candidate_assembly_evidence, selectedHop.gold_materialization_evidence, selectedHop.gold_projection_evidence, selectedHop.gold_commit_evidence)}
+                {renderHopChart(selectedHop.id, mode, totalFiles, mergedMetrics, mergedTelemetry, selectedHop.scatter_points, selectedHop.tpf_transform_points, selectedHop.materialization_points, selectedHop.encode_failures, selectedHop.silver_failures, selectedHop.checkpoint_points, selectedHop.details, selectedHop.lc_feature_evidence, selectedHop.bls_search_evidence, selectedHop.tpf_spatial_evidence, selectedHop.candidate_assembly_evidence, selectedHop.gold_materialization_evidence, selectedHop.gold_projection_evidence, selectedHop.gold_commit_evidence)}
               </div>
             </div>
           ) : (

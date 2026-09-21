@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -36,6 +39,62 @@ func NewLakehouseService(objects provider.ObjectStorage, bucket string) domainSe
 		objects: objects,
 		bucket:  bucket,
 	}
+}
+
+type prefixStatter interface {
+	StatPrefix(ctx context.Context, prefix string) (int, int64, error)
+}
+
+func (s *LakehouseService) statTier(ctx context.Context, tier string) (int, int64, error) {
+	if statter, ok := s.objects.(prefixStatter); ok {
+		return statter.StatPrefix(ctx, tier)
+	}
+	objs, err := s.objects.ListObjects(ctx, tier)
+	if err != nil {
+		return 0, 0, err
+	}
+	var totalBytes int64
+	for _, o := range objs {
+		totalBytes += o.Size
+	}
+	return len(objs), totalBytes, nil
+}
+
+// Summary aggregates total object count and byte footprint across all Medallion tiers.
+func (s *LakehouseService) Summary(ctx context.Context) (*entity.LakehouseSummary, error) {
+	tiers := []string{"bronze/", "silver/", "gold/"}
+	type tierResult struct {
+		tier  string
+		total int
+		bytes int64
+		err   error
+	}
+
+	results := make(chan tierResult, len(tiers))
+	for _, t := range tiers {
+		tier := t
+		go func() {
+			total, bytes, err := s.statTier(ctx, tier)
+			results <- tierResult{tier: tier, total: total, bytes: bytes, err: err}
+		}()
+	}
+
+	summary := &entity.LakehouseSummary{}
+	for i := 0; i < len(tiers); i++ {
+		res := <-results
+		if res.err != nil {
+			return nil, fmt.Errorf("stat lakehouse tier %q: %w", res.tier, res.err)
+		}
+		switch res.tier {
+		case "bronze/":
+			summary.Bronze = entity.LakehouseTierSummary{Total: res.total, TotalBytes: res.bytes}
+		case "silver/":
+			summary.Silver = entity.LakehouseTierSummary{Total: res.total, TotalBytes: res.bytes}
+		case "gold/":
+			summary.Gold = entity.LakehouseTierSummary{Total: res.total, TotalBytes: res.bytes}
+		}
+	}
+	return summary, nil
 }
 
 // List enumerates Lakehouse objects using ListObjects, supporting search filtering and random-access page pagination.
@@ -402,6 +461,13 @@ func previewLakehouseFITS(data []byte) (*entity.LakehouseFITSPreview, error) {
 			break
 		}
 
+		cardMap := make(map[string]string, len(cards))
+		for _, c := range cards {
+			if c.Keyword != "" {
+				cardMap[c.Keyword] = c.Value
+			}
+		}
+
 		hduName := summary["EXTNAME"]
 		hduType := "PRIMARY"
 		if hduIndex > 0 {
@@ -417,15 +483,46 @@ func previewLakehouseFITS(data []byte) (*entity.LakehouseFITSPreview, error) {
 			hduName = fmt.Sprintf("HDU %d (%s)", hduIndex, hduType)
 		}
 
+		var tablePreview *entity.LakehouseFITSTablePreview
+		dataSize := 0
+		if hduType == "BINTABLE" {
+			naxis1, _ := strconv.Atoi(cardMap["NAXIS1"])
+			naxis2, _ := strconv.Atoi(cardMap["NAXIS2"])
+			tfields, _ := strconv.Atoi(cardMap["TFIELDS"])
+			if naxis1 > 0 && naxis2 > 0 {
+				tablePreview = decodeFITSBinTable(data, pos, naxis1, naxis2, tfields, cardMap)
+				dataSize = naxis1 * naxis2
+			}
+		} else if hduType == "IMAGE" {
+			bitpix, _ := strconv.Atoi(cardMap["BITPIX"])
+			naxis, _ := strconv.Atoi(cardMap["NAXIS"])
+			if naxis >= 2 {
+				n1, _ := strconv.Atoi(cardMap["NAXIS1"])
+				n2, _ := strconv.Atoi(cardMap["NAXIS2"])
+				bytesPerPix := int(math.Abs(float64(bitpix))) / 8
+				if bytesPerPix < 1 {
+					bytesPerPix = 1
+				}
+				dataSize = n1 * n2 * bytesPerPix
+			}
+		}
+
 		hdus = append(hdus, entity.LakehouseFITSHDU{
 			Index:   hduIndex,
 			Name:    hduName,
 			Type:    hduType,
 			Cards:   cards,
 			Summary: summary,
+			Table:   tablePreview,
 		})
 
 		hduIndex++
+
+		// Advance pos past data block (padded to 2880 bytes)
+		if dataSize > 0 {
+			paddedBlocks := ((dataSize + 2879) / 2880) * 2880
+			pos += paddedBlocks
+		}
 
 		// Scan for next HDU block
 		nextHduFound := false
@@ -445,4 +542,207 @@ func previewLakehouseFITS(data []byte) (*entity.LakehouseFITSPreview, error) {
 	}
 
 	return &entity.LakehouseFITSPreview{HDUs: hdus}, nil
+}
+
+type fitsColDef struct {
+	name   string
+	unit   string
+	format string
+	kind   byte
+	size   int
+	offset int
+}
+
+func decodeFITSBinTable(data []byte, startPos int, naxis1, naxis2, tfields int, cardMap map[string]string) *entity.LakehouseFITSTablePreview {
+	if naxis1 <= 0 || naxis2 <= 0 || tfields <= 0 || startPos >= len(data) {
+		return nil
+	}
+	cols := make([]fitsColDef, 0, tfields)
+	entityCols := make([]entity.LakehouseFITSTableColumn, 0, tfields)
+	offset := 0
+	for i := 1; i <= tfields; i++ {
+		name := cardMap[fmt.Sprintf("TTYPE%d", i)]
+		form := cardMap[fmt.Sprintf("TFORM%d", i)]
+		unit := cardMap[fmt.Sprintf("TUNIT%d", i)]
+		if name == "" {
+			name = fmt.Sprintf("COL_%d", i)
+		}
+		kind := byte('A')
+		if len(form) > 0 {
+			kind = form[len(form)-1]
+		}
+		size := 1
+		colType := "string"
+		switch kind {
+		case 'D':
+			size = 8
+			colType = "float64"
+		case 'E':
+			size = 4
+			colType = "float32"
+		case 'J':
+			size = 4
+			colType = "int32"
+		case 'I':
+			size = 2
+			colType = "int16"
+		case 'B':
+			size = 1
+			colType = "uint8"
+		case 'A':
+			size = 1
+			colType = "string"
+		}
+
+		cols = append(cols, fitsColDef{
+			name:   name,
+			unit:   unit,
+			format: form,
+			kind:   kind,
+			size:   size,
+			offset: offset,
+		})
+		entityCols = append(entityCols, entity.LakehouseFITSTableColumn{
+			Name: name,
+			Type: colType,
+			Unit: unit,
+		})
+		offset += size
+	}
+
+	totalDataBytes := naxis1 * naxis2
+	if startPos+totalDataBytes > len(data) {
+		totalDataBytes = len(data) - startPos
+	}
+	actualRows := totalDataBytes / naxis1
+	if actualRows <= 0 {
+		return nil
+	}
+
+	maxSampleRows := 100
+	if maxSampleRows > actualRows {
+		maxSampleRows = actualRows
+	}
+
+	rows := make([]map[string]any, 0, maxSampleRows)
+	for r := 0; r < maxSampleRows; r++ {
+		rowOffset := startPos + r*naxis1
+		if rowOffset+naxis1 > len(data) {
+			break
+		}
+		rowBytes := data[rowOffset : rowOffset+naxis1]
+		row := make(map[string]any, len(cols)+1)
+		row["_row"] = r + 1
+		for _, c := range cols {
+			if c.offset+c.size > len(rowBytes) {
+				continue
+			}
+			cb := rowBytes[c.offset : c.offset+c.size]
+			switch c.kind {
+			case 'D':
+				val := math.Float64frombits(binary.BigEndian.Uint64(cb))
+				if math.IsNaN(val) || math.IsInf(val, 0) {
+					row[c.name] = nil
+				} else {
+					row[c.name] = val
+				}
+			case 'E':
+				val := math.Float32frombits(binary.BigEndian.Uint32(cb))
+				if math.IsNaN(float64(val)) || math.IsInf(float64(val), 0) {
+					row[c.name] = nil
+				} else {
+					row[c.name] = val
+				}
+			case 'J':
+				row[c.name] = int32(binary.BigEndian.Uint32(cb))
+			case 'I':
+				row[c.name] = int16(binary.BigEndian.Uint16(cb))
+			case 'B':
+				row[c.name] = uint8(cb[0])
+			case 'A':
+				row[c.name] = strings.TrimSpace(string(cb))
+			default:
+				row[c.name] = nil
+			}
+		}
+		rows = append(rows, row)
+	}
+
+	// Downsample for fast, interactive time-series chart
+	chartPoints := make([]map[string]any, 0, 300)
+	step := actualRows / 300
+	if step < 1 {
+		step = 1
+	}
+
+	var timeCol, fluxCol, errCol *fitsColDef
+	for i := range cols {
+		switch cols[i].name {
+		case "TIME":
+			timeCol = &cols[i]
+		case "PDCSAP_FLUX":
+			fluxCol = &cols[i]
+		case "PDCSAP_FLUX_ERR":
+			errCol = &cols[i]
+		case "SAP_FLUX":
+			if fluxCol == nil {
+				fluxCol = &cols[i]
+			}
+		case "SAP_FLUX_ERR":
+			if errCol == nil {
+				errCol = &cols[i]
+			}
+		}
+	}
+
+	if timeCol != nil && fluxCol != nil {
+		for r := 0; r < actualRows; r += step {
+			rowOffset := startPos + r*naxis1
+			if rowOffset+naxis1 > len(data) {
+				break
+			}
+			rowBytes := data[rowOffset : rowOffset+naxis1]
+
+			var tVal float64
+			var fVal float64
+			hasTime := false
+			hasFlux := false
+
+			if timeCol.kind == 'D' && timeCol.offset+8 <= len(rowBytes) {
+				tVal = math.Float64frombits(binary.BigEndian.Uint64(rowBytes[timeCol.offset : timeCol.offset+8]))
+				if !math.IsNaN(tVal) && !math.IsInf(tVal, 0) {
+					hasTime = true
+				}
+			}
+
+			if fluxCol.kind == 'E' && fluxCol.offset+4 <= len(rowBytes) {
+				v := math.Float32frombits(binary.BigEndian.Uint32(rowBytes[fluxCol.offset : fluxCol.offset+4]))
+				if !math.IsNaN(float64(v)) && !math.IsInf(float64(v), 0) {
+					fVal = float64(v)
+					hasFlux = true
+				}
+			}
+
+			if hasTime && hasFlux {
+				pt := map[string]any{
+					"time": tVal,
+					"flux": fVal,
+				}
+				if errCol != nil && errCol.kind == 'E' && errCol.offset+4 <= len(rowBytes) {
+					eV := math.Float32frombits(binary.BigEndian.Uint32(rowBytes[errCol.offset : errCol.offset+4]))
+					if !math.IsNaN(float64(eV)) && !math.IsInf(float64(eV), 0) {
+						pt["flux_err"] = float64(eV)
+					}
+				}
+				chartPoints = append(chartPoints, pt)
+			}
+		}
+	}
+
+	return &entity.LakehouseFITSTablePreview{
+		TotalRows: naxis2,
+		Columns:   entityCols,
+		Rows:      rows,
+		Chart:     chartPoints,
+	}
 }

@@ -1,7 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, JSX } from 'react';
 import { AlertCircle } from 'lucide-react';
-import { RunnerTicketBar } from '@/pages/runner-tickets/components/RunnerTicketBar';
 import { useRunnerTicket } from '@/lib/session';
 import { apiBase, apiFetch } from '@/lib/api';
 
@@ -37,6 +36,7 @@ export default function IngestPage(): JSX.Element {
   const [planningSignal, setPlanningSignal] = useState<PlanningSignal | null>(null);
   const [workerSignals, setWorkerSignals] = useState<Record<number, WorkerSignal>>({});
   const loadInFlight = useRef<Promise<void> | null>(null);
+  const workerHighWater = useRef(0);
 
   const load = useCallback(() => {
     if (loadInFlight.current) return loadInFlight.current;
@@ -59,7 +59,8 @@ export default function IngestPage(): JSX.Element {
   useEffect(() => {
     void load();
 
-    const sseTopic = activeTicket ? `ingest:${activeTicket}` : 'ingest';
+    const effectiveTicket = activeTicket || status?.ticket_id;
+    const sseTopic = effectiveTicket ? `ingest:${effectiveTicket}` : 'ingest';
     const eventSource = new EventSource(`${apiBase}/v1/events?topic=${encodeURIComponent(sseTopic)}`);
     eventSource.addEventListener('ready', () => {
       void load();
@@ -67,34 +68,26 @@ export default function IngestPage(): JSX.Element {
     eventSource.addEventListener('workflow', (event) => {
       let consumedRuntimeProgress = false;
       try {
-        const message = JSON.parse((event as MessageEvent<string>).data) as {
-          status?: string;
-          occurred_at?: string;
-          payload?: {
-            status?: string;
-            planning_stage?: string;
-            planning_completed?: number;
-            planning_total?: number;
-            planning_products?: number;
-            worker_id?: number;
-            product_id?: string;
-            product_kind?: string;
-            product_bytes?: number;
-            product_expected_bytes?: number;
-            occurred_at?: string;
-          };
-        };
-        const runtimeStatus = message.payload?.status ?? message.status;
+        const raw = JSON.parse((event as MessageEvent<string>).data) as Record<string, any>;
+        const payload = (raw.payload && typeof raw.payload === 'object') ? raw.payload : raw;
+        const runtimeStatus = payload.status ?? raw.status;
+
         if (runtimeStatus === 'planning') {
           const signal = {
-            stage: message.payload?.planning_stage,
-            completed: message.payload?.planning_completed,
-            total: message.payload?.planning_total,
-            products: message.payload?.planning_products,
-            occurredAt: message.payload?.occurred_at ?? message.occurred_at,
+            stage: payload.planning_stage,
+            completed: payload.planning_completed,
+            total: payload.planning_total,
+            products: payload.planning_products,
+            occurredAt: payload.occurred_at ?? raw.occurred_at,
           };
           setPlanningSignal(signal);
-          if (signal.stage === 'DISCOVERING_MAST_TARGETS' || signal.stage === 'RESOLVING_MAST_PRODUCTS') {
+          if (
+            signal.stage === 'DISCOVERING_MAST_TARGETS' ||
+            signal.stage === 'RESOLVING_MAST_PRODUCTS' ||
+            signal.stage === 'DOWNLOADING_TIC' ||
+            signal.stage === 'PINNING_CATALOG_SNAPSHOTS' ||
+            signal.stage === 'MANIFEST_READY'
+          ) {
             consumedRuntimeProgress = true;
             setStatus((current) => current?.manifest_progress ? {
               ...current,
@@ -113,29 +106,45 @@ export default function IngestPage(): JSX.Element {
             } : current);
           }
         }
-        if (runtimeStatus === 'transfer' && message.payload?.worker_id && message.payload.product_id) {
-          const workerId = message.payload.worker_id;
+        if (runtimeStatus === 'transfer' && payload.worker_id && payload.product_id) {
+          const workerId = Number(payload.worker_id);
           setWorkerSignals((current) => ({
             ...current,
             [workerId]: {
               workerId,
-              productId: message.payload!.product_id!,
-              productKind: message.payload?.product_kind,
-              bytesRead: Math.max(0, message.payload?.product_bytes ?? 0),
-              expectedBytes: Math.max(0, message.payload?.product_expected_bytes ?? 0),
-              occurredAt: message.payload?.occurred_at ?? message.occurred_at,
+              productId: String(payload.product_id),
+              productKind: payload.product_kind,
+              bytesRead: Math.max(0, Number(payload.product_bytes ?? 0)),
+              expectedBytes: Math.max(0, Number(payload.product_expected_bytes ?? 0)),
+              occurredAt: payload.occurred_at ?? raw.occurred_at,
             },
           }));
           consumedRuntimeProgress = true;
         }
-        if (runtimeStatus === 'transfer_complete' && message.payload?.worker_id) {
-          const workerId = message.payload.worker_id;
+        if (runtimeStatus === 'transfer_complete' && payload.worker_id) {
+          const workerId = Number(payload.worker_id);
           setWorkerSignals((current) => {
             const next = { ...current };
             delete next[workerId];
             return next;
           });
           consumedRuntimeProgress = true;
+        }
+        if (runtimeStatus === 'progress') {
+          consumedRuntimeProgress = true;
+          setStatus((current) =>
+            current
+              ? {
+                ...current,
+                completed_products: Number(payload.completed_products ?? current.completed_products),
+                total_products: Number(payload.total_products ?? current.total_products),
+                completed_bytes: Number(payload.completed_bytes ?? current.completed_bytes),
+                expected_bytes: Number(payload.expected_bytes ?? current.expected_bytes),
+                downloading: Number(payload.active_workers ?? current.downloading),
+                inflight_products: Number(payload.active_workers ?? current.inflight_products),
+              }
+              : current,
+          );
         }
       } catch {
         // Unknown events fall back to an authoritative snapshot below.
@@ -176,11 +185,18 @@ export default function IngestPage(): JSX.Element {
   const isDraining = (reportedStatus ?? '').toLowerCase() === 'draining';
 
   useEffect(() => {
-    if (!isIngesting) setWorkerSignals({});
+    if (!isIngesting) {
+      setWorkerSignals({});
+      workerHighWater.current = 0;
+    }
   }, [isIngesting]);
 
   const handleStart = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
+    if (!activeTicket) {
+      setError('Please select a Runner Ticket before starting an ingestion run.');
+      return;
+    }
     setControlBusy(true);
     setError(null);
     setWorkerSignals({});
@@ -223,10 +239,21 @@ export default function IngestPage(): JSX.Element {
     [status?.products],
   );
   const signaledWorkerCount = Object.keys(workerSignals).length;
-  const spawnedWorkerCount = Math.max(0, Math.round(status?.downloading ?? 0), signaledWorkerCount);
+  const rawSpawnedCount = Math.max(0, Math.round(status?.downloading ?? 0), signaledWorkerCount);
+  if (isIngesting && rawSpawnedCount > workerHighWater.current) {
+    workerHighWater.current = rawSpawnedCount;
+  }
+  const spawnedWorkerCount = isIngesting ? Math.max(rawSpawnedCount, workerHighWater.current) : rawSpawnedCount;
 
   const activeStatus = reportedStatus?.toLowerCase() === 'not_observed' ? undefined : reportedStatus;
-  const manifestDiscoveryActive = activeStatus === 'planning' && (status?.manifest_progress?.stage === 'DISCOVERING_MAST_PRODUCTS' || status?.manifest_progress?.stage === 'DISCOVERING_MAST_TARGETS' || status?.manifest_progress?.stage === 'RESOLVING_MAST_PRODUCTS');
+  const manifestDiscoveryActive = activeStatus === 'planning' && (
+    status?.manifest_progress?.stage === 'DISCOVERING_MAST_PRODUCTS' ||
+    status?.manifest_progress?.stage === 'DISCOVERING_MAST_TARGETS' ||
+    status?.manifest_progress?.stage === 'RESOLVING_MAST_PRODUCTS' ||
+    status?.manifest_progress?.stage === 'DOWNLOADING_TIC' ||
+    status?.manifest_progress?.stage === 'PINNING_CATALOG_SNAPSHOTS' ||
+    status?.manifest_progress?.stage === 'MANIFEST_READY'
+  );
   const manifestStageCompleted = status?.manifest_progress?.stage_completed ?? planningSignal?.completed ?? 0;
   const manifestStageTotal = status?.manifest_progress?.stage_total ?? planningSignal?.total ?? 0;
   const manifestProgressPercent = manifestDiscoveryActive && manifestStageTotal > 0
@@ -240,8 +267,6 @@ export default function IngestPage(): JSX.Element {
       {/* 1. Page Header / Hero Section */}
       <IngestHeroSection />
 
-      {/* 2. Runner Ticket Bar Section */}
-      <RunnerTicketBar />
 
       {/* Observation link error alert */}
       {error && (

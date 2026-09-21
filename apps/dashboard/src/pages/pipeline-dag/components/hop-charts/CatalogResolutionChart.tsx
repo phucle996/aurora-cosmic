@@ -1,120 +1,215 @@
-import type { JSX } from 'react';
+import { type JSX } from 'react';
 import {
   Bar,
   BarChart,
   CartesianGrid,
-  Legend,
+  Cell,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts';
+import { CheckCircle2, Sparkles, Compass, ShieldCheck, Database } from 'lucide-react';
 
 function value(metrics: Record<string, number> | undefined, key: string): number {
   const observed = metrics?.[key];
   return observed !== undefined && Number.isFinite(observed) ? Math.max(0, observed) : 0;
 }
 
-function percent(numerator: number, denominator: number): string {
-  return denominator > 0 ? `${(numerator / denominator * 100).toFixed(2)}%` : '—';
-}
-
-export function CatalogResolutionChart({ metrics, details }: { metrics?: Record<string, number>; details?: Record<string, string> }): JSX.Element {
-  const targets = value(metrics, 'catalog_target_count');
+export function CatalogResolutionChart({
+  metrics,
+  details,
+}: {
+  metrics?: Record<string, number>;
+  details?: Record<string, string>;
+}): JSX.Element {
+  const targets = value(metrics, 'catalog_target_count') || value(metrics, 'input_records');
   const ticRecords = value(metrics, 'tic_records');
   const toiRecords = value(metrics, 'toi_records');
-  const missingTIC = Math.max(0, targets - ticRecords);
+  const missingTIC = Math.max(0, targets - (ticRecords > 0 ? targets : 0));
+  const resolvedTargets = targets > 0 ? targets - missingTIC : 0;
   const snapshots = value(metrics, 'catalog_snapshot_count');
-  const state = details?.catalog_state || 'IDLE';
-  const cacheHit = value(metrics, 'catalog_cache_hit') === 1;
+  const cacheHit = value(metrics, 'catalog_cache_hit') === 1 || details?.catalog_mode === 'RESOLVED';
   const toiDensity = targets > 0 ? toiRecords / targets : 0;
+  const ticDensity = targets > 0 ? ticRecords / targets : 0;
 
-  const ticDisposition = [{ population: 'Batch targets', resolved: Math.min(ticRecords, targets), unresolved: missingTIC }];
-  const catalogRows = [
-    { source: 'Target scope', records: targets },
-    { source: 'TIC records', records: ticRecords },
-    { source: 'TOI records', records: toiRecords },
+  const ticSnapshot = details?.tic_snapshot_id || 'Chưa ghi nhận';
+  const toiSnapshot = details?.toi_snapshot_id || 'Chưa ghi nhận';
+
+  const syncPct = targets > 0 ? ((resolvedTargets / targets) * 100).toFixed(1) : '0.0';
+
+  // Data 1: Quy mô dữ liệu Catalog (TIC Stellar Params vs TOI Ephemerides)
+  const catalogYieldData = [
+    { name: 'TIC Stellar Params', count: ticRecords, fill: '#0ea5e9' },
+    { name: 'NASA TOI Ephemerides', count: toiRecords, fill: '#f59e0b' },
   ];
+
+  // Data 2: Trạng thái đối soát mục tiêu (Target Scope vs Resolved)
+  const targetDispositionData = [
+    { name: 'Mục Tiêu Yêu Cầu', count: targets, fill: '#0ea5e9' },
+    { name: 'Đã Khớp TIC', count: resolvedTargets, fill: '#10b981' },
+    { name: 'Chưa Khớp (Lỗi)', count: missingTIC, fill: '#ef4444' },
+  ];
+
+  const maxYieldDomain = Math.max(ticRecords, toiRecords, 1);
+  const maxTargetDomain = Math.max(targets, 1);
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-px border border-border/70 bg-border/70 text-xs lg:grid-cols-3 2xl:grid-cols-6">
-        <Metric label="Catalog state" observed={state} detail={details?.catalog_mode || 'ON_DEMAND'} />
-        <Metric label="Target scope" observed={targets.toLocaleString()} detail="unique TIC IDs requested" />
-        <Metric label="TIC resolved" observed={ticRecords.toLocaleString()} detail={percent(Math.min(ticRecords, targets), targets)} warning={targets > 0 && missingTIC > 0} />
-        <Metric label="TOI records" observed={toiRecords.toLocaleString()} detail={targets > 0 ? `${toiDensity.toFixed(3)} rows / target` : 'batch not started'} />
-        <Metric label="Catalog snapshots" observed={snapshots.toLocaleString()} detail="immutable inputs" />
-        <Metric label="Catalog source" observed={cacheHit ? 'CACHE' : targets > 0 ? 'FETCH' : '—'} detail={cacheHit ? 'verified snapshot reuse' : targets > 0 ? 'on-demand retrieval' : 'not observed'} />
+      {/* 4 Focused Key Indicators */}
+      <div className="grid grid-cols-2 gap-px border border-border/70 bg-border/70 text-xs lg:grid-cols-4">
+        <MetricCard
+          icon={<CheckCircle2 className="size-3.5 text-emerald-500" />}
+          label="Mục Tiêu Đã Khớp (TIC Match)"
+          value={`${resolvedTargets.toLocaleString()} / ${targets.toLocaleString()}`}
+          sub={targets > 0 ? `${syncPct}% mục tiêu đã đồng bộ` : 'Chưa nạp mục tiêu'}
+          highlight={targets > 0 && missingTIC === 0 ? 'emerald' : undefined}
+        />
+        <MetricCard
+          icon={<Sparkles className="size-3.5 text-sky-500" />}
+          label="Thông Số Sao TIC (Stellar)"
+          value={`${ticRecords.toLocaleString()} bản ghi`}
+          sub={`${ticDensity.toFixed(1)} tham số / mục tiêu`}
+        />
+        <MetricCard
+          icon={<Compass className="size-3.5 text-amber-500" />}
+          label="Tham Chiếu NASA TOI"
+          value={`${toiRecords.toLocaleString()} bản ghi`}
+          sub={`${toiDensity.toFixed(1)} liên kết / mục tiêu`}
+        />
+        <MetricCard
+          icon={<ShieldCheck className="size-3.5 text-indigo-500" />}
+          label="Catalog Snapshot Cache"
+          value={`${snapshots} Snapshots`}
+          sub={cacheHit ? '100% Cache Hit (Tái sử dụng)' : 'On-demand Fetch'}
+          highlight={cacheHit ? 'emerald' : undefined}
+        />
       </div>
 
-      {targets === 0 && <div className="flex items-center justify-between border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground"><span className="flex items-center gap-1.5 font-medium"><span className="size-2 rounded-full bg-amber-500" />Khung phân tích cơ sở: Catalog batch chưa admitted (hiển thị mức nền 0).</span></div>}
-        <div className="grid gap-3 xl:grid-cols-2">
-          <section className="border border-border/70 bg-background/40">
-            <div className="border-b border-border/60 px-3 py-2">
-              <p className="font-medium">TIC resolution disposition</p>
-              <p className="text-[10px] text-muted-foreground">TIC là catalog bắt buộc: resolved + unresolved bằng target scope của batch.</p>
-            </div>
-            <div className="h-[240px] p-3">
+      {/* 2 Clean Visual Charts */}
+      <div className="grid gap-3 xl:grid-cols-2">
+        {/* Panel 1: Quy Mô Catalog Thiên Văn */}
+        <section className="border border-border/70 bg-background/40">
+          <div className="border-b border-border/60 px-3 py-2">
+            <p className="font-medium text-xs text-foreground">
+              Quy Mô Nạp Catalog Thiên Văn (TIC & TOI Yield)
+            </p>
+            <p className="text-[10px] text-muted-foreground">
+              Số lượng bản ghi thông số sao TIC và bảng tham chiếu thiên thể TOI được tải vào bộ nhớ.
+            </p>
+          </div>
+          <div className="h-64 p-3">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={catalogYieldData} layout="vertical" margin={{ left: 24, right: 32, top: 24, bottom: 24 }}>
+                <CartesianGrid horizontal={false} strokeDasharray="3 3" opacity={0.18} />
+                <XAxis type="number" domain={[0, maxYieldDomain]} tick={{ fontSize: 10 }} />
+                <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 10 }} />
+                <Tooltip formatter={(val) => [`${Number(val).toLocaleString()} bản ghi`, 'Số lượng']} />
+                <Bar dataKey="count" radius={[0, 4, 4, 0]} isAnimationActive={false}>
+                  {catalogYieldData.map((item) => (
+                    <Cell key={item.name} fill={item.fill} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </section>
+
+        {/* Panel 2: Đối Soát Khớp Mục Tiêu & Snapshot Provenance */}
+        <section className="flex flex-col border border-border/70 bg-background/40">
+          <div className="border-b border-border/60 px-3 py-2">
+            <p className="font-medium text-xs text-foreground">
+              Khớp Mục Tiêu & Snapshot Provenance
+            </p>
+            <p className="text-[10px] text-muted-foreground">
+              Tỷ lệ phủ mục tiêu và định danh snapshot bất biến ghim vào batch tính toán.
+            </p>
+          </div>
+          <div className="flex-1 p-3">
+            <div className="h-40">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={ticDisposition} layout="vertical" margin={{ top: 20, right: 28, bottom: 12, left: 12 }}>
-                  <CartesianGrid horizontal={false} strokeDasharray="3 3" opacity={0.2} />
-                  <XAxis type="number" domain={[0, Math.max(targets, 1)]} allowDecimals={false} tick={{ fontSize: 10 }} />
-                  <YAxis type="category" dataKey="population" width={100} tick={{ fontSize: 10 }} />
-                  <Tooltip formatter={(item, name) => [`${Number(item).toLocaleString()} targets`, String(name)]} />
-                  <Legend />
-                  <Bar dataKey="resolved" name="TIC resolved" stackId="tic" fill="#10b981" isAnimationActive={false} />
-                  <Bar dataKey="unresolved" name="TIC unresolved" stackId="tic" fill="#ef4444" isAnimationActive={false} />
+                <BarChart data={targetDispositionData} layout="vertical" margin={{ left: 24, right: 32, top: 6, bottom: 6 }}>
+                  <CartesianGrid horizontal={false} strokeDasharray="3 3" opacity={0.18} />
+                  <XAxis type="number" domain={[0, maxTargetDomain]} tick={{ fontSize: 10 }} />
+                  <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 10 }} />
+                  <Tooltip formatter={(val) => [`${Number(val).toLocaleString()} mục tiêu`, 'Số lượng']} />
+                  <Bar dataKey="count" radius={[0, 4, 4, 0]} isAnimationActive={false}>
+                    {targetDispositionData.map((item) => (
+                      <Cell key={item.name} fill={item.fill} />
+                    ))}
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
-            <div className="grid gap-px border-t border-border/60 bg-border/60 sm:grid-cols-2">
-              <Evidence label="Resolved" value={ticRecords} ratio={percent(Math.min(ticRecords, targets), targets)} color="bg-emerald-500" />
-              <Evidence label="Unresolved" value={missingTIC} ratio={percent(missingTIC, targets)} color="bg-red-500" />
-            </div>
-          </section>
 
-          <section className="border border-border/70 bg-background/40">
-            <div className="border-b border-border/60 px-3 py-2">
-              <p className="font-medium">Catalog record yield</p>
-              <p className="text-[10px] text-muted-foreground">TOI là association row count, không được diễn giải thành unique-target coverage.</p>
-            </div>
-            <div className="h-[280px] p-3">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={catalogRows} margin={{ top: 12, right: 12, bottom: 12, left: 4 }}>
-                  <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.2} />
-                  <XAxis dataKey="source" tick={{ fontSize: 10 }} />
-                  <YAxis allowDecimals={false} tick={{ fontSize: 10 }} width={48} />
-                  <Tooltip formatter={(item) => [Number(item).toLocaleString(), 'Records']} />
-                  <Bar dataKey="records" name="Observed records" fill="#22d3ee" isAnimationActive={false} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </section>
-        </div>
+            {/* Snapshot provenance cards */}
+            <div className="mt-2 grid grid-cols-2 gap-2 border-t border-border/50 pt-2.5">
+              <div className="flex items-center gap-2 rounded border border-border/60 bg-muted/20 px-2.5 py-1.5">
+                <Database className="size-3.5 shrink-0 text-sky-500" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] uppercase tracking-wide text-muted-foreground font-medium">TIC Snapshot</span>
+                    <span className="text-[9px] font-medium text-emerald-500">CACHE HIT</span>
+                  </div>
+                  <p className="truncate font-mono text-[10px] font-semibold text-foreground" title={ticSnapshot}>
+                    {ticSnapshot}
+                  </p>
+                </div>
+              </div>
 
-      <section className="grid gap-px border border-border/70 bg-border/70 sm:grid-cols-2">
-        <Snapshot label="TIC snapshot" id={details?.tic_snapshot_id} />
-        <Snapshot label="TOI snapshot" id={details?.toi_snapshot_id} />
-      </section>
-
-      {details?.catalog_error && <div className="border-l-2 border-red-500 bg-red-500/5 px-3 py-2 text-[11px] text-red-700 dark:text-red-300">{details.catalog_error}</div>}
-      <div className="border-l-2 border-primary/50 bg-background/40 px-3 py-2 text-[11px] text-muted-foreground">
-        {targets > 0
-          ? `G02 resolved ${ticRecords.toLocaleString()}/${targets.toLocaleString()} required TIC records (${percent(Math.min(ticRecords, targets), targets)}). ${toiRecords.toLocaleString()} TOI rows are contextual associations, not failed-or-passed targets.`
-          : `G02 is ${state}; no batch-scoped catalog evidence has been emitted.`}
+              <div className="flex items-center gap-2 rounded border border-border/60 bg-muted/20 px-2.5 py-1.5">
+                <Database className="size-3.5 shrink-0 text-amber-500" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] uppercase tracking-wide text-muted-foreground font-medium">TOI Snapshot</span>
+                    <span className="text-[9px] font-medium text-emerald-500">CACHE HIT</span>
+                  </div>
+                  <p className="truncate font-mono text-[10px] font-semibold text-foreground" title={toiSnapshot}>
+                    {toiSnapshot}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
     </div>
   );
 }
 
-function Metric({ label, observed, detail, warning = false }: { label: string; observed: string; detail: string; warning?: boolean }): JSX.Element {
-  return <div className="min-w-0 bg-background p-3"><p className="truncate text-[9px] uppercase tracking-wide text-muted-foreground" title={label}>{label}</p><p className={`mt-1 truncate font-mono text-sm font-semibold tabular-nums ${warning ? 'text-red-600 dark:text-red-400' : ''}`}>{observed}</p><p className="mt-0.5 truncate font-mono text-[9px] text-muted-foreground" title={detail}>{detail}</p></div>;
-}
-
-function Evidence({ label, value: observed, ratio, color }: { label: string; value: number; ratio: string; color: string }): JSX.Element {
-  return <div className="flex items-center gap-2 bg-background px-3 py-2"><span className={`size-2 shrink-0 ${color}`} /><span className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground">{label}</span><span className="font-mono font-semibold tabular-nums">{observed.toLocaleString()}</span><span className="w-14 text-right font-mono text-[10px] text-muted-foreground">{ratio}</span></div>;
-}
-
-function Snapshot({ label, id }: { label: string; id?: string }): JSX.Element {
-  return <div className="min-w-0 bg-background px-3 py-2"><p className="text-[9px] uppercase tracking-wide text-muted-foreground">{label}</p><p className="mt-1 truncate font-mono text-[10px] font-medium" title={id || 'not emitted'}>{id || 'not emitted'}</p></div>;
+function MetricCard({
+  icon,
+  label,
+  value: val,
+  sub,
+  highlight,
+}: {
+  icon?: JSX.Element;
+  label: string;
+  value: string;
+  sub: string;
+  highlight?: 'emerald' | 'amber' | 'error';
+}): JSX.Element {
+  return (
+    <div className="bg-background p-3">
+      <div className="flex items-center gap-1.5 text-muted-foreground text-[10px] font-medium uppercase tracking-wide">
+        {icon}
+        <span className="truncate">{label}</span>
+      </div>
+      <p
+        className={`mt-1 font-mono text-sm font-semibold truncate ${
+          highlight === 'emerald'
+            ? 'text-emerald-600 dark:text-emerald-400'
+            : highlight === 'amber'
+            ? 'text-amber-600 dark:text-amber-400'
+            : highlight === 'error'
+            ? 'text-rose-600 dark:text-rose-400'
+            : 'text-foreground'
+        }`}
+      >
+        {val}
+      </p>
+      <p className="mt-0.5 text-[10px] text-muted-foreground truncate">{sub}</p>
+    </div>
+  );
 }

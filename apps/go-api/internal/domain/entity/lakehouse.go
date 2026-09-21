@@ -32,6 +32,19 @@ type LakehouseListing struct {
 	Objects    []LakehouseObject `json:"objects"`
 }
 
+// LakehouseTierSummary holds aggregate metric counts and byte footprint for one tier.
+type LakehouseTierSummary struct {
+	Total      int   `json:"total"`
+	TotalBytes int64 `json:"total_bytes"`
+}
+
+// LakehouseSummary represents aggregate metrics for all Medallion tiers.
+type LakehouseSummary struct {
+	Bronze LakehouseTierSummary `json:"bronze"`
+	Silver LakehouseTierSummary `json:"silver"`
+	Gold   LakehouseTierSummary `json:"gold"`
+}
+
 // LakehousePreviewQuery specifies which object to inspect and preview.
 type LakehousePreviewQuery struct {
 	Key    string `json:"key"`
@@ -66,13 +79,29 @@ type LakehouseFITSHeaderCard struct {
 	Comment string `json:"comment"`
 }
 
+// LakehouseFITSTableColumn describes one field in a FITS BINTABLE HDU.
+type LakehouseFITSTableColumn struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+	Unit string `json:"unit,omitempty"`
+}
+
+// LakehouseFITSTablePreview contains tabular row samples and downsampled time-series chart points.
+type LakehouseFITSTablePreview struct {
+	TotalRows int                        `json:"total_rows"`
+	Columns   []LakehouseFITSTableColumn `json:"columns"`
+	Rows      []map[string]any           `json:"rows"`
+	Chart     []map[string]any           `json:"chart,omitempty"`
+}
+
 // LakehouseFITSHDU represents one Header and Data Unit (HDU) within a FITS file.
 type LakehouseFITSHDU struct {
-	Index   int                       `json:"index"`
-	Name    string                    `json:"name"`
-	Type    string                    `json:"type"` // "PRIMARY", "BINTABLE", "IMAGE", "EXTENSION"
-	Cards   []LakehouseFITSHeaderCard `json:"cards"`
-	Summary map[string]string         `json:"summary"` // Quick highlights: OBJECT, TICID, SECTOR, CAMERA, etc.
+	Index   int                        `json:"index"`
+	Name    string                     `json:"name"`
+	Type    string                     `json:"type"` // "PRIMARY", "BINTABLE", "IMAGE", "EXTENSION"
+	Cards   []LakehouseFITSHeaderCard  `json:"cards"`
+	Summary map[string]string          `json:"summary"` // Quick highlights: OBJECT, TICID, SECTOR, CAMERA, etc.
+	Table   *LakehouseFITSTablePreview `json:"table,omitempty"`
 }
 
 // LakehouseFITSPreview holds parsed HDU headers and context for a FITS object.

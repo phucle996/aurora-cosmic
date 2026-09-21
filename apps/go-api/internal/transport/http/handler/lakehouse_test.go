@@ -27,17 +27,34 @@ func (lakehouseServiceStub) Preview(_ context.Context, q entity.LakehousePreview
 	}, nil
 }
 
+func (lakehouseServiceStub) Summary(_ context.Context) (*entity.LakehouseSummary, error) {
+	return &entity.LakehouseSummary{
+		Bronze: entity.LakehouseTierSummary{Total: 10, TotalBytes: 1024},
+		Silver: entity.LakehouseTierSummary{Total: 5, TotalBytes: 512},
+		Gold:   entity.LakehouseTierSummary{Total: 2, TotalBytes: 256},
+	}, nil
+}
+
 func TestLakehouseHandler_Endpoints(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	h := NewLakehouseHandler(lakehouseServiceStub{})
 
+	router.GET("/lakehouse/summary", h.Summary)
 	router.GET("/lakehouse/objects", h.List)
 	router.GET("/lakehouse/preview", h.Preview)
 
-	// 1. List
-	req := httptest.NewRequest(http.MethodGet, "/lakehouse/objects?prefix=silver/", nil)
+	// 0. Summary
+	req := httptest.NewRequest(http.MethodGet, "/lakehouse/summary", nil)
 	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	// 1. List
+	req = httptest.NewRequest(http.MethodGet, "/lakehouse/objects?prefix=silver/", nil)
+	w = httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)

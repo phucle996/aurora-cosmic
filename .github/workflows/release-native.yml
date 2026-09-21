@@ -1,0 +1,154 @@
+name: AURORA Linux Native Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Publish Linux Release
+    runs-on: ubuntu-latest
+    env:
+      TARBALL_SIZE: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Go ────────────────────────────────────────────────────────────
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          check-latest: true
+
+      - name: Build Go binaries
+        run: |
+          cd apps/go-ingester && mkdir -p bin && go build -ldflags="-s -w" -o bin/aurora-ingester ./cmd
+          cd "$GITHUB_WORKSPACE"
+          cd apps/go-api && mkdir -p bin && go build -ldflags="-s -w" -o bin/aurora-api ./cmd/aurora-api
+
+      # ── Rust ──────────────────────────────────────────────────────────
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            apps/rust-preprocessor -> target
+            apps/rust-inference -> target
+          cache-on-failure: true
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libcfitsio-dev pkg-config
+
+      - name: Build Rust binaries
+        run: |
+          cd apps/rust-preprocessor && cargo build --release
+          cd "$GITHUB_WORKSPACE"
+          cd apps/rust-inference && cargo build --release
+
+      # ── Dashboard ────────────────────────────────────────────────────
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/dashboard/package-lock.json
+
+      - name: Build Dashboard
+        working-directory: apps/dashboard
+        run: |
+          npm ci
+          npm run build
+
+      # ── Package Tarball ───────────────────────────────────────────────
+      - name: Assemble release tarball
+        run: |
+          set -euo pipefail
+          STAGE="aurora-linux-amd64"
+          mkdir -p "${STAGE}"/{bin,config/clickhouse,config/nats,config/prometheus,init,systemd,dashboard,apps,scripts}
+
+          # Binaries
+          cp apps/go-ingester/bin/aurora-ingester           "${STAGE}/bin/"
+          cp apps/go-api/bin/aurora-api                     "${STAGE}/bin/"
+          cp apps/rust-preprocessor/target/release/aurora-preprocessor "${STAGE}/bin/"
+          cp apps/rust-inference/target/release/aurora-inference       "${STAGE}/bin/"
+          cp infra/systemd/systemd_exporter.py              "${STAGE}/bin/aurora-systemd-exporter"
+          chmod 755 "${STAGE}"/bin/*
+
+          # Config
+          cp infra/systemd/aurora.env                       "${STAGE}/config/aurora.env"
+          cp infra/clickhouse/config.xml                    "${STAGE}/config/clickhouse/config.xml"
+          cp infra/clickhouse/users.xml                     "${STAGE}/config/clickhouse/users.xml"
+          cp infra/nats/nats.conf                           "${STAGE}/config/nats/nats.conf"
+          cp infra/prometheus/prometheus.yml                "${STAGE}/config/prometheus/prometheus.yml"
+          cp infra/nginx/nginx.conf                         "${STAGE}/config/nginx.conf"
+
+          # Init scripts
+          cp infra/minio/setup-minio.sh                     "${STAGE}/init/setup-minio.sh"
+          cp infra/clickhouse/setup-clickhouse.sh            "${STAGE}/init/setup-clickhouse.sh"
+          cp infra/clickhouse/init.sql                       "${STAGE}/init/init.sql"
+          chmod 755 "${STAGE}"/init/*.sh
+
+          # Systemd units
+          cp infra/systemd/aurora.target                    "${STAGE}/systemd/"
+          cp infra/systemd/aurora-*.service                 "${STAGE}/systemd/"
+
+          # Dashboard static bundle
+          cp -r apps/dashboard/dist                         "${STAGE}/dashboard/dist"
+
+          # Python apps (no venv, no cache)
+          rsync -a --exclude .venv --exclude __pycache__ --exclude .pytest_cache --exclude .ruff_cache \
+            apps/python-ml-worker/ "${STAGE}/apps/python-ml-worker/"
+          rsync -a --exclude .venv --exclude __pycache__ --exclude .pytest_cache --exclude .ruff_cache \
+            apps/python-enrichment/ "${STAGE}/apps/python-enrichment/"
+
+          # Install scripts
+          cp scripts/install-native-infra.sh                "${STAGE}/scripts/"
+          chmod 755 "${STAGE}/scripts/"*.sh
+
+          # Create tarball
+          tar -czf aurora-linux-amd64.tar.gz "${STAGE}"
+          echo "TARBALL_SIZE=$(du -h aurora-linux-amd64.tar.gz | cut -f1)" >> "$GITHUB_ENV"
+
+      # ── Publish GitHub Release ────────────────────────────────────────
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: aurora-linux-amd64.tar.gz
+          generate_release_notes: true
+          body: |
+            ## AURORA Linux Native Release
+
+            **Architecture:** `linux/amd64`
+            **Tarball size:** ${{ env.TARBALL_SIZE }}
+
+            ### Quick Install
+
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | bash
+            ```
+
+            Or for this specific version:
+
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | bash -s -- ${{ github.ref_name }}
+            ```
+
+            ### What's included
+
+            | Component | Type |
+            |---|---|
+            | `aurora-api` | Go binary |
+            | `aurora-ingester` | Go binary |
+            | `aurora-preprocessor` | Rust binary |
+            | `aurora-inference` | Rust binary |
+            | `aurora-systemd-exporter` | Python script |
+            | Dashboard | Pre-built Vite static bundle |
+            | `python-ml-worker` | Python app (requires `uv sync`) |
+            | `python-enrichment` | Python app (requires `uv sync`) |
+            | systemd units | 14 service units + 1 target |
+            | Infrastructure configs | ClickHouse, NATS, Prometheus, Nginx, MinIO |

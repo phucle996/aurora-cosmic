@@ -59,8 +59,6 @@ export function RunnerTicketBar({
                     {t.ticket_id} {t.description ? `(${t.description})` : ''}
                   </option>
                 ))
-              ) : activeTicket ? (
-                <option value={activeTicket}>{activeTicket}</option>
               ) : (
                 <option value="">No tickets available</option>
               )}

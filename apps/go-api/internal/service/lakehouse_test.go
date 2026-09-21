@@ -58,6 +58,18 @@ func (f fakeLakehouseStorage) DeleteObject(_ context.Context, key string) error 
 	return nil
 }
 
+func (f fakeLakehouseStorage) StatPrefix(_ context.Context, prefix string) (int, int64, error) {
+	var total int
+	var totalBytes int64
+	for k, v := range f.objects {
+		if strings.HasPrefix(k, prefix) {
+			total++
+			totalBytes += int64(len(v))
+		}
+	}
+	return total, totalBytes, nil
+}
+
 func TestLakehouseService_List(t *testing.T) {
 	store := fakeLakehouseStorage{
 		objects: map[string][]byte{
@@ -123,5 +135,31 @@ func TestLakehouseService_PreviewJSON(t *testing.T) {
 	}
 	if resp.JSONContent == nil {
 		t.Error("expected parsed JSONContent, got nil")
+	}
+}
+
+func TestLakehouseService_Summary(t *testing.T) {
+	store := fakeLakehouseStorage{
+		objects: map[string][]byte{
+			"bronze/tess/s1.fits":    []byte("12345"),
+			"bronze/tess/s2.fits":    []byte("12345"),
+			"silver/tess/s1.parquet": []byte("12345678"),
+			"gold/snapshots/m.json":  []byte("123"),
+		},
+	}
+	svc := NewLakehouseService(store, "aurora")
+
+	summary, err := svc.Summary(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if summary.Bronze.Total != 2 || summary.Bronze.TotalBytes != 10 {
+		t.Errorf("expected bronze total 2, bytes 10; got %d, %d", summary.Bronze.Total, summary.Bronze.TotalBytes)
+	}
+	if summary.Silver.Total != 1 || summary.Silver.TotalBytes != 8 {
+		t.Errorf("expected silver total 1, bytes 8; got %d, %d", summary.Silver.Total, summary.Silver.TotalBytes)
+	}
+	if summary.Gold.Total != 1 || summary.Gold.TotalBytes != 3 {
+		t.Errorf("expected gold total 1, bytes 3; got %d, %d", summary.Gold.Total, summary.Gold.TotalBytes)
 	}
 }

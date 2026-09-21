@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"go-ingester/infra/storage"
@@ -159,7 +160,7 @@ func SyncTOI(ctx context.Context, store *storage.MinIOClient, bucket string) (ma
 	return targets, snapshotID, len(records), nil
 }
 
-func SyncTIC(ctx context.Context, store *storage.MinIOClient, bucket string, ticIDs []int64, toiSnapshotID string, toiRows int) (string, error) {
+func SyncTIC(ctx context.Context, store *storage.MinIOClient, bucket string, ticIDs []int64, toiSnapshotID string, toiRows int, onProgress ...func(completed, total int)) (string, error) {
 	progress := Progress{State: "RUNNING", Stage: "DOWNLOADING_TIC", TOIRows: toiRows, TOISnapshotID: toiSnapshotID, Completed: 1, Total: 2}
 	requested := make([]int64, 0, len(ticIDs))
 	seen := map[int64]struct{}{}
@@ -172,40 +173,131 @@ func SyncTIC(ctx context.Context, store *storage.MinIOClient, bucket string, tic
 		}
 	}
 	sort.Slice(requested, func(i, j int) bool { return requested[i] < requested[j] })
-	rows := make([]TICRecord, 0, len(requested))
-	client := &http.Client{Timeout: 90 * time.Second}
-	for start := 0; start < len(requested); start += 100 {
-		end := start + 100
+
+	const batchSize = 250
+	const workerCount = 6
+
+	type batchJob struct {
+		ids []int64
+	}
+
+	numBatches := (len(requested) + batchSize - 1) / batchSize
+	jobs := make(chan batchJob, numBatches)
+	for start := 0; start < len(requested); start += batchSize {
+		end := start + batchSize
 		if end > len(requested) {
 			end = len(requested)
 		}
-		payload := map[string]any{"service": "Mast.Catalogs.Filtered.Tic.Rows", "format": "json", "params": map[string]any{"columns": "ID,ra,dec,Tmag,Teff,rad,mass,logg", "filters": []map[string]any{{"paramName": "ID", "values": requested[start:end]}}}}
-		encoded := url.Values{"request": {string(canonical(payload))}}.Encode()
-		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://mast.stsci.edu/api/v0/invoke", strings.NewReader(encoded))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		resp, err := client.Do(req)
-		if err != nil {
-			return "", err
-		}
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		var result struct {
-			Status string           `json:"status"`
-			Data   []map[string]any `json:"data"`
-		}
-		if err = json.Unmarshal(body, &result); err != nil || result.Status != "COMPLETE" {
-			return "", fmt.Errorf("invalid MAST TIC response")
-		}
-		for _, raw := range result.Data {
-			id, ok := numberInt64(raw["ID"])
-			if !ok {
-				continue
-			}
-			rows = append(rows, TICRecord{id, numberFloat(raw["ra"]), numberFloat(raw["dec"]), numberFloat(raw["Tmag"]), numberFloat(raw["Teff"]), numberFloat(raw["rad"]), numberFloat(raw["mass"]), numberFloat(raw["logg"])})
-		}
-		progress.TICRows = len(rows)
-		writeProgress(ctx, store, bucket, progress)
+		jobs <- batchJob{ids: requested[start:end]}
 	}
+	close(jobs)
+
+	var mu sync.Mutex
+	rows := make([]TICRecord, 0, len(requested))
+	var workerErr error
+	var errOnce sync.Once
+	completedCount := 0
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			MaxIdleConns:        50,
+			MaxIdleConnsPerHost: 50,
+			IdleConnTimeout:     90 * time.Second,
+		},
+		Timeout: 90 * time.Second,
+	}
+
+	var wg sync.WaitGroup
+	for w := 0; w < workerCount; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for job := range jobs {
+				if ctx.Err() != nil {
+					errOnce.Do(func() { workerErr = ctx.Err() })
+					return
+				}
+				if workerErr != nil {
+					return
+				}
+
+				payload := map[string]any{
+					"service": "Mast.Catalogs.Filtered.Tic.Rows",
+					"format":  "json",
+					"params": map[string]any{
+						"columns": "ID,ra,dec,Tmag,Teff,rad,mass,logg",
+						"filters": []map[string]any{{"paramName": "ID", "values": job.ids}},
+					},
+				}
+				encoded := url.Values{"request": {string(canonical(payload))}}.Encode()
+				req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://mast.stsci.edu/api/v0/invoke", strings.NewReader(encoded))
+				if err != nil {
+					errOnce.Do(func() { workerErr = err })
+					return
+				}
+				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+				resp, err := client.Do(req)
+				if err != nil {
+					errOnce.Do(func() { workerErr = err })
+					return
+				}
+				body, readErr := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if readErr != nil {
+					errOnce.Do(func() { workerErr = readErr })
+					return
+				}
+
+				var result struct {
+					Status string           `json:"status"`
+					Data   []map[string]any `json:"data"`
+				}
+				if err = json.Unmarshal(body, &result); err != nil || result.Status != "COMPLETE" {
+					errOnce.Do(func() { workerErr = fmt.Errorf("invalid MAST TIC response") })
+					return
+				}
+
+				batchRows := make([]TICRecord, 0, len(result.Data))
+				for _, raw := range result.Data {
+					id, ok := numberInt64(raw["ID"])
+					if !ok {
+						continue
+					}
+					batchRows = append(batchRows, TICRecord{
+						id,
+						numberFloat(raw["ra"]),
+						numberFloat(raw["dec"]),
+						numberFloat(raw["Tmag"]),
+						numberFloat(raw["Teff"]),
+						numberFloat(raw["rad"]),
+						numberFloat(raw["mass"]),
+						numberFloat(raw["logg"]),
+					})
+				}
+
+				mu.Lock()
+				rows = append(rows, batchRows...)
+				completedCount += len(job.ids)
+				currentCompleted := completedCount
+				currentRows := len(rows)
+				progress.TICRows = currentRows
+				writeProgress(ctx, store, bucket, progress)
+				mu.Unlock()
+
+				if len(onProgress) > 0 && onProgress[0] != nil {
+					onProgress[0](currentCompleted, len(requested))
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	if workerErr != nil {
+		return "", workerErr
+	}
+
 	sort.Slice(rows, func(i, j int) bool { return rows[i].TICID < rows[j].TICID })
 	data := canonical(rows)
 	dataSHA := digest(data)

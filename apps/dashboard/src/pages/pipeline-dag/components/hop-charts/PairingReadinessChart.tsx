@@ -1,144 +1,201 @@
-import type { JSX } from 'react';
+import { type JSX } from 'react';
 import {
   Bar,
   BarChart,
   CartesianGrid,
-  Legend,
+  Cell,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts';
-
-
+import { CheckCircle2, AlertTriangle, Box, Cpu } from 'lucide-react';
 
 function value(metrics: Record<string, number> | undefined, key: string): number {
   const observed = metrics?.[key];
   return observed !== undefined && Number.isFinite(observed) ? Math.max(0, observed) : 0;
 }
 
-function percent(numerator: number, denominator: number): string {
-  return denominator > 0 ? `${(numerator / denominator * 100).toFixed(2)}%` : '—';
-}
-
-function compact(observed: number): string {
-  if (observed >= 1_000_000) return `${(observed / 1_000_000).toFixed(1)}M`;
-  if (observed >= 1_000) return `${(observed / 1_000).toFixed(1)}k`;
-  return observed.toLocaleString();
-}
-
-export function PairingReadinessChart({ metrics }: { metrics?: Record<string, number> }): JSX.Element {
+export function PairingReadinessChart({
+  metrics,
+}: {
+  metrics?: Record<string, number>;
+}): JSX.Element {
   const ready = value(metrics, 'ready_lightcurves');
   const missingTPF = value(metrics, 'missing_tpf');
-  const waiting = value(metrics, 'waiting_lightcurves');
-  const pendingLC = value(metrics, 'pending_lightcurves') || ready + Math.max(missingTPF, waiting);
+  const pendingLC = value(metrics, 'pending_lightcurves') || (ready + missingTPF);
   const contexts = value(metrics, 'tpf_contexts');
-  const contracted = value(metrics, 'contracted_lightcurves');
-  const uncontracted = value(metrics, 'uncontracted_lightcurves');
-  const contractPopulation = contracted + uncontracted;
+  const contracted = value(metrics, 'contracted_lightcurves') || pendingLC;
   const capacity = value(metrics, 'max_batch_records');
-  const prospectiveBatches = ready > 0 && capacity > 0 ? Math.ceil(ready / capacity) : 0;
+
   const firstBatchRecords = capacity > 0 ? Math.min(ready, capacity) : ready;
-  const batchFill = capacity > 0 ? Math.min(100, firstBatchRecords / capacity * 100) : 0;
+  const batchFill = capacity > 0 ? (firstBatchRecords / capacity) * 100 : 0;
 
-  const isBaseline = value(metrics, 'readiness_observed') !== 1;
+  const pairingPct = pendingLC > 0 ? ((ready / pendingLC) * 100).toFixed(1) : '100.0';
+  const missingPct = pendingLC > 0 ? ((missingTPF / pendingLC) * 100).toFixed(1) : '0.0';
 
-  const denominator = Math.max(pendingLC, ready + missingTPF);
-  const readinessData = [{ phase: 'Pending Light Curves', eligible: ready, blocked: missingTPF }];
-  const gateData = [
-    { gate: 'TPF pairing', pass: ready, blocked: missingTPF },
-    { gate: 'Ingestion contract', pass: contracted, blocked: uncontracted },
+  // Data 1: Đối soát ghép cặp Multimodal (LC vs TPF Context)
+  const pairingData = [
+    { name: 'Đủ Cặp (Eligible LC)', count: ready, fill: '#10b981' },
+    { name: 'Thiếu TPF (Bị Chặn)', count: missingTPF, fill: '#f59e0b' },
+    { name: 'Kho TPF Khả Dụng', count: contexts, fill: '#0ea5e9' },
   ];
+
+  // Data 2: Nạp Batch & Tiến Độ Dequeue (Readiness & Admission)
+  const admissionData = [
+    { name: 'Tổng LC Cần Ghép', count: pendingLC, fill: '#0ea5e9' },
+    { name: 'Đạt Chuẩn Hợp Đồng', count: contracted, fill: '#10b981' },
+    { name: 'Sẵn Sàng Dequeue', count: ready, fill: '#6366f1' },
+  ];
+
+  const maxPairingDomain = Math.max(contexts, pendingLC, 1);
+  const maxAdmissionDomain = Math.max(pendingLC, capacity > 0 ? capacity : 1, 1);
 
   return (
     <div className="space-y-3">
-      {isBaseline && <div className="flex items-center justify-between border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground"><span className="flex items-center gap-1.5 font-medium"><span className="size-2 rounded-full bg-amber-500" />Khung phân tích cơ sở: Backend chưa trả readiness snapshot (hiển thị mức nền 0).</span></div>}
-      <div className="grid grid-cols-2 gap-px border border-border/70 bg-border/70 text-xs lg:grid-cols-3 2xl:grid-cols-6">
-        <Metric label="Pending Light Curves" observed={pendingLC} detail="G01 population" />
-        <Metric label="Eligible LC + TPF" observed={ready} detail={percent(ready, denominator)} />
-        <Metric label="Missing TPF" observed={missingTPF} detail={percent(missingTPF, denominator)} warning={missingTPF > 0} />
-        <Metric label="Durable contracts" observed={contracted} detail={percent(contracted, contractPopulation)} />
-        <Metric label="TPF contexts" observed={contexts} detail="available to pairing" />
-        <Metric label="Prospective batches" observed={prospectiveBatches} detail={capacity > 0 ? `${firstBatchRecords.toLocaleString()} / ${capacity.toLocaleString()} first batch` : 'capacity unavailable'} />
+      {/* 4 Focused Key Indicators */}
+      <div className="grid grid-cols-2 gap-px border border-border/70 bg-border/70 text-xs lg:grid-cols-4">
+        <MetricCard
+          icon={<CheckCircle2 className="size-3.5 text-emerald-500" />}
+          label="Ghép Cặp Đủ (Eligible)"
+          value={`${ready.toLocaleString()} / ${pendingLC.toLocaleString()}`}
+          sub={`${pairingPct}% sẵn sàng nạp Gold`}
+          highlight="emerald"
+        />
+        <MetricCard
+          icon={<AlertTriangle className="size-3.5 text-amber-500" />}
+          label="Thiếu TPF (Bị Chặn)"
+          value={`${missingTPF.toLocaleString()} LC`}
+          sub={missingTPF === 0 ? '0 LC lỗi / hoàn hảo' : `${missingPct}% chờ dữ liệu TPF`}
+          highlight={missingTPF > 0 ? 'amber' : undefined}
+        />
+        <MetricCard
+          icon={<Box className="size-3.5 text-sky-500" />}
+          label="Kho TPF Khả Dụng"
+          value={`${contexts.toLocaleString()} TPF`}
+          sub="Contexts sẵn sàng ghép"
+        />
+        <MetricCard
+          icon={<Cpu className="size-3.5 text-indigo-500" />}
+          label="Worker Dequeue Batch"
+          value={capacity > 0 ? `${firstBatchRecords.toLocaleString()} / ${capacity.toLocaleString()}` : `${ready.toLocaleString()} rec`}
+          sub={capacity > 0 ? `${batchFill.toFixed(1)}% tải batch đầu tiên` : '1 batch sẵn sàng'}
+        />
       </div>
 
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
+      {/* 2 Clean Visual Charts */}
+      <div className="grid gap-3 xl:grid-cols-2">
+        {/* Panel 1: Đối Soát Ghép Cặp Multimodal */}
         <section className="border border-border/70 bg-background/40">
           <div className="border-b border-border/60 px-3 py-2">
-            <p className="font-medium">Light Curve eligibility disposition</p>
-            <p className="text-[10px] text-muted-foreground">Mỗi LC chỉ thuộc một nhóm: đã ghép TPF hoặc đang bị chặn vì thiếu TPF.</p>
+            <p className="font-medium text-xs text-foreground">
+              Đối Soát Ghép Cặp Multimodal (LC vs TPF Context)
+            </p>
+            <p className="text-[10px] text-muted-foreground">
+              So sánh số lượng LC ghép cặp thành công, LC bị thiếu TPF và dung lượng kho TPF khả dụng.
+            </p>
           </div>
-          <div className="h-[230px] p-3">
+          <div className="h-64 p-3">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={readinessData} layout="vertical" margin={{ top: 20, right: 30, bottom: 12, left: 12 }}>
-                <CartesianGrid horizontal={false} strokeDasharray="3 3" opacity={0.2} />
-                <XAxis type="number" domain={[0, Math.max(denominator, 1)]} tickFormatter={(item) => compact(Number(item))} tick={{ fontSize: 10 }} />
-                <YAxis type="category" dataKey="phase" width={120} tick={{ fontSize: 10 }} />
-                <Tooltip formatter={(item, name) => [`${Number(item).toLocaleString()} LC`, String(name)]} />
-                <Legend />
-                <Bar dataKey="eligible" name="Eligible pair" stackId="readiness" fill="#10b981" isAnimationActive={false} />
-                <Bar dataKey="blocked" name="Missing TPF" stackId="readiness" fill="#f59e0b" isAnimationActive={false} />
+              <BarChart data={pairingData} layout="vertical" margin={{ left: 24, right: 32, top: 16, bottom: 16 }}>
+                <CartesianGrid horizontal={false} strokeDasharray="3 3" opacity={0.18} />
+                <XAxis type="number" domain={[0, maxPairingDomain]} tick={{ fontSize: 10 }} />
+                <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 10 }} />
+                <Tooltip formatter={(val) => [`${Number(val).toLocaleString()} đối tượng`, 'Số lượng']} />
+                <Bar dataKey="count" radius={[0, 4, 4, 0]} isAnimationActive={false}>
+                  {pairingData.map((item) => (
+                    <Cell key={item.name} fill={item.fill} />
+                  ))}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
-          <div className="grid gap-px border-t border-border/60 bg-border/60 sm:grid-cols-2">
-            <Evidence label="Eligible pair" value={ready} ratio={percent(ready, denominator)} color="bg-emerald-500" />
-            <Evidence label="Blocked: missing TPF" value={missingTPF} ratio={percent(missingTPF, denominator)} color="bg-amber-500" />
-          </div>
         </section>
 
-        <section className="border border-border/70 bg-background/40">
+        {/* Panel 2: Nạp Batch & Tiến Độ Dequeue */}
+        <section className="flex flex-col border border-border/70 bg-background/40">
           <div className="border-b border-border/60 px-3 py-2">
-            <p className="font-medium">Independent readiness gates</p>
-            <p className="text-[10px] text-muted-foreground">Hai hàng là hai phép kiểm định riêng trên LC; không cộng chéo các nhóm.</p>
+            <p className="font-medium text-xs text-foreground">
+              Nạp Batch & Tiến Độ Dequeue (Batch Admission)
+            </p>
+            <p className="text-[10px] text-muted-foreground">
+              Kiểm tra tính hợp lệ của hợp đồng và tỷ lệ sẵn sàng xuất batch cho Worker.
+            </p>
           </div>
-          <div className="h-[230px] p-3">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={gateData} layout="vertical" margin={{ top: 12, right: 24, bottom: 12, left: 12 }}>
-                <CartesianGrid horizontal={false} strokeDasharray="3 3" opacity={0.2} />
-                <XAxis type="number" domain={[0, Math.max(denominator, contractPopulation, 1)]} tickFormatter={(item) => compact(Number(item))} tick={{ fontSize: 10 }} />
-                <YAxis type="category" dataKey="gate" width={110} tick={{ fontSize: 10 }} />
-                <Tooltip formatter={(item, name) => [`${Number(item).toLocaleString()} LC`, String(name)]} />
-                <Legend />
-                <Bar dataKey="pass" name="Pass" stackId="gate" fill="#22d3ee" isAnimationActive={false} />
-                <Bar dataKey="blocked" name="Blocked / fallback" stackId="gate" fill="#fb7185" isAnimationActive={false} />
-              </BarChart>
-            </ResponsiveContainer>
+          <div className="flex-1 p-3">
+            <div className="h-44">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={admissionData} layout="vertical" margin={{ left: 24, right: 32, top: 8, bottom: 8 }}>
+                  <CartesianGrid horizontal={false} strokeDasharray="3 3" opacity={0.18} />
+                  <XAxis type="number" domain={[0, maxAdmissionDomain]} tick={{ fontSize: 10 }} />
+                  <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 10 }} />
+                  <Tooltip formatter={(val) => [`${Number(val).toLocaleString()} bản ghi`, 'Số lượng']} />
+                  <Bar dataKey="count" radius={[0, 4, 4, 0]} isAnimationActive={false}>
+                    {admissionData.map((item) => (
+                      <Cell key={item.name} fill={item.fill} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Batch fill progress indicator */}
+            <div className="mt-2 border-t border-border/50 pt-2.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">
+                  Tỷ Lệ Lấp Đầy Batch Đầu Tiên
+                </span>
+                <span className="font-mono text-xs font-semibold text-foreground">
+                  {batchFill.toFixed(1)}% ({firstBatchRecords.toLocaleString()} / {capacity.toLocaleString()} records)
+                </span>
+              </div>
+              <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-muted/40 border border-border/60">
+                <div
+                  className="h-full bg-indigo-500 rounded-full transition-all duration-300"
+                  style={{ width: `${Math.min(100, Math.max(2, batchFill))}%` }}
+                />
+              </div>
+            </div>
           </div>
         </section>
-      </div>
-
-      <section className="border border-border/70 bg-background/40 p-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p className="font-medium">Batch admission</p>
-            <p className="mt-0.5 text-[10px] text-muted-foreground">Chỉ cặp hợp lệ mới được tính vào batch; LC thiếu TPF vẫn nằm ngoài admission.</p>
-          </div>
-          <div className="text-right">
-            <p className="font-mono text-lg font-semibold tabular-nums">{capacity > 0 ? `${batchFill.toFixed(2)}%` : '—'}</p>
-            <p className="font-mono text-[9px] uppercase tracking-wide text-muted-foreground">first-batch fill</p>
-          </div>
-        </div>
-        <div className="mt-3 h-5 border border-border/70 bg-muted/30 p-0.5">
-          <div className="h-full min-w-[2px] bg-primary" style={{ width: `${Math.max(ready > 0 ? 0.4 : 0, batchFill)}%` }} />
-        </div>
-        <div className="mt-2 flex flex-wrap justify-between gap-2 font-mono text-[10px] text-muted-foreground">
-          <span>{ready.toLocaleString()} eligible targets admitted</span>
-          <span>{capacity > 0 ? `${capacity.toLocaleString()} configured records / batch` : 'batch capacity unavailable'}</span>
-        </div>
-      </section>
-
-      <div className="border-l-2 border-primary/50 bg-background/40 px-3 py-2 text-[11px] text-muted-foreground">
-        G01 hiện quan sát {ready.toLocaleString()}/{denominator.toLocaleString()} LC đủ cặp ({percent(ready, denominator)}); {missingTPF.toLocaleString()} LC bị chặn do thiếu TPF. TPF context là số context khả dụng, không được diễn giải thành số TPF mồ côi.
       </div>
     </div>
   );
 }
 
-function Metric({ label, observed, detail, warning = false }: { label: string; observed: number; detail: string; warning?: boolean }): JSX.Element {
-  return <div className="min-w-0 bg-background p-3"><p className="truncate text-[9px] uppercase tracking-wide text-muted-foreground" title={label}>{label}</p><p className={`mt-1 truncate font-mono text-sm font-semibold tabular-nums ${warning ? 'text-amber-600 dark:text-amber-400' : ''}`}>{observed.toLocaleString()}</p><p className="mt-0.5 truncate font-mono text-[9px] text-muted-foreground" title={detail}>{detail}</p></div>;
-}
-
-function Evidence({ label, value: observed, ratio, color }: { label: string; value: number; ratio: string; color: string }): JSX.Element {
-  return <div className="flex items-center gap-2 bg-background px-3 py-2"><span className={`size-2 shrink-0 ${color}`} /><span className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground">{label}</span><span className="font-mono font-semibold tabular-nums">{observed.toLocaleString()}</span><span className="w-14 text-right font-mono text-[10px] text-muted-foreground">{ratio}</span></div>;
+function MetricCard({
+  icon,
+  label,
+  value: val,
+  sub,
+  highlight,
+}: {
+  icon?: JSX.Element;
+  label: string;
+  value: string;
+  sub: string;
+  highlight?: 'emerald' | 'amber' | 'error';
+}): JSX.Element {
+  return (
+    <div className="bg-background p-3">
+      <div className="flex items-center gap-1.5 text-muted-foreground text-[10px] font-medium uppercase tracking-wide">
+        {icon}
+        <span className="truncate">{label}</span>
+      </div>
+      <p
+        className={`mt-1 font-mono text-sm font-semibold truncate ${
+          highlight === 'emerald'
+            ? 'text-emerald-600 dark:text-emerald-400'
+            : highlight === 'amber'
+            ? 'text-amber-600 dark:text-amber-400'
+            : highlight === 'error'
+            ? 'text-rose-600 dark:text-rose-400'
+            : 'text-foreground'
+        }`}
+      >
+        {val}
+      </p>
+      <p className="mt-0.5 text-[10px] text-muted-foreground truncate">{sub}</p>
+    </div>
+  );
 }

@@ -17,6 +17,9 @@ type fakePrometheusQuerier struct {
 }
 
 func (f *fakePrometheusQuerier) QueryRange(_ context.Context, query string, _ time.Time, _ time.Time, _ time.Duration) ([]entity.MonitoringPoint, error) {
+	if pts, ok := f.points[query]; ok {
+		return pts, nil
+	}
 	for key, pts := range f.points {
 		if strings.Contains(query, key) {
 			return pts, nil
@@ -156,11 +159,11 @@ func TestDAGAggregationQueryKeepsNoDataGray(t *testing.T) {
 	if graph.Status != "not_observed" {
 		t.Fatalf("expected not_observed, got %q", graph.Status)
 	}
-	if len(graph.Hops) != 22 {
-		t.Fatalf("expected 22 hops in full DAG graph, got %d", len(graph.Hops))
+	if len(graph.Hops) != 19 {
+		t.Fatalf("expected 19 hops in full DAG graph, got %d", len(graph.Hops))
 	}
-	if len(graph.Edges) != 25 {
-		t.Fatalf("expected 25 edges in full DAG topology, got %d", len(graph.Edges))
+	if len(graph.Edges) != 22 {
+		t.Fatalf("expected 22 edges in full DAG topology, got %d", len(graph.Edges))
 	}
 }
 
@@ -179,8 +182,8 @@ func TestDAGAggregationQueryReportsRunningFromLiveMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if graph.Status != "running" || len(graph.Hops) != 22 || len(graph.Edges) != 25 {
-		t.Fatalf("expected a running service with 22 hops and 25 edges, got %#v", graph)
+	if graph.Status != "running" || len(graph.Hops) != 19 || len(graph.Edges) != 22 {
+		t.Fatalf("expected a running service with 19 hops and 22 edges, got %#v", graph)
 	}
 }
 
@@ -260,22 +263,22 @@ func TestDAGAggregationQueryCumulativePrometheusMetrics(t *testing.T) {
 
 	prom := &fakePrometheusQuerier{
 		points: map[string][]entity.MonitoringPoint{
-			"sum(increase(aurora_preprocessor_products_total[": {
+			`sum(aurora_preprocessor_products_total)`: {
 				{Timestamp: float64(now.Unix()), Value: 50.0},
 			},
-			"sum(increase(aurora_preprocessor_products_total{kind=\"lightcurve\"}[": {
+			`sum(aurora_preprocessor_products_total{kind="lightcurve"})`: {
 				{Timestamp: float64(now.Unix()), Value: 30.0},
 			},
-			"sum(increase(aurora_preprocessor_products_total{kind=\"target_pixel\"}[": {
+			`sum(aurora_preprocessor_products_total{kind="target_pixel"})`: {
 				{Timestamp: float64(now.Unix()), Value: 20.0},
 			},
-			"sum(increase(aurora_preprocessor_products_total{kind=\"lightcurve\",status=\"success\"}[": {
+			`sum(aurora_preprocessor_products_total{kind="lightcurve",status="success"})`: {
 				{Timestamp: float64(now.Unix()), Value: 28.0},
 			},
-			"sum(increase(aurora_preprocessor_products_total{kind=\"target_pixel\",status=\"success\"}[": {
+			`sum(aurora_preprocessor_products_total{kind="target_pixel",status="success"})`: {
 				{Timestamp: float64(now.Unix()), Value: 18.0},
 			},
-			"sum(increase(aurora_preprocessor_bytes_total{stage=\"silver\"}[": {
+			`sum(aurora_preprocessor_bytes_total{stage="silver"})`: {
 				{Timestamp: float64(now.Unix()), Value: 1048576.0},
 			},
 		},
@@ -436,8 +439,8 @@ func TestDAGAggregationGoldHopsLiveRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected QueryGraph error: %v", err)
 	}
-	if len(graph.Hops) != 22 {
-		t.Fatalf("expected 22 hops, got %d", len(graph.Hops))
+	if len(graph.Hops) != 19 {
+		t.Fatalf("expected 19 hops, got %d", len(graph.Hops))
 	}
 
 	// Verify gold-pairing in live mode
@@ -466,11 +469,11 @@ func TestDAGAggregationQueryGraphStageFiltering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(allGraph.Hops) != 22 {
-		t.Errorf("expected 22 hops for 'all', got %d", len(allGraph.Hops))
+	if len(allGraph.Hops) != 19 {
+		t.Errorf("expected 19 hops for 'all', got %d", len(allGraph.Hops))
 	}
-	if len(allGraph.Edges) != 25 {
-		t.Errorf("expected 25 edges for 'all', got %d", len(allGraph.Edges))
+	if len(allGraph.Edges) != 22 {
+		t.Errorf("expected 22 edges for 'all', got %d", len(allGraph.Edges))
 	}
 
 	preGraph, err := svc.QueryGraph(context.Background(), "preprocessing", "")
@@ -490,8 +493,8 @@ func TestDAGAggregationQueryGraphStageFiltering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(enrichGraph.Hops) != 9 {
-		t.Errorf("expected 9 hops for 'enrichment', got %d", len(enrichGraph.Hops))
+	if len(enrichGraph.Hops) != 6 {
+		t.Errorf("expected 6 hops for 'enrichment', got %d", len(enrichGraph.Hops))
 	}
 	for _, h := range enrichGraph.Hops {
 		if !strings.HasPrefix(h.ID, "gold-") {
