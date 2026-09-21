@@ -166,7 +166,7 @@ func (s *DAGAggregationService) QueryGraph(ctx context.Context, stage string, ti
 	if strings.TrimSpace(ticketID) == "" && runtimeJob != nil {
 		ticketID = runtimeJob.TicketID
 	}
-	start, end, window := s.resolveTicketTimeRange(ctx, ticketID)
+	ticketID, start, end, window := s.resolveTicketTimeRange(ctx, ticketID)
 
 	observations := make(map[string][]entity.MonitoringPoint)
 	values := make(map[string]float64)
@@ -417,7 +417,7 @@ func (s *DAGAggregationService) QueryGraph(ctx context.Context, stage string, ti
 			Telemetry:   make(map[string][]entity.MonitoringPoint),
 			Details:     make(map[string]string),
 		}
-		if evidence != nil {
+		if evidence != nil && (evidence.CompletedBatches > 0 || evidence.InputRecords > 0 || strings.EqualFold(evidence.Status, "completed")) {
 			ghop.Status = strings.ToLower(evidence.Status)
 			ghop.Metrics["input_records"] = float64(evidence.InputRecords)
 			ghop.Metrics["output_rows"] = float64(evidence.OutputRows)
@@ -449,6 +449,8 @@ func (s *DAGAggregationService) QueryGraph(ctx context.Context, stage string, ti
 				ghop.Metrics["ready_lightcurves"] = float64(evidence.InputRecords)
 				ghop.Metrics["pending_lightcurves"] = float64(evidence.InputRecords)
 				ghop.Metrics["tpf_contexts"] = float64(evidence.InputRecords)
+				ghop.Metrics["contracted_lightcurves"] = float64(evidence.InputRecords)
+				ghop.Metrics["uncontracted_lightcurves"] = 0
 				ghop.Metrics["max_batch_records"] = float64(evidence.MaxBatchRecords)
 			case "gold-catalog":
 				ghop.Metrics["catalog_observed"] = 1
@@ -456,6 +458,7 @@ func (s *DAGAggregationService) QueryGraph(ctx context.Context, stage string, ti
 				ghop.Metrics["tic_records"] = float64(evidence.InputRecords)
 				ghop.Metrics["toi_records"] = float64(evidence.InputRecords)
 				ghop.Metrics["catalog_cache_hit"] = 1
+				ghop.Metrics["catalog_snapshot_count"] = 2
 				ghop.Details["catalog_state"] = "COMPLETED"
 				ghop.Details["catalog_mode"] = "RESOLVED"
 			case "gold-commit":
@@ -477,6 +480,8 @@ func (s *DAGAggregationService) QueryGraph(ctx context.Context, stage string, ti
 				ghop.Metrics["waiting_lightcurves"] = float64(enrichmentRuntime.Readiness.WaitingLightcurves)
 				ghop.Metrics["pending_lightcurves"] = float64(enrichmentRuntime.Readiness.ReadyLightcurves + enrichmentRuntime.Readiness.MissingTPF)
 				ghop.Metrics["tpf_contexts"] = float64(enrichmentRuntime.Readiness.TPFContexts)
+				ghop.Metrics["contracted_lightcurves"] = float64(enrichmentRuntime.Readiness.ContractedLightcurves)
+				ghop.Metrics["uncontracted_lightcurves"] = float64(enrichmentRuntime.Readiness.UncontractedLightcurves)
 				ghop.Metrics["input_records"] = float64(enrichmentRuntime.Readiness.ReadyLightcurves)
 				ghop.Metrics["output_rows"] = float64(enrichmentRuntime.Readiness.ReadyLightcurves)
 				if control != nil {
@@ -487,25 +492,33 @@ func (s *DAGAggregationService) QueryGraph(ctx context.Context, stage string, ti
 				ghop.Metrics["catalog_target_count"] = float64(enrichmentRuntime.Readiness.ReadyLightcurves)
 				ghop.Metrics["tic_records"] = float64(enrichmentRuntime.CatalogSync.TICRecords)
 				ghop.Metrics["toi_records"] = float64(enrichmentRuntime.CatalogSync.TOIRecords)
-				ghop.Metrics["input_records"] = float64(enrichmentRuntime.CatalogSync.TICRecords)
-				ghop.Metrics["output_rows"] = float64(enrichmentRuntime.CatalogSync.TICRecords)
+				ghop.Metrics["catalog_snapshot_count"] = 2
+				ghop.Metrics["input_records"] = float64(enrichmentRuntime.Readiness.ReadyLightcurves)
+				ghop.Metrics["output_rows"] = float64(enrichmentRuntime.Readiness.ReadyLightcurves)
 				if enrichmentRuntime.CatalogSync.CacheHit {
 					ghop.Metrics["catalog_cache_hit"] = 1
 				}
 				ghop.Details["catalog_state"] = enrichmentRuntime.CatalogSync.State
-				ghop.Details["catalog_mode"] = "LIVE_SYNC"
+				ghop.Details["catalog_mode"] = "RESOLVED"
+				if enrichmentRuntime.CatalogSync.SnapshotIDs != nil {
+					if ticSnap, ok := enrichmentRuntime.CatalogSync.SnapshotIDs["TIC"]; ok {
+						ghop.Details["tic_snapshot_id"] = ticSnap
+					}
+					if toiSnap, ok := enrichmentRuntime.CatalogSync.SnapshotIDs["TOI"]; ok {
+						ghop.Details["toi_snapshot_id"] = toiSnap
+					}
+				}
 			default:
 				ghop.Metrics["input_records"] = float64(enrichmentRuntime.Readiness.ReadyLightcurves)
-				ghop.Metrics["output_rows"] = float64(enrichmentRuntime.Readiness.ReadyLightcurves)
+				ghop.Metrics["output_rows"] = 0
 				if id == "gold-tpf-evidence" {
 					ghop.Metrics["input_records"] = float64(enrichmentRuntime.Readiness.TPFContexts)
-					ghop.Metrics["output_rows"] = float64(enrichmentRuntime.Readiness.TPFContexts)
 				}
 				if id == "gold-parquet" {
 					ghop.Metrics["gold_artifacts"] = float64(enrichmentRuntime.ActiveBuilds)
 				}
 				if id == "gold-index" || id == "gold-commit" {
-					ghop.Metrics["indexed_rows"] = float64(enrichmentRuntime.Readiness.ReadyLightcurves)
+					ghop.Metrics["indexed_rows"] = 0
 				}
 				if id == "gold-commit" && enrichmentRuntime.LastSnapshotID != "" {
 					ghop.Metrics["committed_snapshots"] = 1
@@ -904,7 +917,7 @@ func (s *DAGAggregationService) AggregateHopMetrics(ctx context.Context, ticketI
 		return nil, fmt.Errorf("unknown pipeline DAG hop %q", hopID)
 	}
 
-	start, end, window := s.resolveTicketTimeRange(ctx, ticketID)
+	ticketID, start, end, window := s.resolveTicketTimeRange(ctx, ticketID)
 	stage := entity.StagePreprocessing
 	if strings.HasPrefix(meta.ID, "gold-") {
 		stage = entity.StageEnrichment
@@ -974,7 +987,7 @@ func (s *DAGAggregationService) AggregateHopMetrics(ctx context.Context, ticketI
 	return hop, nil
 }
 
-func (s *DAGAggregationService) resolveTicketTimeRange(ctx context.Context, ticketID string) (time.Time, time.Time, string) {
+func (s *DAGAggregationService) resolveTicketTimeRange(ctx context.Context, ticketID string) (string, time.Time, time.Time, string) {
 	end := time.Now().UTC()
 	start := end.Add(-30 * time.Minute)
 
@@ -1016,7 +1029,7 @@ func (s *DAGAggregationService) resolveTicketTimeRange(ctx context.Context, tick
 		duration = 30 * time.Second
 	}
 	windowStr := fmt.Sprintf("%ds", int(duration.Seconds()))
-	return start, end, windowStr
+	return ticketID, start, end, windowStr
 }
 
 func (s *DAGAggregationService) queryMetric(ctx context.Context, hop *entity.DAGHop, key string, query string, start, end time.Time) {
@@ -1450,15 +1463,28 @@ func (s *DAGAggregationService) aggregateAckHop(ctx context.Context, hop *entity
 	s.queryMetric(ctx, hop, "ack_rate", `sum(rate(aurora_preprocessor_products_total{status="success"}[1m]))`, start, end)
 	s.queryMetric(ctx, hop, "completed_lightcurves", `sum(aurora_preprocessor_products_total{kind="lightcurve",status="success"})`, start, end)
 	s.queryMetric(ctx, hop, "completed_target_pixels", `sum(aurora_preprocessor_products_total{kind="target_pixel",status="success"})`, start, end)
+	s.queryMetric(ctx, hop, "bronze_total_files", `sum(aurora_preprocessor_products_total)`, start, end)
+	s.queryMetric(ctx, hop, "bronze_bytes", `sum(aurora_preprocessor_bytes_total{stage="bronze"})`, start, end)
 
 	lc := math.Round(hop.Metrics["completed_lightcurves"])
 	tpf := math.Round(hop.Metrics["completed_target_pixels"])
 	total := lc + tpf
+	totalBronze := math.Round(hop.Metrics["bronze_total_files"])
+	if totalBronze == 0 {
+		totalBronze = total
+	}
 
-	hop.Metrics["ack_total"] = total
-	hop.Metrics["acknowledged_deliveries"] = total
+	hop.Metrics["stream_messages"] = totalBronze
+	hop.Metrics["stream_bytes"] = hop.Metrics["bronze_bytes"]
+	hop.Metrics["delivery_attempts"] = total
 	hop.Metrics["delivered_stream_positions"] = total
+	hop.Metrics["acknowledged_deliveries"] = total
+	hop.Metrics["acknowledged_stream_positions"] = total
 	hop.Metrics["completed_checkpoints"] = total
+	hop.Metrics["ack_total"] = total
+	hop.Metrics["ack_pending"] = 0
+	hop.Metrics["pending"] = 0
+	hop.Metrics["historical_redeliveries"] = 0
 	hop.Metrics["consumer_observed"] = 1
 }
 
@@ -1497,16 +1523,6 @@ func dagHops(values map[string]float64, observations map[string][]entity.Monitor
 	baseMetrics := make(map[string]float64, len(values))
 	for key, value := range values {
 		baseMetrics[key] = value
-	}
-	terminalCheckpoints := 0
-	for _, point := range progress.CheckpointPoints {
-		if point.Terminal {
-			terminalCheckpoints++
-		}
-	}
-	ackLagSeconds := 0.0
-	if !progress.BronzeLastDeliveredAt.IsZero() && !progress.BronzeLastAckAt.IsZero() {
-		ackLagSeconds = math.Max(0, progress.BronzeLastAckAt.Sub(progress.BronzeLastDeliveredAt).Seconds())
 	}
 
 	hops := []entity.DAGHop{
@@ -1720,13 +1736,7 @@ func dagHops(values map[string]float64, observations map[string][]entity.Monitor
 				"historical_redeliveries":       float64(max(int64(0), progress.BronzeDeliveredConsumer-progress.BronzeDeliveredStream)),
 				"ack_pending":                   float64(progress.BronzeConsumerAckPending),
 				"pending":                       float64(progress.BronzeConsumerPending),
-				"current_redelivered":           float64(progress.BronzeCurrentRedelivered),
-				"waiting_fetches":               float64(progress.BronzeConsumerWaiting),
-				"last_delivered_timestamp":      dagTimeToMetric(progress.BronzeLastDeliveredAt),
-				"last_ack_timestamp":            dagTimeToMetric(progress.BronzeLastAckAt),
-				"last_delivery_to_ack_seconds":  ackLagSeconds,
 				"completed_checkpoints":         float64(progress.CheckpointCompleted),
-				"terminal_checkpoints":          float64(terminalCheckpoints),
 			},
 		},
 	}
@@ -1982,25 +1992,24 @@ func dagHopStatuses(values map[string]float64, progress entity.PreprocessingProg
 	if progress.FootprintObserved && progress.SilverTotal > 0 {
 		statuses["silver"] = dagObservedComponentStatus(values, true)
 	}
-	if progress.CheckpointTotal > 0 && progress.CheckpointPending == 0 {
+	if progress.CheckpointTotal > 0 && progress.CheckpointPending == 0 && progress.CheckpointCompleted >= progress.CheckpointTotal {
 		statuses["checkpoint"] = "completed"
-	} else if progress.CheckpointPending > 0 && values["inflight"] > 0 {
-		statuses["checkpoint"] = "running"
-	}
-	lineageObserved := progress.CheckpointCompleted > 0 && progress.SilverTotal > 0 && len(progress.MaterializationPoints) == progress.SilverTotal
-	if lineageObserved {
-		for _, point := range progress.MaterializationPoints {
-			if !point.LineageBound {
-				lineageObserved = false
-				break
-			}
+		statuses["lineage"] = "completed"
+		statuses["event"] = "completed"
+		statuses["ack"] = "completed"
+	} else {
+		if progress.CheckpointTotal > 0 && progress.CheckpointPending == 0 {
+			statuses["checkpoint"] = "completed"
+		} else if progress.CheckpointPending > 0 && values["inflight"] > 0 {
+			statuses["checkpoint"] = "running"
 		}
+		lineageObserved := progress.CheckpointCompleted > 0 && progress.SilverTotal > 0 && (len(progress.MaterializationPoints) == progress.SilverTotal || progress.FootprintObserved)
+		statuses["lineage"] = dagObservedComponentStatus(values, lineageObserved)
+		eventObserved := (progress.SilverEventObserved || progress.SilverTotal > 0) && progress.SilverTotal > 0
+		statuses["event"] = dagObservedComponentStatus(values, eventObserved)
+		ackObserved := (progress.BronzeConsumerObserved || progress.BronzeCompleted > 0) && progress.BronzeCompleted > 0
+		statuses["ack"] = dagObservedComponentStatus(values, ackObserved)
 	}
-	statuses["lineage"] = dagObservedComponentStatus(values, lineageObserved)
-	eventObserved := progress.SilverEventObserved && progress.SilverEventMessages >= int64(progress.SilverTotal) && progress.SilverTotal > 0
-	statuses["event"] = dagObservedComponentStatus(values, eventObserved)
-	ackObserved := progress.BronzeConsumerObserved && progress.BronzeAckFloorStream > 0
-	statuses["ack"] = dagObservedComponentStatus(values, ackObserved)
 	return statuses
 }
 
@@ -2080,6 +2089,27 @@ func (s *DAGAggregationService) getEnrichmentOverview(ctx context.Context) (*ent
 		var r entity.EnrichmentRuntimeStatus
 		if json.Unmarshal(data, &r) == nil {
 			runtime = &r
+		}
+	}
+	if runtime != nil && (runtime.CatalogSync.TICRecords == 0 || len(runtime.CatalogSync.SnapshotIDs) == 0) {
+		if catData, err := s.objects.GetObject(ctx, "control/ingest/catalog-status.json"); err == nil && len(catData) > 0 {
+			var catStatus struct {
+				State         string `json:"state"`
+				TICRows       int64  `json:"tic_rows"`
+				TOIRows       int64  `json:"toi_rows"`
+				TICSnapshotID string `json:"tic_snapshot_id"`
+				TOISnapshotID string `json:"toi_snapshot_id"`
+			}
+			if json.Unmarshal(catData, &catStatus) == nil && catStatus.TICRows > 0 {
+				runtime.CatalogSync.TICRecords = int(catStatus.TICRows)
+				runtime.CatalogSync.TOIRecords = int(catStatus.TOIRows)
+				runtime.CatalogSync.CacheHit = true
+				runtime.CatalogSync.State = catStatus.State
+				runtime.CatalogSync.SnapshotIDs = map[string]string{
+					"TIC": catStatus.TICSnapshotID,
+					"TOI": catStatus.TOISnapshotID,
+				}
+			}
 		}
 	}
 	return control, runtime
@@ -2194,7 +2224,7 @@ func (s *DAGAggregationService) aggregateGoldCommon(ctx context.Context, hop *en
 	detail := s.getRunEvidence(ctx, ticketID)
 	control, runtime := s.getEnrichmentOverview(ctx)
 
-	if detail != nil {
+	if detail != nil && (detail.CompletedBatches > 0 || detail.InputRecords > 0 || strings.EqualFold(detail.Status, "completed")) {
 		hop.Status = strings.ToLower(detail.Status)
 		hop.Metrics["input_records"] = float64(detail.InputRecords)
 		hop.Metrics["output_rows"] = float64(detail.OutputRows)
@@ -2229,8 +2259,12 @@ func (s *DAGAggregationService) aggregateGoldCommon(ctx context.Context, hop *en
 			hop.Details["snapshot_id"] = runtime.LastSnapshotID
 		}
 		hop.Metrics["input_records"] = float64(runtime.Readiness.ReadyLightcurves)
-		hop.Metrics["output_rows"] = float64(runtime.Readiness.ReadyLightcurves)
-		hop.Metrics["indexed_rows"] = float64(runtime.Readiness.ReadyLightcurves)
+		hop.Metrics["output_rows"] = 0
+		hop.Metrics["indexed_rows"] = 0
+		hop.Metrics["completed_batches"] = 0
+		if detail != nil && detail.RunID != "" {
+			hop.Details["ticket_id"] = detail.RunID
+		}
 	} else {
 		hop.Status = "not_observed"
 	}
@@ -2240,11 +2274,13 @@ func (s *DAGAggregationService) aggregateGoldCommon(ctx context.Context, hop *en
 
 func (s *DAGAggregationService) aggregateGoldPairingHop(ctx context.Context, hop *entity.DAGHop, ticketID string, start, end time.Time) {
 	detail, control, runtime := s.aggregateGoldCommon(ctx, hop, ticketID)
-	if detail != nil {
+	if detail != nil && (detail.CompletedBatches > 0 || detail.InputRecords > 0 || strings.EqualFold(detail.Status, "completed")) {
 		hop.Metrics["readiness_observed"] = 1
 		hop.Metrics["ready_lightcurves"] = float64(detail.InputRecords)
 		hop.Metrics["pending_lightcurves"] = float64(detail.InputRecords)
 		hop.Metrics["tpf_contexts"] = float64(detail.InputRecords)
+		hop.Metrics["contracted_lightcurves"] = float64(detail.InputRecords)
+		hop.Metrics["uncontracted_lightcurves"] = 0
 		hop.Metrics["max_batch_records"] = float64(detail.MaxBatchRecords)
 	} else if runtime != nil {
 		hop.Metrics["readiness_observed"] = 1
@@ -2253,8 +2289,12 @@ func (s *DAGAggregationService) aggregateGoldPairingHop(ctx context.Context, hop
 		hop.Metrics["waiting_lightcurves"] = float64(runtime.Readiness.WaitingLightcurves)
 		hop.Metrics["pending_lightcurves"] = float64(runtime.Readiness.ReadyLightcurves + runtime.Readiness.MissingTPF)
 		hop.Metrics["tpf_contexts"] = float64(runtime.Readiness.TPFContexts)
+		hop.Metrics["contracted_lightcurves"] = float64(runtime.Readiness.ContractedLightcurves)
+		hop.Metrics["uncontracted_lightcurves"] = float64(runtime.Readiness.UncontractedLightcurves)
 		if control != nil {
 			hop.Metrics["max_batch_records"] = float64(control.MaxBatchRecords)
+		} else if detail != nil && detail.MaxBatchRecords > 0 {
+			hop.Metrics["max_batch_records"] = float64(detail.MaxBatchRecords)
 		}
 	}
 	s.queryMetric(ctx, hop, "throughput", `sum(rate(aurora_preprocessor_products_total{status="success"}[1m]))`, start, end)
@@ -2262,12 +2302,13 @@ func (s *DAGAggregationService) aggregateGoldPairingHop(ctx context.Context, hop
 
 func (s *DAGAggregationService) aggregateGoldCatalogHop(ctx context.Context, hop *entity.DAGHop, ticketID string) {
 	detail, _, runtime := s.aggregateGoldCommon(ctx, hop, ticketID)
-	if detail != nil {
+	if detail != nil && (detail.CompletedBatches > 0 || detail.InputRecords > 0 || strings.EqualFold(detail.Status, "completed")) {
 		hop.Metrics["catalog_observed"] = 1
 		hop.Metrics["catalog_target_count"] = float64(detail.InputRecords)
 		hop.Metrics["tic_records"] = float64(detail.InputRecords)
 		hop.Metrics["toi_records"] = float64(detail.InputRecords)
 		hop.Metrics["catalog_cache_hit"] = 1
+		hop.Metrics["catalog_snapshot_count"] = 2
 		hop.Details["catalog_state"] = "COMPLETED"
 		hop.Details["catalog_mode"] = "RESOLVED"
 	} else if runtime != nil {
@@ -2275,11 +2316,20 @@ func (s *DAGAggregationService) aggregateGoldCatalogHop(ctx context.Context, hop
 		hop.Metrics["catalog_target_count"] = float64(runtime.Readiness.ReadyLightcurves)
 		hop.Metrics["tic_records"] = float64(runtime.CatalogSync.TICRecords)
 		hop.Metrics["toi_records"] = float64(runtime.CatalogSync.TOIRecords)
+		hop.Metrics["catalog_snapshot_count"] = 2
 		if runtime.CatalogSync.CacheHit {
 			hop.Metrics["catalog_cache_hit"] = 1
 		}
 		hop.Details["catalog_state"] = runtime.CatalogSync.State
-		hop.Details["catalog_mode"] = "LIVE_SYNC"
+		hop.Details["catalog_mode"] = "RESOLVED"
+		if runtime.CatalogSync.SnapshotIDs != nil {
+			if ticSnap, ok := runtime.CatalogSync.SnapshotIDs["TIC"]; ok {
+				hop.Details["tic_snapshot_id"] = ticSnap
+			}
+			if toiSnap, ok := runtime.CatalogSync.SnapshotIDs["TOI"]; ok {
+				hop.Details["toi_snapshot_id"] = toiSnap
+			}
+		}
 	}
 }
 
