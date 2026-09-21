@@ -170,6 +170,23 @@ func (r *minioObjectStorage) ListObjectsCursor(ctx context.Context, prefix strin
 	return objects, nextCursor, truncated, nil
 }
 
+// StatPrefix counts the total number of objects and accumulates total bytes for a given prefix in a streaming manner.
+func (r *minioObjectStorage) StatPrefix(ctx context.Context, prefix string) (int, int64, error) {
+	if r.client.SDK == nil {
+		return 0, 0, fmt.Errorf("MinIO client is unavailable")
+	}
+	var total int
+	var totalBytes int64
+	for object := range r.client.SDK.ListObjects(ctx, r.client.Bucket, minioSDK.ListObjectsOptions{Prefix: prefix, Recursive: true}) {
+		if object.Err != nil {
+			return 0, 0, fmt.Errorf("MinIO stat prefix %q: %w", prefix, object.Err)
+		}
+		total++
+		totalBytes += object.Size
+	}
+	return total, totalBytes, nil
+}
+
 func isProcessableBronzeFITS(key string) bool {
 	key = strings.ToLower(strings.TrimSpace(key))
 	return strings.HasSuffix(key, ".fits") || strings.HasSuffix(key, ".fit") ||

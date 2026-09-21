@@ -9,7 +9,7 @@ import { BronzeLayerTab } from './components/BronzeLayerTab';
 import { GoldLayerTab } from './components/GoldLayerTab';
 import { LakehouseTierCards } from './components/LakehouseTierCards';
 import { SilverLayerTab } from './components/SilverLayerTab';
-import type { StorageListing } from './types';
+import type { LakehouseSummary, StorageListing } from './types';
 
 const PAGE_SIZE = 25;
 
@@ -20,6 +20,7 @@ export default function LakehousePage(): JSX.Element {
   const [bronzeData, setBronzeData] = useState<StorageListing | null>(null);
   const [silverData, setSilverData] = useState<StorageListing | null>(null);
   const [goldData, setGoldData] = useState<StorageListing | null>(null);
+  const [summary, setSummary] = useState<LakehouseSummary | null>(null);
 
   const [currentPrefix, setCurrentPrefix] = useState('gold/');
   const [page, setPage] = useState(1);
@@ -51,9 +52,17 @@ export default function LakehousePage(): JSX.Element {
     }
   }, []);
 
-  // Only load the initial active tab (gold) on mount; do not eagerly fetch all 3 tiers.
+  // Eagerly load lightweight aggregate tier summary and initial active tab
   useEffect(() => {
     void loadTier('gold/', 1, '');
+    void (async () => {
+      try {
+        const data = await apiFetch<LakehouseSummary>('/v1/lakehouse/summary');
+        setSummary(data);
+      } catch {
+        // non-fatal summary fetch failure
+      }
+    })();
   }, [loadTier]);
 
   const handleTabChange = (tab: string) => {
@@ -141,6 +150,7 @@ export default function LakehousePage(): JSX.Element {
         bronzeData={bronzeData}
         silverData={silverData}
         goldData={goldData}
+        summary={summary}
       />
 
       <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">

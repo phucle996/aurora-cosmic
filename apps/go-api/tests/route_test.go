@@ -205,6 +205,14 @@ func (fakeLakehouse) Preview(context.Context, entity.LakehousePreviewQuery) (*en
 	return &entity.LakehousePreviewResponse{Key: "test.txt", Format: "text", TextContent: "hello"}, nil
 }
 
+func (fakeLakehouse) Summary(context.Context) (*entity.LakehouseSummary, error) {
+	return &entity.LakehouseSummary{
+		Bronze: entity.LakehouseTierSummary{Total: 10, TotalBytes: 1024},
+		Silver: entity.LakehouseTierSummary{Total: 5, TotalBytes: 512},
+		Gold:   entity.LakehouseTierSummary{Total: 2, TotalBytes: 256},
+	}, nil
+}
+
 func (fakeIngest) Start(context.Context, entity.IngestStartRequest) (*entity.IngestControlJob, error) {
 	return &entity.IngestControlJob{TicketID: "ingest-job-test", Status: "running"}, nil
 }
@@ -254,7 +262,7 @@ func newTestRouter() http.Handler {
 
 func TestRouterEndpoints(t *testing.T) {
 	router := newTestRouter()
-	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/dag/hops/bronze", "/api/v1/dag/hops/gold-pairing", "/api/v1/dag/hops/gold-commit", "/api/v1/dag/graph", "/api/v1/dag/graph?stage=enrichment", "/api/v1/dag/graph?stage=preprocessing", "/api/v1/data-factory/runs", "/api/v1/data-factory/tickets", "/api/v1/enrichment/control", "/api/v1/enrichment/snapshots", "/api/v1/enrichment/snapshots/gold-v1-test", "/api/v1/lineage/ledger", "/api/v1/ingest/status", "/api/v1/storage?prefix=bronze/&limit=10", "/api/v1/lakehouse/objects?prefix=bronze/&limit=10", "/api/v1/lakehouse/preview?key=test.txt", "/api/v1/targets", "/api/v1/targets/101/insights?sector=42", "/api/v1/targets/101/observation?sector=42", "/api/v1/lightcurves?tic_id=101&sector=42", "/api/v1/models", "/api/v1/inference/jobs", "/api/v1/models/training-preflight?snapshot_id=gold-v1-test", "/api/v1/models/snapshots", "/api/v1/models/train/active"} {
+	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/dag/hops/bronze", "/api/v1/dag/hops/gold-pairing", "/api/v1/dag/hops/gold-commit", "/api/v1/dag/graph", "/api/v1/dag/graph?stage=enrichment", "/api/v1/dag/graph?stage=preprocessing", "/api/v1/data-factory/runs", "/api/v1/data-factory/tickets", "/api/v1/enrichment/control", "/api/v1/enrichment/snapshots", "/api/v1/enrichment/snapshots/gold-v1-test", "/api/v1/lineage/ledger", "/api/v1/ingest/status", "/api/v1/storage?prefix=bronze/&limit=10", "/api/v1/lakehouse/summary", "/api/v1/lakehouse/objects?prefix=bronze/&limit=10", "/api/v1/lakehouse/preview?key=test.txt", "/api/v1/targets", "/api/v1/targets/101/insights?sector=42", "/api/v1/targets/101/observation?sector=42", "/api/v1/lightcurves?tic_id=101&sector=42", "/api/v1/models", "/api/v1/inference/jobs", "/api/v1/models/training-preflight?snapshot_id=gold-v1-test", "/api/v1/models/snapshots", "/api/v1/models/train/active"} {
 		req := httptest.NewRequest(http.MethodGet, endpoint, nil)
 		recorder := httptest.NewRecorder()
 		router.ServeHTTP(recorder, req)

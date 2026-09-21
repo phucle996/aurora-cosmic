@@ -32,6 +32,19 @@ type LakehouseListing struct {
 	Objects    []LakehouseObject `json:"objects"`
 }
 
+// LakehouseTierSummary holds aggregate metric counts and byte footprint for one tier.
+type LakehouseTierSummary struct {
+	Total      int   `json:"total"`
+	TotalBytes int64 `json:"total_bytes"`
+}
+
+// LakehouseSummary represents aggregate metrics for all Medallion tiers.
+type LakehouseSummary struct {
+	Bronze LakehouseTierSummary `json:"bronze"`
+	Silver LakehouseTierSummary `json:"silver"`
+	Gold   LakehouseTierSummary `json:"gold"`
+}
+
 // LakehousePreviewQuery specifies which object to inspect and preview.
 type LakehousePreviewQuery struct {
 	Key    string `json:"key"`

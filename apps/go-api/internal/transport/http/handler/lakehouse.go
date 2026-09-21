@@ -20,6 +20,16 @@ func NewLakehouseHandler(lakehouse service.Lakehouse) *LakehouseHandler {
 	return &LakehouseHandler{lakehouse: lakehouse}
 }
 
+// Summary handles GET /api/v1/lakehouse/summary
+func (h *LakehouseHandler) Summary(c *gin.Context) {
+	summary, err := h.lakehouse.Summary(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, summary)
+}
+
 // List handles GET /api/v1/lakehouse/objects
 func (h *LakehouseHandler) List(c *gin.Context) {
 	prefix := strings.TrimSpace(c.Query("prefix"))

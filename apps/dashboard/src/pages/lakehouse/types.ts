@@ -21,6 +21,17 @@ export type StorageListing = {
   objects: StorageObject[];
 };
 
+export type LakehouseTierSummary = {
+  total: number;
+  total_bytes: number;
+};
+
+export type LakehouseSummary = {
+  bronze: LakehouseTierSummary;
+  silver: LakehouseTierSummary;
+  gold: LakehouseTierSummary;
+};
+
 export type FeatureCatalogItem = {
   name: string;
   category: string;

@@ -38,6 +38,62 @@ func NewLakehouseService(objects provider.ObjectStorage, bucket string) domainSe
 	}
 }
 
+type prefixStatter interface {
+	StatPrefix(ctx context.Context, prefix string) (int, int64, error)
+}
+
+func (s *LakehouseService) statTier(ctx context.Context, tier string) (int, int64, error) {
+	if statter, ok := s.objects.(prefixStatter); ok {
+		return statter.StatPrefix(ctx, tier)
+	}
+	objs, err := s.objects.ListObjects(ctx, tier)
+	if err != nil {
+		return 0, 0, err
+	}
+	var totalBytes int64
+	for _, o := range objs {
+		totalBytes += o.Size
+	}
+	return len(objs), totalBytes, nil
+}
+
+// Summary aggregates total object count and byte footprint across all Medallion tiers.
+func (s *LakehouseService) Summary(ctx context.Context) (*entity.LakehouseSummary, error) {
+	tiers := []string{"bronze/", "silver/", "gold/"}
+	type tierResult struct {
+		tier  string
+		total int
+		bytes int64
+		err   error
+	}
+
+	results := make(chan tierResult, len(tiers))
+	for _, t := range tiers {
+		tier := t
+		go func() {
+			total, bytes, err := s.statTier(ctx, tier)
+			results <- tierResult{tier: tier, total: total, bytes: bytes, err: err}
+		}()
+	}
+
+	summary := &entity.LakehouseSummary{}
+	for i := 0; i < len(tiers); i++ {
+		res := <-results
+		if res.err != nil {
+			return nil, fmt.Errorf("stat lakehouse tier %q: %w", res.tier, res.err)
+		}
+		switch res.tier {
+		case "bronze/":
+			summary.Bronze = entity.LakehouseTierSummary{Total: res.total, TotalBytes: res.bytes}
+		case "silver/":
+			summary.Silver = entity.LakehouseTierSummary{Total: res.total, TotalBytes: res.bytes}
+		case "gold/":
+			summary.Gold = entity.LakehouseTierSummary{Total: res.total, TotalBytes: res.bytes}
+		}
+	}
+	return summary, nil
+}
+
 // List enumerates Lakehouse objects using ListObjects, supporting search filtering and random-access page pagination.
 func (s *LakehouseService) List(ctx context.Context, query entity.LakehouseListingQuery) (*entity.LakehouseListing, error) {
 	rawObjects, err := s.objects.ListObjects(ctx, query.Prefix)

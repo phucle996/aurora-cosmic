@@ -48,6 +48,9 @@ func (f *fakeObjectStorage) PutObject(_ context.Context, _ string, _ []byte, _ s
 	return nil
 }
 func (f *fakeObjectStorage) DeleteObject(_ context.Context, _ string) error { return nil }
+func (f *fakeObjectStorage) StatPrefix(_ context.Context, _ string) (int, int64, error) {
+	return 0, 0, nil
+}
 
 func TestLineageServiceTracesCommittedInputs(t *testing.T) {
 	repo := &fakeLineageRepo{
