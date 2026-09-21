@@ -61,6 +61,13 @@ export async function fetchTicketCatalog(force = false): Promise<RunnerTicket[]>
             setStoredActiveTicket(firstTicket);
           }
         }
+      } else {
+        try {
+          window.localStorage.removeItem(ACTIVE_TICKET_STORAGE_KEY);
+          window.dispatchEvent(new CustomEvent('aurora:ticket-change', { detail: '' }));
+        } catch {
+          // LocalStorage failure
+        }
       }
       notifyListeners();
       return items;

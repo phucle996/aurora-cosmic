@@ -138,6 +138,7 @@ func (s *IngestService) handleRuntimeEvent(data []byte) {
 	}
 	if ev.ActiveWorkers > 0 {
 		s.runtime.InflightProducts = ev.ActiveWorkers
+		s.runtime.Downloading = ev.ActiveWorkers
 	}
 
 	// Calculate soft throughput metrics (bytes/s, products/s)
@@ -211,6 +212,18 @@ func (s *IngestService) handleRuntimeEvent(data []byte) {
 		}
 	}
 
+	downloadingCount := 0
+	for i := range s.runtime.Products {
+		if s.runtime.Products[i].State == "downloading" {
+			downloadingCount++
+		}
+	}
+	if downloadingCount > 0 {
+		s.runtime.Downloading = downloadingCount
+	} else if ev.ActiveWorkers > 0 {
+		s.runtime.Downloading = ev.ActiveWorkers
+	}
+
 	if ev.Status == "completed" || ev.Status == "canceled" || ev.Status == "stopped" || ev.Status == "failed" {
 		s.runtime.Downloading = 0
 		s.runtime.InflightProducts = 0
@@ -227,6 +240,11 @@ func (s *IngestService) handleRuntimeEvent(data []byte) {
 	_ = s.publisher.Publish(context.Background(), topic, provider.Event{
 		Type:  "workflow",
 		Topic: topic,
+		Data:  data,
+	})
+	_ = s.publisher.Publish(context.Background(), "ingest", provider.Event{
+		Type:  "workflow",
+		Topic: "ingest",
 		Data:  data,
 	})
 }

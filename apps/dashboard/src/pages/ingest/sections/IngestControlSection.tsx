@@ -145,7 +145,9 @@ export function IngestControlSection({
                   <p className="truncate font-mono text-[10px] text-muted-foreground" title={status.manifest_progress.stage}>
                     {status.manifest_progress.stage} ·{' '}
                     {manifestDiscoveryActive
-                      ? `${status.manifest_progress.discovered_products.toLocaleString()} products resolved`
+                      ? status.manifest_progress.stage === 'DOWNLOADING_TIC'
+                        ? `${manifestStageCompleted.toLocaleString()}/${manifestStageTotal.toLocaleString()} targets synced`
+                        : `${status.manifest_progress.discovered_products.toLocaleString()} products resolved`
                       : `${status.manifest_progress.selected_samples.toLocaleString()} selected targets`}
                   </p>
                   {manifestDiscoveryActive && (

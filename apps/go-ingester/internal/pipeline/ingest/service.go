@@ -90,7 +90,10 @@ func (s *Service) Run(ctx context.Context, command control.Command) (runErr erro
 		SelectedSamples:    len(manifest.Samples),
 		PrioritySamples:    countPreferredSamples(manifest, preferredTICs),
 	})
-	ticSnapshotID, err := catalog.SyncTIC(ctx, minioClient, s.cfg.MinIO.Bucket, ticIDs, toiSnapshotID, toiRows)
+	s.publishPlanning(command, "DOWNLOADING_TIC", 0, len(ticIDs))
+	ticSnapshotID, err := catalog.SyncTIC(ctx, minioClient, s.cfg.MinIO.Bucket, ticIDs, toiSnapshotID, toiRows, func(completed, total int) {
+		s.publishPlanning(command, "DOWNLOADING_TIC", completed, total)
+	})
 	if err != nil {
 		s.reportPlanningTerminal(ctx, minioClient, "DOWNLOADING_TIC", err)
 		return fmt.Errorf("sync shared TIC catalog: %w", err)
@@ -106,6 +109,7 @@ func (s *Service) Run(ctx context.Context, command control.Command) (runErr erro
 		PrioritySamples:    countPreferredSamples(manifest, preferredTICs),
 		CatalogSnapshots:   manifest.CatalogSnapshots,
 	})
+	s.publishPlanning(command, "MANIFEST_READY", 5, 5)
 	capacity, err := lifecycle.NewManager(minioClient, s.cfg.MinIO.Bucket, lifecycle.Policy{
 		MaxBytes:           s.cfg.Bronze.MaxBytes,
 		HighWatermarkBytes: s.cfg.Bronze.HighWatermarkBytes,
