@@ -125,8 +125,6 @@ func testToBool(v any) bool {
 	}
 }
 
-
-
 func TestLiveClickHouseListTargets(t *testing.T) {
 	client, err := clickhouse.NewClient("127.0.0.1:9004", "aurora", "aurora", "aurora-dev-password")
 	if err != nil || client.Ping(context.Background()) != nil {
@@ -179,4 +177,3 @@ func TestLiveClickHouseGetTargetInsightAndObservation(t *testing.T) {
 		t.Fatalf("Expected TPF 11x11 sample, got %v", obs.TPF)
 	}
 }
-

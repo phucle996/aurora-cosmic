@@ -48,7 +48,11 @@ fn bench_prediction_id_and_fingerprint(c: &mut Criterion) {
     group.throughput(Throughput::Elements(1));
 
     let (_, diff) = TRACKER.measure(|| {
-        compute_candidate_prediction_id("runtime-v1-pkg-001", "gold-v1-snapshot-42", "tess-s0042-000261136674");
+        compute_candidate_prediction_id(
+            "runtime-v1-pkg-001",
+            "gold-v1-snapshot-42",
+            "tess-s0042-000261136674",
+        );
     });
     diff.print("candidate_prediction_id");
 
@@ -68,7 +72,8 @@ fn bench_prediction_id_and_fingerprint(c: &mut Criterion) {
         gold_snapshot_id: "gold-v1-snapshot-42",
         gold_manifest_sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         gold_artifact_key: "gold/candidate/part-00000.parquet",
-        gold_artifact_content_sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        gold_artifact_content_sha256:
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         runtime_package_id: "runtime-v1-pkg-001",
         runtime_manifest_sha256: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         runtime_validation_id: "rval-v1-001",

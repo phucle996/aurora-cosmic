@@ -17,9 +17,6 @@ import (
 	"go-api/internal/transport/http/handler"
 )
 
-
-
-
 type fakeTarget struct{}
 
 func (fakeTarget) ListTargets(context.Context, entity.TargetQuery) (entity.Page[entity.Target], error) {
@@ -101,9 +98,9 @@ func (fakeModel) GetModelEvolution(context.Context, string) (*entity.ModelEvolut
 func (fakeModel) ListInferenceJobs(context.Context, string, string, string) ([]entity.InferenceJob, error) {
 	return []entity.InferenceJob{
 		{
-			JobID:             "inf-job-001",
-			Task:              "candidate_vetting",
-			Status:            "completed",
+			JobID:            "inf-job-001",
+			Task:             "candidate_vetting",
+			Status:           "completed",
 			RuntimePackageID: "runtime-test",
 		},
 	}, nil
@@ -119,7 +116,6 @@ func (fakeModel) RetryInferenceJob(context.Context, string) (*entity.InferenceJo
 func (fakeModel) ReconcileChampionInference(context.Context) (int, error) {
 	return 0, nil
 }
-
 
 type fakeReadiness struct{}
 
@@ -342,8 +338,6 @@ func TestEnrichmentControlStartAndStop(t *testing.T) {
 	}
 }
 
-
-
 func TestMonitoringTabValidation(t *testing.T) {
 	// Rejects invalid component / tab
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/monitoring?component=not-a-component", nil)
@@ -499,4 +493,3 @@ func TestInferenceRoutes(t *testing.T) {
 		t.Fatalf("expected 200 OK for POST /api/v1/inference/jobs/:job_id/retry, got %d: %s", recRetry.Code, recRetry.Body.String())
 	}
 }
-

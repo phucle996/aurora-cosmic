@@ -58,4 +58,3 @@ func RegisterRoutes(engine *gin.Engine, module *Module) {
 	engine.POST("/api/v1/models/train/control", module.ModelHandler.ControlTraining)
 	engine.GET("/api/v1/models/train/active", module.ModelHandler.GetActiveTraining)
 }
-

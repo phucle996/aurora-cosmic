@@ -158,4 +158,3 @@ func NewRouter(cfg *config.Config, module *Module, metrics ...*provider.Metrics)
 	RegisterRoutes(engine, module)
 	return engine
 }
-

@@ -43,9 +43,7 @@ impl Metrics {
         )?;
 
         // Tuned buckets for batch inference latency (0.05s up to 60s)
-        let duration_buckets = vec![
-            0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0, 30.0, 60.0,
-        ];
+        let duration_buckets = vec![0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0, 30.0, 60.0];
         let duration = HistogramVec::new(
             HistogramOpts::new(
                 "aurora_inference_processing_duration_seconds",
@@ -145,7 +143,8 @@ impl Metrics {
             stage_duration.with_label_values(&[stage]);
         }
 
-        info.with_label_values(&[env!("CARGO_PKG_VERSION"), "ort"]).set(1);
+        info.with_label_values(&[env!("CARGO_PKG_VERSION"), "ort"])
+            .set(1);
 
         Ok(Self {
             registry,

@@ -133,8 +133,6 @@ func NewModule(infra Infrastructure) (*Module, error) {
 		return nil, fmt.Errorf("handler ModelHandler is nil")
 	}
 
-
-
 	predictionProjectionRepo := repository.NewPredictionProjectionClickHouse(infra.ClickHouse)
 	if predictionProjectionRepo == nil {
 		return nil, fmt.Errorf("repository PredictionProjectionClickHouse is nil")
@@ -281,9 +279,9 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	// 16. Module Struct Assembly
 	// =========================================================================
 	m := &Module{
-		TargetHandler:            targetHandler,
-		ModelHandler:             modelHandler,
-		LabelingHandler:          labelingHandler,
+		TargetHandler:   targetHandler,
+		ModelHandler:    modelHandler,
+		LabelingHandler: labelingHandler,
 
 		SystemHandler:            systemHandler,
 		MonitoringHandler:        monitoringHandler,

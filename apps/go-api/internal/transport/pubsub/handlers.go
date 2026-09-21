@@ -72,7 +72,6 @@ func (p *NATSPubSub) handleMLEvent(ctx context.Context, msg *nats.Msg, jobID str
 		}
 	}
 
-
 	if msg.Subject != "aurora.live.ml.promotion.progress" || p.model == nil {
 		return
 	}

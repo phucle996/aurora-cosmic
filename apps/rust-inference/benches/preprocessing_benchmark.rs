@@ -11,7 +11,10 @@ use aurora_inference::runtime::preprocess_features;
 #[global_allocator]
 static TRACKER: TrackingAllocator = TrackingAllocator::new();
 
-fn build_feature_environment(num_features: usize, null_ratio: f64) -> (
+fn build_feature_environment(
+    num_features: usize,
+    null_ratio: f64,
+) -> (
     Vec<String>,
     HashMap<String, Option<f64>>,
     PreprocessingConfig,
@@ -25,7 +28,11 @@ fn build_feature_environment(num_features: usize, null_ratio: f64) -> (
     for i in 0..num_features {
         let name = format!("feature_{:03}", i);
         let is_null = (i as f64 / num_features as f64) < null_ratio;
-        let value = if is_null { None } else { Some(10.0 + (i as f64) * 0.5) };
+        let value = if is_null {
+            None
+        } else {
+            Some(10.0 + (i as f64) * 0.5)
+        };
 
         feature_order.push(name.clone());
         raw_features.insert(name.clone(), value);
@@ -55,9 +62,8 @@ fn bench_preprocess_features_dense(c: &mut Criterion) {
         let (feature_order, raw_features, config) = build_feature_environment(num_features, 0.0);
         group.throughput(Throughput::Elements(1));
 
-        let (_, diff) = TRACKER.measure(|| {
-            preprocess_features(&raw_features, &feature_order, &config).unwrap()
-        });
+        let (_, diff) = TRACKER
+            .measure(|| preprocess_features(&raw_features, &feature_order, &config).unwrap());
         diff.print(&format!("dense_{}_features", num_features));
 
         group.bench_function(format!("dense_{}_features", num_features), |b| {
@@ -81,9 +87,8 @@ fn bench_preprocess_features_imputed(c: &mut Criterion) {
         let (feature_order, raw_features, config) = build_feature_environment(num_features, 0.25);
         group.throughput(Throughput::Elements(1));
 
-        let (_, diff) = TRACKER.measure(|| {
-            preprocess_features(&raw_features, &feature_order, &config).unwrap()
-        });
+        let (_, diff) = TRACKER
+            .measure(|| preprocess_features(&raw_features, &feature_order, &config).unwrap());
         diff.print(&format!("imputed_{}_features", num_features));
 
         group.bench_function(format!("imputed_{}_features", num_features), |b| {

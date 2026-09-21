@@ -43,9 +43,8 @@ fn bench_prediction_serialization(c: &mut Criterion) {
     let mut group = c.benchmark_group("prediction_ndjson_serialization");
 
     for &batch_size in &[500, 2000] {
-        let records: Vec<CandidatePredictionRecord> = (0..batch_size)
-            .map(create_sample_prediction)
-            .collect();
+        let records: Vec<CandidatePredictionRecord> =
+            (0..batch_size).map(create_sample_prediction).collect();
 
         // Calculate approximate serialized payload size
         let sample_json = serde_json::to_vec(&records[0]).unwrap();
@@ -53,7 +52,8 @@ fn bench_prediction_serialization(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(estimated_bytes as u64));
 
         let (_, diff) = TRACKER.measure(|| {
-            let mut buf = std::io::BufWriter::with_capacity(128 * 1024, Vec::with_capacity(estimated_bytes));
+            let mut buf =
+                std::io::BufWriter::with_capacity(128 * 1024, Vec::with_capacity(estimated_bytes));
             for record in &records {
                 serde_json::to_writer(&mut buf, record).unwrap();
                 buf.write_all(b"\n").unwrap();

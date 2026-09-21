@@ -4,14 +4,14 @@ use std::path::Path;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 
-use crate::domain::model::{
-    ModelRuntimeManifest, ModelRuntimeValidationRecord, ParityFixture, PreprocessingConfig,
-    ThresholdConfig,
-};
 use super::error::RuntimeError;
 use super::math::{compute_sha256, stable_sigmoid};
 use super::preprocessing::{preprocess_features, validate_preprocessing};
 use super::session::{validate_manifest, OnnxRuntime};
+use crate::domain::model::{
+    ModelRuntimeManifest, ModelRuntimeValidationRecord, ParityFixture, PreprocessingConfig,
+    ThresholdConfig,
+};
 
 fn parity_within_tolerance(actual: f64, expected: f64, atol: f64, rtol: f64) -> bool {
     (actual - expected).abs() <= atol + rtol * expected.abs()

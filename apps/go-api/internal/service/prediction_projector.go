@@ -71,8 +71,6 @@ type candidatePredictionRecord struct {
 	Producer            string  `json:"producer"`
 }
 
-
-
 type projectionJobManifest struct {
 	SchemaVersion  int    `json:"schema_version"`
 	JobID          string `json:"job_id"`

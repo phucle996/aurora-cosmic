@@ -41,11 +41,11 @@ const (
 func DeriveTargetPhysics(ticID int64, sector int32, evidence entity.TargetEvidence) (entity.PlanetPhysics, entity.HabitabilityAssessment) {
 	// 1. Khởi tạo cấu trúc kết quả vật lý với các giá trị mặc định
 	result := entity.PlanetPhysics{
-		PlanetCandidateID:       targetSignalID(ticID, sector, evidence),
-		ModelVersion:            modelVersion,
-		BondAlbedoAssumption:    bondAlbedo,
-		HZClassification:        "unknown",
-		PlanetClassification:    "unknown",
+		PlanetCandidateID:    targetSignalID(ticID, sector, evidence),
+		ModelVersion:         modelVersion,
+		BondAlbedoAssumption: bondAlbedo,
+		HZClassification:     "unknown",
+		PlanetClassification: "unknown",
 		HZFluxBoundaries: entity.HZFluxBoundaries{
 			ConservativeInner: 1.06, // Ranh giới trong vùng bảo thủ (Inner Conservative HZ)
 			ConservativeOuter: 0.36, // Ranh giới ngoài vùng bảo thủ (Outer Conservative HZ)

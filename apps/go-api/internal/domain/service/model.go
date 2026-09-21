@@ -22,5 +22,3 @@ type Model interface {
 	RetryInferenceJob(ctx context.Context, jobID string) (*entity.InferenceJobRetryResult, error)
 	ReconcileChampionInference(ctx context.Context) (int, error)
 }
-
-

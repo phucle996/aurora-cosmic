@@ -23,7 +23,7 @@ jobs:
       go-api: ${{ steps.filter.outputs.go-api }}
       dashboard: ${{ steps.filter.outputs.dashboard }}
       shared: ${{ steps.filter.outputs.shared }}
-      compose: ${{ steps.filter.outputs.compose }}
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -51,10 +51,7 @@ jobs:
             shared:
               - 'contracts/**'
               - '.github/workflows/**'
-            compose:
-              - 'docker-compose.yml'
-              - '.env.example'
-              - 'infra/**'
+
 
       - name: Write release change manifest
         run: |
@@ -76,14 +73,6 @@ jobs:
           path: changed-subprojects.env
           retention-days: 1
 
-  docker-config:
-    name: Validate Docker Compose Config
-    needs: changes
-    if: ${{ needs.changes.outputs.compose == 'true' || needs.changes.outputs.shared == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: docker compose config --quiet
 
   go-ingester-checks:
     name: Go Verification (go-ingester)

@@ -427,4 +427,3 @@ func (h *ModelHandler) RetryInferenceJob(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, result)
 }
-

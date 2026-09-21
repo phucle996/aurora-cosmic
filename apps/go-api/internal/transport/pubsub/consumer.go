@@ -33,7 +33,7 @@ type NATSPubSub struct {
 	model          service.Model
 	log            *slog.Logger
 
-	natsURL           string
+	natsURL string
 
 	mu             sync.Mutex
 	conn           *nats.Conn
@@ -64,10 +64,10 @@ func New(cfg Config) *NATSPubSub {
 		dagAggregation: cfg.DAGAggregation,
 		model:          cfg.Model,
 		log:            logger,
-		natsURL:           cfg.NATSURL,
-		conn:              cfg.Conn,
-		ownsConn:          ownsConn,
-		customHandlers:    make(map[string][]MessageHandler),
+		natsURL:        cfg.NATSURL,
+		conn:           cfg.Conn,
+		ownsConn:       ownsConn,
+		customHandlers: make(map[string][]MessageHandler),
 	}
 }
 

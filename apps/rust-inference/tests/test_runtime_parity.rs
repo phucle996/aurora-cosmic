@@ -17,8 +17,6 @@ fn test_rust_stable_sigmoid() {
     assert!(s_neg.abs() < 1e-12 || (s_neg - 1.0).abs() < 1e-12);
 }
 
-
-
 #[test]
 fn test_rust_imputation_and_standardization() {
     let feature_order = vec!["feat_a".to_string(), "feat_b".to_string()];

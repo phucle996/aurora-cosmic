@@ -5,10 +5,10 @@ use std::path::Path;
 use ndarray::Array2;
 use ort::{ep, session::Session, value::TensorRef};
 
-use crate::domain::model::{ModelRuntimeManifest, PreprocessingConfig, ThresholdConfig};
 use super::error::RuntimeError;
 use super::math::compute_sha256;
 use super::preprocessing::{preprocess_features, validate_preprocessing};
+use crate::domain::model::{ModelRuntimeManifest, PreprocessingConfig, ThresholdConfig};
 
 fn ort_error(error: impl std::fmt::Display) -> RuntimeError {
     RuntimeError::Ort(error.to_string())

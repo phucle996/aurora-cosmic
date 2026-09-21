@@ -19,8 +19,8 @@ pub async fn qualify_runtime_package(
     job: &InferenceJobManifest,
     package_dir: &Path,
 ) -> Result<()> {
-    let manifest_sha = compute_sha256(&package_dir.join("manifest.json"))
-        .map_err(anyhow::Error::new)?;
+    let manifest_sha =
+        compute_sha256(&package_dir.join("manifest.json")).map_err(anyhow::Error::new)?;
     if manifest_sha != job.runtime_manifest_sha256 {
         anyhow::bail!("downloaded runtime manifest SHA does not match inference job")
     }

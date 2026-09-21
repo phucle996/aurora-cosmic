@@ -5,10 +5,10 @@ use async_nats::jetstream::{self, AckKind};
 use chrono::Utc;
 use tokio_util::sync::CancellationToken;
 
+use super::executor::JobOutput;
 use crate::adapters::storage::ObjectStore;
 use crate::domain::job::{InferenceJobManifest, InferenceJobStatusRecord};
 use crate::runtime::RuntimeError;
-use super::executor::JobOutput;
 
 pub fn status_key(job_id: &str) -> String {
     format!("inference/status/{job_id}.json")
@@ -39,7 +39,10 @@ pub fn status_record(
     }
 }
 
-pub fn validate_status(status: &InferenceJobStatusRecord, job: &InferenceJobManifest) -> Result<()> {
+pub fn validate_status(
+    status: &InferenceJobStatusRecord,
+    job: &InferenceJobManifest,
+) -> Result<()> {
     if status.schema_version != 1
         || status.job_id != job.job_id
         || status.job_fingerprint != job.job_fingerprint

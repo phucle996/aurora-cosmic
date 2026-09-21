@@ -17,13 +17,13 @@ import (
 )
 
 type fakeModelService struct {
-	preflight   *entity.TrainingPreflight
-	snapshots   []entity.ModelTrainingSnapshot
-	training    *entity.TrainingResult
-	control     *entity.TrainingControlResult
-	activeState *entity.TrainingActiveState
-	models      []entity.Model
-	evaluation  *entity.ModelEvaluation
+	preflight     *entity.TrainingPreflight
+	snapshots     []entity.ModelTrainingSnapshot
+	training      *entity.TrainingResult
+	control       *entity.TrainingControlResult
+	activeState   *entity.TrainingActiveState
+	models        []entity.Model
+	evaluation    *entity.ModelEvaluation
 	evolution     *entity.ModelEvolutionEvidence
 	inferenceJobs []entity.InferenceJob
 	retryResult   *entity.InferenceJobRetryResult
@@ -723,6 +723,3 @@ func TestModelHandler_RetryInferenceJob(t *testing.T) {
 		}
 	})
 }
-
-
-

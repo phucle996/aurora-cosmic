@@ -126,4 +126,3 @@ func (h *LabelingHandler) GetTargetEvidence(c *gin.Context) {
 
 	c.JSON(http.StatusOK, detail)
 }
-

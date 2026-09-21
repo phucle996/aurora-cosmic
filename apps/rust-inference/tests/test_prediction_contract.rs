@@ -1,9 +1,7 @@
 //! Rust Inference Prediction Contracts & Job Manifest Parsing Tests (Phase 7.1).
 
 use aurora_inference::job::{InferenceJobManifest, InferenceJobRequestedEvent};
-use aurora_inference::prediction::{
-    compute_candidate_prediction_id, compute_model_input_sha256,
-};
+use aurora_inference::prediction::{compute_candidate_prediction_id, compute_model_input_sha256};
 
 #[test]
 fn test_rust_model_input_sha256() {

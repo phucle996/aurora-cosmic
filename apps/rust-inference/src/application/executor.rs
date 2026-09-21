@@ -5,6 +5,7 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use tempfile::{NamedTempFile, TempDir};
 
+use super::qualification::qualify_runtime_package;
 use crate::adapters::gold::{decode_gold_batch, open_gold_reader_from_file, GoldRow};
 use crate::adapters::storage::ObjectStore;
 use crate::config::Config;
@@ -14,7 +15,6 @@ use crate::domain::prediction::{
 };
 use crate::observer::Metrics;
 use crate::runtime::{compute_sha256, stable_sigmoid, OnnxRuntime};
-use super::qualification::qualify_runtime_package;
 
 #[derive(Clone, Debug)]
 pub struct JobOutput {
@@ -86,14 +86,8 @@ pub async fn execute_job(
             let model_output = runtime
                 .infer_standardized(&standardized)
                 .map_err(anyhow::Error::new)?;
-            let record = build_prediction(
-                job,
-                &runtime,
-                &row,
-                &input_sha,
-                &model_output,
-                predicted_at,
-            )?;
+            let record =
+                build_prediction(job, &runtime, &row, &input_sha, &model_output, predicted_at)?;
             serde_json::to_writer(&mut output, &record)?;
             output.write_all(b"\n")?;
             processed_rows += 1;
