@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, JSX } from 'react';
 import { AlertCircle } from 'lucide-react';
-import { RunnerTicketBar } from '@/pages/runner-tickets/components/RunnerTicketBar';
+import { useIngestRuntimeEvents } from './hooks/useIngestRuntimeEvents';
 import { useRunnerTicket } from '@/lib/session';
 import { apiBase, apiFetch } from '@/lib/api';
 
@@ -191,7 +191,7 @@ export default function IngestPage(): JSX.Element {
   const handleStart = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
     if (!activeTicket) {
-      setError('Please select or create a Runner Ticket before starting an ingestion run.');
+      setError('Please select a Runner Ticket before starting an ingestion run.');
       return;
     }
     setControlBusy(true);
@@ -260,8 +260,6 @@ export default function IngestPage(): JSX.Element {
       {/* 1. Page Header / Hero Section */}
       <IngestHeroSection />
 
-      {/* 2. Runner Ticket Bar Section */}
-      <RunnerTicketBar allowCreate />
 
       {/* Observation link error alert */}
       {error && (

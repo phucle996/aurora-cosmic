@@ -1,10 +1,11 @@
 import type { FormEvent, JSX } from 'react';
-import { Play, Square } from 'lucide-react';
+import { Play, Square, Ticket } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
+import { useRunnerTicket } from '@/lib/runner-ticket';
 import type { IngestStatus, PlanningSignal } from '../types';
 import { formatDate, statusVariant } from '../types';
 
@@ -47,6 +48,9 @@ export function IngestControlSection({
   onStart,
   onCancel,
 }: IngestControlSectionProps): JSX.Element {
+  const { activeTicket: runnerTicket, setActiveTicket, tickets } = useRunnerTicket();
+  const currentTicket = activeTicket || runnerTicket;
+
   return (
     <Card className="rounded-none border-border/80 shadow-none">
       <CardHeader className="border-b border-border/60 pb-4">
@@ -56,6 +60,34 @@ export function IngestControlSection({
       </CardHeader>
       <CardContent className="p-4 sm:p-5">
         <form className="space-y-5" onSubmit={onStart}>
+          <label htmlFor="ticket-select" className="block space-y-2 text-xs font-medium text-muted-foreground">
+            <span className="flex items-center justify-between">
+              <span className="flex items-center gap-1.5 text-foreground font-medium">
+                <Ticket className="size-3.5 text-primary" />
+                <span>Runner Ticket</span>
+              </span>
+              <span className="font-mono text-[10px] font-normal">Lineage context</span>
+            </span>
+            <select
+              id="ticket-select"
+              value={currentTicket}
+              onChange={(e) => setActiveTicket(e.target.value)}
+              disabled={controlBusy || isIngesting}
+              className="h-9 w-full rounded-none border border-input bg-background px-2.5 font-mono text-xs font-medium text-foreground outline-none focus:border-ring disabled:cursor-not-allowed disabled:opacity-50"
+              title="Select runner ticket"
+            >
+              {tickets.length > 0 ? (
+                tickets.map((t) => (
+                  <option key={t.ticket_id} value={t.ticket_id}>
+                    {t.ticket_id} {t.description ? `(${t.description})` : ''}
+                  </option>
+                ))
+              ) : (
+                <option value="">No tickets available (create in Runner Tickets)</option>
+              )}
+            </select>
+          </label>
+
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
             <label htmlFor="sector-input" className="space-y-2 text-xs font-medium text-muted-foreground">
               <span className="flex items-center justify-between">
