@@ -31,9 +31,6 @@ func TestUnmarshalClickHouseTargetsJSON(t *testing.T) {
 		{"name": "candidate_prediction_id", "type": "String"},
 		{"name": "candidate_score", "type": "Float64"},
 		{"name": "candidate_above_threshold", "type": "UInt8"},
-		{"name": "has_anomaly", "type": "UInt8"},
-		{"name": "anomaly_prediction_id", "type": "String"},
-		{"name": "anomaly_score", "type": "Float64"},
 		{"name": "pipeline_status", "type": "String"}
 	],
 	"data":
@@ -56,9 +53,6 @@ func TestUnmarshalClickHouseTargetsJSON(t *testing.T) {
 			"candidate_prediction_id": "pred-1",
 			"candidate_score": 0.999,
 			"candidate_above_threshold": 1,
-			"has_anomaly": 1,
-			"anomaly_prediction_id": "pred-2",
-			"anomaly_score": 0.05,
 			"pipeline_status": "scored"
 		}
 	]
@@ -83,9 +77,6 @@ func TestUnmarshalClickHouseTargetsJSON(t *testing.T) {
 			CandidatePredictionID   string  `json:"candidate_prediction_id"`
 			CandidateScore          float64 `json:"candidate_score"`
 			CandidateAboveThreshold any     `json:"candidate_above_threshold"`
-			HasAnomaly              uint8   `json:"has_anomaly"`
-			AnomalyPredictionID     string  `json:"anomaly_prediction_id"`
-			AnomalyScore            float64 `json:"anomaly_score"`
 			PipelineStatus          string  `json:"pipeline_status"`
 		} `json:"data"`
 	}
@@ -159,25 +150,33 @@ func TestLiveClickHouseListTargets(t *testing.T) {
 	t.Logf("Got total=%d, items=%d, first TICID=%d", page.Count, len(page.Items), page.Items[0].TICID)
 }
 
-func TestLiveClickHouseGetTarget(t *testing.T) {
+func TestLiveClickHouseGetTargetInsightAndObservation(t *testing.T) {
 	client, err := clickhouse.NewClient("127.0.0.1:9004", "aurora", "aurora", "aurora-dev-password")
 	if err != nil || client.Ping(context.Background()) != nil {
 		t.Skipf("ClickHouse TCP not reachable, skipping live test: %v", err)
 	}
 
 	repo := NewTargetClickHouse(client)
-	detail, err := repo.GetTarget(context.Background(), 117516398, 1, "")
+	insight, err := repo.GetTargetInsight(context.Background(), 117516398, 1, "")
 	if err != nil {
-		t.Fatalf("Live GetTarget error: %v", err)
+		t.Fatalf("Live GetTargetInsight error: %v", err)
 	}
-	if detail.Target.TICID != 117516398 {
-		t.Fatalf("Expected TICID 117516398, got %d", detail.Target.TICID)
+	if insight.Target.TICID != 117516398 {
+		t.Fatalf("Expected TICID 117516398, got %d", insight.Target.TICID)
 	}
-	if !detail.Target.HasLightcurve || detail.Target.LightcurvePoints <= 0 {
-		t.Fatalf("Expected HasLightcurve=true with points, got %v (%d points)", detail.Target.HasLightcurve, detail.Target.LightcurvePoints)
+	if !insight.Target.HasLightcurve || insight.Target.LightcurvePoints <= 0 {
+		t.Fatalf("Expected HasLightcurve=true with points, got %v (%d points)", insight.Target.HasLightcurve, insight.Target.LightcurvePoints)
 	}
-	if detail.Target.PipelineStatus != "ingested" {
-		t.Fatalf("Expected PipelineStatus 'ingested', got %q", detail.Target.PipelineStatus)
+
+	obs, err := repo.GetTargetObservation(context.Background(), 117516398, 1, 1000)
+	if err != nil {
+		t.Fatalf("Live GetTargetObservation error: %v", err)
+	}
+	if obs.Lightcurve.Points <= 0 {
+		t.Fatalf("Expected lightcurve points > 0, got %d", obs.Lightcurve.Points)
+	}
+	if obs.TPF == nil || obs.TPF.Rows != 11 || obs.TPF.Cols != 11 {
+		t.Fatalf("Expected TPF 11x11 sample, got %v", obs.TPF)
 	}
 }
 

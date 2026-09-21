@@ -21,7 +21,6 @@ import (
 
 const (
 	candidateTask = "candidate_vetting"
-	anomalyTask   = "astronomical_anomaly_detection"
 )
 
 type PredictionProjectorService struct {
@@ -72,20 +71,7 @@ type candidatePredictionRecord struct {
 	Producer            string  `json:"producer"`
 }
 
-type anomalyPredictionRecord struct {
-	predictionEnvelope
-	PredictionID        string  `json:"prediction_id"`
-	SourceProductID     string  `json:"source_product_id"`
-	TICID               int64   `json:"tic_id"`
-	Sector              int64   `json:"sector"`
-	ReconstructionMSE   float64 `json:"reconstruction_mse"`
-	DecisionThreshold   float64 `json:"decision_threshold"`
-	AboveThreshold      bool    `json:"above_threshold"`
-	RegisteredModelID   string  `json:"registered_model_id"`
-	RuntimeValidationID string  `json:"runtime_validation_id"`
-	PredictedAt         string  `json:"predicted_at"`
-	Producer            string  `json:"producer"`
-}
+
 
 type projectionJobManifest struct {
 	SchemaVersion  int    `json:"schema_version"`
@@ -155,8 +141,6 @@ func (s *PredictionProjectorService) validateCompletion(event inferenceCompletio
 	switch event.Task {
 	case candidateTask:
 		expectedType = "aurora.v1.inference.candidate.completed"
-	case anomalyTask:
-		expectedType = "aurora.v1.inference.anomaly.completed"
 	default:
 		return fmt.Errorf("unsupported inference completion task %q", event.Task)
 	}
@@ -203,7 +187,7 @@ func (s *PredictionProjectorService) projectObject(
 	if err := json.Unmarshal(lines[0], &envelope); err != nil {
 		return entity.PredictionProjectionResult{}, fmt.Errorf("decode prediction envelope: %w", err)
 	}
-	if envelope.Task != candidateTask && envelope.Task != anomalyTask {
+	if envelope.Task != candidateTask {
 		return entity.PredictionProjectionResult{}, fmt.Errorf("unsupported prediction task %q", envelope.Task)
 	}
 	if event != nil {
@@ -240,43 +224,23 @@ func (s *PredictionProjectorService) projectObject(
 	if event != nil {
 		result.SourceEventID = event.EventID
 	}
-	if envelope.Task == candidateTask {
-		rows, parseErr := parseCandidateRows(lines, envelope, manifest.ModelVersion)
-		if parseErr != nil {
-			return entity.PredictionProjectionResult{}, parseErr
-		}
-		filtered, filterErr := s.filterCandidateRows(ctx, rows)
-		if filterErr != nil {
-			return entity.PredictionProjectionResult{}, filterErr
-		}
-		if err := s.predictions.InsertCandidatePredictions(ctx, filtered); err != nil {
-			return entity.PredictionProjectionResult{}, fmt.Errorf("insert candidate predictions: %w", err)
-		}
-		result.InsertedRows = int64(len(filtered))
-		return result, nil
+	rows, parseErr := parseCandidateRows(lines, envelope, manifest.ModelVersion)
+	if parseErr != nil {
+		return entity.PredictionProjectionResult{}, parseErr
 	}
-
-	rows, err := parseAnomalyRows(lines, envelope, manifest.ModelVersion)
-	if err != nil {
-		return entity.PredictionProjectionResult{}, err
+	filtered, filterErr := s.filterCandidateRows(ctx, rows)
+	if filterErr != nil {
+		return entity.PredictionProjectionResult{}, filterErr
 	}
-	filtered, err := s.filterAnomalyRows(ctx, rows)
-	if err != nil {
-		return entity.PredictionProjectionResult{}, err
-	}
-	if err := s.predictions.InsertAnomalyPredictions(ctx, filtered); err != nil {
-		return entity.PredictionProjectionResult{}, fmt.Errorf("insert anomaly predictions: %w", err)
+	if err := s.predictions.InsertCandidatePredictions(ctx, filtered); err != nil {
+		return entity.PredictionProjectionResult{}, fmt.Errorf("insert candidate predictions: %w", err)
 	}
 	result.InsertedRows = int64(len(filtered))
 	return result, nil
 }
 
 func (s *PredictionProjectorService) loadManifest(ctx context.Context, envelope predictionEnvelope) (projectionJobManifest, error) {
-	taskDir := "candidate"
-	if envelope.Task == anomalyTask {
-		taskDir = "anomaly"
-	}
-	key := fmt.Sprintf("manifests/inference-jobs/%s/%s.json", taskDir, envelope.JobID)
+	key := fmt.Sprintf("manifests/inference-jobs/candidate/%s.json", envelope.JobID)
 	content, err := s.objects.GetObject(ctx, key)
 	if err != nil {
 		return projectionJobManifest{}, fmt.Errorf("read inference job manifest: %w", err)
@@ -303,24 +267,6 @@ func (s *PredictionProjectorService) filterCandidateRows(ctx context.Context, ro
 		return nil, fmt.Errorf("query existing candidate predictions: %w", err)
 	}
 	filtered := make([]entity.CandidatePredictionProjection, 0, len(rows))
-	for _, row := range rows {
-		if _, found := existing[row.PredictionID]; !found {
-			filtered = append(filtered, row)
-		}
-	}
-	return filtered, nil
-}
-
-func (s *PredictionProjectorService) filterAnomalyRows(ctx context.Context, rows []entity.AnomalyPredictionProjection) ([]entity.AnomalyPredictionProjection, error) {
-	ids := make([]string, len(rows))
-	for i := range rows {
-		ids[i] = rows[i].PredictionID
-	}
-	existing, err := s.predictions.ExistingPredictionIDs(ctx, anomalyTask, ids)
-	if err != nil {
-		return nil, fmt.Errorf("query existing anomaly predictions: %w", err)
-	}
-	filtered := make([]entity.AnomalyPredictionProjection, 0, len(rows))
 	for _, row := range rows {
 		if _, found := existing[row.PredictionID]; !found {
 			filtered = append(filtered, row)
@@ -364,45 +310,6 @@ func parseCandidateRows(lines [][]byte, envelope predictionEnvelope, modelVersio
 			RegisteredModelID: record.RegisteredModelID, GoldSnapshotID: envelope.GoldSnapshotID,
 			RuntimeValidation: record.RuntimeValidationID, RuntimePackageID: envelope.RuntimePackageID,
 			PredictedAt: predictedAt,
-		})
-	}
-	return rows, nil
-}
-
-func parseAnomalyRows(lines [][]byte, envelope predictionEnvelope, modelVersion string) ([]entity.AnomalyPredictionProjection, error) {
-	rows := make([]entity.AnomalyPredictionProjection, 0, len(lines))
-	seen := make(map[string]struct{}, len(lines))
-	for _, line := range lines {
-		var record anomalyPredictionRecord
-		if err := json.Unmarshal(line, &record); err != nil {
-			return nil, fmt.Errorf("decode anomaly prediction: %w", err)
-		}
-		if err := validatePredictionEnvelope(record.predictionEnvelope, envelope); err != nil {
-			return nil, err
-		}
-		if record.Producer != "rust-inference" || record.SourceProductID == "" || record.RegisteredModelID == "" || record.RuntimeValidationID == "" ||
-			!projectionFinite(record.ReconstructionMSE) || record.ReconstructionMSE < 0 || !projectionFinite(record.DecisionThreshold) || record.DecisionThreshold < 0 ||
-			record.AboveThreshold != (record.ReconstructionMSE >= record.DecisionThreshold) {
-			return nil, fmt.Errorf("anomaly prediction scientific contract is invalid")
-		}
-		if record.PredictionID != deterministicPredictionID("pred-anom-v1", envelope.RuntimePackageID, envelope.GoldSnapshotID, record.SourceProductID) {
-			return nil, fmt.Errorf("anomaly prediction ID does not match immutable lineage")
-		}
-		if _, duplicate := seen[record.PredictionID]; duplicate {
-			return nil, fmt.Errorf("duplicate anomaly prediction ID %s", record.PredictionID)
-		}
-		seen[record.PredictionID] = struct{}{}
-		predictedAt, err := projectionTimestamp(record.PredictedAt)
-		if err != nil {
-			return nil, err
-		}
-		rows = append(rows, entity.AnomalyPredictionProjection{
-			PredictionID: record.PredictionID, SourceProductID: record.SourceProductID,
-			TICID: record.TICID, Sector: record.Sector, ReconstructionMSE: record.ReconstructionMSE,
-			DecisionThreshold: record.DecisionThreshold, AboveThreshold: record.AboveThreshold,
-			ModelVersion: modelVersion, RegisteredModelID: record.RegisteredModelID,
-			GoldSnapshotID: envelope.GoldSnapshotID, RuntimeValidation: record.RuntimeValidationID,
-			RuntimePackageID: envelope.RuntimePackageID, PredictedAt: predictedAt,
 		})
 	}
 	return rows, nil

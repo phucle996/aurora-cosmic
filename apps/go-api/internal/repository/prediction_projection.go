@@ -21,8 +21,6 @@ func predictionTable(task string) (string, error) {
 	switch task {
 	case "candidate_vetting":
 		return "candidate_predictions", nil
-	case "astronomical_anomaly_detection":
-		return "anomaly_predictions", nil
 	default:
 		return "", fmt.Errorf("unsupported prediction task %q", task)
 	}
@@ -84,44 +82,6 @@ func (r *PredictionProjectionClickHouse) InsertCandidatePredictions(ctx context.
 	}
 	if err := batch.Send(); err != nil {
 		return fmt.Errorf("send candidate_predictions batch: %w", err)
-	}
-	return nil
-}
-
-func (r *PredictionProjectionClickHouse) InsertAnomalyPredictions(ctx context.Context, rows []entity.AnomalyPredictionProjection) error {
-	if len(rows) == 0 {
-		return nil
-	}
-	batch, err := r.client.PrepareBatch(ctx, `INSERT INTO anomaly_predictions (
-		prediction_id, source_product_id, tic_id, sector, reconstruction_mse,
-		decision_threshold, above_threshold, model_version, registered_model_id,
-		gold_snapshot_id, runtime_validation_id, runtime_package_id, predicted_at
-	)`)
-	if err != nil {
-		return fmt.Errorf("prepare anomaly_predictions batch: %w", err)
-	}
-	for _, row := range rows {
-		predictedAt, _ := time.Parse("2006-01-02 15:04:05", row.PredictedAt)
-		if err := batch.Append(
-			row.PredictionID,
-			row.SourceProductID,
-			row.TICID,
-			int32(row.Sector),
-			row.ReconstructionMSE,
-			row.DecisionThreshold,
-			row.AboveThreshold,
-			row.ModelVersion,
-			row.RegisteredModelID,
-			row.GoldSnapshotID,
-			row.RuntimeValidation,
-			row.RuntimePackageID,
-			predictedAt,
-		); err != nil {
-			return fmt.Errorf("append to anomaly_predictions batch: %w", err)
-		}
-	}
-	if err := batch.Send(); err != nil {
-		return fmt.Errorf("send anomaly_predictions batch: %w", err)
 	}
 	return nil
 }

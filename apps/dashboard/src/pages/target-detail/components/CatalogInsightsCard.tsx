@@ -4,63 +4,25 @@ import { Compass, Database, Sparkles, Star } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import type { HabitableZoneBoundaries } from './orbit-viewer/types';
-import type { CandidateEvidence, Target } from '@/lib/analytics-types';
+import type { Target, TargetInsights } from '@/lib/analytics-types';
 import { AiPhysicsTab } from './AiPhysicsTab';
 import { ObservationTab } from './ObservationTab';
 import { StarPhysicsTab } from './StarPhysicsTab';
 
 interface CatalogInsightsCardProps {
   target: Target;
-  hasTicContext: boolean;
-  hasStellarContext: boolean;
-  toiMatch: string;
-  starTeff: number;
-  starRadius: number;
-  stellarMass: number;
-  surfaceGravity: number;
-  spectralClassLabel: string;
-  evolutionStatus: string;
-  evolutionColor: string;
-  hzBoundaries: HabitableZoneBoundaries | null;
-  stellarDensity: number;
-  escapeVelocity: number;
-  bolometricMag: number | null;
-  fluxStdPpm: number | null;
-  fluxAmplitudePct: string | null;
-  warnings?: string[];
-  blsPeriod?: number | null;
-  semiMajorAxis?: number | null;
-  planetRadius?: number | null;
-  eqTemp?: number | null;
-  evidence?: CandidateEvidence;
+  insights: TargetInsights;
 }
 
 export function CatalogInsightsCard({
   target,
-  hasTicContext,
-  hasStellarContext,
-  toiMatch,
-  starTeff,
-  starRadius,
-  stellarMass,
-  surfaceGravity,
-  spectralClassLabel,
-  evolutionStatus,
-  evolutionColor,
-  hzBoundaries,
-  stellarDensity,
-  escapeVelocity,
-  bolometricMag,
-  fluxStdPpm,
-  fluxAmplitudePct,
-  warnings,
-  blsPeriod,
-  semiMajorAxis,
-  planetRadius,
-  eqTemp,
-  evidence,
+  insights,
 }: CatalogInsightsCardProps): JSX.Element {
+  const hasStellarContext =
+    target.tic_context_available &&
+    insights.stellar_physics.teff > 0 &&
+    insights.stellar_physics.radius > 0;
+
   return (
     <Card className="flex flex-col justify-between rounded-none border border-border/80 py-0 shadow-none ring-0">
       <CardHeader className="rounded-none border-b border-border/60 bg-muted/10 py-4">
@@ -108,38 +70,20 @@ export function CatalogInsightsCard({
           </TabsList>
 
           <ObservationTab
-            target={target}
-            hasTicContext={hasTicContext}
-            toiMatch={toiMatch}
-            evidence={evidence}
+            observation={insights.observation}
+            hasTicContext={target.tic_context_available}
           />
 
           <StarPhysicsTab
-            target={target}
-            hasTicContext={hasTicContext}
+            stellar={insights.stellar_physics}
+            tessMag={target.tess_mag}
             hasStellarContext={hasStellarContext}
-            starTeff={starTeff}
-            starRadius={starRadius}
-            stellarMass={stellarMass}
-            surfaceGravity={surfaceGravity}
-            spectralClassLabel={spectralClassLabel}
-            evolutionStatus={evolutionStatus}
-            evolutionColor={evolutionColor}
-            hzBoundaries={hzBoundaries}
-            stellarDensity={stellarDensity}
-            escapeVelocity={escapeVelocity}
-            bolometricMag={bolometricMag}
-            fluxStdPpm={fluxStdPpm}
-            fluxAmplitudePct={fluxAmplitudePct}
-            warnings={warnings}
+            warnings={insights.ai_insights.warnings}
           />
 
           <AiPhysicsTab
-            target={target}
-            blsPeriod={blsPeriod}
-            semiMajorAxis={semiMajorAxis}
-            planetRadius={planetRadius}
-            eqTemp={eqTemp}
+            ai={insights.ai_insights}
+            hasCandidate={target.has_candidate}
           />
         </Tabs>
       </CardContent>

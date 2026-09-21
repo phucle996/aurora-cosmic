@@ -3,6 +3,7 @@ import type { JSX } from 'react';
 import { Eye, Focus, Sparkles, TrendingDown } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
+import type { TPFSample } from '@/lib/analytics-types';
 
 export interface TpfPixelInspectorProps {
   currentFlux: number; // e.g. -0.0014 (deviation) or 0.9986
@@ -14,6 +15,7 @@ export interface TpfPixelInspectorProps {
   totalCadences?: number;
   blsDepth?: number;
   centroidOffset?: number;
+  tpf?: TPFSample;
   className?: string;
 }
 
@@ -68,17 +70,29 @@ export function TpfPixelInspector({
   totalCadences = 18277,
   blsDepth = 0.0014,
   centroidOffset = 0.08,
+  tpf,
   className = '',
 }: TpfPixelInspectorProps): JSX.Element {
   const [showAperture, setShowAperture] = useState(true);
   const [hoveredPixel, setHoveredPixel] = useState<{ r: number; c: number; flux: number; inAperture: boolean } | null>(null);
 
-  // Compute 11x11 pixel flux map based on instantaneous flux & PSF
+  const effectiveOffset = tpf?.centroid_offset_pixels ?? centroidOffset;
+
+  // Compute 11x11 pixel flux map based on instantaneous flux, real TPF maps & PSF
   const { grid, peakFlux, totalApertureFlux } = useMemo(() => {
-    const size = 11;
-    const centerR = 5.0 + (centroidOffset ? centroidOffset * 0.4 : 0);
-    const centerC = 5.0;
+    const size = tpf?.rows || 11;
+    const centerR = tpf?.centroid_row && tpf.centroid_row > 0 ? tpf.centroid_row : (5.0 + (effectiveOffset ? effectiveOffset * 0.4 : 0));
+    const centerC = tpf?.centroid_col && tpf.centroid_col > 0 ? tpf.centroid_col : 5.0;
     const sigma = 1.35; // Standard TESS Point Spread Function width
+
+    const hasMedianMap = Boolean(tpf?.median_flux_map && tpf.median_flux_map.length === size * size);
+    const hasDiffMap = Boolean(tpf?.difference_flux_map && tpf.difference_flux_map.length === size * size);
+    const hasAperture = Boolean(tpf?.aperture_mask && tpf.aperture_mask.length === size * size);
+
+    let maxBaseline = 14850;
+    if (hasMedianMap && tpf) {
+      maxBaseline = Math.max(...tpf.median_flux_map, 1);
+    }
 
     // Relative optical flux factor (1.0 = baseline, drops by transit depth during dip)
     const effectiveDip = isTransit ? blsDepth * Math.max(0.2, transitDepthRatio) : 0;
@@ -92,20 +106,26 @@ export function TpfPixelInspector({
     for (let r = 0; r < size; r++) {
       const row: { r: number; c: number; value: number; inAperture: boolean; eRate: number }[] = [];
       for (let c = 0; c < size; c++) {
+        const idx = r * size + c;
         const d2 = Math.pow(r - centerR, 2) + Math.pow(c - centerC, 2);
         const dist = Math.sqrt(d2);
 
-        // Standard 13-pixel optimal aperture mask (radius <= 2.2 pixels)
-        const inAperture = dist <= 2.25;
+        // Standard 13-pixel optimal aperture mask or real TESS aperture from ClickHouse
+        const inAperture = hasAperture && tpf ? tpf.aperture_mask[idx] === 1 : dist <= 2.25;
 
-        // Gaussian PSF model
-        const psfWeight = Math.exp(-d2 / (2 * Math.pow(sigma, 2)));
+        let eRate = 0;
+        if (hasMedianMap && tpf) {
+          const baseRate = tpf.median_flux_map[idx];
+          const diff = (hasDiffMap && isTransit) ? tpf.difference_flux_map[idx] * Math.max(0.2, transitDepthRatio) : 0;
+          eRate = Math.max(0, Math.round(baseRate + diff));
+        } else {
+          const psfWeight = Math.exp(-d2 / (2 * Math.pow(sigma, 2)));
+          const pseudoNoise = 0.025 + 0.018 * Math.sin(r * 12.9898 + c * 78.233);
+          const val = psfWeight * fluxMultiplier + pseudoNoise;
+          eRate = Math.round(val * 14850);
+        }
 
-        // Subtle deterministic background noise
-        const pseudoNoise = 0.025 + 0.018 * Math.sin(r * 12.9898 + c * 78.233);
-
-        const val = psfWeight * fluxMultiplier + pseudoNoise;
-        const eRate = Math.round(val * 14850); // calibrated electrons per second
+        const val = maxBaseline > 0 ? Math.min(1, Math.max(0, eRate / maxBaseline)) : 0;
 
         if (inAperture) {
           apertureSum += eRate;
@@ -122,7 +142,7 @@ export function TpfPixelInspector({
       peakFlux: maxVal,
       totalApertureFlux: apertureSum,
     };
-  }, [currentFlux, isTransit, transitDepthRatio, blsDepth, centroidOffset]);
+  }, [currentFlux, isTransit, transitDepthRatio, blsDepth, effectiveOffset, tpf]);
 
   return (
     <div className={`flex flex-col justify-between rounded-none border border-border/80 bg-card p-3.5 ${className}`}>
@@ -138,6 +158,11 @@ export function TpfPixelInspector({
           </p>
         </div>
         <div className="flex items-center gap-1.5">
+          {effectiveOffset > 0 && (
+            <Badge variant="outline" className="h-5 rounded-none border-border/80 font-mono text-[10px] text-muted-foreground uppercase">
+              Offset: {effectiveOffset.toFixed(2)} px
+            </Badge>
+          )}
           {isTransit ? (
             <Badge className="h-5 rounded-none border-rose-500/50 bg-rose-500/15 font-mono text-[10px] text-rose-400 animate-pulse uppercase">
               <TrendingDown className="mr-1 size-3" />

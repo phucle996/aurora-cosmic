@@ -33,25 +33,30 @@ func (fakeCandidate) ReviewCandidate(context.Context, entity.CandidateReviewInpu
 	}, nil
 }
 
-type fakeAnomaly struct{}
-
-func (fakeAnomaly) ListAnomalies(context.Context, int, string, bool, entity.PageRequest) (entity.Page[entity.Anomaly], error) {
-	return entity.Page[entity.Anomaly]{Items: []entity.Anomaly{}, Limit: 100}, nil
-}
-func (fakeAnomaly) GetAnomalyDetail(context.Context, string, string) (*entity.AnomalyDetail, error) {
-	return &entity.AnomalyDetail{}, nil
-}
 
 type fakeTarget struct{}
 
 func (fakeTarget) ListTargets(context.Context, entity.TargetQuery) (entity.Page[entity.Target], error) {
 	return entity.Page[entity.Target]{Items: []entity.Target{}, Limit: 100}, nil
 }
-func (fakeTarget) GetTarget(context.Context, int64, int, string) (*entity.TargetDetail, error) {
-	return &entity.TargetDetail{}, nil
+func (fakeTarget) GetTargetInsight(context.Context, int64, int, string) (*entity.TargetInsightResponse, error) {
+	return &entity.TargetInsightResponse{
+		Target: entity.Target{TICID: 101, Sector: 42},
+	}, nil
 }
 func (fakeTarget) GetLightcurve(context.Context, int64, int, entity.PageRequest) (*entity.Lightcurve, error) {
 	return &entity.Lightcurve{TICID: 101, Time: []float64{}, Flux: []float64{}}, nil
+}
+func (fakeTarget) GetTargetObservation(context.Context, int64, int, int) (*entity.TargetObservationResponse, error) {
+	return &entity.TargetObservationResponse{
+		TICID:  101,
+		Sector: 42,
+		Lightcurve: entity.TargetObservationLC{
+			Points: 0,
+			Time:   []float64{},
+			Flux:   []float64{},
+		},
+	}, nil
 }
 
 type fakeModel struct{}
@@ -242,7 +247,6 @@ func (fakeTicket) Detail(context.Context, string) (*entity.PipelineRunDetail, er
 }
 
 var _ service.Candidate = fakeCandidate{}
-var _ service.Anomaly = fakeAnomaly{}
 var _ service.Target = fakeTarget{}
 var _ service.Lakehouse = fakeLakehouse{}
 var _ service.EnrichmentControl = fakeEnrichmentControl{}
@@ -254,7 +258,6 @@ func newTestRouter() http.Handler {
 	}, &app.Module{
 		TargetHandler:            handler.NewTargetHandler(fakeTarget{}),
 		CandidateHandler:         handler.NewCandidateHandler(fakeCandidate{}),
-		AnomalyHandler:           handler.NewAnomalyHandler(fakeAnomaly{}),
 		ModelHandler:             handler.NewModelHandler(fakeModel{}),
 		SystemHandler:            handler.NewSystemHandler(fakeReadiness{}),
 		MonitoringHandler:        handler.NewMonitoringHandler(fakeMonitoring{}),
@@ -271,7 +274,7 @@ func newTestRouter() http.Handler {
 
 func TestRouterEndpoints(t *testing.T) {
 	router := newTestRouter()
-	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/dag/hops/bronze", "/api/v1/dag/hops/gold-pairing", "/api/v1/dag/hops/gold-commit", "/api/v1/dag/graph", "/api/v1/dag/graph?stage=enrichment", "/api/v1/dag/graph?stage=preprocessing", "/api/v1/data-factory/runs", "/api/v1/data-factory/tickets", "/api/v1/enrichment/control", "/api/v1/enrichment/snapshots", "/api/v1/enrichment/snapshots/gold-v1-test", "/api/v1/lineage/ledger", "/api/v1/ingest/status", "/api/v1/storage?prefix=bronze/&limit=10", "/api/v1/lakehouse/objects?prefix=bronze/&limit=10", "/api/v1/lakehouse/preview?key=test.txt", "/api/v1/targets", "/api/v1/targets/101?sector=42", "/api/v1/candidates?snapshot_id=gold-v1-test", "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", "/api/v1/lightcurves?tic_id=101&sector=42", "/api/v1/models", "/api/v1/inference/jobs", "/api/v1/models/training-preflight?snapshot_id=gold-v1-test", "/api/v1/models/snapshots", "/api/v1/models/train/active"} {
+	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/dag/hops/bronze", "/api/v1/dag/hops/gold-pairing", "/api/v1/dag/hops/gold-commit", "/api/v1/dag/graph", "/api/v1/dag/graph?stage=enrichment", "/api/v1/dag/graph?stage=preprocessing", "/api/v1/data-factory/runs", "/api/v1/data-factory/tickets", "/api/v1/enrichment/control", "/api/v1/enrichment/snapshots", "/api/v1/enrichment/snapshots/gold-v1-test", "/api/v1/lineage/ledger", "/api/v1/ingest/status", "/api/v1/storage?prefix=bronze/&limit=10", "/api/v1/lakehouse/objects?prefix=bronze/&limit=10", "/api/v1/lakehouse/preview?key=test.txt", "/api/v1/targets", "/api/v1/targets/101/insights?sector=42", "/api/v1/targets/101/observation?sector=42", "/api/v1/candidates?snapshot_id=gold-v1-test", "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", "/api/v1/lightcurves?tic_id=101&sector=42", "/api/v1/models", "/api/v1/inference/jobs", "/api/v1/models/training-preflight?snapshot_id=gold-v1-test", "/api/v1/models/snapshots", "/api/v1/models/train/active"} {
 		req := httptest.NewRequest(http.MethodGet, endpoint, nil)
 		recorder := httptest.NewRecorder()
 		router.ServeHTTP(recorder, req)

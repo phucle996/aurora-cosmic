@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { OrbitViewer3D } from './OrbitViewer3D';
 import type { PlanetParams, TransitSyncEvent } from './orbit-viewer/types';
-import type { CandidateEvidence, Target } from '@/lib/analytics-types';
+import type { Target } from '@/lib/analytics-types';
 import { number } from './InfoItem';
 
 interface Target3DSimulatorProps {
@@ -13,7 +13,7 @@ interface Target3DSimulatorProps {
   hasStellarContext: boolean;
   starTeff: number;
   starRadius: number;
-  evidence?: CandidateEvidence;
+  stellarMass?: number;
   planetsList: PlanetParams[];
   onTransitSync: (event: TransitSyncEvent) => void;
 }
@@ -23,7 +23,7 @@ export function Target3DSimulator({
   hasStellarContext,
   starTeff,
   starRadius,
-  evidence,
+  stellarMass,
   planetsList,
   onTransitSync,
 }: Target3DSimulatorProps): JSX.Element {
@@ -54,7 +54,7 @@ export function Target3DSimulator({
               name: `TIC ${target.tic_id}`,
               teff: starTeff,
               radius: starRadius,
-              mass: evidence?.stellar_mass || undefined,
+              mass: stellarMass && stellarMass > 0 ? stellarMass : undefined,
               mag: target.tess_mag > 0 ? target.tess_mag : undefined,
             }}
             planets={planetsList}

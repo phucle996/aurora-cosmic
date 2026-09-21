@@ -1,5 +1,5 @@
 import type { BackgroundStar, HabitableZoneBoundaries, PlanetBiome, PlanetParams, StarStyle } from './types';
-import type { CandidateEvidence, HabitabilityAssessment, PlanetPhysics } from '@/lib/analytics-types';
+import type { Target, TargetInsights } from '@/lib/analytics-types';
 
 // ============================================================================
 // STELLAR SPECTRAL CLASSIFICATION & VISUALS
@@ -235,81 +235,48 @@ export function solveKeplerOrbit(
 }
 
 // ============================================================================
-// ACCURATE ASTRONOMICAL PLANETARY SYSTEM DERIVATION (1:1 with Real Data)
+// ACCURATE ASTRONOMICAL PLANETARY SYSTEM DERIVATION FROM TARGET INSIGHTS
 // ============================================================================
-export function derivePlanetarySystemForTarget(
-  target: {
-    tic_id: number | string;
-    radius?: number | null;
-    effective_t?: number | null;
-    tess_mag?: number | null;
-    surface_grav?: number | null;
-    has_candidate?: boolean | null;
-    candidate_score?: number | null;
-    matched_toi?: string | null;
-  } | null | undefined,
-  physics?: {
-    planet_candidate_id?: string | null;
-    orbital_period_days?: number | null;
-    planet_radius_earth?: number | null;
-    semi_major_axis_au?: number | null;
-    equilibrium_temperature_k?: number | null;
-    insolation_earth?: number | null;
-    hz_classification?: string | null;
-  } | PlanetPhysics | null,
-  _evidence?: {
-    teff?: number | null;
-    stellar_radius?: number | null;
-    stellar_mass?: number | null;
-    bls_period?: number | null;
-    bls_depth?: number | null;
-    matched_toi_id?: string | null;
-  } | CandidateEvidence | null,
-  habitability?: {
-    tier?: string | null;
-    physics_score?: number | null;
-  } | HabitabilityAssessment | null
+export function derivePlanetarySystemFromInsights(
+  target: Target | null | undefined,
+  insights: TargetInsights | null | undefined
 ): PlanetParams[] {
-  if (!target) return [];
+  if (!target || !insights) return [];
+  const ai = insights.ai_insights;
+  const stellar = insights.stellar_physics;
 
-	const period = physics?.orbital_period_days ?? _evidence?.bls_period;
-	let semiMajorAxis = physics?.semi_major_axis_au;
-	let radiusEarth = physics?.planet_radius_earth;
+  const period = ai.bls_period_days;
+  let semiMajorAxis = ai.semi_major_axis_au;
+  let radiusEarth = ai.planet_radius_earth;
 
-	if ((!Number.isFinite(radiusEarth) || radiusEarth! <= 0) && _evidence?.bls_depth && _evidence.bls_depth > 0 && (_evidence?.stellar_radius || target.radius)) {
-		const starR = _evidence?.stellar_radius || target.radius || 1.0;
-		radiusEarth = Math.sqrt(_evidence.bls_depth) * starR * 109.076;
-	}
+  if ((!Number.isFinite(radiusEarth) || radiusEarth! <= 0) && ai.bls_depth_fraction && ai.bls_depth_fraction > 0 && stellar.radius > 0) {
+    radiusEarth = Math.sqrt(ai.bls_depth_fraction) * stellar.radius * 109.076;
+  }
 
-	if ((!Number.isFinite(semiMajorAxis) || semiMajorAxis! <= 0) && Number.isFinite(period) && period! > 0) {
-		const periodYears = (period as number) / 365.25;
-		const mStar = _evidence?.stellar_mass && _evidence.stellar_mass > 0 ? _evidence.stellar_mass : 1.0;
-		semiMajorAxis = Math.cbrt(mStar * periodYears * periodYears);
-	}
+  if ((!Number.isFinite(semiMajorAxis) || semiMajorAxis! <= 0) && Number.isFinite(period) && period! > 0) {
+    const periodYears = (period as number) / 365.25;
+    const mStar = stellar.mass > 0 ? stellar.mass : 1.0;
+    semiMajorAxis = Math.cbrt(mStar * periodYears * periodYears);
+  }
 
-	if (!Number.isFinite(period) || !Number.isFinite(semiMajorAxis) || !Number.isFinite(radiusEarth) || period! <= 0 || semiMajorAxis! <= 0 || radiusEarth! <= 0) {
-		return [];
-	}
-	const observedPeriod = period as number;
-	const observedSemiMajorAxis = semiMajorAxis as number;
-	const observedRadiusEarth = radiusEarth as number;
+  if (!Number.isFinite(period) || !Number.isFinite(semiMajorAxis) || !Number.isFinite(radiusEarth) || period! <= 0 || semiMajorAxis! <= 0 || radiusEarth! <= 0) {
+    return [];
+  }
 
-	// Only recorded Gold/physics quantities are rendered. Orientation is a
-	// declared circular display convention, never a fabricated observation.
-	return [{
-		name: physics?.planet_candidate_id || `Candidate (TIC ${target.tic_id})`,
-		radiusEarth: observedRadiusEarth,
-		periodDays: observedPeriod,
-		semiMajorAxisAu: observedSemiMajorAxis,
-		tempK: physics?.equilibrium_temperature_k ?? undefined,
-		habitabilityTier: habitability?.tier ?? physics?.hz_classification ?? undefined,
-		habitabilityScore: habitability?.physics_score ?? undefined,
-		eccentricity: 0,
-		periapsisDeg: 0,
-		initialPhase: 0,
-		insolationEarth: physics?.insolation_earth ?? undefined,
-		isCandidate: true,
-	}];
+  return [{
+    name: ai.candidate_prediction_id || `Candidate (TIC ${target.tic_id})`,
+    radiusEarth: radiusEarth!,
+    periodDays: period!,
+    semiMajorAxisAu: semiMajorAxis!,
+    tempK: ai.equilibrium_temp_k ?? undefined,
+    habitabilityTier: ai.habitability_tier || ai.hz_classification || undefined,
+    habitabilityScore: ai.habitability_score ?? undefined,
+    eccentricity: 0,
+    periapsisDeg: 0,
+    initialPhase: 0,
+    insolationEarth: undefined,
+    isCandidate: true,
+  }];
 }
 
 // ============================================================================

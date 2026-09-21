@@ -126,11 +126,88 @@ export type Target = {
   toi_match_status: string;
 };
 
-export type TargetDetailResponse = {
+export type TargetObservationInsight = {
+  tess_mag: number;
+  sector: number;
+  ra: number;
+  dec: number;
+  matched_toi: string;
+  sampling_cadence_minutes: number;
+  lightcurve_points: number;
+  lightcurve_time_span_days: number;
+  max_data_gap_days: number;
+  max_data_gap_hours: number;
+  photometric_noise_ppm: number;
+};
+
+export type TargetStellarPhysicsInsight = {
+  teff: number;
+  radius: number;
+  mass: number;
+  logg: number;
+  spectral_class_label: string;
+  evolution_status: string;
+  stellar_density_gcc: number;
+  escape_velocity_kms: number;
+  bolometric_mag: number | null;
+  hz_inner_au: number;
+  hz_outer_au: number;
+  hz_luminosity_solar: number;
+  flux_std_ppm: number | null;
+  flux_amplitude_pct: number | null;
+};
+
+export type TargetAIInsights = {
+  bls_period_days: number | null;
+  bls_depth_fraction: number | null;
+  bls_duration_days: number | null;
+  bls_transit_time: number | null;
+  semi_major_axis_au: number | null;
+  planet_radius_earth: number | null;
+  equilibrium_temp_k: number | null;
+  hz_classification: string;
+  candidate_score: number | null;
+  candidate_above_threshold: boolean;
+  candidate_prediction_id: string;
+  habitability_score: number | null;
+  habitability_confidence: number;
+  habitability_tier: string;
+  warnings: string[];
+};
+
+export type TargetInsights = {
+  observation: TargetObservationInsight;
+  stellar_physics: TargetStellarPhysicsInsight;
+  ai_insights: TargetAIInsights;
+};
+
+export type TargetInsightResponse = {
   target: Target;
-  planet_physics?: PlanetPhysics;
-  habitability?: HabitabilityAssessment;
-  evidence?: CandidateEvidence;
+  insights: TargetInsights;
+};
+
+export type TPFSample = {
+  rows: number;
+  cols: number;
+  aperture_mask: number[];
+  median_flux_map: number[];
+  difference_flux_map: number[];
+  centroid_row: number;
+  centroid_col: number;
+  centroid_offset_pixels: number;
+  pixel_mad_median: number;
+  variability_peak_fraction: number;
+};
+
+export type TargetObservationResponse = {
+  tic_id: number;
+  sector: number;
+  lightcurve: {
+    points: number;
+    time: number[];
+    flux: number[];
+  };
+  tpf?: TPFSample;
 };
 
 export type LightcurveResponse = {

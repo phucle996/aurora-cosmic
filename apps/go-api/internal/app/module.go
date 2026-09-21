@@ -15,7 +15,6 @@ import (
 type Module struct {
 	TargetHandler            *handler.TargetHandler
 	CandidateHandler         *handler.CandidateHandler
-	AnomalyHandler           *handler.AnomalyHandler
 	ModelHandler             *handler.ModelHandler
 	LabelingHandler          *handler.LabelingHandler
 	SystemHandler            *handler.SystemHandler
@@ -133,21 +132,6 @@ func NewModule(infra Infrastructure) (*Module, error) {
 		return nil, fmt.Errorf("handler CandidateHandler is nil")
 	}
 
-	// =========================================================================
-	// 6. Anomaly Workflow Branch (Unsupervised Deep Learning Outliers)
-	// =========================================================================
-	anomalyRepo := repository.NewAnomalyClickHouse(infra.ClickHouse)
-	if anomalyRepo == nil {
-		return nil, fmt.Errorf("repository AnomalyClickHouse is nil")
-	}
-	anomalyService := service.NewAnomalyService(anomalyRepo, predictionObjectRepo)
-	if anomalyService == nil {
-		return nil, fmt.Errorf("service AnomalyService is nil")
-	}
-	anomalyHandler := handler.NewAnomalyHandler(anomalyService)
-	if anomalyHandler == nil {
-		return nil, fmt.Errorf("handler AnomalyHandler is nil")
-	}
 
 	// =========================================================================
 	// 7. ML Models & Training Branch
@@ -315,7 +299,6 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	m := &Module{
 		TargetHandler:            targetHandler,
 		CandidateHandler:         candidateHandler,
-		AnomalyHandler:           anomalyHandler,
 		ModelHandler:             modelHandler,
 		LabelingHandler:          labelingHandler,
 

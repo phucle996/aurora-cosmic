@@ -23,6 +23,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { TpfPixelInspector } from './TpfPixelInspector';
 import type { TransitSyncEvent } from './orbit-viewer/types';
+import type { TPFSample } from '@/lib/analytics-types';
 
 export interface SynchronizedLightCurveProps {
   time: number[];
@@ -34,6 +35,7 @@ export interface SynchronizedLightCurveProps {
   transitInfo?: TransitSyncEvent;
   planetName?: string;
   centroidOffset?: number;
+  tpf?: TPFSample;
   className?: string;
 }
 
@@ -46,6 +48,7 @@ export function SynchronizedLightCurve({
   blsTransitTime,
   transitInfo,
   centroidOffset = 0.08,
+  tpf,
   className = '',
 }: SynchronizedLightCurveProps): JSX.Element {
   // 1. Full Time Series Data preparation
@@ -272,7 +275,8 @@ export function SynchronizedLightCurve({
             cadenceIndex={cadenceIdx}
             totalCadences={timeSeriesData.length}
             blsDepth={blsDepth}
-            centroidOffset={centroidOffset}
+            centroidOffset={tpf?.centroid_offset_pixels ?? centroidOffset}
+            tpf={tpf}
             className="h-full"
           />
 
