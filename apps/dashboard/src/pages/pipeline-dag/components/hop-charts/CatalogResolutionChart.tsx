@@ -23,18 +23,20 @@ export function CatalogResolutionChart({
   metrics?: Record<string, number>;
   details?: Record<string, string>;
 }): JSX.Element {
-  const targets = value(metrics, 'catalog_target_count') || value(metrics, 'input_records') || 329;
-  const ticRecords = value(metrics, 'tic_records') || 12493;
-  const toiRecords = value(metrics, 'toi_records') || 8148;
+  const targets = value(metrics, 'catalog_target_count') || value(metrics, 'input_records');
+  const ticRecords = value(metrics, 'tic_records');
+  const toiRecords = value(metrics, 'toi_records');
   const missingTIC = Math.max(0, targets - (ticRecords > 0 ? targets : 0));
-  const resolvedTargets = targets - missingTIC;
-  const snapshots = value(metrics, 'catalog_snapshot_count') || 2;
+  const resolvedTargets = targets > 0 ? targets - missingTIC : 0;
+  const snapshots = value(metrics, 'catalog_snapshot_count');
   const cacheHit = value(metrics, 'catalog_cache_hit') === 1 || details?.catalog_mode === 'RESOLVED';
   const toiDensity = targets > 0 ? toiRecords / targets : 0;
   const ticDensity = targets > 0 ? ticRecords / targets : 0;
 
-  const ticSnapshot = details?.tic_snapshot_id || 'tic-v1-e271ac85f50f';
-  const toiSnapshot = details?.toi_snapshot_id || 'toi-v1-15242f8e218a';
+  const ticSnapshot = details?.tic_snapshot_id || 'Chưa ghi nhận';
+  const toiSnapshot = details?.toi_snapshot_id || 'Chưa ghi nhận';
+
+  const syncPct = targets > 0 ? ((resolvedTargets / targets) * 100).toFixed(1) : '0.0';
 
   // Data 1: Quy mô dữ liệu Catalog (TIC Stellar Params vs TOI Ephemerides)
   const catalogYieldData = [
@@ -60,8 +62,8 @@ export function CatalogResolutionChart({
           icon={<CheckCircle2 className="size-3.5 text-emerald-500" />}
           label="Mục Tiêu Đã Khớp (TIC Match)"
           value={`${resolvedTargets.toLocaleString()} / ${targets.toLocaleString()}`}
-          sub="100.0% mục tiêu đã đồng bộ"
-          highlight="emerald"
+          sub={targets > 0 ? `${syncPct}% mục tiêu đã đồng bộ` : 'Chưa nạp mục tiêu'}
+          highlight={targets > 0 && missingTIC === 0 ? 'emerald' : undefined}
         />
         <MetricCard
           icon={<Sparkles className="size-3.5 text-sky-500" />}
