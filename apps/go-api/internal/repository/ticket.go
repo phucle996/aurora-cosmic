@@ -59,16 +59,44 @@ func (r *TicketClickHouse) ListRuns(ctx context.Context, pipeline string, limit 
 		argMax(candidate_rows, updated_at) AS candidate_rows,
 		argMax(indexed_rows, updated_at) AS indexed_rows
 		FROM pipeline_batches_v1 GROUP BY run_id, batch_id
+	),
+	existing_runs AS (
+		SELECT ` + factoryRunColumns() + `
+		FROM pipeline_runs_v1 AS runs
+		LEFT JOIN latest_batches USING (run_id)
+		` + where + `
+		GROUP BY pipeline, run_id
+	),
+	standby_tickets AS (
+		SELECT 'tess-standard' AS pipeline,
+		       ticket_id AS run_id,
+		       'stream' AS mode,
+		       'STANDBY' AS status,
+		       toString(created_at) AS started_at,
+		       '' AS finished_at,
+		       toInt64(0) AS max_batch_records,
+		       toInt64(0) AS idle_flush_seconds,
+		       toInt64(0) AS pending_inputs,
+		       toInt64(0) AS completed_batches,
+		       toInt64(0) AS input_records,
+		       toInt64(0) AS output_rows,
+		       toInt64(0) AS indexed_rows,
+		       '' AS last_snapshot_id,
+		       '' AS last_error,
+		       toString(updated_at) AS updated_at
+		FROM factory_tickets_v1
+		WHERE ticket_id NOT IN (SELECT run_id FROM pipeline_runs_v1)
+	),
+	combined_runs AS (
+		SELECT * FROM existing_runs
+		UNION ALL
+		SELECT * FROM standby_tickets
 	)
-	SELECT ` + factoryRunColumns() + `
-	FROM pipeline_runs_v1 AS runs
-	LEFT JOIN latest_batches USING (run_id)
-	` + where + `
-	GROUP BY pipeline, run_id
+	SELECT * FROM combined_runs
 	ORDER BY updated_at DESC LIMIT ?`
 	args = append(args, limit)
 
-	var runs []entity.PipelineRun
+	runs := make([]entity.PipelineRun, 0)
 	if err := r.client.Select(ctx, &runs, query, args...); err != nil {
 		return nil, fmt.Errorf("list pipeline runs: %w", err)
 	}
@@ -100,6 +128,23 @@ func (r *TicketClickHouse) Detail(ctx context.Context, runID string) (*entity.Pi
 		return nil, fmt.Errorf("select pipeline run: %w", err)
 	}
 	if len(runs) == 0 {
+		var tickets []entity.RunnerTicket
+		ticketQuery := `SELECT ticket_id, toString(created_at) AS created_at, description, toString(updated_at) AS updated_at FROM factory_tickets_v1 WHERE ticket_id = ? LIMIT 1`
+		if err := r.client.Select(ctx, &tickets, ticketQuery, runID); err == nil && len(tickets) > 0 {
+			t := tickets[0]
+			return &entity.PipelineRunDetail{
+				Run: entity.PipelineRun{
+					Pipeline:  "tess-standard",
+					RunID:     t.TicketID,
+					Mode:      "stream",
+					Status:    "STANDBY",
+					StartedAt: t.CreatedAt,
+					UpdatedAt: t.UpdatedAt,
+				},
+				Batches:    []entity.PipelineBatch{},
+				Components: []entity.PipelineComponentEvent{},
+			}, nil
+		}
 		return nil, repo.ErrNotFound
 	}
 	selected := &runs[0]

@@ -6,12 +6,10 @@ PartOf=aurora.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/Desktop/aurora-cosmic/apps/go-ingester
-EnvironmentFile=%h/Desktop/aurora-cosmic/apps/go-ingester/.env.example
-EnvironmentFile=%h/Desktop/aurora-cosmic/infra/systemd/aurora-host.env
-Environment=MINIO_ENDPOINT=http://127.0.0.1:9000
-Environment=NATS_URL=nats://127.0.0.1:4222
-ExecStart=%h/.local/go/bin/go run ./cmd
+WorkingDirectory=%h/.local/share/aurora
+EnvironmentFile=%h/.config/aurora/aurora.env
+Environment=AURORA_METRICS_ADDR=:8081
+ExecStart=%h/.local/bin/aurora-ingester
 Restart=on-failure
 RestartSec=3
 KillSignal=SIGINT

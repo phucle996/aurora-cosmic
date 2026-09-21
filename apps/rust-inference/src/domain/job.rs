@@ -138,23 +138,53 @@ fn default_rust_inference_producer() -> String {
     "rust-inference".to_string()
 }
 
-/// Compute deterministic SHA-256 job fingerprint.
-// The event contract contributes all nine fields to the identity; grouping them
-// would make call sites less explicit at the boundary where manifests are built.
-#[allow(clippy::too_many_arguments)]
-pub fn compute_job_fingerprint(
-    task: &str,
-    selection_policy_version: &str,
-    gold_snapshot_id: &str,
-    gold_manifest_sha256: &str,
-    gold_artifact_key: &str,
-    gold_artifact_content_sha256: &str,
-    runtime_package_id: &str,
-    runtime_manifest_sha256: &str,
-    runtime_validation_id: &str,
-) -> (String, String) {
+impl InferenceJobManifest {
+    pub fn fingerprint_input(&self) -> JobFingerprintInput<'_> {
+        JobFingerprintInput {
+            task: &self.task,
+            selection_policy_version: &self.selection_policy_version,
+            gold_snapshot_id: &self.gold_snapshot_id,
+            gold_manifest_sha256: &self.gold_manifest_sha256,
+            gold_artifact_key: &self.gold_artifact_key,
+            gold_artifact_content_sha256: &self.gold_artifact_content_sha256,
+            runtime_package_id: &self.runtime_package_id,
+            runtime_manifest_sha256: &self.runtime_manifest_sha256,
+            runtime_validation_id: &self.runtime_validation_id,
+        }
+    }
+
+    pub fn compute_fingerprint(&self) -> (String, String) {
+        compute_job_fingerprint(&self.fingerprint_input())
+    }
+}
+
+/// Structured input for deterministic job fingerprint computation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JobFingerprintInput<'a> {
+    pub task: &'a str,
+    pub selection_policy_version: &'a str,
+    pub gold_snapshot_id: &'a str,
+    pub gold_manifest_sha256: &'a str,
+    pub gold_artifact_key: &'a str,
+    pub gold_artifact_content_sha256: &'a str,
+    pub runtime_package_id: &'a str,
+    pub runtime_manifest_sha256: &'a str,
+    pub runtime_validation_id: &'a str,
+}
+
+/// Compute deterministic SHA-256 job fingerprint from structured input.
+pub fn compute_job_fingerprint(input: &JobFingerprintInput<'_>) -> (String, String) {
     let canonical = format!(
-        "{{\"gold_artifact_content_sha256\":\"{gold_artifact_content_sha256}\",\"gold_artifact_key\":\"{gold_artifact_key}\",\"gold_manifest_sha256\":\"{gold_manifest_sha256}\",\"gold_snapshot_id\":\"{gold_snapshot_id}\",\"runtime_manifest_sha256\":\"{runtime_manifest_sha256}\",\"runtime_package_id\":\"{runtime_package_id}\",\"runtime_validation_id\":\"{runtime_validation_id}\",\"selection_policy_version\":\"{selection_policy_version}\",\"task\":\"{task}\"}}"
+        "{{\"gold_artifact_content_sha256\":\"{}\",\"gold_artifact_key\":\"{}\",\"gold_manifest_sha256\":\"{}\",\"gold_snapshot_id\":\"{}\",\"runtime_manifest_sha256\":\"{}\",\"runtime_package_id\":\"{}\",\"runtime_validation_id\":\"{}\",\"selection_policy_version\":\"{}\",\"task\":\"{}\"}}",
+        input.gold_artifact_content_sha256,
+        input.gold_artifact_key,
+        input.gold_manifest_sha256,
+        input.gold_snapshot_id,
+        input.runtime_manifest_sha256,
+        input.runtime_package_id,
+        input.runtime_validation_id,
+        input.selection_policy_version,
+        input.task
     );
 
     let mut hasher = Sha256::new();

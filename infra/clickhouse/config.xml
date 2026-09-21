@@ -12,7 +12,7 @@
     <path>/home/phucle/.local/share/aurora/clickhouse-data/</path>
     <tmp_path>/home/phucle/.local/share/aurora/clickhouse-data/tmp/</tmp_path>
     <user_files_path>/home/phucle/.local/share/aurora/clickhouse-data/user_files/</user_files_path>
-    <users_config>/home/phucle/Desktop/aurora-cosmic/infra/clickhouse/users.xml</users_config>
+    <users_config>/home/phucle/.config/aurora/clickhouse/users.xml</users_config>
     <prometheus>
         <endpoint>/metrics</endpoint>
         <port>9363</port>

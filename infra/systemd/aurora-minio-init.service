@@ -6,7 +6,7 @@ PartOf=aurora.target
 
 [Service]
 Type=oneshot
-ExecStart=%h/Desktop/aurora-cosmic/infra/minio/setup-minio.sh
+ExecStart=%h/.local/share/aurora/init/setup-minio.sh
 RemainAfterExit=yes
 
 [Install]

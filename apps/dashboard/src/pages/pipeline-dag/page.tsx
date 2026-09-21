@@ -407,7 +407,7 @@ export default function PipelineDagPage(): JSX.Element {
         />
       </section>
 
-      <RunnerTicketBar />
+      <RunnerTicketBar onTicketChange={(ticket) => selectRun(ticket)} allowCreate />
 
       {selectedRunID ? (
         <div className="flex flex-wrap items-center justify-between gap-2 border border-primary/30 bg-primary/5 px-3 py-2 text-xs">
@@ -446,8 +446,16 @@ export default function PipelineDagPage(): JSX.Element {
           Loading runner ticket data…
         </div>
       ) : selectedRunID && !historicalRun ? (
-        <div className="flex items-center justify-center border border-dashed border-destructive/40 py-24 text-sm text-destructive">
-          Unable to load evidence for selected ticket; live DAG is not used as fallback.
+        <div className="flex flex-col items-center justify-center gap-3 border border-dashed border-destructive/40 py-24 text-sm text-destructive">
+          <p>Unable to load evidence for selected ticket; live DAG is not used as fallback.</p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => selectRun('')}
+            className="rounded-none border-primary/50 text-xs text-primary hover:bg-primary/10"
+          >
+            Return to Live DAG
+          </Button>
         </div>
       ) : (
         <PipelineDagCanvas

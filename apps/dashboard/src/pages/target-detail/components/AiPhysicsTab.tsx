@@ -1,12 +1,9 @@
 import type { JSX } from 'react';
 import {
   AlertTriangle,
-  Flame,
   Globe,
-  Orbit,
   ShieldCheck,
   Sparkles,
-  Thermometer,
 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';

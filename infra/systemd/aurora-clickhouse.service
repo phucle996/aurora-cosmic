@@ -4,7 +4,7 @@ PartOf=aurora.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/clickhouse server --config-file=%h/Desktop/aurora-cosmic/infra/clickhouse/config.xml
+ExecStart=%h/.local/bin/clickhouse server --config-file=%h/.config/aurora/clickhouse/config.xml
 Restart=on-failure
 RestartSec=3
 KillSignal=SIGINT

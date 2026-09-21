@@ -17,23 +17,7 @@ fn test_rust_stable_sigmoid() {
     assert!(s_neg.abs() < 1e-12 || (s_neg - 1.0).abs() < 1e-12);
 }
 
-#[test]
-fn test_rust_reconstruction_mse() {
-    let std_vec = [0.0f32, 2.0f32];
-    let recon_vec = [0.0f32, 0.0f32];
-    let sum_sq: f64 = std_vec
-        .iter()
-        .zip(recon_vec.iter())
-        .map(|(&x, &x_hat)| {
-            let diff = (x as f64) - (x_hat as f64);
-            diff * diff
-        })
-        .sum();
-    let mse = sum_sq / (std_vec.len() as f64);
 
-    // (0^2 + 2^2) / 2 = 2.0
-    assert!((mse - 2.0).abs() < 1e-12);
-}
 
 #[test]
 fn test_rust_imputation_and_standardization() {

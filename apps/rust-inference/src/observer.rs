@@ -1,4 +1,4 @@
-//! Low-cardinality Prometheus observer for the GPU inference worker.
+//! Low-cardinality Prometheus observer for the GPU/CPU inference worker.
 //!
 //! Runtime IDs, object keys, and product IDs are deliberately excluded from
 //! labels so metric cardinality stays bounded in long-running deployments.
@@ -7,7 +7,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use prometheus::{
-    Encoder, Gauge, HistogramVec, IntCounterVec, IntGauge, Opts, Registry, TextEncoder,
+    Encoder, Gauge, HistogramOpts, HistogramVec, IntCounterVec, IntGauge, IntGaugeVec, Opts,
+    Registry, TextEncoder,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -20,11 +21,14 @@ pub struct Metrics {
     registry: Registry,
     jobs: IntCounterVec,
     duration: HistogramVec,
+    stage_duration: HistogramVec,
     errors: IntCounterVec,
+    retries: IntCounterVec,
     inflight: IntGauge,
     queue: IntGauge,
     rows: IntCounterVec,
     last_success: Gauge,
+    _info: IntGaugeVec,
 }
 
 impl Metrics {
@@ -37,13 +41,33 @@ impl Metrics {
             ),
             &["task", "status"],
         )?;
+
+        // Tuned buckets for batch inference latency (0.05s up to 60s)
+        let duration_buckets = vec![
+            0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0, 30.0, 60.0,
+        ];
         let duration = HistogramVec::new(
-            prometheus::HistogramOpts::new(
+            HistogramOpts::new(
                 "aurora_inference_processing_duration_seconds",
-                "Wall-clock time spent processing one inference job.",
-            ),
+                "Wall-clock time spent processing one full inference job.",
+            )
+            .buckets(duration_buckets),
             &["task"],
         )?;
+
+        // Fine-grained latency breakdown across pipeline stages
+        let stage_buckets = vec![
+            0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0,
+        ];
+        let stage_duration = HistogramVec::new(
+            HistogramOpts::new(
+                "aurora_inference_stage_duration_seconds",
+                "Time spent in individual execution stages (download, inference, upload).",
+            )
+            .buckets(stage_buckets),
+            &["stage"],
+        )?;
+
         let errors = IntCounterVec::new(
             Opts::new(
                 "aurora_inference_errors_total",
@@ -51,14 +75,25 @@ impl Metrics {
             ),
             &["task"],
         )?;
+
+        let retries = IntCounterVec::new(
+            Opts::new(
+                "aurora_inference_retries_total",
+                "Transient inference job retries before success or termination.",
+            ),
+            &["task"],
+        )?;
+
         let inflight = IntGauge::new(
             "aurora_inference_inflight_jobs",
             "Inference jobs currently executing.",
         )?;
+
         let queue = IntGauge::new(
             "aurora_inference_queue_depth",
             "Fetched inference messages waiting to run.",
         )?;
+
         let rows = IntCounterVec::new(
             Opts::new(
                 "aurora_inference_rows_processed_total",
@@ -66,43 +101,64 @@ impl Metrics {
             ),
             &["task"],
         )?;
+
         let last_success = Gauge::new(
             "aurora_inference_last_success_timestamp_seconds",
             "Unix timestamp of the last successful inference job.",
         )?;
 
+        let info = IntGaugeVec::new(
+            Opts::new(
+                "aurora_inference_info",
+                "Metadata describing runtime execution engine and service version.",
+            ),
+            &["version", "engine"],
+        )?;
+
         for collector in [
             Box::new(jobs.clone()) as Box<dyn prometheus::core::Collector>,
             Box::new(duration.clone()),
+            Box::new(stage_duration.clone()),
             Box::new(errors.clone()),
+            Box::new(retries.clone()),
             Box::new(inflight.clone()),
             Box::new(queue.clone()),
             Box::new(rows.clone()),
             Box::new(last_success.clone()),
+            Box::new(info.clone()),
         ] {
             registry.register(collector)?;
         }
 
-        // Materialize the bounded label space so a fresh worker exposes all
-        // seven metric families before the first job arrives.
-        for task in ["candidate", "anomaly", "unknown"] {
+        // Materialize the bounded label space for zero-scraping surprises
+        for task in ["candidate", "unknown"] {
             for status in [STATUS_SUCCESS, STATUS_FAILED] {
                 jobs.with_label_values(&[task, status]);
             }
             duration.with_label_values(&[task]);
             errors.with_label_values(&[task]);
+            retries.with_label_values(&[task]);
             rows.with_label_values(&[task]);
         }
+
+        for stage in ["download", "inference", "upload"] {
+            stage_duration.with_label_values(&[stage]);
+        }
+
+        info.with_label_values(&[env!("CARGO_PKG_VERSION"), "ort"]).set(1);
 
         Ok(Self {
             registry,
             jobs,
             duration,
+            stage_duration,
             errors,
+            retries,
             inflight,
             queue,
             rows,
             last_success,
+            _info: info,
         })
     }
 
@@ -112,6 +168,17 @@ impl Metrics {
 
     pub fn record_transport_error(&self) {
         self.errors.with_label_values(&["unknown"]).inc();
+    }
+
+    pub fn record_retry(&self, task: &str) {
+        let t = normalize_task(task);
+        self.retries.with_label_values(&[t]).inc();
+    }
+
+    pub fn record_stage(&self, stage: &str, elapsed: Duration) {
+        self.stage_duration
+            .with_label_values(&[stage])
+            .observe(elapsed.as_secs_f64());
     }
 
     pub fn begin(self: &Arc<Self>, task: &str, rows: usize) -> JobObservation {
@@ -151,7 +218,7 @@ impl Metrics {
     }
 
     pub fn render(&self) -> Vec<u8> {
-        let mut buffer = Vec::new();
+        let mut buffer = Vec::with_capacity(4096);
         TextEncoder::new()
             .encode(&self.registry.gather(), &mut buffer)
             .expect("encoding metrics into memory cannot fail");
@@ -194,7 +261,6 @@ impl Drop for JobObservation {
 fn normalize_task(task: &str) -> &'static str {
     match task {
         "candidate" | "candidate_vetting" => "candidate",
-        "anomaly" | "anomaly_detection" => "anomaly",
         _ => "unknown",
     }
 }

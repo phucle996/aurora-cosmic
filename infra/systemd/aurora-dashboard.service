@@ -1,18 +1,16 @@
 [Unit]
-Description=AURORA dashboard Vite dev server
+Description=AURORA Dashboard (native Nginx)
 After=aurora-go-api.service
 PartOf=aurora.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/Desktop/aurora-cosmic/apps/dashboard
-EnvironmentFile=%h/Desktop/aurora-cosmic/apps/dashboard/.env.example
-Environment=VITE_AURORA_API_URL=/api
-ExecStart=%h/.local/bin/npm run dev -- --host 0.0.0.0 --port 8501
+WorkingDirectory=%h/.local/share/aurora
+ExecStart=%h/.local/bin/nginx -g "daemon off;" -c %h/.config/aurora/nginx.conf -e %h/.local/share/aurora/nginx_error.log
 Restart=on-failure
 RestartSec=3
-KillSignal=SIGINT
-SuccessExitStatus=0 1 2 130 143 SIGINT SIGTERM
+KillSignal=SIGQUIT
+SuccessExitStatus=0 1 2 130 143 SIGINT SIGTERM SIGQUIT
 TimeoutStopSec=5
 
 [Install]

@@ -1,21 +1,15 @@
 [Unit]
-Description=AURORA Python ML worker (native)
+Description=AURORA Python ML worker (native production)
 Requires=aurora-nats.service aurora-minio-init.service aurora-clickhouse-init.service
 After=aurora-nats.service aurora-minio-init.service aurora-clickhouse-init.service
 PartOf=aurora.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/Desktop/aurora-cosmic/apps/python-ml-worker
-EnvironmentFile=%h/Desktop/aurora-cosmic/apps/python-ml-worker/.env.example
-EnvironmentFile=%h/Desktop/aurora-cosmic/infra/systemd/aurora-host.env
-Environment=MINIO_ENDPOINT=http://127.0.0.1:9000
-Environment=NATS_URL=nats://127.0.0.1:4222
-Environment=AURORA_CLICKHOUSE_HOST=127.0.0.1
-Environment=AURORA_ML_MAX_VRAM_MB=2000
-Environment=UV_CACHE_DIR=%h/.cache/uv
-ExecStartPre=%h/.local/bin/uv sync --extra dev --project %h/Desktop/aurora-cosmic/apps/python-ml-worker
-ExecStart=%h/.local/bin/uv run --project %h/Desktop/aurora-cosmic/apps/python-ml-worker --no-sync python service.py
+WorkingDirectory=%h/.local/share/aurora/apps/python-ml-worker
+EnvironmentFile=%h/.config/aurora/aurora.env
+Environment=AURORA_METRICS_ADDR=0.0.0.0:8083
+ExecStart=%h/.local/share/aurora/apps/python-ml-worker/.venv/bin/python service.py
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGINT
