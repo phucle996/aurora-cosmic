@@ -99,17 +99,17 @@ export function IngestWorkerTelemetrySection({
                   expectedBytes > 0 ? Math.min(100, Math.max(0, Math.round((bytesRead / expectedBytes) * 100))) : 0;
 
                 return (
-                  <div key={`worker-${workerId}`} className="border border-border/70 bg-background/50 px-3 py-3">
+                  <div key={`worker-${workerId}`} className="min-h-[3.5rem] border border-border/70 bg-background/50 px-3 py-3 transition-colors duration-300">
                     <div className="grid gap-2 sm:grid-cols-[5.5rem_minmax(0,1fr)_5rem] sm:items-center sm:gap-4">
                       <div className="flex items-center gap-2">
-                        <span className="size-2 rounded-full bg-primary animate-pulse" />
+                        <span className={`size-2 rounded-full transition-colors duration-500 ${productId ? 'bg-primary' : 'bg-emerald-500'}`} />
                         <span className="font-mono text-xs text-foreground">
                           WORKER-{String(workerId).padStart(2, '0')}
                         </span>
                       </div>
                       <div className="min-w-0">
-                        <p className="truncate font-mono text-[11px] text-foreground" title={productId}>
-                          {productId ?? 'Awaiting product telemetry'}
+                        <p className={`truncate font-mono text-[11px] transition-opacity duration-300 ${productId ? 'text-foreground opacity-100' : 'text-muted-foreground opacity-70'}`} title={productId}>
+                          {productId ?? 'Awaiting next product assignment'}
                         </p>
                         <div className="mt-2 flex items-center gap-3">
                           <Progress value={downloadPercent} className="h-1.5 flex-1" />
@@ -119,7 +119,7 @@ export function IngestWorkerTelemetrySection({
                         </div>
                       </div>
                       <p className="font-mono text-[10px] text-muted-foreground sm:text-right">
-                        {productId ? `${formatTransferBytes(bytesRead)} / ${formatBytes(expectedBytes)}` : 'DOWNLOADING'}
+                        {productId ? `${formatTransferBytes(bytesRead)} / ${formatBytes(expectedBytes)}` : '—'}
                       </p>
                     </div>
                   </div>

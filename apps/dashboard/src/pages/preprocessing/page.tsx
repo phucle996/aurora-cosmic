@@ -242,25 +242,21 @@ export default function PreprocessingPage(): JSX.Element {
                     const processing = worker.state === 'processing';
                     const failed = worker.state === 'failed';
                     return (
-                      <div key={worker.worker_id} className="border border-border/70 bg-background/50 p-3.5">
+                      <div key={worker.worker_id} className="min-h-[5.5rem] border border-border/70 bg-background/50 p-3.5 transition-colors duration-300">
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                           <div className="flex items-start gap-2.5 min-w-0">
-                            <span className={`mt-1 size-2 shrink-0 rounded-full ${failed ? 'bg-destructive' : processing ? 'animate-pulse bg-primary' : 'bg-emerald-500'}`} />
+                            <span className={`mt-1 size-2 shrink-0 rounded-full transition-colors duration-500 ${failed ? 'bg-destructive' : processing ? 'bg-primary' : 'bg-emerald-500'}`} />
                             <div className="min-w-0 space-y-1">
                               <div className="flex flex-wrap items-center gap-2">
                                 <span className="font-mono text-xs font-semibold text-foreground">{worker.worker_id}</span>
-                                {worker.stage && (
-                                  <Badge variant="outline" className="rounded-none font-mono text-[9px] uppercase tracking-wider text-primary border-primary/40 bg-primary/10">
-                                    Stage: {worker.stage}
-                                  </Badge>
-                                )}
-                                {worker.product_kind && (
-                                  <Badge variant="secondary" className="rounded-none font-mono text-[9px] uppercase">
-                                    {worker.product_kind}
-                                  </Badge>
-                                )}
+                                <Badge variant="outline" className={`rounded-none font-mono text-[9px] uppercase tracking-wider text-primary border-primary/40 bg-primary/10 transition-opacity duration-300 ${worker.stage ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+                                  Stage: {worker.stage || '—'}
+                                </Badge>
+                                <Badge variant="secondary" className={`rounded-none font-mono text-[9px] uppercase transition-opacity duration-300 ${worker.product_kind ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+                                  {worker.product_kind || '—'}
+                                </Badge>
                               </div>
-                              <p className="truncate font-mono text-xs text-muted-foreground" title={worker.object_key}>
+                              <p className="truncate font-mono text-xs text-muted-foreground transition-opacity duration-300" title={worker.object_key}>
                                 {worker.object_key ? (
                                   <>Processing: <span className="text-foreground">{worker.object_key}</span></>
                                 ) : (
@@ -271,7 +267,7 @@ export default function PreprocessingPage(): JSX.Element {
                           </div>
 
                           <div className="flex sm:flex-col items-center sm:items-end justify-between gap-1 shrink-0">
-                            <Badge variant={failed ? 'destructive' : processing ? 'default' : 'outline'} className="rounded-none font-mono text-[9px] uppercase">
+                            <Badge variant={failed ? 'destructive' : processing ? 'default' : 'outline'} className="rounded-none font-mono text-[9px] uppercase transition-colors duration-300">
                               {worker.state}
                             </Badge>
                             <span className="font-mono text-[10px] text-muted-foreground">

@@ -161,6 +161,14 @@ func (s *DAGAggregationService) QueryGraph(ctx context.Context, stage string, ti
 
 	s.runtimeMu.RLock()
 	runtime := s.runtime
+	if len(s.runtime.Workers) > 0 {
+		runtime.Workers = make([]entity.PreprocessingWorkerRuntime, len(s.runtime.Workers))
+		copy(runtime.Workers, s.runtime.Workers)
+	}
+	if len(s.runtime.Trace) > 0 {
+		runtime.Trace = make([]entity.PreprocessingRuntimeEvent, len(s.runtime.Trace))
+		copy(runtime.Trace, s.runtime.Trace)
+	}
 	s.runtimeMu.RUnlock()
 
 	if strings.TrimSpace(ticketID) == "" && runtimeJob != nil {

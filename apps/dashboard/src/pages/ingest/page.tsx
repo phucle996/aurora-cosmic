@@ -36,6 +36,7 @@ export default function IngestPage(): JSX.Element {
   const [planningSignal, setPlanningSignal] = useState<PlanningSignal | null>(null);
   const [workerSignals, setWorkerSignals] = useState<Record<number, WorkerSignal>>({});
   const loadInFlight = useRef<Promise<void> | null>(null);
+  const workerHighWater = useRef(0);
 
   const load = useCallback(() => {
     if (loadInFlight.current) return loadInFlight.current;
@@ -184,7 +185,10 @@ export default function IngestPage(): JSX.Element {
   const isDraining = (reportedStatus ?? '').toLowerCase() === 'draining';
 
   useEffect(() => {
-    if (!isIngesting) setWorkerSignals({});
+    if (!isIngesting) {
+      setWorkerSignals({});
+      workerHighWater.current = 0;
+    }
   }, [isIngesting]);
 
   const handleStart = async (event: FormEvent): Promise<void> => {
@@ -235,7 +239,11 @@ export default function IngestPage(): JSX.Element {
     [status?.products],
   );
   const signaledWorkerCount = Object.keys(workerSignals).length;
-  const spawnedWorkerCount = Math.max(0, Math.round(status?.downloading ?? 0), signaledWorkerCount);
+  const rawSpawnedCount = Math.max(0, Math.round(status?.downloading ?? 0), signaledWorkerCount);
+  if (isIngesting && rawSpawnedCount > workerHighWater.current) {
+    workerHighWater.current = rawSpawnedCount;
+  }
+  const spawnedWorkerCount = isIngesting ? Math.max(rawSpawnedCount, workerHighWater.current) : rawSpawnedCount;
 
   const activeStatus = reportedStatus?.toLowerCase() === 'not_observed' ? undefined : reportedStatus;
   const manifestDiscoveryActive = activeStatus === 'planning' && (
