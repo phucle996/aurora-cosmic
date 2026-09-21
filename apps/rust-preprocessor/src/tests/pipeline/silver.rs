@@ -290,4 +290,3 @@ fn test_stream_target_pixel_parquet_writes_multiple_chunks() {
         2
     );
 }
-

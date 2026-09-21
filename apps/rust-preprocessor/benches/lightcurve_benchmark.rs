@@ -125,7 +125,9 @@ fn footstep_2_sort_dedup(
 fn footstep_3_median_normalize(fluxes: &[f32], errs: &[f32]) -> (f32, Vec<f32>, Vec<f32>) {
     let mut scratch = fluxes.to_vec();
     let mid = scratch.len() / 2;
-    scratch.select_nth_unstable_by(mid, |a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    scratch.select_nth_unstable_by(mid, |a, b| {
+        a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+    });
     let median = if scratch.len().is_multiple_of(2) {
         let val_mid = scratch[mid];
         let max_left = scratch[..mid]
@@ -245,7 +247,14 @@ fn bench_lightcurve_footsteps(c: &mut Criterion) {
     });
 
     group.bench_function("footstep_2_sort_dedup", |b| {
-        b.iter(|| footstep_2_sort_dedup(black_box(&f1_t), black_box(&f1_f), black_box(&f1_e), black_box(&f1_q)))
+        b.iter(|| {
+            footstep_2_sort_dedup(
+                black_box(&f1_t),
+                black_box(&f1_f),
+                black_box(&f1_e),
+                black_box(&f1_q),
+            )
+        })
     });
 
     group.bench_function("footstep_3_median_normalize", |b| {
@@ -253,17 +262,44 @@ fn bench_lightcurve_footsteps(c: &mut Criterion) {
     });
 
     group.bench_function("footstep_4_sigma_clip", |b| {
-        b.iter(|| footstep_4_sigma_clip(black_box(&f2_t), black_box(&f3_f), black_box(&f3_e), black_box(&f2_q), 3.0))
+        b.iter(|| {
+            footstep_4_sigma_clip(
+                black_box(&f2_t),
+                black_box(&f3_f),
+                black_box(&f3_e),
+                black_box(&f2_q),
+                3.0,
+            )
+        })
     });
 
     group.bench_function("footstep_5_parquet_zstd_write", |b| {
-        b.iter(|| serialize_lightcurve(black_box(&processed_lc), black_box(&event), black_box(tmp.path()), "sha256:bench-fp").unwrap())
+        b.iter(|| {
+            serialize_lightcurve(
+                black_box(&processed_lc),
+                black_box(&event),
+                black_box(tmp.path()),
+                "sha256:bench-fp",
+            )
+            .unwrap()
+        })
     });
 
     group.bench_function("e2e_lightcurve_full_pipeline", |b| {
         b.iter(|| {
-            let p = preprocess_lc(black_box(raw.clone()), black_box(&event), black_box(&full_config)).unwrap();
-            serialize_lightcurve(black_box(&p), black_box(&event), black_box(tmp.path()), "sha256:bench-fp").unwrap()
+            let p = preprocess_lc(
+                black_box(raw.clone()),
+                black_box(&event),
+                black_box(&full_config),
+            )
+            .unwrap();
+            serialize_lightcurve(
+                black_box(&p),
+                black_box(&event),
+                black_box(tmp.path()),
+                "sha256:bench-fp",
+            )
+            .unwrap()
         })
     });
 

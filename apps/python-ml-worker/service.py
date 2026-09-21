@@ -94,7 +94,9 @@ async def _consume(config: Config, metrics: Metrics, stop: asyncio.Event) -> Non
                     exc_info=True,
                 )
 
-        application = TrainingApplication(config, progress=report_progress, logger=report_log)
+        application = TrainingApplication(
+            config, progress=report_progress, logger=report_log
+        )
         control_sub = await nc.subscribe(CONTROL_SUBJECT)
 
         async def _handle_control():
@@ -105,10 +107,16 @@ async def _consume(config: Config, metrics: Metrics, stop: asyncio.Event) -> Non
                         ctrl_ticket_id = str(raw.get("ticket_id", "")).strip()
                         ctrl_action = str(raw.get("action", "")).strip()
                         if ctrl_ticket_id and ctrl_action:
-                            LOGGER.info("ML control signal received: ticket=%s action=%s", ctrl_ticket_id, ctrl_action)
+                            LOGGER.info(
+                                "ML control signal received: ticket=%s action=%s",
+                                ctrl_ticket_id,
+                                ctrl_action,
+                            )
                             application.set_control(ctrl_ticket_id, ctrl_action)
                     except Exception:
-                        LOGGER.warning("Malformed training control payload", exc_info=True)
+                        LOGGER.warning(
+                            "Malformed training control payload", exc_info=True
+                        )
             except asyncio.CancelledError:
                 pass
 
@@ -177,7 +185,9 @@ async def _consume(config: Config, metrics: Metrics, stop: asyncio.Event) -> Non
                         "error": str(exc),
                     }
                     if is_cancelled:
-                        LOGGER.info("ML training ticket cancelled by operator: %s", ticket_id)
+                        LOGGER.info(
+                            "ML training ticket cancelled by operator: %s", ticket_id
+                        )
                         await _publish(nc, CANCELLED_SUBJECT, failure)
                         await _publish(
                             nc,
@@ -204,9 +214,9 @@ async def _consume(config: Config, metrics: Metrics, stop: asyncio.Event) -> Non
                         )
                     await message.ack()
     finally:
-        if 'control_task' in locals() and not control_task.done():
+        if "control_task" in locals() and not control_task.done():
             control_task.cancel()
-        if 'control_sub' in locals() and control_sub is not None:
+        if "control_sub" in locals() and control_sub is not None:
             await control_sub.unsubscribe()
         if subscription is not None:
             await subscription.unsubscribe()

@@ -103,13 +103,12 @@ class TrainingRequest:
         )
 
 
-def _development_rows(
-    rows: list[dict[str, Any]], seed: int
-) -> list[dict[str, Any]]:
+def _development_rows(rows: list[dict[str, Any]], seed: int) -> list[dict[str, Any]]:
     return [
         row
         for row in rows
-        if str(row.get("training_label", "")).strip().upper() in ("POSITIVE", "NEGATIVE")
+        if str(row.get("training_label", "")).strip().upper()
+        in ("POSITIVE", "NEGATIVE")
     ]
 
 
@@ -174,7 +173,9 @@ class TrainingApplication:
         store.write_job(request.ticket_id, record)
 
     def execute(self, request: TrainingRequest) -> dict[str, Any]:
-        with tempfile.TemporaryDirectory(prefix=f"aurora-train-{request.ticket_id}-") as tmp_dir:
+        with tempfile.TemporaryDirectory(
+            prefix=f"aurora-train-{request.ticket_id}-"
+        ) as tmp_dir:
             job_dir = Path(tmp_dir)
             store = TrainingStore(self.objects, job_dir, self.config)
             existing = store.read_job(request.ticket_id)
@@ -183,11 +184,22 @@ class TrainingApplication:
 
             self._journal(store, request, status="RUNNING", started_at=_now())
             try:
-                self._log(request, f"Accepted experiment specification for ticket {request.ticket_id} ({request.compute_target.upper()})")
+                self._log(
+                    request,
+                    f"Accepted experiment specification for ticket {request.ticket_id} ({request.compute_target.upper()})",
+                )
                 self._progress(request, "loading_gold", 5)
-                self._log(request, f"Loading {len(request.gold_snapshot_ids)} Gold snapshot(s) from MinIO...")
-                loaded = store.load_gold_snapshots(request.task, request.gold_snapshot_ids)
-                self._log(request, f"Loaded {len(loaded.rows):,} observations from Gold snapshots")
+                self._log(
+                    request,
+                    f"Loading {len(request.gold_snapshot_ids)} Gold snapshot(s) from MinIO...",
+                )
+                loaded = store.load_gold_snapshots(
+                    request.task, request.gold_snapshot_ids
+                )
+                self._log(
+                    request,
+                    f"Loaded {len(loaded.rows):,} observations from Gold snapshots",
+                )
                 self._progress(
                     request,
                     "preparing_dataset",
@@ -197,7 +209,13 @@ class TrainingApplication:
                 result = self._train_and_package(request, loaded, store, job_dir)
             except Exception as exc:
                 is_cancelled = "CANCELLED" in str(exc).upper()
-                self._log(request, f"Experiment cancelled by operator: {exc}" if is_cancelled else f"Experiment failed: {exc}", level="warn" if is_cancelled else "error")
+                self._log(
+                    request,
+                    f"Experiment cancelled by operator: {exc}"
+                    if is_cancelled
+                    else f"Experiment failed: {exc}",
+                    level="warn" if is_cancelled else "error",
+                )
                 self._journal(
                     store,
                     request,
@@ -207,7 +225,11 @@ class TrainingApplication:
                     error=str(exc),
                 )
                 raise
-            self._log(request, "Training, evaluation, ONNX package export and registration completed successfully", level="success")
+            self._log(
+                request,
+                "Training, evaluation, ONNX package export and registration completed successfully",
+                level="success",
+            )
             self._journal(
                 store, request, status="COMPLETED", completed_at=_now(), result=result
             )
@@ -241,7 +263,10 @@ class TrainingApplication:
         if view.positive_count == 0 or view.negative_count == 0:
             raise TrainingExecutionError("NO_SUPERVISED_LABELS_IN_GOLD")
         split = create_deterministic_group_split(view, seed=request.seed)
-        self._log(request, f"Built ML view: {view.positive_count} positive, {view.negative_count} negative targets across {len(split.assignments)} groups")
+        self._log(
+            request,
+            f"Built ML view: {view.positive_count} positive, {view.negative_count} negative targets across {len(split.assignments)} groups",
+        )
         self._progress(
             request,
             "training",
@@ -250,7 +275,10 @@ class TrainingApplication:
             total_epochs=request.epochs,
             supervised_rows=view.positive_count + view.negative_count,
         )
-        self._log(request, f"Starting PyTorch optimization ({request.epochs} epochs, batch_size={request.batch_size}, lr={request.learning_rate}) on {request.compute_target.upper()}...")
+        self._log(
+            request,
+            f"Starting PyTorch optimization ({request.epochs} epochs, batch_size={request.batch_size}, lr={request.learning_rate}) on {request.compute_target.upper()}...",
+        )
 
         def on_epoch_progress(epoch_data: dict[str, Any]) -> None:
             ep = int(epoch_data.get("current_epoch", 0))
@@ -258,7 +286,7 @@ class TrainingApplication:
             tl = epoch_data.get("train_loss")
             vl = epoch_data.get("val_loss")
             bep = epoch_data.get("best_epoch")
-            is_best = (ep == bep)
+            is_best = ep == bep
             self._progress(
                 request,
                 "training",
@@ -287,15 +315,20 @@ class TrainingApplication:
             progress_callback=on_epoch_progress,
             control_check=lambda: self.get_control(request.ticket_id),
         )
-        self._log(request, f"Training complete: best epoch {training_manifest.best_epoch} with val_loss {training_manifest.best_validation_loss:.4f}", level="success")
+        self._log(
+            request,
+            f"Training complete: best epoch {training_manifest.best_epoch} with val_loss {training_manifest.best_validation_loss:.4f}",
+            level="success",
+        )
 
         self._progress(request, "evaluating", 78)
-        self._log(request, "Evaluating multi-cohort generalizability (Golden Test & Recent Holdout)...")
+        self._log(
+            request,
+            "Evaluating multi-cohort generalizability (Golden Test & Recent Holdout)...",
+        )
         golden = build_candidate_golden_cohort(loaded.manifest, rows, split)
         try:
-            recent = build_candidate_recent_cohort(
-                loaded.manifest, rows, split, golden
-            )
+            recent = build_candidate_recent_cohort(loaded.manifest, rows, split, golden)
         except MlEvaluationError:
             recent = None
 
@@ -341,16 +374,26 @@ class TrainingApplication:
         exporter = OnnxRuntimeExporter(
             registry_root=str(registry_root), runtime_root=str(runtime_root)
         )
-        self._log(request, f"Exporting ONNX opset 17 package for {model.model_id} and checking parity...")
+        self._log(
+            request,
+            f"Exporting ONNX opset 17 package for {model.model_id} and checking parity...",
+        )
         runtime = exporter.export_candidate_runtime_package(
             model_id=model.model_id,
             evaluation_run_manifest_path=str(evaluation_dir / "manifest.json"),
             validation_rows=development_rows,
         )
-        self._log(request, f"ONNX Runtime package {runtime.runtime_package_id} verified with exact parity", level="success")
+        self._log(
+            request,
+            f"ONNX Runtime package {runtime.runtime_package_id} verified with exact parity",
+            level="success",
+        )
 
         self._progress(request, "persisting_artifacts", 95)
-        self._log(request, "Persisting immutable training manifests and weights to Object Storage...")
+        self._log(
+            request,
+            "Persisting immutable training manifests and weights to Object Storage...",
+        )
         store.upload_tree(
             artifacts_dir / "training",
             f"models/training-runs/{task_dir}/{training_manifest.training_run_id}",
@@ -373,7 +416,11 @@ class TrainingApplication:
             f"{runtime.runtime_package_id}/manifest.json"
         )
         self._progress(request, "completed", 100)
-        self._log(request, "All artifacts uploaded to MinIO bucket successfully", level="success")
+        self._log(
+            request,
+            "All artifacts uploaded to MinIO bucket successfully",
+            level="success",
+        )
 
         return {
             "status": "completed",

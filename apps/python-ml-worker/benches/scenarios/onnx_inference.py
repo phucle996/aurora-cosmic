@@ -44,7 +44,9 @@ def run_onnx_inference_benchmark(
     opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
     opts.inter_op_num_threads = 1
     opts.intra_op_num_threads = 4
-    session = ort.InferenceSession(onnx_bytes, sess_options=opts, providers=["CPUExecutionProvider"])
+    session = ort.InferenceSession(
+        onnx_bytes, sess_options=opts, providers=["CPUExecutionProvider"]
+    )
     input_name = session.get_inputs()[0].name
 
     # 3. Generate test batches

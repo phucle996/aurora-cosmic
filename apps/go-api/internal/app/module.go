@@ -14,10 +14,7 @@ import (
 // Module encapsulates all application capabilities, workflow handlers, and event consumers.
 type Module struct {
 	TargetHandler            *handler.TargetHandler
-	CandidateHandler         *handler.CandidateHandler
-	AnomalyHandler           *handler.AnomalyHandler
-	ModelsHandler            *handler.ModelsHandler
-	ModelNewHandler          *handler.ModelNewHandler
+	ModelHandler             *handler.ModelHandler
 	LabelingHandler          *handler.LabelingHandler
 	SystemHandler            *handler.SystemHandler
 	MonitoringHandler        *handler.MonitoringHandler
@@ -119,68 +116,21 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	}
 
 	// =========================================================================
-	// 5. Candidate Workflow Branch (Vetted Transit Candidates)
-	// =========================================================================
-	candidateRepo := repository.NewCandidateClickHouse(infra.ClickHouse)
-	if candidateRepo == nil {
-		return nil, fmt.Errorf("repository CandidateClickHouse is nil")
-	}
-	candidateService := service.NewCandidateService(candidateRepo)
-	if candidateService == nil {
-		return nil, fmt.Errorf("service CandidateService is nil")
-	}
-	candidateHandler := handler.NewCandidateHandler(candidateService)
-	if candidateHandler == nil {
-		return nil, fmt.Errorf("handler CandidateHandler is nil")
-	}
 
 	// =========================================================================
-	// 6. Anomaly Workflow Branch (Unsupervised Deep Learning Outliers)
+	// 7. ML Models & Training Branch
 	// =========================================================================
-	anomalyRepo := repository.NewAnomalyClickHouse(infra.ClickHouse)
-	if anomalyRepo == nil {
-		return nil, fmt.Errorf("repository AnomalyClickHouse is nil")
+	modelRepo := repository.NewModelClickHouse(infra.ClickHouse)
+	if modelRepo == nil {
+		return nil, fmt.Errorf("repository ModelClickHouse is nil")
 	}
-	anomalyService := service.NewAnomalyService(anomalyRepo, predictionObjectRepo)
-	if anomalyService == nil {
-		return nil, fmt.Errorf("service AnomalyService is nil")
+	modelService := service.NewModelServiceWithResults(objectRepo, predictionObjectRepo, infra.NATS, modelRepo)
+	if modelService == nil {
+		return nil, fmt.Errorf("service ModelService is nil")
 	}
-	anomalyHandler := handler.NewAnomalyHandler(anomalyService)
-	if anomalyHandler == nil {
-		return nil, fmt.Errorf("handler AnomalyHandler is nil")
-	}
-
-	// =========================================================================
-	// 7. ML Models, Training & Inference Branch
-	// =========================================================================
-	trainingRepo := repository.NewTrainingClickHouse(infra.ClickHouse)
-	if trainingRepo == nil {
-		return nil, fmt.Errorf("repository TrainingClickHouse is nil")
-	}
-	modelsService := service.NewModelsService(objectRepo, infra.NATS, trainingRepo)
-	if modelsService == nil {
-		return nil, fmt.Errorf("service ModelsService is nil")
-	}
-	inferenceService := service.NewInferenceServiceWithResults(objectRepo, predictionObjectRepo, infra.NATS, infra.MinIO.Bucket)
-	if inferenceService == nil {
-		return nil, fmt.Errorf("service InferenceService is nil")
-	}
-	modelsHandler := handler.NewModelsHandler(modelsService, inferenceService)
-	if modelsHandler == nil {
-		return nil, fmt.Errorf("handler ModelsHandler is nil")
-	}
-
-	modelNewRepo := repository.NewModelNewClickHouse(infra.ClickHouse)
-	if modelNewRepo == nil {
-		return nil, fmt.Errorf("repository ModelNewClickHouse is nil")
-	}
-	modelNewService := service.NewModelNewService(objectRepo, infra.NATS, modelNewRepo)
-	if modelNewService == nil {
-		return nil, fmt.Errorf("service ModelNewService is nil")
-	}
-	modelNewHandler := handler.NewModelNewHandler(modelNewService)
-	if modelNewHandler == nil {
-		return nil, fmt.Errorf("handler ModelNewHandler is nil")
+	modelHandler := handler.NewModelHandler(modelService)
+	if modelHandler == nil {
+		return nil, fmt.Errorf("handler ModelHandler is nil")
 	}
 
 	predictionProjectionRepo := repository.NewPredictionProjectionClickHouse(infra.ClickHouse)
@@ -314,11 +264,10 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	}
 
 	natsPubSub := pubsub.New(pubsub.Config{
-		NATSURL:           infra.NATS.URL,
-		Broker:            eventBroker,
-		DAGAggregation:    dagAggregationService,
-		ChampionInference: inferenceService,
-		ModelNew:          modelNewService,
+		NATSURL:        infra.NATS.URL,
+		Broker:         eventBroker,
+		DAGAggregation: dagAggregationService,
+		Model:          modelService,
 	})
 
 	natsStream := stream.New(stream.Config{
@@ -330,12 +279,10 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	// 16. Module Struct Assembly
 	// =========================================================================
 	m := &Module{
-		TargetHandler:            targetHandler,
-		CandidateHandler:         candidateHandler,
-		AnomalyHandler:           anomalyHandler,
-		ModelsHandler:            modelsHandler,
-		ModelNewHandler:          modelNewHandler,
-		LabelingHandler:          labelingHandler,
+		TargetHandler:   targetHandler,
+		ModelHandler:    modelHandler,
+		LabelingHandler: labelingHandler,
+
 		SystemHandler:            systemHandler,
 		MonitoringHandler:        monitoringHandler,
 		DAGAggregationHandler:    dagAggregationHandler,

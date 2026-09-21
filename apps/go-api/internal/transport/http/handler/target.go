@@ -134,12 +134,12 @@ func (h *TargetHandler) ListTargets(c *gin.Context) {
 		*target = &value
 		return true
 	}
-	if !parseBoolFilter("has_lightcurve", &query.HasLightcurve) || !parseBoolFilter("has_candidate", &query.HasCandidate) || !parseBoolFilter("has_anomaly", &query.HasAnomaly) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "has_lightcurve, has_candidate, and has_anomaly must be boolean"})
+	if !parseBoolFilter("has_lightcurve", &query.HasLightcurve) || !parseBoolFilter("has_candidate", &query.HasCandidate) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "has_lightcurve and has_candidate must be boolean"})
 		return
 	}
 	query.Sort = c.Query("sort")
-	if query.Sort != "" && query.Sort != "tmag_asc" && query.Sort != "tmag_desc" && query.Sort != "teff_asc" && query.Sort != "teff_desc" && query.Sort != "candidate_desc" && query.Sort != "anomaly_desc" {
+	if query.Sort != "" && query.Sort != "tmag_asc" && query.Sort != "tmag_desc" && query.Sort != "teff_asc" && query.Sort != "teff_desc" && query.Sort != "candidate_desc" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported target sort"})
 		return
 	}
@@ -161,8 +161,8 @@ func (h *TargetHandler) ListTargets(c *gin.Context) {
 	})
 }
 
-// GetTarget xem chi tiết một ngôi sao mục tiêu TIC
-func (h *TargetHandler) GetTarget(c *gin.Context) {
+// GetTargetInsight xem hồ sơ trích xuất vật lý thiên văn và AI Insights của ngôi sao mục tiêu TIC
+func (h *TargetHandler) GetTargetInsight(c *gin.Context) {
 	ticID, err := strconv.ParseInt(c.Param("tic_id"), 10, 64)
 	if err != nil || ticID < 1 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "tic_id must be a positive integer"})
@@ -181,7 +181,7 @@ func (h *TargetHandler) GetTarget(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "snapshot_id must be a valid Gold snapshot id"})
 		return
 	}
-	target, err := h.target.GetTarget(c.Request.Context(), ticID, sector, snapshotID)
+	resp, err := h.target.GetTargetInsight(c.Request.Context(), ticID, sector, snapshotID)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			c.JSON(http.StatusNotFound, gin.H{"error": taxonomy.ErrNotFound.Error()})
@@ -189,24 +189,6 @@ func (h *TargetHandler) GetTarget(c *gin.Context) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": taxonomy.ErrAnalyticsUnavailable.Error()})
 		}
 		return
-	}
-	resp := gin.H{
-		"target": target.Target,
-	}
-	if target.Physics != nil {
-		if target.Physics.Warnings == nil {
-			target.Physics.Warnings = []string{}
-		}
-		resp["planet_physics"] = target.Physics
-	}
-	if target.Habitability != nil {
-		if target.Habitability.Components == nil {
-			target.Habitability.Components = []entity.HabitabilityComponent{}
-		}
-		resp["habitability"] = target.Habitability
-	}
-	if target.Evidence != nil {
-		resp["evidence"] = target.Evidence
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -266,4 +248,38 @@ func (h *TargetHandler) GetLightcurve(c *gin.Context) {
 			"offset": page.Offset,
 		},
 	})
+}
+
+// GetTargetObservation trả về dữ liệu trắc quang Lightcurve và ma trận ảnh TPF 11x11 phục vụ Inspector
+func (h *TargetHandler) GetTargetObservation(c *gin.Context) {
+	ticID, err := strconv.ParseInt(c.Param("tic_id"), 10, 64)
+	if err != nil || ticID < 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "tic_id must be a positive integer"})
+		return
+	}
+
+	sector := 0
+	if raw := c.Query("sector"); raw != "" {
+		parsed, parseErr := strconv.Atoi(raw)
+		if parseErr != nil || parsed < 1 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": taxonomy.ErrInvalidSector.Error()})
+			return
+		}
+		sector = parsed
+	}
+
+	limit := 50000
+	if raw := c.Query("limit"); raw != "" {
+		if parsed, parseErr := strconv.Atoi(raw); parseErr == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	result, err := h.target.GetTargetObservation(c.Request.Context(), ticID, sector, limit)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "analytical data store is unavailable"})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
 }

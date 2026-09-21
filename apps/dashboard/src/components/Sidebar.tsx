@@ -50,8 +50,7 @@ const dataFactoryItems = [
 ];
 
 const researchFactoryItems = [
-  { path: '/research-factory/discovery', label: 'TESS Target Discovery', detail: 'Find research targets', icon: Target },
-  { path: '/research-factory/candidates', label: 'Candidate Review', detail: 'Rank and adjudicate signals', icon: Sparkles },
+  { path: '/research-factory/discovery', label: 'TESS Target Discovery', detail: 'Find & inspect research targets', icon: Target },
 ];
 
 const aiFactoryItems = [
@@ -59,7 +58,6 @@ const aiFactoryItems = [
   { path: '/ai-factory/training', label: 'Training Lab', detail: 'Gold → trained model', icon: BrainCircuit },
   { path: '/ai-factory/evaluation', label: 'Model Evaluation', detail: 'Quality + parity checks', icon: Activity },
   { path: '/ai-factory/evidence', label: 'Evolution Evidence', detail: 'Data and model provenance', icon: GitBranch },
-  { path: '/ai-factory/registry', label: 'Model Registry', detail: 'Promote and roll back', icon: Database },
   { path: '/ai-factory/inference', label: 'Inference Engine', detail: 'Batch + stream scoring', icon: Sparkles },
 ];
 
@@ -147,8 +145,8 @@ export default function Sidebar(): JSX.Element {
                 </SidebarMenuSub>
               </SidebarMenuItem>
               <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={location.pathname.startsWith('/research-factory/')} tooltip="Scientific Research Factory" className="font-medium">
-                  <NavLink to="/research-factory">
+                <SidebarMenuButton asChild isActive={location.pathname.startsWith('/research-factory')} tooltip="Scientific Research Factory" className="font-medium">
+                  <NavLink to="/research-factory/discovery">
                     <Microscope className="size-4" aria-hidden="true" />
                     <span>Scientific Research Factory</span>
                   </NavLink>

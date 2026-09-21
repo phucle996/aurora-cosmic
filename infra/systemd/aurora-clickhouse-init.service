@@ -6,7 +6,7 @@ PartOf=aurora.target
 
 [Service]
 Type=oneshot
-ExecStart=%h/Desktop/aurora-cosmic/infra/clickhouse/setup-clickhouse.sh
+ExecStart=%h/.local/share/aurora/init/setup-clickhouse.sh
 RemainAfterExit=yes
 
 [Install]

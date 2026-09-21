@@ -27,11 +27,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { apiFetch } from '@/lib/api';
-import type { TargetRecord } from '@/lib/analytics-types';
+import type { Target } from '@/lib/analytics-types';
 
 type TargetResponse = {
   count: number;
-  targets: TargetRecord[];
+  targets: Target[];
   page: { limit: number; offset: number; has_more: boolean };
 };
 
@@ -109,14 +109,14 @@ function buildQuery(filters: TargetFilters, offset: number): string {
   return params.toString();
 }
 
-function targetUrl(target: TargetRecord): string {
+function targetUrl(target: Target): string {
   const snapshot = target.gold_snapshot_id
     ? `&snapshot_id=${encodeURIComponent(target.gold_snapshot_id)}`
     : '';
   return `/research-factory/workbench/${target.tic_id}?sector=${target.sector}${snapshot}`;
 }
 
-function targetKey(target: Pick<TargetRecord, 'tic_id' | 'sector' | 'gold_snapshot_id'>): string {
+function targetKey(target: Pick<Target, 'tic_id' | 'sector' | 'gold_snapshot_id'>): string {
   return `${target.tic_id}:${target.sector}:${target.gold_snapshot_id}`;
 }
 
@@ -141,7 +141,7 @@ export default function TargetsTableSection(): JSX.Element {
   const requestSequence = useRef(0);
   const [draftFilters, setDraftFilters] = useState<TargetFilters>(emptyFilters);
   const [appliedFilters, setAppliedFilters] = useState<TargetFilters>(emptyFilters);
-  const [targets, setTargets] = useState<TargetRecord[]>([]);
+  const [targets, setTargets] = useState<Target[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(false);
@@ -786,7 +786,7 @@ function CoverageBar({ label, count, total }: { label: string; count: number; to
   );
 }
 
-function TargetTableRow({ target, onOpen }: { target: TargetRecord; onOpen: () => void }): JSX.Element {
+function TargetTableRow({ target, onOpen }: { target: Target; onOpen: () => void }): JSX.Element {
   const url = targetUrl(target);
   return (
     <tr
@@ -859,7 +859,7 @@ function TargetTableRow({ target, onOpen }: { target: TargetRecord; onOpen: () =
   );
 }
 
-function TargetCard({ target }: { target: TargetRecord }): JSX.Element {
+function TargetCard({ target }: { target: Target }): JSX.Element {
   const url = targetUrl(target);
   return (
     <article className="p-4">
@@ -928,7 +928,7 @@ function MobileFact({ label, value }: { label: string; value: string }): JSX.Ele
   );
 }
 
-function TransitEvidence({ target }: { target: TargetRecord }): JSX.Element {
+function TransitEvidence({ target }: { target: Target }): JSX.Element {
   if (target.has_candidate) {
     return (
       <div className="space-y-1">

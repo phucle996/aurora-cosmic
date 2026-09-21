@@ -86,4 +86,3 @@ func (h *LineageHandler) Ledger(c *gin.Context) {
 
 	c.JSON(http.StatusOK, response)
 }
-

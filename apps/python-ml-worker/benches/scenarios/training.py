@@ -26,7 +26,9 @@ def run_training_benchmark(
     Measures forward pass, backward pass, optimizer step, loss calculation,
     peak VRAM allocation, and gradient throughput.
     """
-    scenario_name = f"training_{device_str}_{'amp' if use_amp and device_str == 'cuda' else 'fp32'}"
+    scenario_name = (
+        f"training_{device_str}_{'amp' if use_amp and device_str == 'cuda' else 'fp32'}"
+    )
     target_device = (
         torch.device("cuda:0")
         if device_str == "cuda" and torch.cuda.is_available()
@@ -97,6 +99,6 @@ def run_training_benchmark(
     message = (
         f"Trained {num_samples * epochs:,} samples over {epochs} epochs on {target_device}. "
         f"Throughput: {result.throughput_items_per_second:,.1f} samples/s. "
-        f"Peak VRAM: {result.gpu.peak_vram_allocated_bytes / (1024*1024):.1f} MiB."
+        f"Peak VRAM: {result.gpu.peak_vram_allocated_bytes / (1024 * 1024):.1f} MiB."
     )
     return result, passed, message

@@ -123,8 +123,6 @@ def sample_candidate_rows_for_evaluation() -> List[Dict[str, Any]]:
     return rows
 
 
-
-
 # -----------------------------------------------------------------------------
 # Unit Tests: Cohort Creation & Contamination Checks
 # -----------------------------------------------------------------------------
@@ -394,4 +392,3 @@ def test_full_candidate_evaluation_flow():
         assert os.path.exists(os.path.join(eval_dir, "threshold.json"))
         assert os.path.exists(os.path.join(eval_dir, "metrics.json"))
         assert os.path.exists(os.path.join(eval_dir, "manifest.json"))
-

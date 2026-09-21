@@ -4,7 +4,7 @@ PartOf=aurora.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/prometheus --config.file=%h/Desktop/aurora-cosmic/infra/prometheus/prometheus.yml --storage.tsdb.path=%h/.local/share/aurora/prometheus-data --web.listen-address=0.0.0.0:9090
+ExecStart=%h/.local/bin/prometheus --config.file=%h/.config/aurora/prometheus/prometheus.yml --storage.tsdb.path=%h/.local/share/aurora/prometheus-data --web.listen-address=0.0.0.0:9090
 Restart=on-failure
 RestartSec=3
 KillSignal=SIGINT

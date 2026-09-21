@@ -21,7 +21,7 @@ func (p *NATSPubSub) handleSilverEvent(_ context.Context, msg *nats.Msg) {
 
 func (p *NATSPubSub) handleGoldEvent(ctx context.Context, msg *nats.Msg) {
 	p.log.Debug("Processing Gold event from stream", "subject", msg.Subject)
-	if msg.Subject != "aurora.v1.gold.candidate.committed" || p.championInference == nil {
+	if msg.Subject != "aurora.v1.gold.candidate.committed" || p.model == nil {
 		return
 	}
 	var committed struct {
@@ -31,7 +31,7 @@ func (p *NATSPubSub) handleGoldEvent(ctx context.Context, msg *nats.Msg) {
 		p.log.Warn("Gold commit cannot trigger champion inference", "error", err)
 		return
 	}
-	dispatched, err := p.championInference.EnsureChampionCoverage(ctx, committed.SnapshotID)
+	dispatched, err := p.model.ReconcileChampionInference(ctx)
 	if err != nil {
 		p.log.Error("Champion inference planning failed for committed Gold snapshot", "snapshot_id", committed.SnapshotID, "error", err)
 		return
@@ -48,8 +48,8 @@ func (p *NATSPubSub) handleInferenceEvent(_ context.Context, msg *nats.Msg, jobI
 func (p *NATSPubSub) handleMLEvent(ctx context.Context, msg *nats.Msg, jobID string) {
 	p.log.Info("ML training event received", "subject", msg.Subject, "job_id", jobID)
 
-	// Route training progress and log events to ModelNew soft state tracker
-	if p.modelNew != nil && strings.HasPrefix(msg.Subject, "aurora.v1.ml.training.") {
+	// Route training progress and log events to Model soft state tracker
+	if p.model != nil && strings.HasPrefix(msg.Subject, "aurora.v1.ml.training.") {
 		if msg.Subject == "aurora.v1.ml.training.log" {
 			var logEvent struct {
 				TicketID  string `json:"ticket_id"`
@@ -58,7 +58,7 @@ func (p *NATSPubSub) handleMLEvent(ctx context.Context, msg *nats.Msg, jobID str
 				Timestamp string `json:"timestamp"`
 			}
 			if err := json.Unmarshal(msg.Data, &logEvent); err == nil && logEvent.TicketID != "" {
-				_ = p.modelNew.ObserveTrainingLog(ctx, logEvent.TicketID, entity.TrainingLogEntry{
+				_ = p.model.ObserveTrainingLog(ctx, logEvent.TicketID, entity.TrainingLogEntry{
 					Timestamp: logEvent.Timestamp,
 					Message:   logEvent.Message,
 					Level:     logEvent.Level,
@@ -67,12 +67,12 @@ func (p *NATSPubSub) handleMLEvent(ctx context.Context, msg *nats.Msg, jobID str
 		} else {
 			var progressEvent map[string]any
 			if err := json.Unmarshal(msg.Data, &progressEvent); err == nil {
-				_ = p.modelNew.ObserveTrainingProgress(ctx, progressEvent)
+				_ = p.model.ObserveTrainingProgress(ctx, progressEvent)
 			}
 		}
 	}
 
-	if msg.Subject != "aurora.live.ml.promotion.progress" || p.championInference == nil {
+	if msg.Subject != "aurora.live.ml.promotion.progress" || p.model == nil {
 		return
 	}
 	var promotion struct {
@@ -85,12 +85,12 @@ func (p *NATSPubSub) handleMLEvent(ctx context.Context, msg *nats.Msg, jobID str
 }
 
 func (p *NATSPubSub) reconcileChampionInference() {
-	if p.championInference == nil {
+	if p.model == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	dispatched, err := p.championInference.ReconcileChampionCoverage(ctx)
+	dispatched, err := p.model.ReconcileChampionInference(ctx)
 	if err != nil {
 		p.log.Error("Champion inference reconciliation completed with errors", "dispatched_jobs", dispatched, "error", err)
 		return

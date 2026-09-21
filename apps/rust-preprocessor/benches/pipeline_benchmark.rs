@@ -5,9 +5,7 @@ use tempfile::tempdir;
 use aurora_preprocessor::config::{ImageConfig, LightCurveConfig};
 use aurora_preprocessor::event::{BronzeObjectReady, ProductKind};
 use aurora_preprocessor::fits::{RawLightCurve, RawTargetPixel};
-use aurora_preprocessor::output::silver::{
-    build_lc_key, build_tpf_key, serialize_lightcurve,
-};
+use aurora_preprocessor::output::silver::{build_lc_key, build_tpf_key, serialize_lightcurve};
 use aurora_preprocessor::pipeline::lightcurve::preprocess_lc;
 use aurora_preprocessor::pipeline::target_pixel::preprocess_target_pixel;
 

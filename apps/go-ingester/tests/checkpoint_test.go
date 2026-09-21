@@ -382,4 +382,3 @@ func TestCheckpointCrossRunResume(t *testing.T) {
 		t.Errorf("expected p-stored to be PUBLISHED, got %s", results[1].Status)
 	}
 }
-

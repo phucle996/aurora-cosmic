@@ -32,7 +32,7 @@ def generate_synthetic_catalog_rows(
 
     for obj_idx in range(num_objects):
         obj_id = f"TIC-{100000000 + obj_idx}"
-        is_planet_candidate = (obj_idx % 5 == 0)  # 20% positive class balance
+        is_planet_candidate = obj_idx % 5 == 0  # 20% positive class balance
 
         # Base physical parameters per star
         stellar_mass = float(np_rng.uniform(0.5, 1.8))
@@ -108,7 +108,9 @@ def generate_synthetic_catalog_rows(
 def generate_benchmark_split_and_data(
     num_objects: int = 200,
     seed: int = 42,
-) -> Tuple[SnapshotManifest, CandidateGroupSplit, List[Dict[str, Any]], CandidatePreprocessor]:
+) -> Tuple[
+    SnapshotManifest, CandidateGroupSplit, List[Dict[str, Any]], CandidatePreprocessor
+]:
     """Generate complete in-memory pre-train split and fitted preprocessor."""
     rows = generate_synthetic_catalog_rows(num_objects=num_objects, seed=seed)
     manifest = SnapshotManifest(

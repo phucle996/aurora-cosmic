@@ -17,101 +17,42 @@ import (
 	"go-api/internal/transport/http/handler"
 )
 
-type fakeCandidate struct{}
-
-func (fakeCandidate) ListCandidates(context.Context, entity.CandidateQuery) (entity.Page[entity.Candidate], error) {
-	return entity.Page[entity.Candidate]{Items: []entity.Candidate{}, Limit: 100}, nil
-}
-func (fakeCandidate) GetCandidate(context.Context, string, string) (*entity.CandidateDetail, error) {
-	return &entity.CandidateDetail{}, nil
-}
-func (fakeCandidate) ReviewCandidate(context.Context, entity.CandidateReviewInput) (*entity.CandidateReview, error) {
-	return &entity.CandidateReview{
-		Decision:     "CONFIRMED",
-		ReviewStatus: "REVIEWED",
-		Reviewer:     "HUMAN_OPERATOR",
-	}, nil
-}
-
-type fakeAnomaly struct{}
-
-func (fakeAnomaly) ListAnomalies(context.Context, int, string, bool, entity.PageRequest) (entity.Page[entity.Anomaly], error) {
-	return entity.Page[entity.Anomaly]{Items: []entity.Anomaly{}, Limit: 100}, nil
-}
-func (fakeAnomaly) GetAnomalyDetail(context.Context, string, string) (*entity.AnomalyDetail, error) {
-	return &entity.AnomalyDetail{}, nil
-}
-
 type fakeTarget struct{}
 
 func (fakeTarget) ListTargets(context.Context, entity.TargetQuery) (entity.Page[entity.Target], error) {
 	return entity.Page[entity.Target]{Items: []entity.Target{}, Limit: 100}, nil
 }
-func (fakeTarget) GetTarget(context.Context, int64, int, string) (*entity.TargetDetail, error) {
-	return &entity.TargetDetail{}, nil
+func (fakeTarget) GetTargetInsight(context.Context, int64, int, string) (*entity.TargetInsightResponse, error) {
+	return &entity.TargetInsightResponse{
+		Target: entity.Target{TICID: 101, Sector: 42},
+	}, nil
 }
 func (fakeTarget) GetLightcurve(context.Context, int64, int, entity.PageRequest) (*entity.Lightcurve, error) {
 	return &entity.Lightcurve{TICID: 101, Time: []float64{}, Flux: []float64{}}, nil
 }
-
-type fakeModels struct{}
-
-func (fakeModels) ListModels(context.Context, string) ([]entity.Model, error) {
-	return []entity.Model{}, nil
-}
-
-func (fakeModels) GetModelEvaluation(context.Context, string) (*entity.ModelEvaluation, error) {
-	return &entity.ModelEvaluation{RuntimePackageID: "runtime-test", EvaluationRunID: "eval-test"}, nil
-}
-
-func (fakeModels) ListTrainingReviews(context.Context, int) ([]entity.TrainingReview, error) {
-	return nil, nil
-}
-
-func (fakeModels) ListTrainingReviewQueue(context.Context, []string, entity.PageRequest) (entity.Page[entity.TrainingReviewQueueItem], error) {
-	return entity.Page[entity.TrainingReviewQueueItem]{Items: []entity.TrainingReviewQueueItem{}, Limit: 20}, nil
-}
-
-func (fakeModels) TrainingReadiness(context.Context, []string) (*entity.TrainingReadiness, error) {
-	return &entity.TrainingReadiness{Ready: true}, nil
-}
-
-func (fakeModels) OverrideTrainingLabel(context.Context, entity.TrainingLabelOverride) error {
-	return nil
-}
-
-func (fakeModels) StartTrainingJob(context.Context, entity.TrainingJobSpec) (*entity.TrainingJobResult, error) {
-	return &entity.TrainingJobResult{
-		JobID:  "train-test-1",
-		Task:   "candidate_vetting",
-		Status: "queued",
+func (fakeTarget) GetTargetObservation(context.Context, int64, int, int) (*entity.TargetObservationResponse, error) {
+	return &entity.TargetObservationResponse{
+		TICID:  101,
+		Sector: 42,
+		Lightcurve: entity.TargetObservationLC{
+			Points: 0,
+			Time:   []float64{},
+			Flux:   []float64{},
+		},
 	}, nil
 }
 
-func (fakeModels) SetModelDeployment(context.Context, string, string, bool, string) (*entity.ModelDeploymentResult, error) {
-	return &entity.ModelDeploymentResult{}, nil
-}
+type fakeModel struct{}
 
-type fakeInference struct{}
-
-func (fakeInference) ListJobs(context.Context, string, string) ([]entity.InferenceJob, error) {
-	return []entity.InferenceJob{}, nil
-}
-func (fakeInference) RetryJob(context.Context, string) (entity.InferenceJobManifest, map[string]any, error) {
-	return entity.InferenceJobManifest{}, nil, nil
-}
-
-type fakeModelNew struct{}
-
-func (fakeModelNew) TrainingPreflight(context.Context, []string) (*entity.TrainingPreflight, error) {
+func (fakeModel) TrainingPreflight(context.Context, []string) (*entity.TrainingPreflight, error) {
 	return &entity.TrainingPreflight{Tier: "EXPERIMENTAL"}, nil
 }
 
-func (fakeModelNew) ListTrainingSnapshots(context.Context, int) ([]entity.ModelTrainingSnapshot, error) {
+func (fakeModel) ListTrainingSnapshots(context.Context, int) ([]entity.ModelTrainingSnapshot, error) {
 	return []entity.ModelTrainingSnapshot{}, nil
 }
 
-func (fakeModelNew) StartTraining(context.Context, entity.StartTrainingSpec) (*entity.TrainingResult, error) {
+func (fakeModel) StartTraining(context.Context, entity.StartTrainingSpec) (*entity.TrainingResult, error) {
 	return &entity.TrainingResult{
 		TicketID: "train-test-1",
 		Task:     "candidate_vetting",
@@ -119,7 +60,7 @@ func (fakeModelNew) StartTraining(context.Context, entity.StartTrainingSpec) (*e
 	}, nil
 }
 
-func (fakeModelNew) ControlTraining(context.Context, entity.TrainingControlSpec) (*entity.TrainingControlResult, error) {
+func (fakeModel) ControlTraining(context.Context, entity.TrainingControlSpec) (*entity.TrainingControlResult, error) {
 	return &entity.TrainingControlResult{
 		TicketID: "RUN-TEST-001",
 		Action:   "cancel",
@@ -127,19 +68,53 @@ func (fakeModelNew) ControlTraining(context.Context, entity.TrainingControlSpec)
 	}, nil
 }
 
-func (fakeModelNew) GetActiveTraining(context.Context, string) (*entity.TrainingActiveState, error) {
+func (fakeModel) GetActiveTraining(context.Context, string) (*entity.TrainingActiveState, error) {
 	return &entity.TrainingActiveState{
 		TicketID: "RUN-TEST-001",
 		Status:   "running",
 	}, nil
 }
 
-func (fakeModelNew) ObserveTrainingProgress(context.Context, map[string]any) error {
+func (fakeModel) ObserveTrainingProgress(context.Context, map[string]any) error {
 	return nil
 }
 
-func (fakeModelNew) ObserveTrainingLog(context.Context, string, entity.TrainingLogEntry) error {
+func (fakeModel) ObserveTrainingLog(context.Context, string, entity.TrainingLogEntry) error {
 	return nil
+}
+
+func (fakeModel) ListModels(context.Context, string) ([]entity.Model, error) {
+	return []entity.Model{}, nil
+}
+
+func (fakeModel) GetModelEvaluation(context.Context, string) (*entity.ModelEvaluation, error) {
+	return &entity.ModelEvaluation{RuntimePackageID: "runtime-test", EvaluationRunID: "eval-test"}, nil
+}
+
+func (fakeModel) GetModelEvolution(context.Context, string) (*entity.ModelEvolutionEvidence, error) {
+	return &entity.ModelEvolutionEvidence{RuntimePackageID: "runtime-test", EvaluationRunID: "eval-test"}, nil
+}
+
+func (fakeModel) ListInferenceJobs(context.Context, string, string, string) ([]entity.InferenceJob, error) {
+	return []entity.InferenceJob{
+		{
+			JobID:            "inf-job-001",
+			Task:             "candidate_vetting",
+			Status:           "completed",
+			RuntimePackageID: "runtime-test",
+		},
+	}, nil
+}
+
+func (fakeModel) RetryInferenceJob(context.Context, string) (*entity.InferenceJobRetryResult, error) {
+	return &entity.InferenceJobRetryResult{
+		JobID:  "inf-job-001",
+		Status: "queued",
+	}, nil
+}
+
+func (fakeModel) ReconcileChampionInference(context.Context) (int, error) {
+	return 0, nil
 }
 
 type fakeReadiness struct{}
@@ -253,8 +228,6 @@ func (fakeTicket) Detail(context.Context, string) (*entity.PipelineRunDetail, er
 	return &entity.PipelineRunDetail{Run: entity.PipelineRun{RunID: "run-test"}}, nil
 }
 
-var _ service.Candidate = fakeCandidate{}
-var _ service.Anomaly = fakeAnomaly{}
 var _ service.Target = fakeTarget{}
 var _ service.Lakehouse = fakeLakehouse{}
 var _ service.EnrichmentControl = fakeEnrichmentControl{}
@@ -265,10 +238,7 @@ func newTestRouter() http.Handler {
 		CORSAllowedOrigin: "http://localhost:8501",
 	}, &app.Module{
 		TargetHandler:            handler.NewTargetHandler(fakeTarget{}),
-		CandidateHandler:         handler.NewCandidateHandler(fakeCandidate{}),
-		AnomalyHandler:           handler.NewAnomalyHandler(fakeAnomaly{}),
-		ModelsHandler:            handler.NewModelsHandler(fakeModels{}, fakeInference{}),
-		ModelNewHandler:          handler.NewModelNewHandler(fakeModelNew{}),
+		ModelHandler:             handler.NewModelHandler(fakeModel{}),
 		SystemHandler:            handler.NewSystemHandler(fakeReadiness{}),
 		MonitoringHandler:        handler.NewMonitoringHandler(fakeMonitoring{}),
 		DAGAggregationHandler:    handler.NewDAGAggregationHandler(fakeDAGAggregation{}),
@@ -284,7 +254,7 @@ func newTestRouter() http.Handler {
 
 func TestRouterEndpoints(t *testing.T) {
 	router := newTestRouter()
-	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/dag/hops/bronze", "/api/v1/dag/hops/gold-pairing", "/api/v1/dag/hops/gold-commit", "/api/v1/dag/graph", "/api/v1/dag/graph?stage=enrichment", "/api/v1/dag/graph?stage=preprocessing", "/api/v1/data-factory/runs", "/api/v1/data-factory/tickets", "/api/v1/enrichment/control", "/api/v1/enrichment/snapshots", "/api/v1/enrichment/snapshots/gold-v1-test", "/api/v1/lineage/ledger", "/api/v1/ingest/status", "/api/v1/storage?prefix=bronze/&limit=10", "/api/v1/lakehouse/objects?prefix=bronze/&limit=10", "/api/v1/lakehouse/preview?key=test.txt", "/api/v1/targets", "/api/v1/targets/101?sector=42", "/api/v1/candidates?snapshot_id=gold-v1-test", "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", "/api/v1/lightcurves?tic_id=101&sector=42", "/api/v1/models/training-cohort/review-queue?snapshot_id=gold-v1-test", "/api/v1/models/training-preflight?snapshot_id=gold-v1-test", "/api/v1/models/snapshots", "/api/v1/models/train/active"} {
+	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/dag/hops/bronze", "/api/v1/dag/hops/gold-pairing", "/api/v1/dag/hops/gold-commit", "/api/v1/dag/graph", "/api/v1/dag/graph?stage=enrichment", "/api/v1/dag/graph?stage=preprocessing", "/api/v1/data-factory/runs", "/api/v1/data-factory/tickets", "/api/v1/enrichment/control", "/api/v1/enrichment/snapshots", "/api/v1/enrichment/snapshots/gold-v1-test", "/api/v1/lineage/ledger", "/api/v1/ingest/status", "/api/v1/storage?prefix=bronze/&limit=10", "/api/v1/lakehouse/objects?prefix=bronze/&limit=10", "/api/v1/lakehouse/preview?key=test.txt", "/api/v1/targets", "/api/v1/targets/101/insights?sector=42", "/api/v1/targets/101/observation?sector=42", "/api/v1/lightcurves?tic_id=101&sector=42", "/api/v1/models", "/api/v1/inference/jobs", "/api/v1/models/training-preflight?snapshot_id=gold-v1-test", "/api/v1/models/snapshots", "/api/v1/models/train/active"} {
 		req := httptest.NewRequest(http.MethodGet, endpoint, nil)
 		recorder := httptest.NewRecorder()
 		router.ServeHTTP(recorder, req)
@@ -368,56 +338,6 @@ func TestEnrichmentControlStartAndStop(t *testing.T) {
 	}
 }
 
-func TestCandidateDetailExposesSeparatePhysicsAndMLAssessments(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", nil)
-	recorder := httptest.NewRecorder()
-	newTestRouter().ServeHTTP(recorder, req)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("candidate detail returned HTTP %d", recorder.Code)
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("decode candidate detail: %v", err)
-	}
-	if _, ok := payload["planet_physics"].(map[string]any); !ok {
-		t.Fatal("candidate detail is missing planet_physics")
-	}
-	habitability, ok := payload["habitability"].(map[string]any)
-	if !ok {
-		t.Fatal("candidate detail is missing habitability")
-	}
-	if value, exists := habitability["ml_score"]; !exists || value != nil {
-		t.Fatalf("unreleased ML score must be present as null, got %#v", value)
-	}
-}
-
-func TestCandidateScientificReviewRoute(t *testing.T) {
-	req := httptest.NewRequest(
-		http.MethodPut,
-		"/api/v1/candidates/prediction-v1/review",
-		strings.NewReader(`{"snapshot_id":"gold-v1-test","decision":"CONFIRMED","note":"Periodic transit evidence survives vetting."}`),
-	)
-	req.Header.Set("Content-Type", "application/json")
-	recorder := httptest.NewRecorder()
-	newTestRouter().ServeHTTP(recorder, req)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("candidate review returned HTTP %d: %s", recorder.Code, recorder.Body.String())
-	}
-	var payload struct {
-		Status string `json:"status"`
-		Review struct {
-			Decision string `json:"decision"`
-			Reviewer string `json:"reviewer"`
-		} `json:"review"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("decode candidate review response: %v", err)
-	}
-	if payload.Status != "reviewed" || payload.Review.Decision != "CONFIRMED" || payload.Review.Reviewer != "HUMAN_OPERATOR" {
-		t.Fatalf("unexpected candidate review response: %#v", payload)
-	}
-}
-
 func TestMonitoringTabValidation(t *testing.T) {
 	// Rejects invalid component / tab
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/monitoring?component=not-a-component", nil)
@@ -484,7 +404,7 @@ func TestRetiredAnomalyRoutesAreNotExposed(t *testing.T) {
 }
 
 func TestCORSHeaders(t *testing.T) {
-	req := httptest.NewRequest(http.MethodOptions, "/api/v1/candidates", nil)
+	req := httptest.NewRequest(http.MethodOptions, "/api/v1/targets", nil)
 	req.Header.Set("Origin", "http://localhost:8501")
 	recorder := httptest.NewRecorder()
 	newTestRouter().ServeHTTP(recorder, req)
@@ -551,5 +471,25 @@ func TestModelTrainingControlRoute(t *testing.T) {
 	router.ServeHTTP(recLegacy, reqLegacy)
 	if recLegacy.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 Bad Request for legacy payload without ticket_id, got %d", recLegacy.Code)
+	}
+}
+
+func TestInferenceRoutes(t *testing.T) {
+	router := newTestRouter()
+
+	// 1. GET /api/v1/inference/jobs
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/inference/jobs", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for GET /api/v1/inference/jobs, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// 2. POST /api/v1/inference/jobs/:job_id/retry
+	reqRetry := httptest.NewRequest(http.MethodPost, "/api/v1/inference/jobs/inf-job-001/retry", nil)
+	recRetry := httptest.NewRecorder()
+	router.ServeHTTP(recRetry, reqRetry)
+	if recRetry.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for POST /api/v1/inference/jobs/:job_id/retry, got %d: %s", recRetry.Code, recRetry.Body.String())
 	}
 }

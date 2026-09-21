@@ -81,10 +81,7 @@ fn footstep_1_filter_cadences(raw: &RawTargetPixel) -> Vec<usize> {
 
 // Footstep 2: Compute Pixel Temporal Medians Across Retained Cadences
 #[allow(clippy::needless_range_loop)]
-fn footstep_2_pixel_medians(
-    raw: &RawTargetPixel,
-    retained_indices: &[usize],
-) -> Vec<Vec<f32>> {
+fn footstep_2_pixel_medians(raw: &RawTargetPixel, retained_indices: &[usize]) -> Vec<Vec<f32>> {
     let rows = raw.rows;
     let cols = raw.cols;
     let mut medians = vec![vec![0.0f32; cols]; rows];
@@ -102,7 +99,9 @@ fn footstep_2_pixel_medians(
             }
             if !series.is_empty() {
                 let mid = series.len() / 2;
-                series.select_nth_unstable_by(mid, |a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                series.select_nth_unstable_by(mid, |a, b| {
+                    a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                });
                 medians[r][c] = series[mid];
             }
         }
@@ -160,8 +159,12 @@ fn footstep_4_drift_metrics(
                 let (h1, h2) = series.split_at_mut(mid);
                 let mid1 = h1.len() / 2;
                 let mid2 = h2.len() / 2;
-                h1.select_nth_unstable_by(mid1, |a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-                h2.select_nth_unstable_by(mid2, |a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                h1.select_nth_unstable_by(mid1, |a, b| {
+                    a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                });
+                h2.select_nth_unstable_by(mid2, |a, b| {
+                    a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                });
                 let m1 = h1[mid1];
                 let m2 = h2[mid2];
                 let ref_val = medians[r][c];
@@ -255,11 +258,15 @@ fn bench_target_pixel_footsteps(c: &mut Criterion) {
     });
 
     group.bench_function("footstep_3_grid_normalization", |b| {
-        b.iter(|| footstep_3_normalize_grid(black_box(&raw), black_box(&retained), black_box(&medians)))
+        b.iter(|| {
+            footstep_3_normalize_grid(black_box(&raw), black_box(&retained), black_box(&medians))
+        })
     });
 
     group.bench_function("footstep_4_drift_metrics", |b| {
-        b.iter(|| footstep_4_drift_metrics(black_box(&raw), black_box(&retained), black_box(&medians)))
+        b.iter(|| {
+            footstep_4_drift_metrics(black_box(&raw), black_box(&retained), black_box(&medians))
+        })
     });
 
     group.bench_function("footstep_5_parquet_stream_writer", |b| {
@@ -281,7 +288,12 @@ fn bench_target_pixel_footsteps(c: &mut Criterion) {
 
     group.bench_function("e2e_target_pixel_full_pipeline", |b| {
         b.iter(|| {
-            let p = preprocess_target_pixel(black_box(raw.clone()), black_box(&event), black_box(&config)).unwrap();
+            let p = preprocess_target_pixel(
+                black_box(raw.clone()),
+                black_box(&event),
+                black_box(&config),
+            )
+            .unwrap();
             let mut writer = TargetPixelStreamWriter::new(black_box(tmp.path())).unwrap();
             writer.write_chunk(black_box(&p)).unwrap();
             writer

@@ -42,10 +42,6 @@ export default function Header(): JSX.Element {
         ? 'Scientific Research Factory'
       : location.pathname === '/research-factory/discovery'
         ? 'Scientific Research Factory · TESS Discovery'
-      : location.pathname === '/research-factory/candidates'
-        ? 'Scientific Research Factory · Candidate Review'
-      : location.pathname.startsWith('/research-factory/candidates/') || location.pathname.startsWith('/research-factory/transit-candidates/')
-        ? 'Scientific Research Factory · Candidate Physics'
       : pageNames[location.pathname] ?? 'Dashboard';
 
   return (

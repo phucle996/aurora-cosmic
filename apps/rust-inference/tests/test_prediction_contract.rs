@@ -1,9 +1,7 @@
 //! Rust Inference Prediction Contracts & Job Manifest Parsing Tests (Phase 7.1).
 
 use aurora_inference::job::{InferenceJobManifest, InferenceJobRequestedEvent};
-use aurora_inference::prediction::{
-    compute_anomaly_prediction_id, compute_candidate_prediction_id, compute_model_input_sha256,
-};
+use aurora_inference::prediction::{compute_candidate_prediction_id, compute_model_input_sha256};
 
 #[test]
 fn test_rust_model_input_sha256() {
@@ -22,10 +20,6 @@ fn test_rust_prediction_id_determinism() {
     assert_eq!(p1, p2);
     assert_eq!(fp1, fp2);
     assert!(p1.starts_with("pred-cand-v1-"));
-
-    let (pa, _) = compute_anomaly_prediction_id("pkg-123", "gold-456", "prod-789");
-    assert!(pa.starts_with("pred-anom-v1-"));
-    assert_ne!(p1, pa);
 }
 
 #[test]

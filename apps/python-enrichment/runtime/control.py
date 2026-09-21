@@ -109,9 +109,7 @@ def load_control(store: ObjectStore, bucket: str) -> EnrichmentControl:
     return EnrichmentControl.from_dict(store.get_json(bucket, CONTROL_KEY))
 
 
-def save_control(
-    store: ObjectStore, bucket: str, control: EnrichmentControl
-) -> None:
+def save_control(store: ObjectStore, bucket: str, control: EnrichmentControl) -> None:
     """Persist updated operator control state to MinIO."""
     store.put_json(bucket, CONTROL_KEY, control.to_dict())
 

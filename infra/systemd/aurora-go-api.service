@@ -6,15 +6,9 @@ PartOf=aurora.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/Desktop/aurora-cosmic/apps/go-api
-EnvironmentFile=%h/Desktop/aurora-cosmic/apps/go-api/.env.example
-EnvironmentFile=%h/Desktop/aurora-cosmic/infra/systemd/aurora-host.env
-Environment=MINIO_ENDPOINT=http://127.0.0.1:9000
-Environment=NATS_URL=nats://127.0.0.1:4222
-Environment=PROMETHEUS_URL=http://127.0.0.1:9090
-Environment=INGESTER_CONTROL_URL=http://127.0.0.1:8087
-Environment=AURORA_CLICKHOUSE_TCP_ADDR=127.0.0.1:9004
-ExecStart=%h/.local/go/bin/go run ./cmd/aurora-api
+WorkingDirectory=%h/.local/share/aurora
+EnvironmentFile=%h/.config/aurora/aurora.env
+ExecStart=%h/.local/bin/aurora-api
 Restart=on-failure
 RestartSec=3
 KillSignal=SIGINT

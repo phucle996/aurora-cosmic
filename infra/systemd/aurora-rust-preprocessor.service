@@ -1,5 +1,5 @@
 [Unit]
-Description=AURORA Rust preprocessor (native)
+Description=AURORA Rust preprocessor (native release)
 Requires=aurora-nats.service aurora-minio-init.service
 After=aurora-nats.service aurora-minio-init.service
 PartOf=aurora.target
@@ -7,19 +7,10 @@ ConditionPathExists=%h/.local/lib/pkgconfig/cfitsio.pc
 
 [Service]
 Type=simple
-WorkingDirectory=%h/Desktop/aurora-cosmic/apps/rust-preprocessor
-EnvironmentFile=%h/Desktop/aurora-cosmic/apps/rust-preprocessor/.env.example
-EnvironmentFile=%h/Desktop/aurora-cosmic/infra/systemd/aurora-host.env
-Environment=MINIO_ENDPOINT=http://127.0.0.1:9000
-Environment=NATS_URL=nats://127.0.0.1:4222
-Environment=PKG_CONFIG_PATH=%h/.local/lib/pkgconfig
-Environment=LD_LIBRARY_PATH=%h/.local/lib
-Environment=AURORA_PREPROCESS_TMP_DIR=%h/.cache/aurora-preprocessor
-Environment=AURORA_TPF_NORMALIZATION=chunk-temporal-median
-Environment=AURORA_TPF_CHUNK_CADENCES=256
-Environment=AURORA_LARGE_STAGING_THRESHOLD_BYTES=1073741824
-Environment=AURORA_LARGE_STAGING_CONCURRENCY=1
-ExecStart=%h/.local/bin/cargo run
+WorkingDirectory=%h/.local/share/aurora
+EnvironmentFile=%h/.config/aurora/aurora.env
+Environment=AURORA_METRICS_ADDR=0.0.0.0:8082
+ExecStart=%h/.local/bin/aurora-preprocessor
 Restart=on-failure
 RestartSec=3
 KillSignal=SIGINT

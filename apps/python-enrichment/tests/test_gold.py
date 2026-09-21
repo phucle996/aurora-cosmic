@@ -2,12 +2,12 @@
 
 import pytest
 
-from aurora_ml.data import parse_lineage_to_silver_ref
 from pipeline.gold import (
     GoldSnapshotManifest,
     GoldSnapshotPlanner,
     SilverInputRef,
     derive_snapshot_identity,
+    parse_lineage_to_silver_ref,
 )
 
 

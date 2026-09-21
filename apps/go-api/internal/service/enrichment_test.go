@@ -207,4 +207,3 @@ func TestEnrichmentListSnapshotsReturnsManifestSummaries(t *testing.T) {
 		t.Fatalf("unexpected summaries: %#v", summaries)
 	}
 }
-

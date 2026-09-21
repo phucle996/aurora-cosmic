@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, JSX } from 'react';
 import { AlertCircle } from 'lucide-react';
-import { RunnerTicketBar } from '@/components/RunnerTicketBar';
+import { RunnerTicketBar } from '@/pages/runner-tickets/components/RunnerTicketBar';
 import { useRunnerTicket } from '@/lib/session';
 import { apiBase, apiFetch } from '@/lib/api';
 

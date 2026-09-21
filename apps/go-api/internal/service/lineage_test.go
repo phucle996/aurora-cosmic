@@ -220,4 +220,3 @@ func TestLineageServiceGetLedger(t *testing.T) {
 		t.Fatalf("expected 1 search result with TIC 117516398, got %d", respSearch.Total)
 	}
 }
-

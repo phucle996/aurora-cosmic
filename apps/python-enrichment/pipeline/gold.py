@@ -61,6 +61,35 @@ class SilverInputRef:
         )
 
 
+def parse_lineage_to_silver_ref(lineage: Dict[str, Any]) -> SilverInputRef:
+    """Parse a raw Lineage event dict into a SilverInputRef.
+
+    The lineage dict is the full event emitted by the preprocessor after
+    Silver materialisation. Bronze lifecycle status (RETAINED vs RAW_DELETED)
+    is intentionally ignored so that snapshot identity remains stable
+    regardless of Bronze storage lifecycle transitions.
+    """
+    source = lineage.get("source", {})
+    bronze = lineage.get("bronze", {})
+    silver = lineage.get("silver", {})
+    processing = lineage.get("processing", {})
+
+    return SilverInputRef(
+        lineage_id=lineage["lineage_id"],
+        source_product_id=source.get(
+            "source_product_id", bronze.get("source_product_id", "")
+        ),
+        product_kind=bronze.get("product_kind", ""),
+        silver_bucket=silver.get("bucket", "aurora-silver"),
+        silver_object_key=silver.get("object_key", ""),
+        silver_sha256=silver.get("sha256", ""),
+        silver_schema_version=silver.get("schema_version", ""),
+        processor_version=silver.get(
+            "processor_version", processing.get("processor_version", "")
+        ),
+    )
+
+
 def sort_silver_inputs(inputs: List[SilverInputRef]) -> List[SilverInputRef]:
     """Sort Silver inputs deterministically independent of MinIO list order."""
     return sorted(

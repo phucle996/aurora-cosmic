@@ -17,24 +17,23 @@ type MessageHandler func(ctx context.Context, msg *nats.Msg) error
 
 // Config holds dependencies and configuration for NATSPubSub.
 type Config struct {
-	Conn              *nats.Conn
-	NATSURL           string
-	Broker            *provider.SSEBroker
-	DAGAggregation    service.DAGAggregation
-	ChampionInference service.ChampionInferencePlanner
-	ModelNew          service.ModelNew
-	Logger            *slog.Logger
+	Conn           *nats.Conn
+	NATSURL        string
+	Broker         *provider.SSEBroker
+	DAGAggregation service.DAGAggregation
+	Model          service.Model
+	Logger         *slog.Logger
 }
 
 // NATSPubSub manages Core NATS ephemeral push-subscriptions and routes
 // real-time events to the SSE broker and internal domain service callbacks.
 type NATSPubSub struct {
-	broker            *provider.SSEBroker
-	dagAggregation    service.DAGAggregation
-	championInference service.ChampionInferencePlanner
-	modelNew          service.ModelNew
-	log               *slog.Logger
-	natsURL           string
+	broker         *provider.SSEBroker
+	dagAggregation service.DAGAggregation
+	model          service.Model
+	log            *slog.Logger
+
+	natsURL string
 
 	mu             sync.Mutex
 	conn           *nats.Conn
@@ -61,15 +60,14 @@ func New(cfg Config) *NATSPubSub {
 	}
 
 	return &NATSPubSub{
-		broker:            cfg.Broker,
-		dagAggregation:    cfg.DAGAggregation,
-		championInference: cfg.ChampionInference,
-		modelNew:          cfg.ModelNew,
-		log:               logger,
-		natsURL:           cfg.NATSURL,
-		conn:              cfg.Conn,
-		ownsConn:          ownsConn,
-		customHandlers:    make(map[string][]MessageHandler),
+		broker:         cfg.Broker,
+		dagAggregation: cfg.DAGAggregation,
+		model:          cfg.Model,
+		log:            logger,
+		natsURL:        cfg.NATSURL,
+		conn:           cfg.Conn,
+		ownsConn:       ownsConn,
+		customHandlers: make(map[string][]MessageHandler),
 	}
 }
 

@@ -64,6 +64,6 @@ def run_preprocess_benchmark(
     message = (
         f"Processed {total_rows:,} rows across {num_objects:,} objects. "
         f"Throughput: {result.throughput_items_per_second:,.1f} rows/s. "
-        f"Heap Delta: {result.heap_delta_bytes / (1024*1024):.2f} MiB."
+        f"Heap Delta: {result.heap_delta_bytes / (1024 * 1024):.2f} MiB."
     )
     return result, passed, message

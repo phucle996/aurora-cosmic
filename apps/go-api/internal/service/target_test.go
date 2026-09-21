@@ -8,7 +8,7 @@ import (
 )
 
 type mockTargetRepo struct {
-	target *entity.TargetDetail
+	target *entity.TargetInsightRecord
 	lc     *entity.Lightcurve
 }
 
@@ -16,7 +16,7 @@ func (r *mockTargetRepo) ListTargets(context.Context, entity.TargetQuery) (entit
 	return entity.Page[entity.Target]{}, nil
 }
 
-func (r *mockTargetRepo) GetTarget(context.Context, int64, int, string) (*entity.TargetDetail, error) {
+func (r *mockTargetRepo) GetTargetInsight(context.Context, int64, int, string) (*entity.TargetInsightRecord, error) {
 	return r.target, nil
 }
 
@@ -24,36 +24,58 @@ func (r *mockTargetRepo) GetLightcurve(context.Context, int64, int, entity.PageR
 	return r.lc, nil
 }
 
-func TestTargetServiceGetTargetLinksCandidatePhysics(t *testing.T) {
+func (r *mockTargetRepo) GetTargetObservation(context.Context, int64, int, int) (*entity.TargetObservationResponse, error) {
+	return &entity.TargetObservationResponse{
+		TICID:  12345,
+		Sector: 1,
+		Lightcurve: entity.TargetObservationLC{
+			Points: 10,
+			Time:   make([]float64, 10),
+			Flux:   make([]float64, 10),
+		},
+	}, nil
+}
+
+func TestTargetServiceGetTargetInsightDerivesPhysicsAndInsights(t *testing.T) {
 	targetRepo := &mockTargetRepo{
-		target: &entity.TargetDetail{
+		target: &entity.TargetInsightRecord{
 			Target: entity.Target{
 				TICID:                 12345,
 				Sector:                1,
 				GoldSnapshotID:        "gold-1",
 				HasCandidate:          true,
 				CandidatePredictionID: "pred-1",
+				EffectiveT:            5800,
+				Radius:                1.1,
 			},
-			Evidence: &entity.CandidateEvidence{
-				BLSAvailable: true,
-				BLSPeriod:    10.5,
-				BLSDepth:     0.01,
+			Evidence: &entity.TargetEvidence{
+				BLSAvailable:  true,
+				BLSPeriod:     10.5,
+				BLSDepth:      0.01,
+				Teff:          5800,
+				StellarRadius: 1.1,
 			},
 		},
 	}
 
 	targetSvc := NewTargetService(targetRepo)
-	detail, err := targetSvc.GetTarget(context.Background(), 12345, 1, "gold-1")
+	resp, err := targetSvc.GetTargetInsight(context.Background(), 12345, 1, "gold-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if detail == nil {
-		t.Fatal("expected target detail, got nil")
+	if resp == nil {
+		t.Fatal("expected target insight response, got nil")
 	}
-	if detail.Physics == nil {
-		t.Fatal("expected physics calculation to be attached")
+	if resp.Insights.Observation.Sector != 1 {
+		t.Errorf("expected observation sector 1, got %d", resp.Insights.Observation.Sector)
 	}
-	if detail.Habitability == nil {
-		t.Fatal("expected habitability assessment to be attached")
+	if resp.Insights.StellarPhysics.Teff != 5800 {
+		t.Errorf("expected stellar physics teff 5800, got %f", resp.Insights.StellarPhysics.Teff)
+	}
+	if resp.Insights.AIInsights.BLSPeriodDays == nil || *resp.Insights.AIInsights.BLSPeriodDays != 10.5 {
+		t.Fatal("expected BLS period 10.5 in AI insights")
+	}
+	if resp.Insights.StellarPhysics.SpectralClassLabel == "" {
+		t.Fatal("expected non-empty spectral class label")
 	}
 }

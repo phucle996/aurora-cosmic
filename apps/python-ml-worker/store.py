@@ -219,9 +219,7 @@ class TrainingStore:
                 table = pq.read_table(io.BytesIO(data))
                 rows.extend(table.to_pylist())
             except Exception as exc:
-                raise TrainingDataError(
-                    f"UNREADABLE_GOLD_PARTITION: {key}"
-                ) from exc
+                raise TrainingDataError(f"UNREADABLE_GOLD_PARTITION: {key}") from exc
         return rows
 
     def load_gold_snapshot(self, task: str, snapshot_id: str) -> LoadedGoldSnapshot:

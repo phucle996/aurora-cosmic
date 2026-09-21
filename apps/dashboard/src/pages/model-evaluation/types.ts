@@ -25,13 +25,6 @@ export type ModelEvaluation = {
   integrity_status: string;
   evaluation_run_id: string;
   training_run_id: string;
-  gold_snapshot_id?: string;
-  gold_manifest_sha256?: string;
-  split_id?: string;
-  dataset_view_version?: string;
-  dataset_view_fingerprint?: string;
-  training_run_manifest_sha256?: string;
-  evaluation_run_manifest_sha256?: string;
   golden_cohort_id: string;
   recent_cohort_id?: string;
   evaluation_policy_version: string;
@@ -46,11 +39,7 @@ export type ModelEvaluation = {
   pr_auc_drift?: number;
   recall_drift?: number;
   evaluation_manifest_key: string;
-  runtime_manifest_key: string;
-  preprocessing_version: string;
-  feature_count: number;
-  onnx_size_bytes: number;
-  onnx_sha256: string;
   metrics_sha256: string;
   created_at: string;
 };
+

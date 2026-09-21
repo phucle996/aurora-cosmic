@@ -164,7 +164,7 @@ def print_scenario_detail(profile: MlProfileResult, message: str) -> None:
             pct = (stage_sec / total_dur) * 100.0
             h_delta = profile.stage_heap_deltas.get(stage_name, 0)
             print(
-                f"  - {stage_name:<28}: {stage_sec*1000:>7.2f} ms ({pct:>5.1f}%) | "
+                f"  - {stage_name:<28}: {stage_sec * 1000:>7.2f} ms ({pct:>5.1f}%) | "
                 f"Heap: {format_bytes(h_delta)}"
             )
 
@@ -194,7 +194,8 @@ def main() -> int:
 
     chosen_device = (
         "cuda"
-        if args.device == "cuda" or (args.device == "auto" and torch.cuda.is_available())
+        if args.device == "cuda"
+        or (args.device == "auto" and torch.cuda.is_available())
         else "cpu"
     )
 
@@ -209,11 +210,15 @@ def main() -> int:
     # 1. Pre-train ETL
     if args.scenario in ("all", "preprocess"):
         print("Running: Pre-train Dataset View & Group Split benchmark...")
-        results.append(run_preprocess_benchmark(num_objects=500, observations_per_object=10))
+        results.append(
+            run_preprocess_benchmark(num_objects=500, observations_per_object=10)
+        )
 
     # 2. Training (Run GPU/CUDA if available, plus CPU if requested)
     if args.scenario in ("all", "training"):
-        print(f"Running: Candidate Model Training benchmark on {chosen_device.upper()}...")
+        print(
+            f"Running: Candidate Model Training benchmark on {chosen_device.upper()}..."
+        )
         results.append(
             run_training_benchmark(
                 device_str=chosen_device,

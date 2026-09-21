@@ -4,9 +4,9 @@ PartOf=aurora.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/Desktop/aurora-cosmic
+WorkingDirectory=%h/.local/share/aurora
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/usr/bin/python3 %h/Desktop/aurora-cosmic/infra/systemd/systemd_exporter.py
+ExecStart=/usr/bin/python3 %h/.local/bin/aurora-systemd-exporter
 Restart=on-failure
 RestartSec=3
 KillSignal=SIGINT

@@ -62,14 +62,15 @@ class EnrichmentBuildResult:
     parquet_bytes: int = 0
 
 
-
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
 def _column_values(table, name: str) -> list[Any]:
     if name not in table.column_names:
-        raise EnrichmentBuildError(f"Silver Parquet is missing required column '{name}'")
+        raise EnrichmentBuildError(
+            f"Silver Parquet is missing required column '{name}'"
+        )
     return table.column(name).combine_chunks().to_pylist()
 
 
@@ -414,7 +415,9 @@ class EnrichmentBuilder:
             pair = tpf_pairs.get(event.source_product_id)
             # The readiness gate above guarantees this pairing exists.
             if pair is None:
-                raise EnrichmentBuildError(f"Missing TPF pair for {event.source_product_id}")
+                raise EnrichmentBuildError(
+                    f"Missing TPF pair for {event.source_product_id}"
+                )
             if (
                 precomputed_tpf_rows is not None
                 and event.source_product_id in precomputed_tpf_rows
@@ -467,7 +470,9 @@ class EnrichmentBuilder:
                 )
             )
         parquet_duration = time.perf_counter() - parquet_start
-        parquet_bytes = sum(int(record.get("size_bytes") or 0) for record in artifact_records)
+        parquet_bytes = sum(
+            int(record.get("size_bytes") or 0) for record in artifact_records
+        )
 
         dataset_row_counts = {
             dataset: sum(
@@ -643,5 +648,3 @@ class EnrichmentBuilder:
 
     def clear_pending(self, pending: Iterable[tuple[str, SilverEvent]]) -> None:
         self.checkpoint_store.clear_pending(pending)
-
-

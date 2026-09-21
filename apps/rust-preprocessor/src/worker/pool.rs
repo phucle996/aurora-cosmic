@@ -30,11 +30,7 @@ pub struct WorkerPoolCapabilities {
 }
 
 /// Run the Tokio Parallel Worker Pool.
-pub async fn run_pool(
-    caps: WorkerPoolCapabilities,
-    mode: &str,
-    ticket_id: &str,
-) -> Result<()> {
+pub async fn run_pool(caps: WorkerPoolCapabilities, mode: &str, ticket_id: &str) -> Result<()> {
     let jetstream = caps.jetstream;
     let minio = caps.minio;
     let cfg = caps.consumer;

@@ -50,7 +50,6 @@ func (o *projectionObjects) DeleteObject(_ context.Context, key string) error {
 type projectionRows struct {
 	existing   map[string]struct{}
 	candidates []entity.CandidatePredictionProjection
-	anomalies  []entity.AnomalyPredictionProjection
 }
 
 func (r *projectionRows) ExistingPredictionIDs(_ context.Context, _ string, ids []string) (map[string]struct{}, error) {
@@ -64,13 +63,6 @@ func (r *projectionRows) ExistingPredictionIDs(_ context.Context, _ string, ids 
 }
 func (r *projectionRows) InsertCandidatePredictions(_ context.Context, rows []entity.CandidatePredictionProjection) error {
 	r.candidates = append(r.candidates, rows...)
-	for _, row := range rows {
-		r.existing[row.PredictionID] = struct{}{}
-	}
-	return nil
-}
-func (r *projectionRows) InsertAnomalyPredictions(_ context.Context, rows []entity.AnomalyPredictionProjection) error {
-	r.anomalies = append(r.anomalies, rows...)
 	for _, row := range rows {
 		r.existing[row.PredictionID] = struct{}{}
 	}

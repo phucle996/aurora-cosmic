@@ -9,7 +9,6 @@ import { ThemeProvider } from '@/components/theme-provider';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
-const CandidateDetailPage = lazy(() => import('@/pages/candidate-detail/page'));
 const OverviewPage = lazy(() => import('@/pages/overview/page'));
 const MonitoringPage = lazy(() => import('@/pages/monitoring/page'));
 const TargetDetailPage = lazy(() => import('@/pages/target-detail/page'));
@@ -17,9 +16,7 @@ const TrainingLabPage = lazy(() => import('@/pages/training-lab/page'));
 const LabelingStudioPage = lazy(() => import('@/pages/labeling-studio/page'));
 const ModelEvaluationPage = lazy(() => import('@/pages/model-evaluation/page'));
 const EvolutionEvidencePage = lazy(() => import('@/pages/evolution-evidence/page'));
-const ModelRegistryPage = lazy(() => import('@/pages/model-registry/page'));
 const InferenceEnginePage = lazy(() => import('@/pages/inference-engine/page'));
-const ModelDetailPage = lazy(() => import('@/pages/model-detail/page'));
 const PreprocessingPage = lazy(() => import('@/pages/preprocessing/page'));
 const IngestPage = lazy(() => import('@/pages/ingest/page'));
 const LakehousePage = lazy(() => import('@/pages/lakehouse/page'));
@@ -28,9 +25,7 @@ const EnrichmentPage = lazy(() => import('@/pages/enrichment/page'));
 const PipelineDagPage = lazy(() => import('@/pages/pipeline-dag/page'));
 const LineageExplorerPage = lazy(() => import('@/pages/lineage-explorer/page'));
 const RunnerTicketsPage = lazy(() => import('@/pages/runner-tickets/page'));
-const ResearchOverviewPage = lazy(() => import('@/pages/research-overview/page'));
 const TargetDiscoveryPage = lazy(() => import('@/pages/target-discovery/page'));
-const CandidateReviewPage = lazy(() => import('@/pages/candidate-review/page'));
 
 export default function App(): JSX.Element {
   return (
@@ -61,32 +56,32 @@ export default function App(): JSX.Element {
                     <Route path="/data-factory/history" element={<Navigate to="/ticket" replace />} />
                     <Route path="/data-factory/tickets" element={<Navigate to="/ticket" replace />} />
                     <Route path="/data-factory/runs" element={<Navigate to="/ticket" replace />} />
-                    <Route path="/research-factory" element={<ResearchOverviewPage />} />
+                    <Route path="/research-factory" element={<Navigate to="/research-factory/discovery" replace />} />
                     <Route path="/research-factory/discovery" element={<TargetDiscoveryPage />} />
                     <Route path="/research-factory/workbench" element={<Navigate to="/research-factory/discovery" replace />} />
                     <Route path="/research-factory/workbench/:ticId" element={<TargetDetailPage />} />
-                    <Route path="/research-factory/candidates" element={<CandidateReviewPage />} />
-                    <Route path="/research-factory/candidates/:predictionId" element={<CandidateDetailPage />} />
-                    <Route path="/research-factory/history" element={<Navigate to="/research-factory" replace />} />
-                    <Route path="/research-factory/transit-candidates" element={<Navigate to="/research-factory/candidates" replace />} />
-                    <Route path="/research-factory/transit-candidates/:predictionId" element={<CandidateDetailPage />} />
-                    <Route path="/research-factory/vetting" element={<Navigate to="/research-factory/candidates" replace />} />
+                    <Route path="/research-factory/candidates" element={<Navigate to="/research-factory/discovery" replace />} />
+                    <Route path="/research-factory/candidates/:predictionId" element={<Navigate to="/research-factory/discovery" replace />} />
+                    <Route path="/research-factory/history" element={<Navigate to="/research-factory/discovery" replace />} />
+                    <Route path="/research-factory/transit-candidates" element={<Navigate to="/research-factory/discovery" replace />} />
+                    <Route path="/research-factory/transit-candidates/:predictionId" element={<Navigate to="/research-factory/discovery" replace />} />
+                    <Route path="/research-factory/vetting" element={<Navigate to="/research-factory/discovery" replace />} />
                     <Route path="/research-factory/systems" element={<Navigate to="/research-factory/discovery" replace />} />
                     <Route path="/research-factory/evidence" element={<Navigate to="/ai-factory/evidence" replace />} />
                     <Route path="/lakehouse" element={<LakehousePage />} />
                     <Route path="/lakehouse/inspector" element={<LakehouseInspectorPage />} />
                     <Route path="/lakehouse/inspect" element={<Navigate to="/lakehouse/inspector" replace />} />
                     <Route path="/datasets" element={<Navigate to="/lakehouse" replace />} />
-                    <Route path="/candidates" element={<Navigate to="/research-factory/candidates" replace />} />
-                    <Route path="/candidates/:predictionId" element={<CandidateDetailPage />} />
-                    <Route path="/models" element={<Navigate to="/ai-factory/registry" replace />} />
+                    <Route path="/candidates" element={<Navigate to="/research-factory/discovery" replace />} />
+                    <Route path="/candidates/:predictionId" element={<Navigate to="/research-factory/discovery" replace />} />
+                    <Route path="/models" element={<Navigate to="/ai-factory/inference" replace />} />
                     <Route path="/ai-factory/training" element={<TrainingLabPage />} />
                     <Route path="/ai-factory/labeling" element={<LabelingStudioPage />} />
                     <Route path="/ai-factory/evaluation" element={<ModelEvaluationPage />} />
                     <Route path="/ai-factory/evidence" element={<EvolutionEvidencePage />} />
-                    <Route path="/ai-factory/registry" element={<ModelRegistryPage />} />
+                    <Route path="/ai-factory/registry" element={<Navigate to="/ai-factory/inference" replace />} />
                     <Route path="/ai-factory/inference" element={<InferenceEnginePage />} />
-                    <Route path="/ai-factory/models/:modelId" element={<ModelDetailPage />} />
+                    <Route path="/ai-factory/models/:modelId" element={<Navigate to="/ai-factory/inference" replace />} />
                     <Route path="/monitoring" element={<MonitoringPage />} />
                   </Routes></Suspense></AppErrorBoundary>
                 </main>
