@@ -24,6 +24,7 @@ type fakeModelService struct {
 	activeState *entity.TrainingActiveState
 	models      []entity.Model
 	evaluation  *entity.ModelEvaluation
+	evolution   *entity.ModelEvolutionEvidence
 	err         error
 }
 
@@ -77,6 +78,13 @@ func (f *fakeModelService) GetModelEvaluation(_ context.Context, _ string) (*ent
 		return f.evaluation, f.err
 	}
 	return &entity.ModelEvaluation{RuntimePackageID: "test-runtime"}, f.err
+}
+
+func (f *fakeModelService) GetModelEvolution(_ context.Context, _ string) (*entity.ModelEvolutionEvidence, error) {
+	if f.evolution != nil {
+		return f.evolution, f.err
+	}
+	return &entity.ModelEvolutionEvidence{RuntimePackageID: "test-runtime", EvaluationRunID: "eval-test"}, f.err
 }
 
 func TestModelHandler_TrainingPreflight(t *testing.T) {
@@ -566,4 +574,52 @@ func TestModelHandler_GetModelEvaluation(t *testing.T) {
 		}
 	})
 }
+
+func TestModelHandler_GetModelEvolution(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("Returns 200 with evolution evidence", func(t *testing.T) {
+		h := NewModelHandler(&fakeModelService{
+			evolution: &entity.ModelEvolutionEvidence{
+				RuntimePackageID: "pkg-1",
+				EvaluationRunID:  "eval-1",
+				GoldSnapshotID:   "gold-1",
+			},
+		})
+		router := gin.New()
+		router.GET("/models/:runtime_package_id/evolution", h.GetModelEvolution)
+
+		req := httptest.NewRequest(http.MethodGet, "/models/pkg-1/evolution", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		var body entity.ModelEvolutionEvidence
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if body.RuntimePackageID != "pkg-1" || body.GoldSnapshotID != "gold-1" {
+			t.Fatalf("unexpected body: %+v", body)
+		}
+	})
+
+	t.Run("Returns 404 when evolution not found", func(t *testing.T) {
+		h := NewModelHandler(&fakeModelService{
+			err: provider.ErrObjectNotFound,
+		})
+		router := gin.New()
+		router.GET("/models/:runtime_package_id/evolution", h.GetModelEvolution)
+
+		req := httptest.NewRequest(http.MethodGet, "/models/pkg-missing/evolution", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", rec.Code)
+		}
+	})
+}
+
 

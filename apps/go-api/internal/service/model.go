@@ -729,3 +729,202 @@ func (s *ModelService) GetModelEvaluation(ctx context.Context, runtimePackageID 
 	}
 	return evaluation, nil
 }
+
+// GetModelEvolution retrieves verified end-to-end lineage and artifact bindings for an immutable runtime package.
+func (s *ModelService) GetModelEvolution(ctx context.Context, runtimePackageID string) (*entity.ModelEvolutionEvidence, error) {
+	runtimePackageID = strings.TrimSpace(runtimePackageID)
+	if runtimePackageID == "" {
+		return nil, fmt.Errorf("%w: runtime_package_id is required", taxonomy.ErrInvalidRequest)
+	}
+
+	// 1. Locate the runtime package manifest directly from object storage
+	objects, err := s.objects.ListObjects(ctx, "models/runtime/")
+	if err != nil {
+		return nil, err
+	}
+
+	var targetKey string
+	var manifest struct {
+		RuntimePackageID      string   `json:"runtime_package_id"`
+		SourceModelID         string   `json:"source_model_id"`
+		SourceEvaluationRunID string   `json:"source_evaluation_run_id"`
+		ModelVersion          string   `json:"model_version"`
+		Task                  string   `json:"task"`
+		PreprocessingVersion  string   `json:"preprocessing_version"`
+		FeatureOrder          []string `json:"feature_order"`
+		DecisionThreshold     float64  `json:"decision_threshold"`
+		PythonParityStatus    string   `json:"python_parity_status"`
+		CreatedAt             string   `json:"created_at"`
+		ONNXSizeBytes         int64    `json:"onnx_size_bytes"`
+		ONNXSHA256            string   `json:"onnx_sha256"`
+		PreprocessingSHA256   string   `json:"preprocessing_sha256"`
+		ThresholdSHA256       string   `json:"threshold_sha256"`
+		ParityFixtureSHA256   string   `json:"parity_fixture_sha256"`
+		GoldSnapshotID        string   `json:"gold_snapshot_id"`
+	}
+
+	found := false
+	for _, obj := range objects {
+		if !strings.HasSuffix(obj.Key, "manifest.json") || !strings.HasPrefix(obj.Key, "models/runtime/") {
+			continue
+		}
+		data, err := s.objects.GetObject(ctx, obj.Key)
+		if err != nil {
+			continue
+		}
+		if json.Unmarshal(data, &manifest) == nil && manifest.RuntimePackageID == runtimePackageID {
+			targetKey = obj.Key
+			found = true
+			break
+		}
+	}
+
+	if !found || manifest.SourceEvaluationRunID == "" {
+		return nil, provider.ErrObjectNotFound
+	}
+
+	var normTask, taskDir string
+	switch strings.ToLower(strings.TrimSpace(manifest.Task)) {
+	case "candidate", taxonomy.TaskCandidateVetting:
+		normTask = taxonomy.TaskCandidateVetting
+		taskDir = "candidate"
+	default:
+		return nil, fmt.Errorf("%w: unsupported evaluation task %q", taxonomy.ErrInvalidRequest, manifest.Task)
+	}
+
+	// 2. Verify integrity of runtime package artifacts
+	integrityOK := true
+	checks := []struct{ name, sum string }{
+		{"model.onnx", manifest.ONNXSHA256},
+		{"preprocessing.json", manifest.PreprocessingSHA256},
+		{"threshold.json", manifest.ThresholdSHA256},
+		{"parity-fixture.json", manifest.ParityFixtureSHA256},
+	}
+	basePath := strings.TrimSuffix(targetKey, "manifest.json")
+	for _, check := range checks {
+		if check.sum == "" {
+			integrityOK = false
+			break
+		}
+		fileData, err := s.objects.GetObject(ctx, basePath+check.name)
+		if err != nil {
+			integrityOK = false
+			break
+		}
+		sumBytes := sha256.Sum256(fileData)
+		if hex.EncodeToString(sumBytes[:]) != check.sum {
+			integrityOK = false
+			break
+		}
+	}
+
+	status := taxonomy.ModelStatusValidated
+	if manifest.PythonParityStatus != "PASS" || !integrityOK {
+		status = taxonomy.ModelStatusInvalid
+	}
+
+	if status != taxonomy.ModelStatusInvalid {
+		champData, err := s.objects.GetObject(ctx, fmt.Sprintf("models/%s/champion.json", taskDir))
+		if err == nil {
+			var pointer struct {
+				RuntimePackageID string `json:"runtime_package_id"`
+			}
+			if json.Unmarshal(champData, &pointer) == nil && pointer.RuntimePackageID == manifest.RuntimePackageID {
+				status = taxonomy.ModelStatusChampion
+			}
+		}
+	}
+
+	integrityStatus := "FAIL"
+	if integrityOK {
+		integrityStatus = "PASS"
+	}
+
+	// 3. Read evaluation manifest
+	prefix := fmt.Sprintf("models/evaluations/%s/%s/", taskDir, manifest.SourceEvaluationRunID)
+	evalManifestKey := prefix + "manifest.json"
+	evalManifestData, err := s.objects.GetObject(ctx, evalManifestKey)
+	if err != nil {
+		return nil, err
+	}
+
+	evalManifestSum := sha256.Sum256(evalManifestData)
+	evalManifestSHA256 := hex.EncodeToString(evalManifestSum[:])
+
+	var evalManifest struct {
+		EvaluationRunID           string `json:"evaluation_run_id"`
+		TrainingRunID             string `json:"training_run_id"`
+		GoldenCohortID            string `json:"golden_cohort_id"`
+		RecentCohortID            string `json:"recent_cohort_id"`
+		EvaluationPolicy          string `json:"evaluation_policy"`
+		ThresholdPolicy           string `json:"threshold_policy"`
+		MetricsSHA256             string `json:"metrics_sha256"`
+		ThresholdSHA256           string `json:"threshold_sha256"`
+		CreatedAt                 string `json:"created_at"`
+		GoldSnapshotID            string `json:"gold_snapshot_id"`
+		GoldManifestSHA256        string `json:"gold_manifest_sha256"`
+		SplitID                   string `json:"split_id"`
+		DatasetViewVersion        string `json:"dataset_view_version"`
+		DatasetViewFingerprint    string `json:"dataset_view_fingerprint"`
+		TrainingRunManifestSHA256 string `json:"training_run_manifest_sha256"`
+	}
+	if err := json.Unmarshal(evalManifestData, &evalManifest); err != nil {
+		return nil, fmt.Errorf("parse evaluation manifest %s: %w", evalManifestKey, err)
+	}
+
+	// 4. Read evaluation metrics
+	metricsData, err := s.objects.GetObject(ctx, prefix+"metrics.json")
+	if err != nil {
+		return nil, err
+	}
+	metricsDigest := sha256.Sum256(metricsData)
+	if evalManifest.MetricsSHA256 == "" || hex.EncodeToString(metricsDigest[:]) != evalManifest.MetricsSHA256 {
+		return nil, fmt.Errorf("evaluation metrics integrity check failed for %s", evalManifest.EvaluationRunID)
+	}
+
+	var metrics struct {
+		GoldenPRAUC  *float64 `json:"golden_pr_auc"`
+		GoldenRecall *float64 `json:"golden_recall"`
+	}
+	if err := json.Unmarshal(metricsData, &metrics); err != nil {
+		return nil, fmt.Errorf("parse evaluation metrics %s: %w", evalManifest.EvaluationRunID, err)
+	}
+
+	goldSnapshotID := evalManifest.GoldSnapshotID
+	if goldSnapshotID == "" {
+		goldSnapshotID = manifest.GoldSnapshotID
+	}
+
+	gatePassed := status != taxonomy.ModelStatusInvalid && metrics.GoldenPRAUC != nil && *metrics.GoldenPRAUC >= 0.80
+
+	return &entity.ModelEvolutionEvidence{
+		RuntimePackageID:            manifest.RuntimePackageID,
+		ModelID:                     manifest.SourceModelID,
+		ModelVersion:                manifest.ModelVersion,
+		Task:                        normTask,
+		ModelStatus:                 status,
+		ParityStatus:                manifest.PythonParityStatus,
+		IntegrityStatus:             integrityStatus,
+		GatePassed:                  gatePassed,
+		CreatedAt:                   manifest.CreatedAt,
+		GoldSnapshotID:              goldSnapshotID,
+		GoldManifestSHA256:          evalManifest.GoldManifestSHA256,
+		DatasetViewVersion:          evalManifest.DatasetViewVersion,
+		DatasetViewFingerprint:      evalManifest.DatasetViewFingerprint,
+		TrainingRunID:               evalManifest.TrainingRunID,
+		SplitID:                     evalManifest.SplitID,
+		FeatureCount:                len(manifest.FeatureOrder),
+		TrainingRunManifestSHA256:   evalManifest.TrainingRunManifestSHA256,
+		PreprocessingVersion:        manifest.PreprocessingVersion,
+		EvaluationRunID:             evalManifest.EvaluationRunID,
+		EvaluationPolicyVersion:     evalManifest.EvaluationPolicy,
+		ThresholdPolicyVersion:      evalManifest.ThresholdPolicy,
+		GoldenPRAUC:                 metrics.GoldenPRAUC,
+		GoldenRecall:                metrics.GoldenRecall,
+		EvaluationRunManifestSHA256: evalManifestSHA256,
+		MetricsSHA256:               evalManifest.MetricsSHA256,
+		ONNXSizeBytes:               manifest.ONNXSizeBytes,
+		ONNXSHA256:                  manifest.ONNXSHA256,
+		RuntimeManifestKey:          targetKey,
+	}, nil
+}

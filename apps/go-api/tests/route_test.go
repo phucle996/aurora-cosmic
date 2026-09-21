@@ -103,6 +103,10 @@ func (fakeModel) GetModelEvaluation(context.Context, string) (*entity.ModelEvalu
 	return &entity.ModelEvaluation{RuntimePackageID: "runtime-test", EvaluationRunID: "eval-test"}, nil
 }
 
+func (fakeModel) GetModelEvolution(context.Context, string) (*entity.ModelEvolutionEvidence, error) {
+	return &entity.ModelEvolutionEvidence{RuntimePackageID: "runtime-test", EvaluationRunID: "eval-test"}, nil
+}
+
 
 type fakeReadiness struct{}
 

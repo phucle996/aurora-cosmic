@@ -47,6 +47,7 @@ func RegisterRoutes(engine *gin.Engine, module *Module) {
 	engine.GET("/api/v1/lightcurves", module.TargetHandler.GetLightcurve)
 	engine.GET("/api/v1/models", module.ModelHandler.ListModels)
 	engine.GET("/api/v1/models/:runtime_package_id/evaluation", module.ModelHandler.GetModelEvaluation)
+	engine.GET("/api/v1/models/:runtime_package_id/evolution", module.ModelHandler.GetModelEvolution)
 	// Labeling Studio Workflow
 	engine.GET("/api/v1/labeling/snapshots", module.LabelingHandler.ListSnapshots)
 	engine.GET("/api/v1/labeling/workspace", module.LabelingHandler.GetCohortWorkspace)

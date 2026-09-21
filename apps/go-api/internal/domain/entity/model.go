@@ -171,3 +171,44 @@ type ModelEvaluation struct {
 	MetricsSHA256         string                   `json:"metrics_sha256"`
 	CreatedAt             string                   `json:"created_at"`
 }
+
+// ModelEvolutionEvidence is the flat projection representing end-to-end lineage
+// provenance and artifact bindings for an immutable runtime model generation.
+type ModelEvolutionEvidence struct {
+	RuntimePackageID            string   `json:"runtime_package_id"`
+	ModelID                     string   `json:"model_id"`
+	ModelVersion                string   `json:"model_version"`
+	Task                        string   `json:"task"`
+	ModelStatus                 string   `json:"model_status"`
+	ParityStatus                string   `json:"parity_status"`
+	IntegrityStatus             string   `json:"integrity_status"`
+	GatePassed                  bool     `json:"gate_passed"`
+	CreatedAt                   string   `json:"created_at"`
+
+	// Stage 01 / DATA (Gold snapshot lineage)
+	GoldSnapshotID              string   `json:"gold_snapshot_id"`
+	GoldManifestSHA256          string   `json:"gold_manifest_sha256"`
+	DatasetViewVersion          string   `json:"dataset_view_version"`
+	DatasetViewFingerprint      string   `json:"dataset_view_fingerprint"`
+
+	// Stage 02 / TRAIN (Training run provenance)
+	TrainingRunID               string   `json:"training_run_id"`
+	SplitID                     string   `json:"split_id"`
+	FeatureCount                int      `json:"feature_count"`
+	TrainingRunManifestSHA256   string   `json:"training_run_manifest_sha256"`
+	PreprocessingVersion        string   `json:"preprocessing_version"`
+
+	// Stage 03 / EVALUATE (Frozen cohort quality evidence)
+	EvaluationRunID             string   `json:"evaluation_run_id"`
+	EvaluationPolicyVersion     string   `json:"evaluation_policy_version"`
+	ThresholdPolicyVersion      string   `json:"threshold_policy_version"`
+	GoldenPRAUC                 *float64 `json:"golden_pr_auc,omitempty"`
+	GoldenRecall                *float64 `json:"golden_recall,omitempty"`
+	EvaluationRunManifestSHA256 string   `json:"evaluation_run_manifest_sha256"`
+	MetricsSHA256               string   `json:"metrics_sha256"`
+
+	// Stage 04 / PACKAGE (ONNX runtime durability)
+	ONNXSizeBytes               int64    `json:"onnx_size_bytes"`
+	ONNXSHA256                  string   `json:"onnx_sha256"`
+	RuntimeManifestKey          string   `json:"runtime_manifest_key"`
+}

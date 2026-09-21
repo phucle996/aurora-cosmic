@@ -372,3 +372,21 @@ func (h *ModelHandler) GetModelEvaluation(c *gin.Context) {
 	c.JSON(http.StatusOK, evaluation)
 }
 
+// GetModelEvolution handles GET requests to retrieve verified end-to-end lineage and artifact bindings.
+func (h *ModelHandler) GetModelEvolution(c *gin.Context) {
+	evidence, err := h.model.GetModelEvolution(c.Request.Context(), strings.TrimSpace(c.Param("runtime_package_id")))
+	if err != nil {
+		if errors.Is(err, provider.ErrObjectNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "model evolution evidence was not found"})
+			return
+		}
+		if errors.Is(err, taxonomy.ErrInvalidRequest) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "model evolution storage is unavailable"})
+		return
+	}
+	c.JSON(http.StatusOK, evidence)
+}
+

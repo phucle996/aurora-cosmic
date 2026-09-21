@@ -172,9 +172,9 @@ export function EvolutionPipelineRail({
           step="03 / EVALUATE"
           title="Frozen Cohorts"
           primary={evaluation.evaluation_run_id || 'Evaluation run unavailable'}
-          secondary={`PR-AUC ${formatScore(evaluation.golden?.pr_auc)} · Recall ${formatScore(
-            evaluation.golden?.recall,
-          )}`}
+          secondary={`PR-AUC ${formatScore(
+            evaluation.golden_pr_auc ?? evaluation.golden?.pr_auc,
+          )} · Recall ${formatScore(evaluation.golden_recall ?? evaluation.golden?.recall)}`}
           badge={evaluation.gate_passed ? 'PASSED' : 'FLAGGED'}
           tone="emerald"
         />

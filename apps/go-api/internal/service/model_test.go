@@ -349,3 +349,37 @@ func TestModelService_GetModelEvaluation(t *testing.T) {
 	}
 }
 
+func TestModelService_GetModelEvolution(t *testing.T) {
+	ctx := context.Background()
+	objects := &memoryModelObjects{objects: modelFixture("PASS")}
+	runtimeKey := "models/runtime/candidate_vetting/model-a/runtime-a/manifest.json"
+	objects.objects[runtimeKey] = []byte(strings.Replace(
+		string(objects.objects[runtimeKey]),
+		`"python_parity_status":"PASS"`,
+		`"python_parity_status":"PASS", "source_evaluation_run_id":"eval-cand-v1-test", "model_version":"1.0.0"`,
+		1,
+	))
+
+	metrics := []byte(`{"golden_pr_auc":0.91,"golden_recall":0.75}`)
+	metricsSHA := sha256.Sum256(metrics)
+	prefix := "models/evaluations/candidate/eval-cand-v1-test/"
+	objects.objects[prefix+"metrics.json"] = metrics
+	objects.objects[prefix+"manifest.json"] = []byte(fmt.Sprintf(`{"evaluation_run_id":"eval-cand-v1-test","training_run_id":"train-test","model_version":"1.0.0","gold_snapshot_id":"gold-snap-1","gold_manifest_sha256":"gold-sha","split_id":"split-1","dataset_view_version":"dv-1","dataset_view_fingerprint":"dv-fp","training_run_manifest_sha256":"train-sha","evaluation_policy":"candidate-evaluation-v1","threshold_policy":"candidate-threshold-max-f1-v1","metrics_sha256":"%x","created_at":"2026-09-02T00:00:00Z"}`, metricsSHA))
+
+	svc := NewModelService(objects, nil, &fakeModelRepo{})
+	evolution, err := svc.GetModelEvolution(ctx, "runtime-a")
+	if err != nil {
+		t.Fatalf("get evolution error: %v", err)
+	}
+	if evolution.GoldSnapshotID != "gold-snap-1" || evolution.TrainingRunID != "train-test" {
+		t.Fatalf("unexpected evolution bindings: %+v", evolution)
+	}
+	if evolution.GoldenPRAUC == nil || *evolution.GoldenPRAUC != 0.91 {
+		t.Fatalf("unexpected golden PR-AUC: %+v", evolution)
+	}
+	if !evolution.GatePassed {
+		t.Fatalf("expected gate passed to be true")
+	}
+}
+
+

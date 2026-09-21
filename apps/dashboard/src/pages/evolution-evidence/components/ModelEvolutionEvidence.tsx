@@ -69,7 +69,7 @@ export function ModelEvolutionEvidence({
     setEvaluation(undefined);
 
     void apiFetch<EvolutionEvaluation>(
-      `/v1/models/${encodeURIComponent(selected.runtime_package_id)}/evaluation`,
+      `/v1/models/${encodeURIComponent(selected.runtime_package_id)}/evolution`,
     )
       .then((value) => {
         if (active) setEvaluation(value);

@@ -17,6 +17,7 @@ type Model interface {
 	ObserveTrainingLog(ctx context.Context, ticketID string, entry entity.TrainingLogEntry) error
 	ListModels(ctx context.Context, task string) ([]entity.Model, error)
 	GetModelEvaluation(ctx context.Context, runtimePackageID string) (*entity.ModelEvaluation, error)
+	GetModelEvolution(ctx context.Context, runtimePackageID string) (*entity.ModelEvolutionEvidence, error)
 }
 
 
