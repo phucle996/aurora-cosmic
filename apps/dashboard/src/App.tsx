@@ -17,9 +17,7 @@ const TrainingLabPage = lazy(() => import('@/pages/training-lab/page'));
 const LabelingStudioPage = lazy(() => import('@/pages/labeling-studio/page'));
 const ModelEvaluationPage = lazy(() => import('@/pages/model-evaluation/page'));
 const EvolutionEvidencePage = lazy(() => import('@/pages/evolution-evidence/page'));
-const ModelRegistryPage = lazy(() => import('@/pages/model-registry/page'));
 const InferenceEnginePage = lazy(() => import('@/pages/inference-engine/page'));
-const ModelDetailPage = lazy(() => import('@/pages/model-detail/page'));
 const PreprocessingPage = lazy(() => import('@/pages/preprocessing/page'));
 const IngestPage = lazy(() => import('@/pages/ingest/page'));
 const LakehousePage = lazy(() => import('@/pages/lakehouse/page'));
@@ -79,14 +77,14 @@ export default function App(): JSX.Element {
                     <Route path="/datasets" element={<Navigate to="/lakehouse" replace />} />
                     <Route path="/candidates" element={<Navigate to="/research-factory/candidates" replace />} />
                     <Route path="/candidates/:predictionId" element={<CandidateDetailPage />} />
-                    <Route path="/models" element={<Navigate to="/ai-factory/registry" replace />} />
+                    <Route path="/models" element={<Navigate to="/ai-factory/inference" replace />} />
                     <Route path="/ai-factory/training" element={<TrainingLabPage />} />
                     <Route path="/ai-factory/labeling" element={<LabelingStudioPage />} />
                     <Route path="/ai-factory/evaluation" element={<ModelEvaluationPage />} />
                     <Route path="/ai-factory/evidence" element={<EvolutionEvidencePage />} />
-                    <Route path="/ai-factory/registry" element={<ModelRegistryPage />} />
+                    <Route path="/ai-factory/registry" element={<Navigate to="/ai-factory/inference" replace />} />
                     <Route path="/ai-factory/inference" element={<InferenceEnginePage />} />
-                    <Route path="/ai-factory/models/:modelId" element={<ModelDetailPage />} />
+                    <Route path="/ai-factory/models/:modelId" element={<Navigate to="/ai-factory/inference" replace />} />
                     <Route path="/monitoring" element={<MonitoringPage />} />
                   </Routes></Suspense></AppErrorBoundary>
                 </main>

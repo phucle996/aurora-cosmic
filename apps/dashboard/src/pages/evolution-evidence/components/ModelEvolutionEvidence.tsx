@@ -22,9 +22,8 @@ function EvidenceState({
 }): JSX.Element {
   return (
     <div
-      className={`grid min-h-[460px] place-items-center p-6 text-center ${
-        destructive ? 'text-destructive' : 'text-muted-foreground'
-      }`}
+      className={`grid min-h-[460px] place-items-center p-6 text-center ${destructive ? 'text-destructive' : 'text-muted-foreground'
+        }`}
     >
       <div>
         <div className="mx-auto flex size-12 items-center justify-center rounded-full bg-muted/40">
@@ -94,10 +93,10 @@ export function ModelEvolutionEvidence({
     () =>
       selected
         ? jobs.filter(
-            (job) =>
-              job.runtime_package_id === selected.runtime_package_id ||
-              job.model_id === selected.model_id,
-          )
+          (job) =>
+            job.runtime_package_id === selected.runtime_package_id ||
+            job.model_id === selected.model_id,
+        )
         : [],
     [jobs, selected],
   );
