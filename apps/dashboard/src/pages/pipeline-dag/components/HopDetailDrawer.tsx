@@ -466,8 +466,8 @@ function ScientificMethodCard({ hop }: { hop: Hop }): JSX.Element {
     <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
       <Calculator className="size-3.5 text-primary" /> Phương pháp tính & thuật ngữ
     </span>
-    {reference.formulas.length > 0 && <div className="space-y-1.5">{reference.formulas.map((formula) => <div key={formula.label} className="border border-border/50 bg-background p-2"><p className="text-[9px] uppercase text-muted-foreground">{formula.label}</p><p className="mt-0.5 overflow-x-auto whitespace-nowrap font-mono text-[11px] text-primary">{formula.expression}</p></div>)}</div>}
-    <dl className="divide-y divide-border/50 border border-border/50 bg-background">{reference.terms.map((item) => <div key={item.term} className="px-2 py-1.5"><dt className="font-mono text-[10px] font-semibold text-foreground">{item.term}</dt><dd className="mt-0.5 text-[10px] leading-4 text-muted-foreground">{item.meaning}</dd></div>)}</dl>
+    {reference.formulas.length > 0 && <div className="space-y-1.5">{reference.formulas.map((formula) => <div key={formula.label} className="border border-border/50 bg-background p-2"><p className="text-[9px] uppercase text-muted-foreground">{formula.label}</p><p className="mt-0.5 break-words font-mono text-[11px] leading-relaxed text-primary">{formula.expression}</p></div>)}</div>}
+    <dl className="divide-y divide-border/50 border border-border/50 bg-background">{reference.terms.map((item) => <div key={item.term} className="px-2 py-1.5"><dt className="break-words font-mono text-[10px] font-semibold text-foreground">{item.term}</dt><dd className="mt-0.5 break-words text-[10px] leading-4 text-muted-foreground">{item.meaning}</dd></div>)}</dl>
   </div>;
 }
 
