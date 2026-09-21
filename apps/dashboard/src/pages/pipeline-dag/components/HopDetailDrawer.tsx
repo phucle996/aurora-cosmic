@@ -28,6 +28,7 @@ import {
   GoldProjectionChart,
   LightCurveFeaturesChart,
   PairingReadinessChart,
+  ProductDemuxChart,
   QualityMaskChart,
   ResidualsDistributionChart,
   SilverMaterializationChart,
@@ -58,8 +59,9 @@ function renderHopChart(
 ): JSX.Element | null {
   switch (hopId) {
     case 'bronze':
-    case 'route':
       return <CadenceTimelineChart mode={mode} totalFiles={totalFiles} metrics={metrics} telemetry={telemetry} />;
+    case 'route':
+      return <ProductDemuxChart mode={mode} totalFiles={totalFiles} metrics={metrics} telemetry={telemetry} />;
     case 'decode':
       return <QualityMaskChart mode={mode} totalFiles={totalFiles} metrics={metrics} telemetry={telemetry} />;
     case 'lc-quality':
@@ -126,6 +128,28 @@ type ScientificReference = {
 
 function scientificReference(hop: Hop): ScientificReference {
   const references: Record<string, ScientificReference> = {
+    bronze: {
+      formulas: [
+        { label: 'Staged integrity', expression: 'verified = size_bytes > 0 ∧ sha256_match' },
+        { label: 'Footprint ratio', expression: 'stored GiB = Σ file bytes / 2³⁰' },
+      ],
+      terms: [
+        { term: 'Bronze FITS', meaning: 'Tệp FITS thiên văn học thô tải trực tiếp từ NASA MAST hoặc S3 staging.' },
+        { term: 'Checksum Gate', meaning: 'Kiểm tra mã băm SHA-256 bảo đảm tệp nguyên vẹn, không bị hỏng hóc khi truyền nhận.' },
+        { term: 'Awaiting Silver', meaning: 'Số tệp Bronze đang nằm trong vùng đệm chưa được seal thành checkpoint Silver.' },
+      ],
+    },
+    route: {
+      formulas: [
+        { label: 'Demux balance ratio', expression: 'LC split % = LC products / (LC + TPF) × 100%' },
+        { label: 'Dispatch throughput', expression: 'rate = d(LC + TPF) / dt' },
+      ],
+      terms: [
+        { term: 'Product Demux', meaning: 'Đọc FITS header cards (XTENSION, EXTNAME) để phân loại và tách luồng song song.' },
+        { term: 'Light Curve (Stream 03A)', meaning: 'Chuỗi dữ liệu 1D thời gian biểu diễn biến thiên thông lượng ánh sáng của sao.' },
+        { term: 'Target Pixel (Stream 03B)', meaning: 'Mảng ảnh 2D (11×11 pixel postage stamps) phục vụ kiểm định độ dịch chuyển centroid.' },
+      ],
+    },
     'lc-quality': {
       formulas: [
         { label: 'Tỷ lệ giữ lại', expression: 'retention = valid cadences / input cadences × 100%' },
@@ -568,7 +592,7 @@ export function HopDetailDrawer({
                   </div>
                 </div>
 
-                  {renderHopChart(selectedHop.id, mode, totalFiles, mergedMetrics, mergedTelemetry, selectedHop.scatter_points, selectedHop.tpf_transform_points, selectedHop.materialization_points, selectedHop.encode_failures, selectedHop.silver_failures, selectedHop.checkpoint_points, selectedHop.details, selectedHop.lc_feature_evidence, selectedHop.bls_search_evidence, selectedHop.tpf_spatial_evidence, selectedHop.candidate_assembly_evidence, selectedHop.gold_materialization_evidence, selectedHop.gold_projection_evidence, selectedHop.gold_commit_evidence)}
+                {renderHopChart(selectedHop.id, mode, totalFiles, mergedMetrics, mergedTelemetry, selectedHop.scatter_points, selectedHop.tpf_transform_points, selectedHop.materialization_points, selectedHop.encode_failures, selectedHop.silver_failures, selectedHop.checkpoint_points, selectedHop.details, selectedHop.lc_feature_evidence, selectedHop.bls_search_evidence, selectedHop.tpf_spatial_evidence, selectedHop.candidate_assembly_evidence, selectedHop.gold_materialization_evidence, selectedHop.gold_projection_evidence, selectedHop.gold_commit_evidence)}
               </div>
             </div>
           ) : (

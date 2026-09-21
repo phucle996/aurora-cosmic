@@ -1,5 +1,6 @@
 // Public chart surface for preprocessing graph consumers.
 export { CadenceTimelineChart } from './CadenceTimelineChart';
+export { ProductDemuxChart } from './ProductDemuxChart';
 export { QualityMaskChart } from './QualityMaskChart';
 export { ResidualsDistributionChart } from './ResidualsDistributionChart';
 export { SilverMaterializationChart } from './SilverMaterializationChart';

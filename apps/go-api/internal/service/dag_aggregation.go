@@ -183,11 +183,23 @@ func (s *DAGAggregationService) QueryGraph(ctx context.Context, stage string, ti
 			values["inflight"] = pts[len(pts)-1].Value
 			observed = true
 		}
+		if pts, err := s.prometheus.QueryRange(ctx, `sum(rate(aurora_preprocessor_products_total{kind="lightcurve"}[1m]))`, start, end, step); err == nil && len(pts) > 0 {
+			values["lc_dispatch_rate"] = pts[len(pts)-1].Value
+			observations["lc_dispatch_rate"] = pts
+			observed = true
+		}
+		if pts, err := s.prometheus.QueryRange(ctx, `sum(rate(aurora_preprocessor_products_total{kind="target_pixel"}[1m]))`, start, end, step); err == nil && len(pts) > 0 {
+			values["tpf_dispatch_rate"] = pts[len(pts)-1].Value
+			observations["tpf_dispatch_rate"] = pts
+			observed = true
+		}
 		if pts, err := s.prometheus.QueryRange(ctx, `sum(rate(aurora_preprocessor_errors_total[1m]))`, start, end, step); err == nil && len(pts) > 0 {
 			values["errors"] = pts[len(pts)-1].Value
 		}
 		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_queue_depth)`, start, end, step); err == nil && len(pts) > 0 {
 			values["queue"] = pts[len(pts)-1].Value
+			values["queue_depth"] = pts[len(pts)-1].Value
+			observations["queue_depth"] = pts
 		}
 		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_backlog_pending)`, start, end, step); err == nil && len(pts) > 0 {
 			values["backlog"] = pts[len(pts)-1].Value
@@ -960,13 +972,25 @@ func (s *DAGAggregationService) aggregateBronzeHop(ctx context.Context, hop *ent
 	s.queryMetric(ctx, hop, "target_pixel_files", fmt.Sprintf(`sum(increase(aurora_preprocessor_products_total{kind="target_pixel"}[%s]))`, window), start, end)
 	s.queryMetric(ctx, hop, "failed_files", fmt.Sprintf(`sum(increase(aurora_preprocessor_products_total{status="failed"}[%s]))`, window), start, end)
 	s.queryMetric(ctx, hop, "bronze_bytes", fmt.Sprintf(`sum(increase(aurora_preprocessor_bytes_total{stage="bronze"}[%s]))`, window), start, end)
+	if hop.Metrics["total_files"] > 0 || hop.Metrics["bronze_bytes"] > 0 {
+		hop.Metrics["inventory_observed"] = 1
+	}
 }
 
 func (s *DAGAggregationService) aggregateRouteHop(ctx context.Context, hop *entity.DAGHop, start, end time.Time, window string) {
 	s.queryMetric(ctx, hop, "throughput", `sum(rate(aurora_preprocessor_products_total[1m]))`, start, end)
+	s.queryMetric(ctx, hop, "lc_dispatch_rate", `sum(rate(aurora_preprocessor_products_total{kind="lightcurve"}[1m]))`, start, end)
+	s.queryMetric(ctx, hop, "tpf_dispatch_rate", `sum(rate(aurora_preprocessor_products_total{kind="target_pixel"}[1m]))`, start, end)
+	s.queryMetric(ctx, hop, "queue_depth", `sum(aurora_preprocessor_queue_depth)`, start, end)
+	s.queryMetric(ctx, hop, "inflight_workers", `sum(aurora_preprocessor_inflight_workers)`, start, end)
 	s.queryMetric(ctx, hop, "total_files", fmt.Sprintf(`sum(increase(aurora_preprocessor_products_total[%s]))`, window), start, end)
 	s.queryMetric(ctx, hop, "lightcurve_files", fmt.Sprintf(`sum(increase(aurora_preprocessor_products_total{kind="lightcurve"}[%s]))`, window), start, end)
 	s.queryMetric(ctx, hop, "target_pixel_files", fmt.Sprintf(`sum(increase(aurora_preprocessor_products_total{kind="target_pixel"}[%s]))`, window), start, end)
+	s.queryMetric(ctx, hop, "unknown_files", fmt.Sprintf(`sum(increase(aurora_preprocessor_products_total{kind="unknown"}[%s]))`, window), start, end)
+	s.queryMetric(ctx, hop, "routing_errors", fmt.Sprintf(`sum(increase(aurora_preprocessor_errors_total[%s]))`, window), start, end)
+	if hop.Metrics["total_files"] > 0 || hop.Metrics["lightcurve_files"] > 0 {
+		hop.Metrics["inventory_observed"] = 1
+	}
 }
 
 func (s *DAGAggregationService) aggregateQualityHop(ctx context.Context, hop *entity.DAGHop, start, end time.Time, window string) {
@@ -1138,6 +1162,28 @@ func dagHops(values map[string]float64, observations map[string][]entity.Monitor
 				"throughput":         values["throughput"],
 			},
 			Telemetry: dagMetricSeries(observations, "throughput"),
+		},
+		{
+			ID:          "route",
+			Label:       "Product Route & Demux",
+			Description: "Route each verified product to the full LC decoder or bounded-memory TPF chunk reader",
+			Contract:    "fits-product-router-v1",
+			Input:       "Verified local FITS",
+			Output:      "Typed LC stream or TPF chunks",
+			Metrics: map[string]float64{
+				"total_files":        float64(progress.BronzeTotal),
+				"lightcurve_files":   float64(progress.BronzeLightCurves),
+				"target_pixel_files": float64(progress.BronzeTargetPixels),
+				"unknown_files":      0,
+				"routing_errors":     0,
+				"queue_depth":        values["queue_depth"],
+				"inflight_workers":   values["inflight"],
+				"throughput":         values["throughput"],
+				"lc_dispatch_rate":   values["lc_dispatch_rate"],
+				"tpf_dispatch_rate":  values["tpf_dispatch_rate"],
+				"inventory_observed": dagBoolToMetric(progress.BronzeObserved),
+			},
+			Telemetry: dagMetricSeries(observations, "throughput", "lc_dispatch_rate", "tpf_dispatch_rate", "queue_depth"),
 		},
 		{
 			ID:          "decode",
@@ -1334,7 +1380,7 @@ func dagHops(values map[string]float64, observations map[string][]entity.Monitor
 	}
 	hops = []entity.DAGHop{
 		deriveHop("bronze", "bronze", "Bronze verify & fetch", "Verify object identity, size and checksum before local staging", "bronze/tess/<product>/sector=<sector>/tic=<tic>/", "NASA MAST FITS", "Verified local FITS"),
-		deriveHop("decode", "route", "Product router & FITS reader", "Route each verified product to the full LC decoder or bounded-memory TPF chunk reader", "fits-product-router-v1", "Verified local FITS", "Typed LC stream or TPF chunks"),
+		deriveHop("route", "route", "Product router & FITS reader", "Route each verified product to the full LC decoder or bounded-memory TPF chunk reader", "fits-product-router-v1", "Verified local FITS", "Typed LC stream or TPF chunks"),
 		deriveHop("decode", "lc-quality", "LC cadence quality control", "Apply quality bitmask, finite-value checks, time validity and cadence deduplication", "quality-flag-bitmask-v1/lc", "Decoded Light Curve", "Quality-valid LC cadences"),
 		deriveHop("transform", "lc-transform", "LC normalization & sigma clip", "Normalize relative flux by its median and optionally remove configured sigma outliers", "lc-preprocess-v1", "Quality-valid LC cadences", "Normalized LC samples"),
 		deriveHop("silver", "lc-parquet", "LC Parquet encode", "Encode the complete normalized Light Curve as a checksummed ZSTD Parquet artifact", "silver-lightcurve-v1", "Normalized LC samples", "Local LC Parquet"),
