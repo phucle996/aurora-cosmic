@@ -20,7 +20,6 @@ import {
   CandidateAssemblyChart,
   CatalogResolutionChart,
   CheckpointMetricsChart,
-  CompressionRatioChart,
   EventPublishChart,
   GoldCommitChart,
   GoldPhaseChart,
@@ -87,11 +86,11 @@ function renderHopChart(
     case 'tpf-parquet':
       return <TPFParquetChart metrics={metrics} telemetry={telemetry} materializationPoints={materializationPoints} encodeFailures={encodeFailures} />;
     case 'checkpoint':
-      return <CheckpointMetricsChart metrics={metrics} checkpoints={checkpointPoints} />;
+      return <CheckpointMetricsChart metrics={metrics} checkpoints={checkpointPoints} materializationPoints={materializationPoints} />;
     case 'lineage':
       return <LineageLedgerChart mode={mode} metrics={metrics} materializationPoints={materializationPoints} />;
     case 'event':
-      return <EventPublishChart metrics={metrics} />;
+      return <EventPublishChart metrics={metrics} materializationPoints={materializationPoints} />;
     case 'ack':
       return <AckDeliveryChart metrics={metrics} />;
     case 'gold-pairing':

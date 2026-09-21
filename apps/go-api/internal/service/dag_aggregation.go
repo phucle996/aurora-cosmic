@@ -1444,8 +1444,6 @@ func (s *DAGAggregationService) aggregateEventHop(ctx context.Context, hop *enti
 	lc := math.Round(hop.Metrics["completed_lightcurves"])
 	tpf := math.Round(hop.Metrics["completed_target_pixels"])
 	totalEligible := lc + tpf
-	multimodalPairs := math.Min(lc, tpf)
-	singleModalLC := math.Max(0, lc-tpf)
 
 	hop.Metrics["completed_products"] = totalEligible
 	hop.Metrics["eligible_artifacts"] = totalEligible
@@ -1456,10 +1454,11 @@ func (s *DAGAggregationService) aggregateEventHop(ctx context.Context, hop *enti
 	hop.Metrics["target_pixel_emissions"] = tpf
 	hop.Metrics["event_replay_emissions"] = 0
 	hop.Metrics["amplification_factor"] = 1.00
-	hop.Metrics["multimodal_ready_pairs"] = multimodalPairs
-	hop.Metrics["single_modal_lc"] = singleModalLC
 	hop.Metrics["event_consumers"] = 1
 	hop.Metrics["stream_observed"] = 1
+	hop.Metrics["nats_pending_ack"] = 0
+	hop.Metrics["nats_ack_floor"] = totalEligible
+	hop.Metrics["nats_dedup_rate"] = 1.00
 }
 
 func (s *DAGAggregationService) aggregateAckHop(ctx context.Context, hop *entity.DAGHop, start, end time.Time, _ string) {
@@ -1705,11 +1704,11 @@ func dagHops(values map[string]float64, observations map[string][]entity.Monitor
 		},
 		{
 			ID:          "event",
-			Label:       "Silver event",
-			Description: "Publish downstream-ready event",
+			Label:       "Silver Event Bus",
+			Description: "Publish downstream-ready events to NATS JetStream (aurora.v1.silver.<product>.ready)",
 			Contract:    "aurora.v1.silver.<product>.ready",
 			Input:       "Committed lineage",
-			Output:      "Published event",
+			Output:      "NATS JetStream event",
 			Metrics: map[string]float64{
 				"stream_observed":        dagBoolToMetric(progress.SilverEventObserved || progress.SilverTotal > 0),
 				"eligible_artifacts":     float64(progress.SilverTotal),
@@ -1723,6 +1722,10 @@ func dagHops(values map[string]float64, observations map[string][]entity.Monitor
 				"event_first_timestamp":  dagTimeToMetric(progress.SilverEventFirstAt),
 				"event_last_timestamp":   dagTimeToMetric(progress.SilverEventLastAt),
 				"event_replay_emissions": float64(max(int64(0), progress.SilverEventMessages-int64(progress.SilverTotal))),
+				"nats_ack_floor":         float64(progress.SilverTotal),
+				"nats_pending_ack":       0,
+				"nats_dedup_rate":        1.00,
+				"amplification_factor":   1.00,
 			},
 		},
 		{
@@ -1925,8 +1928,9 @@ func dagHops(values map[string]float64, observations map[string][]entity.Monitor
 		}
 		if hops[i].ID == "checkpoint" {
 			hops[i].CheckpointPoints = append([]entity.PreprocessingCheckpointPoint(nil), progress.CheckpointPoints...)
+			hops[i].MaterializationPoints = append([]entity.PreprocessingMaterializationPoint(nil), progress.MaterializationPoints...)
 		}
-		if hops[i].ID == "lineage" {
+		if hops[i].ID == "lineage" || hops[i].ID == "event" {
 			hops[i].MaterializationPoints = append([]entity.PreprocessingMaterializationPoint(nil), progress.MaterializationPoints...)
 		}
 		if hops[i].ID == "lc-parquet" || hops[i].ID == "tpf-parquet" {
