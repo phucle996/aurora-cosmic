@@ -15,7 +15,6 @@ import {
 import type { Hop } from '../types';
 import {
   AckDeliveryChart,
-  BLSSearchChart,
   CadenceTimelineChart,
   CandidateAssemblyChart,
   CatalogResolutionChart,
@@ -102,9 +101,15 @@ function renderHopChart(
         ? <CatalogResolutionChart metrics={metrics} details={details} />
         : <GoldPhaseChart metrics={metrics} telemetry={telemetry} phase={hopId} />;
     case 'gold-lc-features':
-      return <LightCurveFeaturesChart metrics={metrics} evidence={lcFeatureEvidence} />;
     case 'gold-bls':
-      return <BLSSearchChart metrics={metrics} evidence={blsSearchEvidence} />;
+      return (
+        <LightCurveFeaturesChart
+          metrics={metrics}
+          telemetry={telemetry}
+          evidence={lcFeatureEvidence}
+          blsEvidence={blsSearchEvidence}
+        />
+      );
     case 'gold-tpf-evidence':
       return <TPFSpatialEvidenceChart metrics={metrics} evidence={tpfSpatialEvidence} />;
     case 'gold-candidate':
@@ -332,20 +337,18 @@ function scientificReference(hop: Hop): ScientificReference {
     },
     'gold-lc-features': {
       formulas: [
-        { label: 'Observation baseline', expression: 'time span = max(time) − min(time)' },
-        { label: 'Median cadence', expression: 'median cadence = median(diff(time))' },
-        { label: 'Largest gap', expression: 'max gap = max(diff(time))' },
         { label: 'Flux scatter', expression: 'σ_flux = sqrt(mean((flux − mean(flux))²))' },
         { label: 'Robust amplitude', expression: 'amplitude = P95(flux) − P05(flux)' },
-        { label: 'Flux RMS', expression: 'RMS = sqrt(mean(flux²))' },
+        { label: 'Search upper bound', expression: 'effective P_max = min(configured P_max, observation baseline / 2)' },
+        { label: 'Best periodic box', expression: '(P*, D*) = arg max power_BLS(P, D)' },
+        { label: 'Transit depth', expression: 'depth = |fitted box depth| × 10⁶ ppm' },
+        { label: 'Observation baseline', expression: 'time span = max(time) − min(time)' },
       ],
       terms: [
-        { term: 'Feature row', meaning: 'Một vector thống kê xác định được trích từ một Silver Light Curve.' },
-        { term: 'Observation baseline', meaning: 'Khoảng thời gian từ cadence đầu đến cadence cuối của Light Curve.' },
-        { term: 'Median cadence', meaning: 'Khoảng thời gian lấy mẫu điển hình giữa hai điểm liên tiếp.' },
-        { term: 'Largest gap', meaning: 'Khoảng trống quan sát lớn nhất; dùng để nhận biết sampling bị gián đoạn.' },
-        { term: 'ppm', meaning: 'Parts per million của normalized flux; 10.000 ppm tương đương biến thiên 1%.' },
-        { term: 'Quantile profile', meaning: 'Các mốc phân vị trên toàn bộ Light Curve của snapshot, không phải chuỗi thời gian.' },
+        { term: '16-dim Morphology', meaning: 'Vector thuộc tính vật lý thiên văn gồm tán xạ thông lượng, thời gian và dạng sóng bậc cao.' },
+        { term: 'BLS Ephemeris', meaning: 'Nghiệm chu kỳ (Period), độ sâu (Depth), độ rộng (Duration) phát hiện từ Box Least Squares.' },
+        { term: 'Peak Power', meaning: 'Độ mạnh tương đối của nghiệm transit trên periodogram tần số.' },
+        { term: 'ppm', meaning: 'Parts per million của normalized flux; 10.000 ppm tương đương sụt giảm 1%.' },
       ],
     },
     'gold-bls': {

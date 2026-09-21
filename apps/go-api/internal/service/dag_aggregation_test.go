@@ -159,11 +159,11 @@ func TestDAGAggregationQueryKeepsNoDataGray(t *testing.T) {
 	if graph.Status != "not_observed" {
 		t.Fatalf("expected not_observed, got %q", graph.Status)
 	}
-	if len(graph.Hops) != 22 {
-		t.Fatalf("expected 22 hops in full DAG graph, got %d", len(graph.Hops))
+	if len(graph.Hops) != 21 {
+		t.Fatalf("expected 21 hops in full DAG graph, got %d", len(graph.Hops))
 	}
-	if len(graph.Edges) != 25 {
-		t.Fatalf("expected 25 edges in full DAG topology, got %d", len(graph.Edges))
+	if len(graph.Edges) != 24 {
+		t.Fatalf("expected 24 edges in full DAG topology, got %d", len(graph.Edges))
 	}
 }
 
@@ -182,8 +182,8 @@ func TestDAGAggregationQueryReportsRunningFromLiveMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if graph.Status != "running" || len(graph.Hops) != 22 || len(graph.Edges) != 25 {
-		t.Fatalf("expected a running service with 22 hops and 25 edges, got %#v", graph)
+	if graph.Status != "running" || len(graph.Hops) != 21 || len(graph.Edges) != 24 {
+		t.Fatalf("expected a running service with 21 hops and 24 edges, got %#v", graph)
 	}
 }
 
@@ -439,8 +439,8 @@ func TestDAGAggregationGoldHopsLiveRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected QueryGraph error: %v", err)
 	}
-	if len(graph.Hops) != 22 {
-		t.Fatalf("expected 22 hops, got %d", len(graph.Hops))
+	if len(graph.Hops) != 21 {
+		t.Fatalf("expected 21 hops, got %d", len(graph.Hops))
 	}
 
 	// Verify gold-pairing in live mode
@@ -469,11 +469,11 @@ func TestDAGAggregationQueryGraphStageFiltering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(allGraph.Hops) != 22 {
-		t.Errorf("expected 22 hops for 'all', got %d", len(allGraph.Hops))
+	if len(allGraph.Hops) != 21 {
+		t.Errorf("expected 21 hops for 'all', got %d", len(allGraph.Hops))
 	}
-	if len(allGraph.Edges) != 25 {
-		t.Errorf("expected 25 edges for 'all', got %d", len(allGraph.Edges))
+	if len(allGraph.Edges) != 24 {
+		t.Errorf("expected 24 edges for 'all', got %d", len(allGraph.Edges))
 	}
 
 	preGraph, err := svc.QueryGraph(context.Background(), "preprocessing", "")
@@ -493,8 +493,8 @@ func TestDAGAggregationQueryGraphStageFiltering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(enrichGraph.Hops) != 9 {
-		t.Errorf("expected 9 hops for 'enrichment', got %d", len(enrichGraph.Hops))
+	if len(enrichGraph.Hops) != 8 {
+		t.Errorf("expected 8 hops for 'enrichment', got %d", len(enrichGraph.Hops))
 	}
 	for _, h := range enrichGraph.Hops {
 		if !strings.HasPrefix(h.ID, "gold-") {

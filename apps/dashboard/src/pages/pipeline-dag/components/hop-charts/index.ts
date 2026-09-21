@@ -13,7 +13,6 @@ export { GoldPhaseChart } from './GoldPhaseChart';
 export { PairingReadinessChart } from './PairingReadinessChart';
 export { CatalogResolutionChart } from './CatalogResolutionChart';
 export { LightCurveFeaturesChart } from './LightCurveFeaturesChart';
-export { BLSSearchChart } from './BLSSearchChart';
 export { TPFSpatialEvidenceChart } from './TPFSpatialEvidenceChart';
 export { CandidateAssemblyChart } from './CandidateAssemblyChart';
 export { GoldMaterializationChart } from './GoldMaterializationChart';

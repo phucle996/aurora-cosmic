@@ -391,10 +391,10 @@ func (s *DAGAggregationService) QueryGraph(ctx context.Context, stage string, ti
 	// Build Pipeline DAG Hops and topology edges
 	hops := dagHops(values, observations, end, nil, runtimeProgress)
 
-	// Append Enrichment Hops (G01 to G09)
+	// Append Enrichment Hops (G01 to G08)
 	control, enrichmentRuntime := s.getEnrichmentOverview(ctx)
 	goldHopIDs := []string{
-		"gold-pairing", "gold-catalog", "gold-lc-features", "gold-bls",
+		"gold-pairing", "gold-catalog", "gold-lc-features",
 		"gold-tpf-evidence", "gold-candidate", "gold-parquet", "gold-index", "gold-commit",
 	}
 	var evidence *entity.DAGRunEvidence
@@ -561,6 +561,10 @@ func (s *DAGAggregationService) QueryGraph(ctx context.Context, stage string, ti
 					ghop.Metrics["duration_ms"] = pts[len(pts)-1].Value
 					ghop.Telemetry["duration_ms"] = pts
 				}
+				if pts, err := s.prometheus.QueryRange(ctx, fmt.Sprintf(`sum(increase(aurora_enrichment_bls_candidates_detected_total[%s]))`, window), start, end, stepDur); err == nil && len(pts) > 0 {
+					ghop.Metrics["bls_candidates"] = pts[len(pts)-1].Value
+					ghop.Telemetry["bls_candidates"] = pts
+				}
 			case "gold-bls":
 				if pts, err := s.prometheus.QueryRange(ctx, fmt.Sprintf(`sum(increase(aurora_enrichment_bls_candidates_detected_total[%s]))`, window), start, end, stepDur); err == nil && len(pts) > 0 {
 					ghop.Metrics["output_rows"] = pts[len(pts)-1].Value
@@ -640,11 +644,10 @@ func (s *DAGAggregationService) QueryGraph(ctx context.Context, stage string, ti
 		{"event", "gold-pairing"},
 		{"gold-pairing", "gold-catalog"},
 		{"gold-pairing", "gold-lc-features"},
-		{"gold-lc-features", "gold-bls"},
 		{"gold-pairing", "gold-tpf-evidence"},
-		{"gold-bls", "gold-tpf-evidence"},
+		{"gold-lc-features", "gold-tpf-evidence"},
 		{"gold-catalog", "gold-candidate"},
-		{"gold-bls", "gold-candidate"},
+		{"gold-lc-features", "gold-candidate"},
 		{"gold-tpf-evidence", "gold-candidate"},
 		{"gold-candidate", "gold-parquet"},
 		{"gold-parquet", "gold-index"},
@@ -854,11 +857,11 @@ var hopCatalog = map[string]HopMetadata{
 	},
 	"gold-lc-features": {
 		ID:          "gold-lc-features",
-		Label:       "Light Curve Statistical Features",
-		Description: "Computes variance, skewness, kurtosis, amplitude, and variability indicators on normalized flux",
-		Contract:    "n_points, flux_std, flux_skewness, flux_kurtosis, flux_amplitude, flux_mad",
+		Label:       "Light Curve Features & BLS Transit Search",
+		Description: "Computes 16-dim flux morphology features and runs Box Least Squares (BLS) transit period search",
+		Contract:    "16-dim morphology vector + bls_period, bls_duration, bls_depth, bls_power",
 		Input:       "Paired normalized flux series",
-		Output:      "LC feature vector",
+		Output:      "LC morphology features + BLS candidate ephemeris",
 	},
 	"gold-bls": {
 		ID:          "gold-bls",
@@ -2350,6 +2353,7 @@ func (s *DAGAggregationService) aggregateGoldLCFeaturesHop(ctx context.Context, 
 	detail, _, _ := s.aggregateGoldCommon(ctx, hop, ticketID)
 	if detail != nil && detail.ScientificEvidence != nil {
 		hop.LCFeatureEvidence = detail.ScientificEvidence.LCFeatures
+		hop.BLSSearchEvidence = detail.ScientificEvidence.BLSSearch
 	}
 }
 
