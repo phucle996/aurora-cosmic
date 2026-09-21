@@ -112,9 +112,9 @@ export function GoldCommitChart({
         <MetricCard
           icon={<HardDrive className="size-3.5 text-sky-500" />}
           label="Dung Lượng Parquet"
-          value={parquetBytes > 0 ? formatBytes(parquetBytes) : (hasRelease ? '~14.2 MB' : '—')}
+          value={parquetBytes > 0 ? formatBytes(parquetBytes) : '—'}
           sub={artifactCount > 0 ? `${artifactCount} phân vùng cột Snappy` : 'MinIO Object Storage'}
-          highlight={hasRelease ? 'emerald' : undefined}
+          highlight={parquetBytes > 0 ? 'emerald' : undefined}
         />
         <MetricCard
           icon={<Database className="size-3.5 text-indigo-500" />}

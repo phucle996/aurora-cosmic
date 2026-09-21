@@ -68,6 +68,10 @@ export function EventPublishChart({
       return [];
     }
 
+    const avgEventBytes = emissions > 0 && (metrics?.event_bytes ?? 0) > 0
+      ? (metrics?.event_bytes ?? 0) / emissions
+      : 0;
+
     return materializationPoints.map((point) => {
       const targetId = extractTargetId(point.object_key);
       const isLC = point.product_kind === 'lightcurve' || point.product_kind === 'light_curve';
@@ -78,12 +82,12 @@ export function EventPublishChart({
         isLC,
         subject: isLC ? 'aurora.v1.silver.lightcurve.ready' : 'aurora.v1.silver.target_pixel.ready',
         payloadSchema: 'v1.silver.ready',
-        payloadSize: isLC ? '1.24 KB' : '1.38 KB',
+        payloadSize: avgEventBytes > 0 ? `${(avgEventBytes / 1024).toFixed(2)} KB` : 'JSON Envelope',
         consumerAck: 'EXPLICIT_ACK',
         status: 'DELIVERED',
       };
     });
-  }, [materializationPoints]);
+  }, [materializationPoints, emissions, metrics?.event_bytes]);
 
   const filteredEvents = useMemo(() => {
     return allEvents.filter((evt) => {

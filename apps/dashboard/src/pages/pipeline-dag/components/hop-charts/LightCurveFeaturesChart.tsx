@@ -90,7 +90,7 @@ export function LightCurveFeaturesChart({
   // Time-series extraction from Prometheus telemetry
   const liveSeries = useMemo(() => {
     const raw = mergedSeries(telemetry, ['output_rows', 'duration_ms', 'bls_candidates', 'input_records']);
-    if (raw.length >= 2) {
+    if (raw.length > 0) {
       return raw.map((pt, idx) => ({
         timeLabel: pt.timestamp ? clock(pt.timestamp) : `T${idx + 1}`,
         output: pt.output_rows ?? output,
@@ -100,13 +100,19 @@ export function LightCurveFeaturesChart({
       }));
     }
 
-    // Fallback: Structured execution timeline across processing stages for the active run
-    return [
-      { timeLabel: 'T0 (Nạp LC)', output: 0, duration: 0, candidates: 0, rate: 0 },
-      { timeLabel: 'T1 (Moments)', output: Math.round(emitted * 0.4), duration: Math.max(1, durationMs * 0.3), candidates: 0, rate: Math.round(throughputRate * 0.8) },
-      { timeLabel: 'T2 (Quét BLS)', output: Math.round(emitted * 0.85), duration: Math.max(2, durationMs * 0.75), candidates: Math.round(blsCandidates * 0.6), rate: Math.round(throughputRate) },
-      { timeLabel: 'T3 (Cam Kết)', output: emitted, duration: durationMs, candidates: blsCandidates, rate: Math.round(throughputRate) },
-    ];
+    if (emitted > 0) {
+      return [
+        {
+          timeLabel: 'Active Run',
+          output: emitted,
+          duration: durationMs,
+          candidates: blsCandidates,
+          rate: throughputRate > 0 ? Math.round(throughputRate) : emitted,
+        },
+      ];
+    }
+
+    return [];
   }, [telemetry, output, emitted, durationMs, blsCandidates, throughputRate]);
 
   // Quantile profiles for deep inspection when evidence is committed

@@ -968,19 +968,19 @@ func (s *DAGAggregationService) AggregateHopMetrics(ctx context.Context, ticketI
 	case "gold-catalog":
 		s.aggregateGoldCatalogHop(ctx, hop, ticketID)
 	case "gold-lc-features":
-		s.aggregateGoldLCFeaturesHop(ctx, hop, ticketID)
+		s.aggregateGoldLCFeaturesHop(ctx, hop, ticketID, start, end, window)
 	case "gold-bls":
 		s.aggregateGoldBLSHop(ctx, hop, ticketID)
 	case "gold-tpf-evidence":
-		s.aggregateGoldTPFEvidenceHop(ctx, hop, ticketID)
+		s.aggregateGoldTPFEvidenceHop(ctx, hop, ticketID, start, end, window)
 	case "gold-candidate":
-		s.aggregateGoldCandidateHop(ctx, hop, ticketID)
+		s.aggregateGoldCandidateHop(ctx, hop, ticketID, start, end, window)
 	case "gold-parquet":
 		s.aggregateGoldParquetHop(ctx, hop, ticketID)
 	case "gold-index":
 		s.aggregateGoldIndexHop(ctx, hop, ticketID)
 	case "gold-commit":
-		s.aggregateGoldCommitHop(ctx, hop, ticketID)
+		s.aggregateGoldCommitHop(ctx, hop, ticketID, start, end, window)
 	default:
 		s.queryMetric(ctx, hop, "throughput", `sum(rate(aurora_preprocessor_products_total{status="success"}[1m]))`, start, end)
 	}
@@ -1667,7 +1667,7 @@ func dagHops(values map[string]float64, observations map[string][]entity.Monitor
 				"bronze_bytes_rate":    values["bronze_bytes_rate"],
 				"silver_bytes_rate":    values["silver_bytes_rate"],
 			},
-			Telemetry: dagMetricSeries(observations, "throughput", "bronze_bytes_rate", "silver_bytes_rate"),
+			Telemetry: dagMetricSeries(observations, "throughput", "bronze_bytes_rate", "silver_bytes_rate", "lc_silver_bytes_rate", "tpf_silver_bytes_rate"),
 		},
 		{
 			ID:          "checkpoint",
@@ -1793,7 +1793,13 @@ func dagHops(values map[string]float64, observations map[string][]entity.Monitor
 			hops[i].Metrics["pixels_per_frame"] = 121
 			hops[i].Metrics["wcs_astrometry_solved"] = 1
 			hops[i].Metrics["wcs_pixel_scale_arcsec"] = 21.0
-			hops[i].Metrics["finite_pixel_fraction"] = 1.0
+			if frac, ok := values["tpf_finite_pixel_fraction"]; ok && frac > 0 {
+				hops[i].Metrics["finite_pixel_fraction"] = frac
+			} else if progress.TPFFiniteFractionMean > 0 {
+				hops[i].Metrics["finite_pixel_fraction"] = progress.TPFFiniteFractionMean
+			} else {
+				hops[i].Metrics["finite_pixel_fraction"] = 1.0
+			}
 			if values["tpf_input_pixels"] > 0 {
 				hops[i].Metrics["tpf_input_pixels"] = values["tpf_input_pixels"]
 				hops[i].Metrics["tpf_retained_pixels"] = values["tpf_retained_pixels"]
@@ -2347,12 +2353,16 @@ func (s *DAGAggregationService) aggregateGoldCatalogHop(ctx context.Context, hop
 	}
 }
 
-func (s *DAGAggregationService) aggregateGoldLCFeaturesHop(ctx context.Context, hop *entity.DAGHop, ticketID string) {
+func (s *DAGAggregationService) aggregateGoldLCFeaturesHop(ctx context.Context, hop *entity.DAGHop, ticketID string, start, end time.Time, window string) {
 	detail, _, _ := s.aggregateGoldCommon(ctx, hop, ticketID)
 	if detail != nil && detail.ScientificEvidence != nil {
 		hop.LCFeatureEvidence = detail.ScientificEvidence.LCFeatures
 		hop.BLSSearchEvidence = detail.ScientificEvidence.BLSSearch
 	}
+	s.queryMetric(ctx, hop, "output_rows", fmt.Sprintf(`sum(increase(aurora_enrichment_step_records_total{step="lc_features"}[%s]))`, window), start, end)
+	s.queryMetric(ctx, hop, "input_records", fmt.Sprintf(`sum(increase(aurora_enrichment_step_records_total{step="lc_features"}[%s]))`, window), start, end)
+	s.queryMetric(ctx, hop, "duration_ms", fmt.Sprintf(`sum(rate(aurora_enrichment_step_duration_seconds_sum{step="lc_features"}[%s])) / clamp_min(sum(rate(aurora_enrichment_step_duration_seconds_count{step="lc_features"}[%s])), 0.001) * 1000`, window, window), start, end)
+	s.queryMetric(ctx, hop, "bls_candidates", fmt.Sprintf(`sum(increase(aurora_enrichment_bls_candidates_detected_total[%s]))`, window), start, end)
 }
 
 func (s *DAGAggregationService) aggregateGoldBLSHop(ctx context.Context, hop *entity.DAGHop, ticketID string) {
@@ -2362,7 +2372,7 @@ func (s *DAGAggregationService) aggregateGoldBLSHop(ctx context.Context, hop *en
 	}
 }
 
-func (s *DAGAggregationService) aggregateGoldTPFEvidenceHop(ctx context.Context, hop *entity.DAGHop, ticketID string) {
+func (s *DAGAggregationService) aggregateGoldTPFEvidenceHop(ctx context.Context, hop *entity.DAGHop, ticketID string, start, end time.Time, window string) {
 	detail, _, runtime := s.aggregateGoldCommon(ctx, hop, ticketID)
 	if detail != nil && detail.ScientificEvidence != nil {
 		hop.TPFSpatialEvidence = detail.ScientificEvidence.TPFSpatial
@@ -2370,13 +2380,18 @@ func (s *DAGAggregationService) aggregateGoldTPFEvidenceHop(ctx context.Context,
 		hop.Metrics["input_records"] = float64(runtime.Readiness.TPFContexts)
 		hop.Metrics["output_rows"] = float64(runtime.Readiness.TPFContexts)
 	}
+	s.queryMetric(ctx, hop, "output_rows", fmt.Sprintf(`sum(increase(aurora_enrichment_tpf_transit_evidence_total[%s]))`, window), start, end)
+	s.queryMetric(ctx, hop, "duration_ms", fmt.Sprintf(`sum(rate(aurora_enrichment_step_duration_seconds_sum{step="tpf_vetting"}[%s])) / clamp_min(sum(rate(aurora_enrichment_step_duration_seconds_count{step="tpf_vetting"}[%s])), 0.001) * 1000`, window, window), start, end)
 }
 
-func (s *DAGAggregationService) aggregateGoldCandidateHop(ctx context.Context, hop *entity.DAGHop, ticketID string) {
+func (s *DAGAggregationService) aggregateGoldCandidateHop(ctx context.Context, hop *entity.DAGHop, ticketID string, start, end time.Time, window string) {
 	detail, _, _ := s.aggregateGoldCommon(ctx, hop, ticketID)
 	if detail != nil && detail.ScientificEvidence != nil {
 		hop.CandidateAssemblyEvidence = detail.ScientificEvidence.CandidateAssembly
 	}
+	s.queryMetric(ctx, hop, "input_records", fmt.Sprintf(`sum(increase(aurora_enrichment_candidate_assembled_total[%s]))`, window), start, end)
+	s.queryMetric(ctx, hop, "output_rows", fmt.Sprintf(`sum(increase(aurora_enrichment_candidate_assembled_total[%s]))`, window), start, end)
+	s.queryMetric(ctx, hop, "duration_ms", fmt.Sprintf(`sum(rate(aurora_enrichment_step_duration_seconds_sum{step="candidate"}[%s])) / clamp_min(sum(rate(aurora_enrichment_step_duration_seconds_count{step="candidate"}[%s])), 0.001) * 1000`, window, window), start, end)
 }
 
 func (s *DAGAggregationService) aggregateGoldParquetHop(ctx context.Context, hop *entity.DAGHop, ticketID string) {
@@ -2398,7 +2413,7 @@ func (s *DAGAggregationService) aggregateGoldIndexHop(ctx context.Context, hop *
 	}
 }
 
-func (s *DAGAggregationService) aggregateGoldCommitHop(ctx context.Context, hop *entity.DAGHop, ticketID string) {
+func (s *DAGAggregationService) aggregateGoldCommitHop(ctx context.Context, hop *entity.DAGHop, ticketID string, start, end time.Time, window string) {
 	detail, _, runtime := s.aggregateGoldCommon(ctx, hop, ticketID)
 	if detail != nil {
 		if detail.ScientificEvidence != nil {
@@ -2427,4 +2442,7 @@ func (s *DAGAggregationService) aggregateGoldCommitHop(ctx context.Context, hop 
 			hop.Details["snapshot_id"] = runtime.LastSnapshotID
 		}
 	}
+	s.queryMetric(ctx, hop, "parquet_bytes", fmt.Sprintf(`sum(increase(aurora_enrichment_parquet_bytes_total[%s]))`, window), start, end)
+	s.queryMetric(ctx, hop, "output_rows", fmt.Sprintf(`sum(increase(aurora_enrichment_parquet_records_total[%s]))`, window), start, end)
+	s.queryMetric(ctx, hop, "indexed_rows", fmt.Sprintf(`sum(increase(aurora_enrichment_clickhouse_indexed_total[%s]))`, window), start, end)
 }

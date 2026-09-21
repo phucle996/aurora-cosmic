@@ -126,7 +126,7 @@ function StoredFootprintSummary({ metrics, telemetry, points, failures }: { metr
   const recoveredUploadFailures = failures.filter((failure) => failure.recovered).length;
   const sizes = observed.map((point) => point.size_bytes).sort((a, b) => a - b);
   const p50Size = sizes.length > 0 ? quantile(sizes, 0.50) : (total > 0 && footprintBytes > 0 ? footprintBytes / total : 0);
-  const p95Size = sizes.length > 0 ? quantile(sizes, 0.95) : (targetPixels > 0 && footprintBytes > 0 ? Math.min(footprintBytes, 9.0 * 1024 * 1024) : p50Size);
+  const p95Size = sizes.length > 0 ? quantile(sizes, 0.95) : p50Size;
   const funnel = [
     { stage: 'Stored object', count: total, fill: '#64748b' },
     { stage: 'Checkpoint linked', count: linked, fill: '#22d3ee' },
@@ -143,11 +143,26 @@ function StoredFootprintSummary({ metrics, telemetry, points, failures }: { metr
     { kind: 'Light curves', total: lightCurves, verified: lightCurves, incomplete: 0 },
     { kind: 'Target pixels', total: targetPixels, verified: targetPixels, incomplete: 0 },
   ].filter((row) => row.total > 0);
-  const deposition = observed.length > 0 ? buildVerificationTimeline(observed) : recent.map((p) => ({
-    timestamp: p.timestamp,
-    lightcurveMiB: Number(p.silver_bytes_rate ?? 0) * 0.05 / (1024 * 1024),
-    targetPixelMiB: Number(p.silver_bytes_rate ?? 0) * 0.95 / (1024 * 1024),
-  })).filter((p) => p.lightcurveMiB > 0 || p.targetPixelMiB > 0);
+  const deposition = observed.length > 0 ? buildVerificationTimeline(observed) : recent.map((p) => {
+    const totalRate = Number(p.silver_bytes_rate ?? 0);
+    const lcRate = Number(p.lc_silver_bytes_rate ?? 0);
+    const tpfRate = Number(p.tpf_silver_bytes_rate ?? 0);
+    if (lcRate > 0 || tpfRate > 0) {
+      return {
+        timestamp: p.timestamp,
+        lightcurveMiB: lcRate / (1024 * 1024),
+        targetPixelMiB: tpfRate / (1024 * 1024),
+      };
+    }
+    const aggregateTotal = lightCurves + targetPixels;
+    const lcRatio = aggregateTotal > 0 ? lightCurves / aggregateTotal : 0.5;
+    const tpfRatio = aggregateTotal > 0 ? targetPixels / aggregateTotal : 0.5;
+    return {
+      timestamp: p.timestamp,
+      lightcurveMiB: (totalRate * lcRatio) / (1024 * 1024),
+      targetPixelMiB: (totalRate * tpfRatio) / (1024 * 1024),
+    };
+  }).filter((p) => p.lightcurveMiB > 0 || p.targetPixelMiB > 0);
   const anomalies = observed.filter((point) => !point.integrity_verified);
   const isBaseline = total === 0 && failures.length === 0;
   return <div className="space-y-3">
