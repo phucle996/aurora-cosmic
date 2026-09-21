@@ -17,6 +17,9 @@ type fakePrometheusQuerier struct {
 }
 
 func (f *fakePrometheusQuerier) QueryRange(_ context.Context, query string, _ time.Time, _ time.Time, _ time.Duration) ([]entity.MonitoringPoint, error) {
+	if pts, ok := f.points[query]; ok {
+		return pts, nil
+	}
 	for key, pts := range f.points {
 		if strings.Contains(query, key) {
 			return pts, nil
@@ -260,22 +263,22 @@ func TestDAGAggregationQueryCumulativePrometheusMetrics(t *testing.T) {
 
 	prom := &fakePrometheusQuerier{
 		points: map[string][]entity.MonitoringPoint{
-			"sum(increase(aurora_preprocessor_products_total[": {
+			`sum(aurora_preprocessor_products_total)`: {
 				{Timestamp: float64(now.Unix()), Value: 50.0},
 			},
-			"sum(increase(aurora_preprocessor_products_total{kind=\"lightcurve\"}[": {
+			`sum(aurora_preprocessor_products_total{kind="lightcurve"})`: {
 				{Timestamp: float64(now.Unix()), Value: 30.0},
 			},
-			"sum(increase(aurora_preprocessor_products_total{kind=\"target_pixel\"}[": {
+			`sum(aurora_preprocessor_products_total{kind="target_pixel"})`: {
 				{Timestamp: float64(now.Unix()), Value: 20.0},
 			},
-			"sum(increase(aurora_preprocessor_products_total{kind=\"lightcurve\",status=\"success\"}[": {
+			`sum(aurora_preprocessor_products_total{kind="lightcurve",status="success"})`: {
 				{Timestamp: float64(now.Unix()), Value: 28.0},
 			},
-			"sum(increase(aurora_preprocessor_products_total{kind=\"target_pixel\",status=\"success\"}[": {
+			`sum(aurora_preprocessor_products_total{kind="target_pixel",status="success"})`: {
 				{Timestamp: float64(now.Unix()), Value: 18.0},
 			},
-			"sum(increase(aurora_preprocessor_bytes_total{stage=\"silver\"}[": {
+			`sum(aurora_preprocessor_bytes_total{stage="silver"})`: {
 				{Timestamp: float64(now.Unix()), Value: 1048576.0},
 			},
 		},

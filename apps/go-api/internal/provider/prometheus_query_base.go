@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/url"
 	"strconv"
 	"time"
@@ -80,7 +81,7 @@ func (q *PrometheusQueryBase) QueryRange(ctx context.Context, expression string,
 			continue
 		}
 		value, err := strconv.ParseFloat(rawValue, 64)
-		if err == nil {
+		if err == nil && !math.IsNaN(value) && !math.IsInf(value, 0) {
 			points = append(points, entity.MonitoringPoint{
 				Timestamp: timestamp,
 				Value:     value,
