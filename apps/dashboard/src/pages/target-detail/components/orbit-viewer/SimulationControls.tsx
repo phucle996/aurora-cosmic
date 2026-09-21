@@ -7,7 +7,7 @@ import type { PlanetParams } from './types';
 
 export interface SimulationControlsProps {
   isPlaying: boolean;
-  speedMultiplier: number;
+  speedMinPerSec: number;
   showHabitableZone: boolean;
   showTrails: boolean;
   showGrid: boolean;
@@ -15,7 +15,7 @@ export interface SimulationControlsProps {
   planets: PlanetParams[];
   selectedPlanetIndex: number;
   onTogglePlay: () => void;
-  onChangeSpeed: (speed: number) => void;
+  onChangeSpeed: (speedMinPerSec: number) => void;
   onSelectPlanet: (index: number) => void;
   onToggleHabitableZone: () => void;
   onToggleTrails: () => void;
@@ -25,7 +25,7 @@ export interface SimulationControlsProps {
 
 export function SimulationControls({
   isPlaying,
-  speedMultiplier,
+  speedMinPerSec,
   showHabitableZone,
   showTrails,
   showGrid,
@@ -42,8 +42,8 @@ export function SimulationControls({
 }: SimulationControlsProps): JSX.Element {
   return (
     <div className="absolute inset-x-4 bottom-4 z-10 flex flex-wrap items-center justify-between gap-3 border border-border/60 bg-background/90 p-3 px-5 text-xs shadow-none backdrop-blur-xl">
-      {/* Play/Pause & Speed Multiplier */}
-      <div className="flex items-center gap-4">
+      {/* Play/Pause & Speed Slider */}
+      <div className="flex items-center gap-3">
         <Button
           variant={isPlaying ? 'secondary' : 'default'}
           size="sm"
@@ -54,18 +54,21 @@ export function SimulationControls({
           {isPlaying ? 'Pause' : 'Resume'}
         </Button>
 
-        <div className="flex items-center gap-2.5">
-          <span className="text-muted-foreground font-mono text-xs w-12 text-right">
-            {speedMultiplier}x speed
-          </span>
+        <div className="flex items-center gap-2">
           <Slider
-            value={[speedMultiplier]}
+            value={[speedMinPerSec]}
             min={1}
             max={60}
             step={1}
-            onValueChange={(val) => onChangeSpeed(val[0] ?? 8)}
-            className="w-24"
+            onValueChange={(val) => onChangeSpeed(val[0] ?? 1)}
+            className="w-24 sm:w-32"
           />
+          <span
+            className="font-mono text-[11px] text-muted-foreground min-w-[68px] text-right whitespace-nowrap"
+            title={`1 giây ngoài đời = ${speedMinPerSec} phút trong vũ trụ`}
+          >
+            {speedMinPerSec < 60 ? `${speedMinPerSec} phút/s` : '1 giờ/s'}
+          </span>
         </div>
       </div>
 

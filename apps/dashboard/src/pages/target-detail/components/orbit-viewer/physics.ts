@@ -272,9 +272,21 @@ export function derivePlanetarySystemForTarget(
 ): PlanetParams[] {
   if (!target) return [];
 
-	const period = physics?.orbital_period_days;
-	const semiMajorAxis = physics?.semi_major_axis_au;
-	const radiusEarth = physics?.planet_radius_earth;
+	const period = physics?.orbital_period_days ?? _evidence?.bls_period;
+	let semiMajorAxis = physics?.semi_major_axis_au;
+	let radiusEarth = physics?.planet_radius_earth;
+
+	if ((!Number.isFinite(radiusEarth) || radiusEarth! <= 0) && _evidence?.bls_depth && _evidence.bls_depth > 0 && (_evidence?.stellar_radius || target.radius)) {
+		const starR = _evidence?.stellar_radius || target.radius || 1.0;
+		radiusEarth = Math.sqrt(_evidence.bls_depth) * starR * 109.076;
+	}
+
+	if ((!Number.isFinite(semiMajorAxis) || semiMajorAxis! <= 0) && Number.isFinite(period) && period! > 0) {
+		const periodYears = (period as number) / 365.25;
+		const mStar = _evidence?.stellar_mass && _evidence.stellar_mass > 0 ? _evidence.stellar_mass : 1.0;
+		semiMajorAxis = Math.cbrt(mStar * periodYears * periodYears);
+	}
+
 	if (!Number.isFinite(period) || !Number.isFinite(semiMajorAxis) || !Number.isFinite(radiusEarth) || period! <= 0 || semiMajorAxis! <= 0 || radiusEarth! <= 0) {
 		return [];
 	}

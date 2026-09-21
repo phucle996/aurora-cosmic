@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
 
-import type { CameraMode, CameraState, OrbitViewer3DProps, StarParams, TrailPoint } from './types';
+import type { CameraMode, CameraState, OrbitViewer3DProps, PlanetParams, StarParams, TrailPoint } from './types';
 import { calculateHabitableZone, generateStarfield, getStarColor, solveKeplerOrbit } from './physics';
 import {
   createProjector,
@@ -20,6 +20,20 @@ import { SystemHud } from './SystemHud';
 import { CameraControls } from './CameraControls';
 import { SimulationControls } from './SimulationControls';
 
+// 1 second in simulation = 1 second in real physical time at 1x speed
+// 1 day = 86,400 seconds
+const SECONDS_PER_DAY = 86400;
+
+function getPlanetMeanAnomaly(
+  planet: PlanetParams,
+  timeSec: number
+): number {
+  const periodDays = Math.max(0.01, planet.periodDays);
+  const periodSeconds = periodDays * SECONDS_PER_DAY;
+  const orbits = timeSec / periodSeconds;
+  return (planet.initialPhase ?? 0) + orbits * Math.PI * 2;
+}
+
 export function OrbitViewer3D({
   star,
   planets,
@@ -30,9 +44,9 @@ export function OrbitViewer3D({
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Simulation state
+  // Simulation state: speed expressed in simulation minutes per real second
   const [isPlaying, setIsPlaying] = useState(true);
-  const [speedMultiplier, setSpeedMultiplier] = useState(1);
+  const [speedMinPerSec, setSpeedMinPerSec] = useState(5);
   const [showHabitableZone, setShowHabitableZone] = useState(true);
   const showOrbits = true;
   const [showGrid, setShowGrid] = useState(true);
@@ -183,7 +197,7 @@ export function OrbitViewer3D({
       }
 
       if (isPlaying) {
-        timeRef.current += deltaSeconds * speedMultiplier;
+        timeRef.current += deltaSeconds * (speedMinPerSec * 60);
         if (cameraRef.current.autoRotate && !cameraRef.current.isDragging && cameraMode === 'free') {
           cameraRef.current.targetYaw += 0.0012;
         }
@@ -207,9 +221,7 @@ export function OrbitViewer3D({
       const selectedPlanet = planets[selectedPlanetIndex] ?? planets[0];
 
       if (cameraMode === 'focus_planet' && selectedPlanet) {
-        const period = Math.max(0.1, selectedPlanet.periodDays);
-        const orbitalSpeedFactor = Math.pow(10.0 / period, 0.65);
-        const meanAnom = (selectedPlanet.initialPhase ?? 0) + (timeRef.current * orbitalSpeedFactor * 0.12) * Math.PI * 2;
+        const meanAnom = getPlanetMeanAnomaly(selectedPlanet, timeRef.current);
         const ecc = selectedPlanet.eccentricity ?? 0.04;
         const periRad = ((selectedPlanet.periapsisDeg ?? 0) * Math.PI) / 180;
         const { xAu: orbX, zAu: orbZ } = solveKeplerOrbit(meanAnom, ecc, selectedPlanet.semiMajorAxisAu, periRad);
@@ -249,9 +261,7 @@ export function OrbitViewer3D({
       // 5. Update and Draw Trails
       if (showTrails) {
         planets.forEach((p, idx) => {
-          const period = Math.max(0.1, p.periodDays);
-          const orbitalSpeedFactor = Math.pow(10.0 / period, 0.65);
-          const meanAnom = (p.initialPhase ?? 0) + (timeRef.current * orbitalSpeedFactor * 0.12) * Math.PI * 2;
+          const meanAnom = getPlanetMeanAnomaly(p, timeRef.current);
           const ecc = p.eccentricity ?? 0.04;
           const periRad = ((p.periapsisDeg ?? 0) * Math.PI) / 180;
           const { xAu: currentXAu, zAu: currentZAu } = solveKeplerOrbit(meanAnom, ecc, p.semiMajorAxisAu, periRad);
@@ -295,9 +305,7 @@ export function OrbitViewer3D({
       const activePlanetForRuler = planets[selectedPlanetIndex] ?? planets[0];
       const activePlanetProj = activePlanetForRuler
         ? (() => {
-            const period = Math.max(0.1, activePlanetForRuler.periodDays);
-            const orbitalSpeedFactor = Math.pow(10.0 / period, 0.65);
-            const meanAnom = (activePlanetForRuler.initialPhase ?? 0) + (timeRef.current * orbitalSpeedFactor * 0.12) * Math.PI * 2;
+            const meanAnom = getPlanetMeanAnomaly(activePlanetForRuler, timeRef.current);
             const ecc = activePlanetForRuler.eccentricity ?? 0.04;
             const periRad = ((activePlanetForRuler.periapsisDeg ?? 0) * Math.PI) / 180;
             const orbit = solveKeplerOrbit(meanAnom, ecc, activePlanetForRuler.semiMajorAxisAu, periRad);
@@ -307,9 +315,7 @@ export function OrbitViewer3D({
         : null;
 
       planets.forEach((p, idx) => {
-        const period = Math.max(0.1, p.periodDays);
-        const orbitalSpeedFactor = Math.pow(10.0 / period, 0.65);
-        const meanAnom = (p.initialPhase ?? 0) + (timeRef.current * orbitalSpeedFactor * 0.12) * Math.PI * 2;
+        const meanAnom = getPlanetMeanAnomaly(p, timeRef.current);
         const ecc = p.eccentricity ?? 0.04;
         const periRad = ((p.periapsisDeg ?? 0) * Math.PI) / 180;
         const { xAu: orbX, zAu: orbZ, radiusAu } = solveKeplerOrbit(meanAnom, ecc, p.semiMajorAxisAu, periRad);
@@ -370,9 +376,7 @@ export function OrbitViewer3D({
       // 10. Transit Eclipse Ray
       const transitThreshold = 0.05;
       planets.forEach((p) => {
-        const period = Math.max(0.1, p.periodDays);
-        const orbitalSpeedFactor = Math.pow(10.0 / period, 0.65);
-        const meanAnom = (p.initialPhase ?? 0) + (timeRef.current * orbitalSpeedFactor * 0.12) * Math.PI * 2;
+        const meanAnom = getPlanetMeanAnomaly(p, timeRef.current);
         const ecc = p.eccentricity ?? 0.04;
         const periRad = ((p.periapsisDeg ?? 0) * Math.PI) / 180;
         const { xAu: orbX, zAu: orbZ } = solveKeplerOrbit(meanAnom, ecc, p.semiMajorAxisAu, periRad);
@@ -391,9 +395,7 @@ export function OrbitViewer3D({
       // Notify Transit Sync Event for Synchronized Light Curve
       const activePlanet = planets[selectedPlanetIndex] ?? planets[0];
       if (activePlanet && onTimeUpdate && frameAt - previousSyncAt >= 100) {
-        const period = Math.max(0.1, activePlanet.periodDays);
-        const orbitalSpeedFactor = Math.pow(10.0 / period, 0.65);
-        const meanAnom = (activePlanet.initialPhase ?? 0) + (timeRef.current * orbitalSpeedFactor * 0.12) * Math.PI * 2;
+        const meanAnom = getPlanetMeanAnomaly(activePlanet, timeRef.current);
         const ecc = activePlanet.eccentricity ?? 0.04;
         const periRad = ((activePlanet.periapsisDeg ?? 0) * Math.PI) / 180;
         const { xAu: orbX, zAu: orbZ } = solveKeplerOrbit(meanAnom, ecc, activePlanet.semiMajorAxisAu, periRad);
@@ -427,7 +429,7 @@ export function OrbitViewer3D({
     stableStar,
     planets,
     isPlaying,
-    speedMultiplier,
+    speedMinPerSec,
     showHabitableZone,
     showOrbits,
     showGrid,
@@ -524,7 +526,7 @@ export function OrbitViewer3D({
       {/* Bottom Simulation Controls */}
       <SimulationControls
         isPlaying={isPlaying}
-        speedMultiplier={speedMultiplier}
+        speedMinPerSec={speedMinPerSec}
         showHabitableZone={showHabitableZone}
         showTrails={showTrails}
         showGrid={showGrid}
@@ -532,7 +534,7 @@ export function OrbitViewer3D({
         planets={planets}
         selectedPlanetIndex={selectedPlanetIndex}
         onTogglePlay={() => setIsPlaying(!isPlaying)}
-        onChangeSpeed={setSpeedMultiplier}
+        onChangeSpeed={setSpeedMinPerSec}
         onSelectPlanet={(idx) => {
           setSelectedPlanetIndex(idx);
           if (cameraMode === 'focus_planet') focusPlanet();

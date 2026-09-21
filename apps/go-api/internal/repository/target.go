@@ -299,6 +299,7 @@ LEFT JOIN gf ON gf.tic_id = t.tic_id AND gf.sector = t.sector
 LEFT JOIN cp ON cp.tic_id = t.tic_id AND cp.sector = t.sector
 LEFT JOIN ap ON ap.tic_id = t.tic_id AND ap.sector = t.sector
 WHERE t.tic_id = ?` + sectorFilter + `
+ORDER BY t.sector DESC
 LIMIT 1`
 
 	var targets []entity.Target

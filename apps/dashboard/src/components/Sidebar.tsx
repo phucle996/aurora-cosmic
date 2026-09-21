@@ -146,8 +146,8 @@ export default function Sidebar(): JSX.Element {
                 </SidebarMenuSub>
               </SidebarMenuItem>
               <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={location.pathname.startsWith('/research-factory/')} tooltip="Scientific Research Factory" className="font-medium">
-                  <NavLink to="/research-factory">
+                <SidebarMenuButton asChild isActive={location.pathname.startsWith('/research-factory')} tooltip="Scientific Research Factory" className="font-medium">
+                  <NavLink to="/research-factory/discovery">
                     <Microscope className="size-4" aria-hidden="true" />
                     <span>Scientific Research Factory</span>
                   </NavLink>

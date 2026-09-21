@@ -26,7 +26,6 @@ const EnrichmentPage = lazy(() => import('@/pages/enrichment/page'));
 const PipelineDagPage = lazy(() => import('@/pages/pipeline-dag/page'));
 const LineageExplorerPage = lazy(() => import('@/pages/lineage-explorer/page'));
 const RunnerTicketsPage = lazy(() => import('@/pages/runner-tickets/page'));
-const ResearchOverviewPage = lazy(() => import('@/pages/research-overview/page'));
 const TargetDiscoveryPage = lazy(() => import('@/pages/target-discovery/page'));
 const CandidateReviewPage = lazy(() => import('@/pages/candidate-review/page'));
 
@@ -59,13 +58,13 @@ export default function App(): JSX.Element {
                     <Route path="/data-factory/history" element={<Navigate to="/ticket" replace />} />
                     <Route path="/data-factory/tickets" element={<Navigate to="/ticket" replace />} />
                     <Route path="/data-factory/runs" element={<Navigate to="/ticket" replace />} />
-                    <Route path="/research-factory" element={<ResearchOverviewPage />} />
+                    <Route path="/research-factory" element={<Navigate to="/research-factory/discovery" replace />} />
                     <Route path="/research-factory/discovery" element={<TargetDiscoveryPage />} />
                     <Route path="/research-factory/workbench" element={<Navigate to="/research-factory/discovery" replace />} />
                     <Route path="/research-factory/workbench/:ticId" element={<TargetDetailPage />} />
                     <Route path="/research-factory/candidates" element={<CandidateReviewPage />} />
                     <Route path="/research-factory/candidates/:predictionId" element={<CandidateDetailPage />} />
-                    <Route path="/research-factory/history" element={<Navigate to="/research-factory" replace />} />
+                    <Route path="/research-factory/history" element={<Navigate to="/research-factory/discovery" replace />} />
                     <Route path="/research-factory/transit-candidates" element={<Navigate to="/research-factory/candidates" replace />} />
                     <Route path="/research-factory/transit-candidates/:predictionId" element={<CandidateDetailPage />} />
                     <Route path="/research-factory/vetting" element={<Navigate to="/research-factory/candidates" replace />} />

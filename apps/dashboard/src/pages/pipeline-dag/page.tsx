@@ -15,7 +15,7 @@ import { useSearchParams } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import type { GoldControlOverview } from '@/pages/enrichment/types';
-import { RunnerTicketBar } from '@/components/RunnerTicketBar';
+import { RunnerTicketBar } from '@/pages/runner-tickets/components/RunnerTicketBar';
 import { useRunnerTicket } from '@/lib/session';
 import type { PipelineRunDetail } from '@/pages/runner-tickets/types';
 import { HopDetailDrawer } from './components/HopDetailDrawer';

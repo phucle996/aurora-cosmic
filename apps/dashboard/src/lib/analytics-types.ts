@@ -35,6 +35,11 @@ export type CandidateEvidence = {
   logg: number;
   matched_toi_id: string;
   toi_match_status: string;
+  median_flux_err?: number;
+  flux_std?: number;
+  flux_amplitude?: number;
+  pixel_mad_median?: number;
+  transit_deficit_center_offset?: number;
 };
 
 export type PlanetPhysics = {
@@ -97,8 +102,8 @@ export type CandidateReview = {
   updated_at: string;
 };
 
-export type TargetRecord = {
-	gold_snapshot_id: string;
+export type Target = {
+  gold_snapshot_id: string;
   tic_id: number;
   tess_mag: number;
   ra: number;
@@ -122,10 +127,15 @@ export type TargetRecord = {
 };
 
 export type TargetDetailResponse = {
-  target: TargetRecord;
+  target: Target;
   planet_physics?: PlanetPhysics;
   habitability?: HabitabilityAssessment;
   evidence?: CandidateEvidence;
 };
 
-export type LightcurveResponse = { tic_id: number; sector: number; time: number[]; flux: number[] };
+export type LightcurveResponse = {
+  tic_id: number;
+  sector: number;
+  time: number[];
+  flux: number[];
+};
