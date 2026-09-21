@@ -5,7 +5,6 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Cell,
   Legend,
   ResponsiveContainer,
   Tooltip,
@@ -143,9 +142,8 @@ export function TPFQualityWCSChart({
                       key={`${r}-${c}`}
                       onMouseEnter={() => setHoveredPixel({ r, c })}
                       onMouseLeave={() => setHoveredPixel(null)}
-                      className={`aspect-square rounded-[2px] border transition-all cursor-pointer flex items-center justify-center text-[7px] font-mono ${cellColor} ${
-                        isHovered ? 'ring-2 ring-white scale-110 z-10' : ''
-                      }`}
+                      className={`aspect-square rounded-[2px] border transition-all cursor-pointer flex items-center justify-center text-[7px] font-mono ${cellColor} ${isHovered ? 'ring-2 ring-white scale-110 z-10' : ''
+                        }`}
                       title={`Row ${r}, Col ${c}: ${role}`}
                     >
                       {r === 5 && c === 5 ? '★' : ''}

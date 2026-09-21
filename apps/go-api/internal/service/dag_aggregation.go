@@ -1063,6 +1063,53 @@ func (s *DAGAggregationService) aggregateLCTransformHop(ctx context.Context, hop
 	s.queryMetric(ctx, hop, "lc_output_total", fmt.Sprintf(`sum(increase(aurora_preprocessor_science_samples_total{kind="lightcurve",outcome="output"}[%s]))`, window), start, end)
 	s.queryMetric(ctx, hop, "lc_outlier_removed_total", fmt.Sprintf(`sum(increase(aurora_preprocessor_science_samples_total{kind="lightcurve",outcome="outlier_removed"}[%s]))`, window), start, end)
 	s.queryMetric(ctx, hop, "completed_lightcurves", fmt.Sprintf(`sum(increase(aurora_preprocessor_products_total{kind="lightcurve",status="success"}[%s]))`, window), start, end)
+
+	// Round completed lightcurves and fallback to total counter if needed
+	if val, ok := hop.Metrics["completed_lightcurves"]; ok {
+		hop.Metrics["completed_lightcurves"] = math.Round(val)
+	}
+	if hop.Metrics["completed_lightcurves"] == 0 {
+		s.queryMetric(ctx, hop, "completed_lightcurves", `sum(aurora_preprocessor_products_total{kind="lightcurve",status="success"})`, start, end)
+		if val, ok := hop.Metrics["completed_lightcurves"]; ok {
+			hop.Metrics["completed_lightcurves"] = math.Round(val)
+		}
+	}
+
+	// Cadence totals & retention breakdown
+	if hop.Metrics["lc_output_total"] == 0 {
+		s.queryMetric(ctx, hop, "lc_output_total", `sum(aurora_preprocessor_science_samples_total{kind="lightcurve",outcome="output"})`, start, end)
+	}
+	if hop.Metrics["lc_outlier_removed_total"] == 0 {
+		s.queryMetric(ctx, hop, "lc_outlier_removed_total", `sum(aurora_preprocessor_science_samples_total{kind="lightcurve",outcome="outlier_removed"})`, start, end)
+	}
+	retained := hop.Metrics["lc_output_total"]
+	outliers := hop.Metrics["lc_outlier_removed_total"]
+	hop.Metrics["lc_retained_samples"] = retained
+	hop.Metrics["lc_outlier_removed"] = outliers
+	hop.Metrics["lc_preclip_samples"] = retained + outliers
+
+	// Robust fallback for scatter quantiles & durable means if live rate is 0/NaN
+	if hop.Metrics["lc_scatter_before_p50"] == 0 || math.IsNaN(hop.Metrics["lc_scatter_before_p50"]) {
+		s.queryMetric(ctx, hop, "lc_scatter_before_p50", `histogram_quantile(0.50, sum by (le) (aurora_preprocessor_lc_normalized_scatter_ppm_bucket{phase="before_clip"}))`, start, end)
+	}
+	if hop.Metrics["lc_scatter_after_p50"] == 0 || math.IsNaN(hop.Metrics["lc_scatter_after_p50"]) {
+		s.queryMetric(ctx, hop, "lc_scatter_after_p50", `histogram_quantile(0.50, sum by (le) (aurora_preprocessor_lc_normalized_scatter_ppm_bucket{phase="after_clip"}))`, start, end)
+	}
+	s.queryMetric(ctx, hop, "lc_scatter_before_p95", `histogram_quantile(0.95, sum by (le) (aurora_preprocessor_lc_normalized_scatter_ppm_bucket{phase="before_clip"}))`, start, end)
+	s.queryMetric(ctx, hop, "lc_scatter_after_p95", `histogram_quantile(0.95, sum by (le) (aurora_preprocessor_lc_normalized_scatter_ppm_bucket{phase="after_clip"}))`, start, end)
+	s.queryMetric(ctx, hop, "lc_scatter_before_mean_durable", `sum(aurora_preprocessor_lc_normalized_scatter_ppm_sum{phase="before_clip"}) / sum(aurora_preprocessor_lc_normalized_scatter_ppm_count{phase="before_clip"})`, start, end)
+	s.queryMetric(ctx, hop, "lc_scatter_after_mean_durable", `sum(aurora_preprocessor_lc_normalized_scatter_ppm_sum{phase="after_clip"}) / sum(aurora_preprocessor_lc_normalized_scatter_ppm_count{phase="after_clip"})`, start, end)
+	s.queryMetric(ctx, hop, "lc_scatter_products", `sum(aurora_preprocessor_lc_normalized_scatter_ppm_count{phase="after_clip"})`, start, end)
+
+	// Scatter distribution histogram buckets
+	s.queryMetric(ctx, hop, "lc_scatter_bucket_le_100", `sum(aurora_preprocessor_lc_normalized_scatter_ppm_bucket{phase="after_clip",le="100"})`, start, end)
+	s.queryMetric(ctx, hop, "lc_scatter_bucket_le_300", `sum(aurora_preprocessor_lc_normalized_scatter_ppm_bucket{phase="after_clip",le="300"})`, start, end)
+	s.queryMetric(ctx, hop, "lc_scatter_bucket_le_1000", `sum(aurora_preprocessor_lc_normalized_scatter_ppm_bucket{phase="after_clip",le="1000"})`, start, end)
+	s.queryMetric(ctx, hop, "lc_scatter_bucket_le_3000", `sum(aurora_preprocessor_lc_normalized_scatter_ppm_bucket{phase="after_clip",le="3000"})`, start, end)
+	s.queryMetric(ctx, hop, "lc_scatter_bucket_le_10000", `sum(aurora_preprocessor_lc_normalized_scatter_ppm_bucket{phase="after_clip",le="10000"})`, start, end)
+	s.queryMetric(ctx, hop, "lc_scatter_bucket_le_30000", `sum(aurora_preprocessor_lc_normalized_scatter_ppm_bucket{phase="after_clip",le="30000"})`, start, end)
+	s.queryMetric(ctx, hop, "lc_scatter_bucket_le_100000", `sum(aurora_preprocessor_lc_normalized_scatter_ppm_bucket{phase="after_clip",le="100000"})`, start, end)
+	s.queryMetric(ctx, hop, "lc_scatter_bucket_le_1000000", `sum(aurora_preprocessor_lc_normalized_scatter_ppm_bucket{phase="after_clip",le="1000000"})`, start, end)
 }
 
 func (s *DAGAggregationService) aggregateLCParquetHop(ctx context.Context, hop *entity.DAGHop, start, end time.Time, window string) {
@@ -1070,6 +1117,9 @@ func (s *DAGAggregationService) aggregateLCParquetHop(ctx context.Context, hop *
 	s.queryMetric(ctx, hop, "lc_duration_p95", `histogram_quantile(0.95, sum by (le) (rate(aurora_preprocessor_processing_duration_seconds_bucket{kind="lightcurve"}[5m])))`, start, end)
 	s.queryMetric(ctx, hop, "silver_bytes", fmt.Sprintf(`sum(increase(aurora_preprocessor_bytes_total{stage="silver",kind="lightcurve"}[%s]))`, window), start, end)
 	s.queryMetric(ctx, hop, "completed_lightcurves", fmt.Sprintf(`sum(increase(aurora_preprocessor_products_total{kind="lightcurve",status="success"}[%s]))`, window), start, end)
+	if val, ok := hop.Metrics["completed_lightcurves"]; ok {
+		hop.Metrics["completed_lightcurves"] = math.Round(val)
+	}
 }
 
 func (s *DAGAggregationService) aggregateTPFTransformHop(ctx context.Context, hop *entity.DAGHop, start, end time.Time, window string) {
@@ -1081,6 +1131,35 @@ func (s *DAGAggregationService) aggregateTPFTransformHop(ctx context.Context, ho
 	s.queryMetric(ctx, hop, "tpf_boundary_jump_p95", `histogram_quantile(0.95, sum by (le) (rate(aurora_preprocessor_tpf_chunk_boundary_jump_ppm_bucket{quantile="p95"}[15m])))`, start, end)
 
 	s.queryMetric(ctx, hop, "completed_target_pixels", fmt.Sprintf(`sum(increase(aurora_preprocessor_products_total{kind="target_pixel",status="success"}[%s]))`, window), start, end)
+
+	// Round completed target pixels and fallback to total counter if needed
+	if val, ok := hop.Metrics["completed_target_pixels"]; ok {
+		hop.Metrics["completed_target_pixels"] = math.Round(val)
+	}
+	if hop.Metrics["completed_target_pixels"] == 0 {
+		s.queryMetric(ctx, hop, "completed_target_pixels", `sum(aurora_preprocessor_products_total{kind="target_pixel",status="success"})`, start, end)
+		if val, ok := hop.Metrics["completed_target_pixels"]; ok {
+			hop.Metrics["completed_target_pixels"] = math.Round(val)
+		}
+	}
+
+	// Normalization pixel totals
+	s.queryMetric(ctx, hop, "tpf_input_pixels", `sum(aurora_preprocessor_tpf_normalization_pixels_total{outcome="input"})`, start, end)
+	s.queryMetric(ctx, hop, "tpf_retained_pixels", `sum(aurora_preprocessor_tpf_normalization_pixels_total{outcome="retained"})`, start, end)
+	s.queryMetric(ctx, hop, "tpf_invalid_reference_pixels", `sum(aurora_preprocessor_tpf_normalization_pixels_total{outcome="invalid_reference"})`, start, end)
+	s.queryMetric(ctx, hop, "tpf_nonfinite_pixels", `sum(aurora_preprocessor_tpf_normalization_pixels_total{outcome="nonfinite_input"})`, start, end)
+
+	// Fallbacks for TPF scatter quantiles, drift and jump
+	if hop.Metrics["tpf_scatter_p50"] == 0 || math.IsNaN(hop.Metrics["tpf_scatter_p50"]) {
+		s.queryMetric(ctx, hop, "tpf_scatter_p50", `histogram_quantile(0.50, sum by (le) (aurora_preprocessor_tpf_pixel_scatter_mad_ppm_bucket{quantile="p50"}))`, start, end)
+	}
+	s.queryMetric(ctx, hop, "tpf_scatter_p95", `histogram_quantile(0.95, sum by (le) (aurora_preprocessor_tpf_pixel_scatter_mad_ppm_bucket{quantile="p95"}))`, start, end)
+	if hop.Metrics["tpf_reference_drift_p95"] == 0 || math.IsNaN(hop.Metrics["tpf_reference_drift_p95"]) {
+		s.queryMetric(ctx, hop, "tpf_reference_drift_p95", `histogram_quantile(0.95, sum by (le) (aurora_preprocessor_tpf_reference_drift_ppm_bucket{quantile="p95"}))`, start, end)
+	}
+	if hop.Metrics["tpf_boundary_jump_p95"] == 0 || math.IsNaN(hop.Metrics["tpf_boundary_jump_p95"]) {
+		s.queryMetric(ctx, hop, "tpf_boundary_jump_p95", `histogram_quantile(0.95, sum by (le) (aurora_preprocessor_tpf_chunk_boundary_jump_ppm_bucket{quantile="p95"}))`, start, end)
+	}
 }
 
 func (s *DAGAggregationService) aggregateTPFParquetHop(ctx context.Context, hop *entity.DAGHop, start, end time.Time, window string) {

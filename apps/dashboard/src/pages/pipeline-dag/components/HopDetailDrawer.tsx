@@ -26,6 +26,7 @@ import {
   GoldPhaseChart,
   GoldMaterializationChart,
   GoldProjectionChart,
+  LCDetrendChart,
   LightCurveFeaturesChart,
   PairingReadinessChart,
   ProductDemuxChart,
@@ -34,6 +35,7 @@ import {
   SilverMaterializationChart,
   TPFQualityWCSChart,
   TPFSpatialEvidenceChart,
+  TPFTransformChart,
 } from './hop-charts';
 
 // Hàm render chart tương ứng với từng Hop id kèm mode, metrics và số tệp cộng dồn
@@ -72,9 +74,9 @@ function renderHopChart(
     case 'transform':
       return <ResidualsDistributionChart metrics={metrics} telemetry={telemetry} scatterPoints={scatterPoints} tpfTransformPoints={tpfTransformPoints} />;
     case 'lc-transform':
-      return <ResidualsDistributionChart metrics={metrics} telemetry={telemetry} focus="lightcurve" scatterPoints={scatterPoints} />;
+      return <LCDetrendChart metrics={metrics} telemetry={telemetry} scatterPoints={scatterPoints} />;
     case 'tpf-transform':
-      return <ResidualsDistributionChart metrics={metrics} telemetry={telemetry} focus="target-pixel" tpfTransformPoints={tpfTransformPoints} />;
+      return <TPFTransformChart metrics={metrics} telemetry={telemetry} tpfTransformPoints={tpfTransformPoints} />;
     case 'silver':
       return <SilverMaterializationChart metrics={metrics} telemetry={telemetry} materializationPoints={materializationPoints} encodeFailures={encodeFailures} silverFailures={silverFailures} />;
     case 'lc-parquet':
