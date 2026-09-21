@@ -18,19 +18,19 @@ const (
 	preflightNegativeDiversityTarget            int64 = 300
 )
 
-// ModelNewClickHouse implements repo.ModelNewRepository for Model domain workflows.
-type ModelNewClickHouse struct {
+// ModelClickHouse implements repo.ModelRepository for Model domain workflows.
+type ModelClickHouse struct {
 	client *clickhouse.Client
 }
 
-// NewModelNewClickHouse initializes a new ModelNewClickHouse repository instance.
-func NewModelNewClickHouse(client *clickhouse.Client) repo.ModelNewRepository {
-	return &ModelNewClickHouse{client: client}
+// NewModelClickHouse initializes a new ModelClickHouse repository instance.
+func NewModelClickHouse(client *clickhouse.Client) repo.ModelRepository {
+	return &ModelClickHouse{client: client}
 }
 
 // TrainingPreflight executes a CTE-first analytical query across Candidate Gold snapshots
 // in ClickHouse to verify supervised label coverage, class balance, and independent target diversity.
-func (r *ModelNewClickHouse) TrainingPreflight(ctx context.Context, snapshotIDs []string) (*entity.TrainingPreflight, error) {
+func (r *ModelClickHouse) TrainingPreflight(ctx context.Context, snapshotIDs []string) (*entity.TrainingPreflight, error) {
 	preflight := &entity.TrainingPreflight{
 		SnapshotIDs:                        append([]string(nil), snapshotIDs...),
 		Tier:                               "BLOCKED",
@@ -90,7 +90,7 @@ func (r *ModelNewClickHouse) TrainingPreflight(ctx context.Context, snapshotIDs 
 }
 
 // ListTrainingSnapshots retrieves the latest indexed Gold snapshots with candidate cohort counts from ClickHouse.
-func (r *ModelNewClickHouse) ListTrainingSnapshots(ctx context.Context, limit int) ([]entity.ModelTrainingSnapshot, error) {
+func (r *ModelClickHouse) ListTrainingSnapshots(ctx context.Context, limit int) ([]entity.ModelTrainingSnapshot, error) {
 	query := `WITH cohort_counts AS (
 		SELECT
 			snapshot_id,

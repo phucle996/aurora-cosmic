@@ -12,6 +12,7 @@ import (
 
 	"go-api/internal/domain/entity"
 	"go-api/internal/domain/service"
+	"go-api/internal/provider"
 	"go-api/internal/taxonomy"
 
 	"github.com/gin-gonic/gin"
@@ -21,18 +22,18 @@ const maxSnapshotsPerPreflight = 200
 
 var ticketIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_\-]+$`)
 
-// ModelNewHandler handles HTTP transport for Model domain workflows.
-type ModelNewHandler struct {
-	model service.ModelNew
+// ModelHandler handles HTTP transport for Model domain workflows.
+type ModelHandler struct {
+	model service.Model
 }
 
-// NewModelNewHandler initializes a new ModelNewHandler instance.
-func NewModelNewHandler(model service.ModelNew) *ModelNewHandler {
-	return &ModelNewHandler{model: model}
+// NewModelHandler initializes a new ModelHandler instance.
+func NewModelHandler(model service.Model) *ModelHandler {
+	return &ModelHandler{model: model}
 }
 
 // TrainingPreflight validates request input and handles GET requests to evaluate preflight conditions.
-func (h *ModelNewHandler) TrainingPreflight(c *gin.Context) {
+func (h *ModelHandler) TrainingPreflight(c *gin.Context) {
 	rawIDs := c.QueryArray("snapshot_id")
 	if len(rawIDs) == 0 {
 		raw := c.Query("snapshot_ids")
@@ -89,7 +90,7 @@ func (h *ModelNewHandler) TrainingPreflight(c *gin.Context) {
 }
 
 // ListSnapshots handles GET requests to retrieve committed Gold snapshots available for candidate model training.
-func (h *ModelNewHandler) ListSnapshots(c *gin.Context) {
+func (h *ModelHandler) ListSnapshots(c *gin.Context) {
 	limit := 100
 	if rawLimit := strings.TrimSpace(c.Query("limit")); rawLimit != "" {
 		if parsed, err := strconv.Atoi(rawLimit); err == nil {
@@ -131,7 +132,7 @@ type startTrainingRequest struct {
 }
 
 // StartTraining validates JSON parameters and dispatches a model training run.
-func (h *ModelNewHandler) StartTraining(c *gin.Context) {
+func (h *ModelHandler) StartTraining(c *gin.Context) {
 	var req startTrainingRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid JSON payload: %s", err.Error())})
@@ -275,7 +276,7 @@ func (h *ModelNewHandler) StartTraining(c *gin.Context) {
 }
 
 // ControlTraining handles intervention signals (cancel or checkpoint) for active training runs.
-func (h *ModelNewHandler) ControlTraining(c *gin.Context) {
+func (h *ModelHandler) ControlTraining(c *gin.Context) {
 	var req entity.TrainingControlSpec
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "malformed JSON: expected ticket_id and action"})
@@ -312,7 +313,7 @@ func (h *ModelNewHandler) ControlTraining(c *gin.Context) {
 }
 
 // GetActiveTraining retrieves the current soft state (progress, metrics, logs) for an active training run.
-func (h *ModelNewHandler) GetActiveTraining(c *gin.Context) {
+func (h *ModelHandler) GetActiveTraining(c *gin.Context) {
 	ticketID := strings.TrimSpace(c.Query("ticket_id"))
 	if ticketID != "" && (!ticketIDPattern.MatchString(ticketID) || len(ticketID) > 128) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid ticket_id format"})
@@ -338,3 +339,36 @@ func (h *ModelNewHandler) GetActiveTraining(c *gin.Context) {
 		"state":  state,
 	})
 }
+
+// ListModels handles GET requests to retrieve registered models/packages in Model Registry.
+func (h *ModelHandler) ListModels(c *gin.Context) {
+	models, err := h.model.ListModels(c.Request.Context(), strings.TrimSpace(c.Query("task")))
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "model storage is unavailable"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"models": models,
+		"count":  len(models),
+		"source": "minio-runtime-registry",
+	})
+}
+
+// GetModelEvaluation handles GET requests to retrieve verified evaluation evidence for a specific package.
+func (h *ModelHandler) GetModelEvaluation(c *gin.Context) {
+	evaluation, err := h.model.GetModelEvaluation(c.Request.Context(), strings.TrimSpace(c.Param("runtime_package_id")))
+	if err != nil {
+		if errors.Is(err, provider.ErrObjectNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "model evaluation evidence was not found"})
+			return
+		}
+		if errors.Is(err, taxonomy.ErrInvalidRequest) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "model evaluation storage is unavailable"})
+		return
+	}
+	c.JSON(http.StatusOK, evaluation)
+}
+

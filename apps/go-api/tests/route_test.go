@@ -54,64 +54,17 @@ func (fakeTarget) GetLightcurve(context.Context, int64, int, entity.PageRequest)
 	return &entity.Lightcurve{TICID: 101, Time: []float64{}, Flux: []float64{}}, nil
 }
 
-type fakeModels struct{}
+type fakeModel struct{}
 
-func (fakeModels) ListModels(context.Context, string) ([]entity.Model, error) {
-	return []entity.Model{}, nil
-}
-
-func (fakeModels) GetModelEvaluation(context.Context, string) (*entity.ModelEvaluation, error) {
-	return &entity.ModelEvaluation{RuntimePackageID: "runtime-test", EvaluationRunID: "eval-test"}, nil
-}
-
-func (fakeModels) ListTrainingReviews(context.Context, int) ([]entity.TrainingReview, error) {
-	return nil, nil
-}
-
-func (fakeModels) ListTrainingReviewQueue(context.Context, []string, entity.PageRequest) (entity.Page[entity.TrainingReviewQueueItem], error) {
-	return entity.Page[entity.TrainingReviewQueueItem]{Items: []entity.TrainingReviewQueueItem{}, Limit: 20}, nil
-}
-
-func (fakeModels) TrainingReadiness(context.Context, []string) (*entity.TrainingReadiness, error) {
-	return &entity.TrainingReadiness{Ready: true}, nil
-}
-
-func (fakeModels) OverrideTrainingLabel(context.Context, entity.TrainingLabelOverride) error {
-	return nil
-}
-
-func (fakeModels) StartTrainingJob(context.Context, entity.TrainingJobSpec) (*entity.TrainingJobResult, error) {
-	return &entity.TrainingJobResult{
-		JobID:  "train-test-1",
-		Task:   "candidate_vetting",
-		Status: "queued",
-	}, nil
-}
-
-func (fakeModels) SetModelDeployment(context.Context, string, string, bool, string) (*entity.ModelDeploymentResult, error) {
-	return &entity.ModelDeploymentResult{}, nil
-}
-
-type fakeInference struct{}
-
-func (fakeInference) ListJobs(context.Context, string, string) ([]entity.InferenceJob, error) {
-	return []entity.InferenceJob{}, nil
-}
-func (fakeInference) RetryJob(context.Context, string) (entity.InferenceJobManifest, map[string]any, error) {
-	return entity.InferenceJobManifest{}, nil, nil
-}
-
-type fakeModelNew struct{}
-
-func (fakeModelNew) TrainingPreflight(context.Context, []string) (*entity.TrainingPreflight, error) {
+func (fakeModel) TrainingPreflight(context.Context, []string) (*entity.TrainingPreflight, error) {
 	return &entity.TrainingPreflight{Tier: "EXPERIMENTAL"}, nil
 }
 
-func (fakeModelNew) ListTrainingSnapshots(context.Context, int) ([]entity.ModelTrainingSnapshot, error) {
+func (fakeModel) ListTrainingSnapshots(context.Context, int) ([]entity.ModelTrainingSnapshot, error) {
 	return []entity.ModelTrainingSnapshot{}, nil
 }
 
-func (fakeModelNew) StartTraining(context.Context, entity.StartTrainingSpec) (*entity.TrainingResult, error) {
+func (fakeModel) StartTraining(context.Context, entity.StartTrainingSpec) (*entity.TrainingResult, error) {
 	return &entity.TrainingResult{
 		TicketID: "train-test-1",
 		Task:     "candidate_vetting",
@@ -119,7 +72,7 @@ func (fakeModelNew) StartTraining(context.Context, entity.StartTrainingSpec) (*e
 	}, nil
 }
 
-func (fakeModelNew) ControlTraining(context.Context, entity.TrainingControlSpec) (*entity.TrainingControlResult, error) {
+func (fakeModel) ControlTraining(context.Context, entity.TrainingControlSpec) (*entity.TrainingControlResult, error) {
 	return &entity.TrainingControlResult{
 		TicketID: "RUN-TEST-001",
 		Action:   "cancel",
@@ -127,20 +80,29 @@ func (fakeModelNew) ControlTraining(context.Context, entity.TrainingControlSpec)
 	}, nil
 }
 
-func (fakeModelNew) GetActiveTraining(context.Context, string) (*entity.TrainingActiveState, error) {
+func (fakeModel) GetActiveTraining(context.Context, string) (*entity.TrainingActiveState, error) {
 	return &entity.TrainingActiveState{
 		TicketID: "RUN-TEST-001",
 		Status:   "running",
 	}, nil
 }
 
-func (fakeModelNew) ObserveTrainingProgress(context.Context, map[string]any) error {
+func (fakeModel) ObserveTrainingProgress(context.Context, map[string]any) error {
 	return nil
 }
 
-func (fakeModelNew) ObserveTrainingLog(context.Context, string, entity.TrainingLogEntry) error {
+func (fakeModel) ObserveTrainingLog(context.Context, string, entity.TrainingLogEntry) error {
 	return nil
 }
+
+func (fakeModel) ListModels(context.Context, string) ([]entity.Model, error) {
+	return []entity.Model{}, nil
+}
+
+func (fakeModel) GetModelEvaluation(context.Context, string) (*entity.ModelEvaluation, error) {
+	return &entity.ModelEvaluation{RuntimePackageID: "runtime-test", EvaluationRunID: "eval-test"}, nil
+}
+
 
 type fakeReadiness struct{}
 
@@ -267,8 +229,7 @@ func newTestRouter() http.Handler {
 		TargetHandler:            handler.NewTargetHandler(fakeTarget{}),
 		CandidateHandler:         handler.NewCandidateHandler(fakeCandidate{}),
 		AnomalyHandler:           handler.NewAnomalyHandler(fakeAnomaly{}),
-		ModelsHandler:            handler.NewModelsHandler(fakeModels{}, fakeInference{}),
-		ModelNewHandler:          handler.NewModelNewHandler(fakeModelNew{}),
+		ModelHandler:             handler.NewModelHandler(fakeModel{}),
 		SystemHandler:            handler.NewSystemHandler(fakeReadiness{}),
 		MonitoringHandler:        handler.NewMonitoringHandler(fakeMonitoring{}),
 		DAGAggregationHandler:    handler.NewDAGAggregationHandler(fakeDAGAggregation{}),

@@ -16,8 +16,7 @@ type Module struct {
 	TargetHandler            *handler.TargetHandler
 	CandidateHandler         *handler.CandidateHandler
 	AnomalyHandler           *handler.AnomalyHandler
-	ModelsHandler            *handler.ModelsHandler
-	ModelNewHandler          *handler.ModelNewHandler
+	ModelHandler             *handler.ModelHandler
 	LabelingHandler          *handler.LabelingHandler
 	SystemHandler            *handler.SystemHandler
 	MonitoringHandler        *handler.MonitoringHandler
@@ -151,37 +150,27 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	}
 
 	// =========================================================================
-	// 7. ML Models, Training & Inference Branch
+	// 7. ML Models & Training Branch
 	// =========================================================================
-	trainingRepo := repository.NewTrainingClickHouse(infra.ClickHouse)
-	if trainingRepo == nil {
-		return nil, fmt.Errorf("repository TrainingClickHouse is nil")
+	modelRepo := repository.NewModelClickHouse(infra.ClickHouse)
+	if modelRepo == nil {
+		return nil, fmt.Errorf("repository ModelClickHouse is nil")
 	}
-	modelsService := service.NewModelsService(objectRepo, infra.NATS, trainingRepo)
-	if modelsService == nil {
-		return nil, fmt.Errorf("service ModelsService is nil")
+	modelService := service.NewModelService(objectRepo, infra.NATS, modelRepo)
+	if modelService == nil {
+		return nil, fmt.Errorf("service ModelService is nil")
 	}
+	modelHandler := handler.NewModelHandler(modelService)
+	if modelHandler == nil {
+		return nil, fmt.Errorf("handler ModelHandler is nil")
+	}
+
 	inferenceService := service.NewInferenceServiceWithResults(objectRepo, predictionObjectRepo, infra.NATS, infra.MinIO.Bucket)
 	if inferenceService == nil {
 		return nil, fmt.Errorf("service InferenceService is nil")
 	}
-	modelsHandler := handler.NewModelsHandler(modelsService, inferenceService)
-	if modelsHandler == nil {
-		return nil, fmt.Errorf("handler ModelsHandler is nil")
-	}
 
-	modelNewRepo := repository.NewModelNewClickHouse(infra.ClickHouse)
-	if modelNewRepo == nil {
-		return nil, fmt.Errorf("repository ModelNewClickHouse is nil")
-	}
-	modelNewService := service.NewModelNewService(objectRepo, infra.NATS, modelNewRepo)
-	if modelNewService == nil {
-		return nil, fmt.Errorf("service ModelNewService is nil")
-	}
-	modelNewHandler := handler.NewModelNewHandler(modelNewService)
-	if modelNewHandler == nil {
-		return nil, fmt.Errorf("handler ModelNewHandler is nil")
-	}
+
 
 	predictionProjectionRepo := repository.NewPredictionProjectionClickHouse(infra.ClickHouse)
 	if predictionProjectionRepo == nil {
@@ -318,7 +307,7 @@ func NewModule(infra Infrastructure) (*Module, error) {
 		Broker:            eventBroker,
 		DAGAggregation:    dagAggregationService,
 		ChampionInference: inferenceService,
-		ModelNew:          modelNewService,
+		Model:             modelService,
 	})
 
 	natsStream := stream.New(stream.Config{
@@ -333,9 +322,9 @@ func NewModule(infra Infrastructure) (*Module, error) {
 		TargetHandler:            targetHandler,
 		CandidateHandler:         candidateHandler,
 		AnomalyHandler:           anomalyHandler,
-		ModelsHandler:            modelsHandler,
-		ModelNewHandler:          modelNewHandler,
+		ModelHandler:             modelHandler,
 		LabelingHandler:          labelingHandler,
+
 		SystemHandler:            systemHandler,
 		MonitoringHandler:        monitoringHandler,
 		DAGAggregationHandler:    dagAggregationHandler,

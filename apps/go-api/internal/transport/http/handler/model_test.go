@@ -12,34 +12,37 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go-api/internal/domain/entity"
+	"go-api/internal/provider"
 	"go-api/internal/taxonomy"
 )
 
-type fakeModelNewService struct {
+type fakeModelService struct {
 	preflight   *entity.TrainingPreflight
 	snapshots   []entity.ModelTrainingSnapshot
 	training    *entity.TrainingResult
 	control     *entity.TrainingControlResult
 	activeState *entity.TrainingActiveState
+	models      []entity.Model
+	evaluation  *entity.ModelEvaluation
 	err         error
 }
 
-func (f *fakeModelNewService) TrainingPreflight(_ context.Context, _ []string) (*entity.TrainingPreflight, error) {
+func (f *fakeModelService) TrainingPreflight(_ context.Context, _ []string) (*entity.TrainingPreflight, error) {
 	return f.preflight, f.err
 }
 
-func (f *fakeModelNewService) ListTrainingSnapshots(_ context.Context, _ int) ([]entity.ModelTrainingSnapshot, error) {
+func (f *fakeModelService) ListTrainingSnapshots(_ context.Context, _ int) ([]entity.ModelTrainingSnapshot, error) {
 	return f.snapshots, f.err
 }
 
-func (f *fakeModelNewService) StartTraining(_ context.Context, _ entity.StartTrainingSpec) (*entity.TrainingResult, error) {
+func (f *fakeModelService) StartTraining(_ context.Context, _ entity.StartTrainingSpec) (*entity.TrainingResult, error) {
 	if f.training != nil {
 		return f.training, f.err
 	}
 	return &entity.TrainingResult{Status: "queued"}, f.err
 }
 
-func (f *fakeModelNewService) ControlTraining(_ context.Context, spec entity.TrainingControlSpec) (*entity.TrainingControlResult, error) {
+func (f *fakeModelService) ControlTraining(_ context.Context, spec entity.TrainingControlSpec) (*entity.TrainingControlResult, error) {
 	if f.control != nil {
 		return f.control, f.err
 	}
@@ -50,23 +53,37 @@ func (f *fakeModelNewService) ControlTraining(_ context.Context, spec entity.Tra
 	}, f.err
 }
 
-func (f *fakeModelNewService) GetActiveTraining(_ context.Context, _ string) (*entity.TrainingActiveState, error) {
+func (f *fakeModelService) GetActiveTraining(_ context.Context, _ string) (*entity.TrainingActiveState, error) {
 	return f.activeState, f.err
 }
 
-func (f *fakeModelNewService) ObserveTrainingProgress(_ context.Context, _ map[string]any) error {
+func (f *fakeModelService) ObserveTrainingProgress(_ context.Context, _ map[string]any) error {
 	return f.err
 }
 
-func (f *fakeModelNewService) ObserveTrainingLog(_ context.Context, _ string, _ entity.TrainingLogEntry) error {
+func (f *fakeModelService) ObserveTrainingLog(_ context.Context, _ string, _ entity.TrainingLogEntry) error {
 	return f.err
 }
 
-func TestModelNewHandler_TrainingPreflight(t *testing.T) {
+func (f *fakeModelService) ListModels(_ context.Context, _ string) ([]entity.Model, error) {
+	if f.models != nil {
+		return f.models, f.err
+	}
+	return []entity.Model{}, f.err
+}
+
+func (f *fakeModelService) GetModelEvaluation(_ context.Context, _ string) (*entity.ModelEvaluation, error) {
+	if f.evaluation != nil {
+		return f.evaluation, f.err
+	}
+	return &entity.ModelEvaluation{RuntimePackageID: "test-runtime"}, f.err
+}
+
+func TestModelHandler_TrainingPreflight(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	t.Run("Missing snapshot_id returns 400", func(t *testing.T) {
-		h := NewModelNewHandler(&fakeModelNewService{})
+		h := NewModelHandler(&fakeModelService{})
 		router := gin.New()
 		router.GET("/preflight", h.TrainingPreflight)
 
@@ -80,7 +97,7 @@ func TestModelNewHandler_TrainingPreflight(t *testing.T) {
 	})
 
 	t.Run("Invalid snapshot_id prefix returns 400", func(t *testing.T) {
-		h := NewModelNewHandler(&fakeModelNewService{})
+		h := NewModelHandler(&fakeModelService{})
 		router := gin.New()
 		router.GET("/preflight", h.TrainingPreflight)
 
@@ -94,7 +111,7 @@ func TestModelNewHandler_TrainingPreflight(t *testing.T) {
 	})
 
 	t.Run("Snapshot_id with slashes returns 400", func(t *testing.T) {
-		h := NewModelNewHandler(&fakeModelNewService{})
+		h := NewModelHandler(&fakeModelService{})
 		router := gin.New()
 		router.GET("/preflight", h.TrainingPreflight)
 
@@ -108,7 +125,7 @@ func TestModelNewHandler_TrainingPreflight(t *testing.T) {
 	})
 
 	t.Run("Exceeding max snapshots limit returns 400", func(t *testing.T) {
-		h := NewModelNewHandler(&fakeModelNewService{})
+		h := NewModelHandler(&fakeModelService{})
 		router := gin.New()
 		router.GET("/preflight", h.TrainingPreflight)
 
@@ -128,7 +145,7 @@ func TestModelNewHandler_TrainingPreflight(t *testing.T) {
 	})
 
 	t.Run("Invalid request from service returns 400", func(t *testing.T) {
-		h := NewModelNewHandler(&fakeModelNewService{
+		h := NewModelHandler(&fakeModelService{
 			err: fmt.Errorf("%w: snapshot not found", taxonomy.ErrInvalidRequest),
 		})
 		router := gin.New()
@@ -144,7 +161,7 @@ func TestModelNewHandler_TrainingPreflight(t *testing.T) {
 	})
 
 	t.Run("Storage failure from service returns 503", func(t *testing.T) {
-		h := NewModelNewHandler(&fakeModelNewService{
+		h := NewModelHandler(&fakeModelService{
 			err: errors.New("clickhouse connection timeout"),
 		})
 		router := gin.New()
@@ -166,7 +183,7 @@ func TestModelNewHandler_TrainingPreflight(t *testing.T) {
 			PositiveTargets: 65,
 			NegativeTargets: 62,
 		}
-		h := NewModelNewHandler(&fakeModelNewService{preflight: expected})
+		h := NewModelHandler(&fakeModelService{preflight: expected})
 		router := gin.New()
 		router.GET("/preflight", h.TrainingPreflight)
 
@@ -188,11 +205,11 @@ func TestModelNewHandler_TrainingPreflight(t *testing.T) {
 	})
 }
 
-func TestModelNewHandler_ListSnapshots(t *testing.T) {
+func TestModelHandler_ListSnapshots(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	t.Run("Invalid limit returns 400", func(t *testing.T) {
-		h := NewModelNewHandler(&fakeModelNewService{})
+		h := NewModelHandler(&fakeModelService{})
 		router := gin.New()
 		router.GET("/snapshots", h.ListSnapshots)
 
@@ -206,7 +223,7 @@ func TestModelNewHandler_ListSnapshots(t *testing.T) {
 	})
 
 	t.Run("Limit out of bounds returns 400", func(t *testing.T) {
-		h := NewModelNewHandler(&fakeModelNewService{})
+		h := NewModelHandler(&fakeModelService{})
 		router := gin.New()
 		router.GET("/snapshots", h.ListSnapshots)
 
@@ -220,7 +237,7 @@ func TestModelNewHandler_ListSnapshots(t *testing.T) {
 	})
 
 	t.Run("Service error returns 503", func(t *testing.T) {
-		h := NewModelNewHandler(&fakeModelNewService{err: errors.New("clickhouse down")})
+		h := NewModelHandler(&fakeModelService{err: errors.New("clickhouse down")})
 		router := gin.New()
 		router.GET("/snapshots", h.ListSnapshots)
 
@@ -243,7 +260,7 @@ func TestModelNewHandler_ListSnapshots(t *testing.T) {
 				CandidateCount: 20,
 			},
 		}
-		h := NewModelNewHandler(&fakeModelNewService{snapshots: expected})
+		h := NewModelHandler(&fakeModelService{snapshots: expected})
 		router := gin.New()
 		router.GET("/snapshots", h.ListSnapshots)
 
@@ -268,11 +285,11 @@ func TestModelNewHandler_ListSnapshots(t *testing.T) {
 	})
 }
 
-func TestModelNewHandler_ControlTraining(t *testing.T) {
+func TestModelHandler_ControlTraining(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	t.Run("Malformed JSON returns 400", func(t *testing.T) {
-		h := NewModelNewHandler(&fakeModelNewService{})
+		h := NewModelHandler(&fakeModelService{})
 		router := gin.New()
 		router.POST("/control", h.ControlTraining)
 
@@ -287,7 +304,7 @@ func TestModelNewHandler_ControlTraining(t *testing.T) {
 	})
 
 	t.Run("Missing ticket_id returns 400", func(t *testing.T) {
-		h := NewModelNewHandler(&fakeModelNewService{})
+		h := NewModelHandler(&fakeModelService{})
 		router := gin.New()
 		router.POST("/control", h.ControlTraining)
 
@@ -302,7 +319,7 @@ func TestModelNewHandler_ControlTraining(t *testing.T) {
 	})
 
 	t.Run("Invalid ticket_id pattern returns 400", func(t *testing.T) {
-		h := NewModelNewHandler(&fakeModelNewService{})
+		h := NewModelHandler(&fakeModelService{})
 		router := gin.New()
 		router.POST("/control", h.ControlTraining)
 
@@ -317,7 +334,7 @@ func TestModelNewHandler_ControlTraining(t *testing.T) {
 	})
 
 	t.Run("Invalid action returns 400", func(t *testing.T) {
-		h := NewModelNewHandler(&fakeModelNewService{})
+		h := NewModelHandler(&fakeModelService{})
 		router := gin.New()
 		router.POST("/control", h.ControlTraining)
 
@@ -332,7 +349,7 @@ func TestModelNewHandler_ControlTraining(t *testing.T) {
 	})
 
 	t.Run("Valid cancel request returns 200 with dispatched status", func(t *testing.T) {
-		h := NewModelNewHandler(&fakeModelNewService{})
+		h := NewModelHandler(&fakeModelService{})
 		router := gin.New()
 		router.POST("/control", h.ControlTraining)
 
@@ -355,7 +372,7 @@ func TestModelNewHandler_ControlTraining(t *testing.T) {
 	})
 
 	t.Run("Valid checkpoint request returns 200", func(t *testing.T) {
-		h := NewModelNewHandler(&fakeModelNewService{})
+		h := NewModelHandler(&fakeModelService{})
 		router := gin.New()
 		router.POST("/control", h.ControlTraining)
 
@@ -370,7 +387,7 @@ func TestModelNewHandler_ControlTraining(t *testing.T) {
 	})
 
 	t.Run("Service ErrInvalidRequest returns 400", func(t *testing.T) {
-		h := NewModelNewHandler(&fakeModelNewService{err: fmt.Errorf("%w: invalid state", taxonomy.ErrInvalidRequest)})
+		h := NewModelHandler(&fakeModelService{err: fmt.Errorf("%w: invalid state", taxonomy.ErrInvalidRequest)})
 		router := gin.New()
 		router.POST("/control", h.ControlTraining)
 
@@ -385,7 +402,7 @@ func TestModelNewHandler_ControlTraining(t *testing.T) {
 	})
 
 	t.Run("Internal service error returns 503", func(t *testing.T) {
-		h := NewModelNewHandler(&fakeModelNewService{err: errors.New("dispatcher unavailable")})
+		h := NewModelHandler(&fakeModelService{err: errors.New("dispatcher unavailable")})
 		router := gin.New()
 		router.POST("/control", h.ControlTraining)
 
@@ -400,11 +417,11 @@ func TestModelNewHandler_ControlTraining(t *testing.T) {
 	})
 }
 
-func TestModelNewHandler_GetActiveTraining(t *testing.T) {
+func TestModelHandler_GetActiveTraining(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	t.Run("Invalid ticket_id pattern returns 400", func(t *testing.T) {
-		h := NewModelNewHandler(&fakeModelNewService{})
+		h := NewModelHandler(&fakeModelService{})
 		router := gin.New()
 		router.GET("/active", h.GetActiveTraining)
 
@@ -418,7 +435,7 @@ func TestModelNewHandler_GetActiveTraining(t *testing.T) {
 	})
 
 	t.Run("No active run returns active: false", func(t *testing.T) {
-		h := NewModelNewHandler(&fakeModelNewService{})
+		h := NewModelHandler(&fakeModelService{})
 		router := gin.New()
 		router.GET("/active", h.GetActiveTraining)
 
@@ -439,7 +456,7 @@ func TestModelNewHandler_GetActiveTraining(t *testing.T) {
 	})
 
 	t.Run("Active run returns 200 with active state", func(t *testing.T) {
-		h := NewModelNewHandler(&fakeModelNewService{
+		h := NewModelHandler(&fakeModelService{
 			activeState: &entity.TrainingActiveState{
 				TicketID: "RUN-001",
 				Status:   "running",
@@ -462,6 +479,90 @@ func TestModelNewHandler_GetActiveTraining(t *testing.T) {
 		}
 		if body["active"] != true {
 			t.Fatalf("expected active=true, got %v", body["active"])
+		}
+	})
+}
+
+func TestModelHandler_ListModels(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("Returns list of models with count and source", func(t *testing.T) {
+		h := NewModelHandler(&fakeModelService{
+			models: []entity.Model{
+				{
+					ModelID:          "model-1",
+					RuntimePackageID: "pkg-1",
+					Task:             "candidate_vetting",
+					Status:           "VALIDATED",
+				},
+			},
+		})
+		router := gin.New()
+		router.GET("/models", h.ListModels)
+
+		req := httptest.NewRequest(http.MethodGet, "/models", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		var body struct {
+			Models []map[string]any `json:"models"`
+			Count  int              `json:"count"`
+			Source string           `json:"source"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Count != 1 || len(body.Models) != 1 || body.Source != "minio-runtime-registry" {
+			t.Fatalf("unexpected response: %+v", body)
+		}
+	})
+}
+
+func TestModelHandler_GetModelEvaluation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("Returns 200 with evaluation payload", func(t *testing.T) {
+		h := NewModelHandler(&fakeModelService{
+			evaluation: &entity.ModelEvaluation{
+				RuntimePackageID: "pkg-1",
+				EvaluationRunID:  "eval-1",
+			},
+		})
+		router := gin.New()
+		router.GET("/models/:runtime_package_id/evaluation", h.GetModelEvaluation)
+
+		req := httptest.NewRequest(http.MethodGet, "/models/pkg-1/evaluation", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		var body entity.ModelEvaluation
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if body.RuntimePackageID != "pkg-1" || body.EvaluationRunID != "eval-1" {
+			t.Fatalf("unexpected body: %+v", body)
+		}
+	})
+
+	t.Run("Returns 404 when object not found", func(t *testing.T) {
+		h := NewModelHandler(&fakeModelService{
+			err: provider.ErrObjectNotFound,
+		})
+		router := gin.New()
+		router.GET("/models/:runtime_package_id/evaluation", h.GetModelEvaluation)
+
+		req := httptest.NewRequest(http.MethodGet, "/models/pkg-missing/evaluation", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", rec.Code)
 		}
 	})
 }

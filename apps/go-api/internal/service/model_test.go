@@ -2,8 +2,11 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	natsio "github.com/nats-io/nats.go"
@@ -13,61 +16,67 @@ import (
 	"go-api/internal/taxonomy"
 )
 
-type memoryModelNewObjects struct {
+type memoryModelObjects struct {
 	objects map[string][]byte
 }
 
-func (m *memoryModelNewObjects) Ping(context.Context) error { return nil }
-func (m *memoryModelNewObjects) ListObjects(_ context.Context, _ string) ([]provider.ObjectInfo, error) {
+func (m *memoryModelObjects) Ping(context.Context) error { return nil }
+func (m *memoryModelObjects) ListObjects(_ context.Context, prefix string) ([]provider.ObjectInfo, error) {
+	items := make([]provider.ObjectInfo, 0)
+	for key := range m.objects {
+		if strings.HasPrefix(key, prefix) {
+			items = append(items, provider.ObjectInfo{Key: key})
+		}
+	}
+	return items, nil
+}
+func (m *memoryModelObjects) ListObjectsWithMetadata(ctx context.Context, prefix string) ([]provider.ObjectInfo, error) {
 	return nil, nil
 }
-func (m *memoryModelNewObjects) ListObjectsWithMetadata(ctx context.Context, prefix string) ([]provider.ObjectInfo, error) {
-	return nil, nil
-}
-func (m *memoryModelNewObjects) ListObjectsCursor(context.Context, string, string, int) ([]provider.ObjectInfo, string, bool, error) {
+func (m *memoryModelObjects) ListObjectsCursor(context.Context, string, string, int) ([]provider.ObjectInfo, string, bool, error) {
 	return nil, "", false, nil
 }
-func (m *memoryModelNewObjects) GetObject(_ context.Context, key string) ([]byte, error) {
+func (m *memoryModelObjects) GetObject(_ context.Context, key string) ([]byte, error) {
 	data, ok := m.objects[key]
 	if !ok {
 		return nil, provider.ErrObjectNotFound
 	}
 	return data, nil
 }
-func (m *memoryModelNewObjects) PutObject(_ context.Context, key string, data []byte, _ string) error {
+func (m *memoryModelObjects) PutObject(_ context.Context, key string, data []byte, _ string) error {
 	m.objects[key] = data
 	return nil
 }
-func (m *memoryModelNewObjects) DeleteObject(_ context.Context, key string) error {
+func (m *memoryModelObjects) DeleteObject(_ context.Context, key string) error {
 	delete(m.objects, key)
 	return nil
 }
 
-type fakeModelNewRepo struct {
+type fakeModelRepo struct {
 	preflightReport *entity.TrainingPreflight
 	snapshots       []entity.ModelTrainingSnapshot
 	err             error
 }
 
-func (f *fakeModelNewRepo) TrainingPreflight(_ context.Context, _ []string) (*entity.TrainingPreflight, error) {
+func (f *fakeModelRepo) TrainingPreflight(_ context.Context, _ []string) (*entity.TrainingPreflight, error) {
 	return f.preflightReport, f.err
 }
 
-func (f *fakeModelNewRepo) ListTrainingSnapshots(_ context.Context, _ int) ([]entity.ModelTrainingSnapshot, error) {
+func (f *fakeModelRepo) ListTrainingSnapshots(_ context.Context, _ int) ([]entity.ModelTrainingSnapshot, error) {
 	return f.snapshots, f.err
 }
 
-func TestModelNewService_TrainingPreflight(t *testing.T) {
+func TestModelService_TrainingPreflight(t *testing.T) {
 	validSnapshotID := "gold-v1-test-snapshot"
 	manifestData := []byte(`{"snapshot_id":"gold-v1-test-snapshot"}`)
 
-	objects := &memoryModelNewObjects{
+	objects := &memoryModelObjects{
 		objects: map[string][]byte{
 			"gold/snapshots/" + validSnapshotID + "/manifest.json": manifestData,
 		},
 	}
 
-	repo := &fakeModelNewRepo{
+	repo := &fakeModelRepo{
 		preflightReport: &entity.TrainingPreflight{
 			SnapshotIDs:     []string{validSnapshotID},
 			Tier:            "EXPERIMENTAL",
@@ -76,7 +85,7 @@ func TestModelNewService_TrainingPreflight(t *testing.T) {
 		},
 	}
 
-	svc := NewModelNewService(objects, nil, repo)
+	svc := NewModelService(objects, nil, repo)
 	ctx := context.Background()
 
 	t.Run("Rejects non-existent snapshot in MinIO", func(t *testing.T) {
@@ -100,7 +109,7 @@ func TestModelNewService_TrainingPreflight(t *testing.T) {
 	})
 }
 
-func TestModelNewService_ListTrainingSnapshots(t *testing.T) {
+func TestModelService_ListTrainingSnapshots(t *testing.T) {
 	ctx := context.Background()
 	expected := []entity.ModelTrainingSnapshot{
 		{
@@ -112,8 +121,8 @@ func TestModelNewService_ListTrainingSnapshots(t *testing.T) {
 		},
 	}
 
-	repo := &fakeModelNewRepo{snapshots: expected}
-	svc := NewModelNewService(&memoryModelNewObjects{}, nil, repo)
+	repo := &fakeModelRepo{snapshots: expected}
+	svc := NewModelService(&memoryModelObjects{}, nil, repo)
 
 	results, err := svc.ListTrainingSnapshots(ctx, 50)
 	if err != nil {
@@ -124,17 +133,17 @@ func TestModelNewService_ListTrainingSnapshots(t *testing.T) {
 	}
 }
 
-func TestModelNewService_StartTraining_BlockedByPreflight(t *testing.T) {
+func TestModelService_StartTraining_BlockedByPreflight(t *testing.T) {
 	validSnapshotID := "gold-v1-test-snapshot"
 	manifestData := []byte(`{"snapshot_id":"gold-v1-test-snapshot"}`)
 
-	objects := &memoryModelNewObjects{
+	objects := &memoryModelObjects{
 		objects: map[string][]byte{
 			"gold/snapshots/" + validSnapshotID + "/manifest.json": manifestData,
 		},
 	}
 
-	repo := &fakeModelNewRepo{
+	repo := &fakeModelRepo{
 		preflightReport: &entity.TrainingPreflight{
 			SnapshotIDs:     []string{validSnapshotID},
 			Tier:            "BLOCKED",
@@ -149,7 +158,7 @@ func TestModelNewService_StartTraining_BlockedByPreflight(t *testing.T) {
 		return nil, nil
 	}
 
-	svc := NewModelNewService(objects, natsClient, repo)
+	svc := NewModelService(objects, natsClient, repo)
 	ctx := context.Background()
 
 	spec := entity.StartTrainingSpec{
@@ -173,11 +182,11 @@ func TestModelNewService_StartTraining_BlockedByPreflight(t *testing.T) {
 	}
 }
 
-func TestModelNewService_ControlTraining(t *testing.T) {
+func TestModelService_ControlTraining(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("Unavailable NATS returns error", func(t *testing.T) {
-		svc := NewModelNewService(&memoryModelNewObjects{}, nil, &fakeModelNewRepo{})
+		svc := NewModelService(&memoryModelObjects{}, nil, &fakeModelRepo{})
 		_, err := svc.ControlTraining(ctx, entity.TrainingControlSpec{
 			TicketID: "RUN-TEST-001",
 			Action:   "cancel",
@@ -197,7 +206,7 @@ func TestModelNewService_ControlTraining(t *testing.T) {
 			return json.Unmarshal(payload, &publishedPayload)
 		}
 
-		svc := NewModelNewService(&memoryModelNewObjects{}, natsClient, &fakeModelNewRepo{})
+		svc := NewModelService(&memoryModelObjects{}, natsClient, &fakeModelRepo{})
 		res, err := svc.ControlTraining(ctx, entity.TrainingControlSpec{
 			TicketID: "RUN-TEST-001",
 			Action:   "cancel",
@@ -223,7 +232,7 @@ func TestModelNewService_ControlTraining(t *testing.T) {
 			return json.Unmarshal(payload, &publishedPayload)
 		}
 
-		svc := NewModelNewService(&memoryModelNewObjects{}, natsClient, &fakeModelNewRepo{})
+		svc := NewModelService(&memoryModelObjects{}, natsClient, &fakeModelRepo{})
 		res, err := svc.ControlTraining(ctx, entity.TrainingControlSpec{
 			TicketID: "RUN-TEST-002",
 			Action:   "checkpoint",
@@ -237,9 +246,9 @@ func TestModelNewService_ControlTraining(t *testing.T) {
 	})
 }
 
-func TestModelNewService_ActiveTrainingSoftState(t *testing.T) {
+func TestModelService_ActiveTrainingSoftState(t *testing.T) {
 	ctx := context.Background()
-	svc := NewModelNewService(&memoryModelNewObjects{}, nil, &fakeModelNewRepo{})
+	svc := NewModelService(&memoryModelObjects{}, nil, &fakeModelRepo{})
 
 	// 1. Initially empty
 	state, err := svc.GetActiveTraining(ctx, "")
@@ -287,6 +296,56 @@ func TestModelNewService_ActiveTrainingSoftState(t *testing.T) {
 	}
 	if active.TicketID != "RUN-100" || active.CurrentEpoch != 2 || len(active.Logs) != 1 || len(active.LossHistory) != 1 {
 		t.Fatalf("unexpected state: %+v", active)
+	}
+}
+
+func TestModelService_ListModels(t *testing.T) {
+	ctx := context.Background()
+	objects := &memoryModelObjects{objects: modelFixture("PASS")}
+	svc := NewModelService(objects, nil, &fakeModelRepo{})
+
+	models, err := svc.ListModels(ctx, taxonomy.TaskCandidateVetting)
+	if err != nil {
+		t.Fatalf("list models error: %v", err)
+	}
+	if len(models) != 1 {
+		t.Fatalf("expected 1 model, got %d", len(models))
+	}
+	if models[0].RuntimePackageID != "runtime-a" || models[0].Status != taxonomy.ModelStatusValidated {
+		t.Fatalf("unexpected model: %+v", models[0])
+	}
+}
+
+func TestModelService_GetModelEvaluation(t *testing.T) {
+	ctx := context.Background()
+	objects := &memoryModelObjects{objects: modelFixture("PASS")}
+	runtimeKey := "models/runtime/candidate_vetting/model-a/runtime-a/manifest.json"
+	objects.objects[runtimeKey] = []byte(strings.Replace(
+		string(objects.objects[runtimeKey]),
+		`"python_parity_status":"PASS"`,
+		`"python_parity_status":"PASS", "source_evaluation_run_id":"eval-cand-v1-test", "model_version":"1.0.0"`,
+		1,
+	))
+
+	metrics := []byte(`{"golden_pr_auc":0.91,"golden_roc_auc":0.94,"golden_precision":0.8,"golden_recall":0.75,"golden_f1":0.774,"golden_confusion_matrix":[[18,2],[3,9]],"golden_row_count":32,"golden_positive_count":12,"golden_negative_count":20,"recent_pr_auc":0.88,"recent_recall":0.70,"recent_confusion_matrix":[[17,3],[4,8]],"recent_row_count":32,"recent_positive_count":12,"recent_negative_count":20,"pr_auc_drift":-0.03,"recall_drift":-0.05}`)
+	threshold := []byte(`{"decision_threshold":0.63,"validation_row_count":40,"validation_precision":0.82,"validation_recall":0.78,"validation_f1":0.80}`)
+	metricsSHA := sha256.Sum256(metrics)
+	thresholdSHA := sha256.Sum256(threshold)
+	prefix := "models/evaluations/candidate/eval-cand-v1-test/"
+	objects.objects[prefix+"metrics.json"] = metrics
+	objects.objects[prefix+"threshold.json"] = threshold
+	objects.objects[prefix+"manifest.json"] = []byte(fmt.Sprintf(`{"evaluation_run_id":"eval-cand-v1-test","training_run_id":"train-test","model_version":"1.0.0","golden_cohort_id":"golden-test","recent_cohort_id":"recent-test","evaluation_policy_version":"candidate-evaluation-v1","threshold_policy_version":"candidate-threshold-max-f1-v1","decision_threshold":0.63,"threshold_sha256":"%x","metrics_sha256":"%x","created_at":"2026-09-02T00:00:00Z"}`, thresholdSHA, metricsSHA))
+
+	svc := NewModelService(objects, nil, &fakeModelRepo{})
+	evaluation, err := svc.GetModelEvaluation(ctx, "runtime-a")
+	if err != nil {
+		t.Fatalf("get evaluation error: %v", err)
+	}
+	if evaluation.Golden.PRAUC == nil || *evaluation.Golden.PRAUC != 0.91 {
+		t.Fatalf("unexpected golden PR-AUC: %+v", evaluation.Golden)
+	}
+	if evaluation.DecisionThreshold != 0.63 || evaluation.ValidationRowCount != 40 {
+		t.Fatalf("unexpected decision threshold: %f", evaluation.DecisionThreshold)
 	}
 }
 

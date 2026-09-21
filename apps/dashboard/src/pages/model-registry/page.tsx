@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type JSX } from 'react';
-import { BrainCircuit, CircleAlert, RefreshCw } from 'lucide-react';
+import { CircleAlert, Package, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { apiBase, apiFetch } from '@/lib/api';
@@ -195,19 +195,20 @@ export default function ModelRegistryPage(): JSX.Element {
 
   return (
     <div className="space-y-6">
-      {/* Page Header */}
-      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
-        <div>
-          <div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
-            <BrainCircuit className="size-4 text-primary" />
-            AI Factory · Model Registry
+      {/* Blueprint Hero Banner */}
+      <div className="relative flex flex-col justify-between gap-4 overflow-hidden border border-border/70 bg-card px-4 py-5 shadow-sm sm:px-6 md:flex-row md:items-end">
+        <div className="pointer-events-none absolute inset-0 opacity-[0.18] [background-image:linear-gradient(to_right,var(--border)_1px,transparent_1px),linear-gradient(to_bottom,var(--border)_1px,transparent_1px)] [background-size:28px_28px]" />
+        <div className="relative">
+          <div className="mb-2 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.18em] text-primary">
+            <Package className="size-4 text-primary" />
+            AI Factory / Model Registry
           </div>
           <h2 className="font-heading text-2xl font-semibold tracking-tight md:text-3xl">Model Registry</h2>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Quản lý version, candidate/validated/champion và deployment có thể rollback.
+            Version management, candidate/validated/champion lifecycle, and rollback-safe deployment controls.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="relative flex flex-wrap items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => void loadData(true)} disabled={loading || refreshing}>
             <RefreshCw className={`size-3.5 ${refreshing ? 'animate-spin' : ''}`} />
             Refresh evidence
@@ -217,10 +218,10 @@ export default function ModelRegistryPage(): JSX.Element {
 
       {/* Error Alert */}
       {error && (
-        <div className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+        <div className="flex items-start gap-3 border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
           <CircleAlert className="mt-0.5 size-4 shrink-0" />
           <div>
-            <p className="font-medium">Lỗi kết nối / Model Registry</p>
+            <p className="font-medium">Connection / Model Registry Error</p>
             <p className="mt-1 opacity-90">{error}</p>
           </div>
         </div>

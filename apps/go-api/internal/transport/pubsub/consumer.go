@@ -22,7 +22,7 @@ type Config struct {
 	Broker            *provider.SSEBroker
 	DAGAggregation    service.DAGAggregation
 	ChampionInference service.ChampionInferencePlanner
-	ModelNew          service.ModelNew
+	Model             service.Model
 	Logger            *slog.Logger
 }
 
@@ -32,8 +32,9 @@ type NATSPubSub struct {
 	broker            *provider.SSEBroker
 	dagAggregation    service.DAGAggregation
 	championInference service.ChampionInferencePlanner
-	modelNew          service.ModelNew
+	model             service.Model
 	log               *slog.Logger
+
 	natsURL           string
 
 	mu             sync.Mutex
@@ -64,7 +65,7 @@ func New(cfg Config) *NATSPubSub {
 		broker:            cfg.Broker,
 		dagAggregation:    cfg.DAGAggregation,
 		championInference: cfg.ChampionInference,
-		modelNew:          cfg.ModelNew,
+		model:             cfg.Model,
 		log:               logger,
 		natsURL:           cfg.NATSURL,
 		conn:              cfg.Conn,

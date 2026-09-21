@@ -6,8 +6,8 @@ import (
 	"go-api/internal/domain/entity"
 )
 
-// ModelNew defines the service contract for Model domain workflows.
-type ModelNew interface {
+// Model defines the service contract for Model domain workflows.
+type Model interface {
 	TrainingPreflight(ctx context.Context, snapshotIDs []string) (*entity.TrainingPreflight, error)
 	ListTrainingSnapshots(ctx context.Context, limit int) ([]entity.ModelTrainingSnapshot, error)
 	StartTraining(ctx context.Context, spec entity.StartTrainingSpec) (*entity.TrainingResult, error)
@@ -15,5 +15,8 @@ type ModelNew interface {
 	GetActiveTraining(ctx context.Context, ticketID string) (*entity.TrainingActiveState, error)
 	ObserveTrainingProgress(ctx context.Context, event map[string]any) error
 	ObserveTrainingLog(ctx context.Context, ticketID string, entry entity.TrainingLogEntry) error
+	ListModels(ctx context.Context, task string) ([]entity.Model, error)
+	GetModelEvaluation(ctx context.Context, runtimePackageID string) (*entity.ModelEvaluation, error)
 }
+
 

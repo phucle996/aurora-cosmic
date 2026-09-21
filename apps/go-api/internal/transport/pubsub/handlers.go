@@ -48,8 +48,8 @@ func (p *NATSPubSub) handleInferenceEvent(_ context.Context, msg *nats.Msg, jobI
 func (p *NATSPubSub) handleMLEvent(ctx context.Context, msg *nats.Msg, jobID string) {
 	p.log.Info("ML training event received", "subject", msg.Subject, "job_id", jobID)
 
-	// Route training progress and log events to ModelNew soft state tracker
-	if p.modelNew != nil && strings.HasPrefix(msg.Subject, "aurora.v1.ml.training.") {
+	// Route training progress and log events to Model soft state tracker
+	if p.model != nil && strings.HasPrefix(msg.Subject, "aurora.v1.ml.training.") {
 		if msg.Subject == "aurora.v1.ml.training.log" {
 			var logEvent struct {
 				TicketID  string `json:"ticket_id"`
@@ -58,7 +58,7 @@ func (p *NATSPubSub) handleMLEvent(ctx context.Context, msg *nats.Msg, jobID str
 				Timestamp string `json:"timestamp"`
 			}
 			if err := json.Unmarshal(msg.Data, &logEvent); err == nil && logEvent.TicketID != "" {
-				_ = p.modelNew.ObserveTrainingLog(ctx, logEvent.TicketID, entity.TrainingLogEntry{
+				_ = p.model.ObserveTrainingLog(ctx, logEvent.TicketID, entity.TrainingLogEntry{
 					Timestamp: logEvent.Timestamp,
 					Message:   logEvent.Message,
 					Level:     logEvent.Level,
@@ -67,10 +67,11 @@ func (p *NATSPubSub) handleMLEvent(ctx context.Context, msg *nats.Msg, jobID str
 		} else {
 			var progressEvent map[string]any
 			if err := json.Unmarshal(msg.Data, &progressEvent); err == nil {
-				_ = p.modelNew.ObserveTrainingProgress(ctx, progressEvent)
+				_ = p.model.ObserveTrainingProgress(ctx, progressEvent)
 			}
 		}
 	}
+
 
 	if msg.Subject != "aurora.live.ml.promotion.progress" || p.championInference == nil {
 		return
