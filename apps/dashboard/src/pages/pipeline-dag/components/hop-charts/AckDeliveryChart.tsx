@@ -11,34 +11,24 @@ import {
 } from 'recharts';
 import { CheckCircle2, XCircle, FileText, Box } from 'lucide-react';
 
-import type { Hop } from '../../types';
-
 function value(metrics: Record<string, number> | undefined, key: string): number {
   return Math.max(0, Number(metrics?.[key] ?? 0));
 }
 
 export function AckDeliveryChart({
   metrics,
-  materializationPoints = [],
 }: {
   metrics?: Record<string, number>;
-  materializationPoints?: Hop['materialization_points'];
 }): JSX.Element {
-  const lcPointsCount = materializationPoints.filter(
-    (p) => p.product_kind === 'lightcurve' || p.product_kind === 'light_curve',
-  ).length;
-  const tpfPointsCount = materializationPoints.filter((p) => p.product_kind.includes('target')).length;
-
-  const lcAck = value(metrics, 'acknowledged_lightcurves') || value(metrics, 'silver_lightcurves') || lcPointsCount;
-  const tpfAck = value(metrics, 'acknowledged_target_pixels') || value(metrics, 'silver_target_pixels') || tpfPointsCount;
+  const lcAck = value(metrics, 'acknowledged_lightcurves') || value(metrics, 'silver_lightcurves');
+  const tpfAck = value(metrics, 'acknowledged_target_pixels') || value(metrics, 'silver_target_pixels');
 
   const streamMessages =
     value(metrics, 'stream_messages') ||
     value(metrics, 'bronze_total_files') ||
     value(metrics, 'completed_products') ||
     value(metrics, 'silver_objects') ||
-    (lcAck + tpfAck) ||
-    materializationPoints.length;
+    (lcAck + tpfAck);
 
   const unacked = value(metrics, 'ack_pending') + value(metrics, 'pending');
   const acknowledged =

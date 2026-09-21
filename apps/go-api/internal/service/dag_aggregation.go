@@ -1484,7 +1484,6 @@ func (s *DAGAggregationService) aggregateAckHop(ctx context.Context, hop *entity
 	hop.Metrics["acknowledged_stream_positions"] = total
 	hop.Metrics["acknowledged_lightcurves"] = lc
 	hop.Metrics["acknowledged_target_pixels"] = tpf
-	hop.Metrics["completed_checkpoints"] = total
 	hop.Metrics["ack_total"] = total
 	hop.Metrics["ack_pending"] = 0
 	hop.Metrics["pending"] = 0
@@ -1750,7 +1749,6 @@ func dagHops(values map[string]float64, observations map[string][]entity.Monitor
 				"historical_redeliveries":       float64(max(int64(0), progress.BronzeDeliveredConsumer-progress.BronzeDeliveredStream)),
 				"ack_pending":                   float64(progress.BronzeConsumerAckPending),
 				"pending":                       float64(progress.BronzeConsumerPending),
-				"completed_checkpoints":         float64(progress.CheckpointCompleted),
 			},
 		},
 	}
@@ -1934,7 +1932,7 @@ func dagHops(values map[string]float64, observations map[string][]entity.Monitor
 			hops[i].CheckpointPoints = append([]entity.PreprocessingCheckpointPoint(nil), progress.CheckpointPoints...)
 			hops[i].MaterializationPoints = append([]entity.PreprocessingMaterializationPoint(nil), progress.MaterializationPoints...)
 		}
-		if hops[i].ID == "lineage" || hops[i].ID == "event" || hops[i].ID == "ack" {
+		if hops[i].ID == "lineage" || hops[i].ID == "event" {
 			hops[i].MaterializationPoints = append([]entity.PreprocessingMaterializationPoint(nil), progress.MaterializationPoints...)
 		}
 		if hops[i].ID == "lc-parquet" || hops[i].ID == "tpf-parquet" {
