@@ -22,8 +22,6 @@ import {
   EventPublishChart,
   GoldCommitChart,
   GoldPhaseChart,
-  GoldMaterializationChart,
-  GoldProjectionChart,
   LCDetrendChart,
   LCParquetChart,
   LightCurveFeaturesChart,
@@ -113,13 +111,19 @@ function renderHopChart(
     case 'gold-tpf-evidence':
       return <TPFSpatialEvidenceChart metrics={metrics} evidence={tpfSpatialEvidence} />;
     case 'gold-candidate':
-      return <CandidateAssemblyChart metrics={metrics} evidence={candidateAssemblyEvidence} />;
+      return <CandidateAssemblyChart metrics={metrics} telemetry={telemetry} evidence={candidateAssemblyEvidence} />;
     case 'gold-parquet':
-      return <GoldMaterializationChart metrics={metrics} evidence={goldMaterializationEvidence} />;
     case 'gold-index':
-      return <GoldProjectionChart metrics={metrics} evidence={goldProjectionEvidence} />;
     case 'gold-commit':
-      return <GoldCommitChart metrics={metrics} evidence={goldCommitEvidence} />;
+      return (
+        <GoldCommitChart
+          metrics={metrics}
+          telemetry={telemetry}
+          evidence={goldCommitEvidence}
+          materializationEvidence={goldMaterializationEvidence}
+          projectionEvidence={goldProjectionEvidence}
+        />
+      );
     default:
       return <StageEvidence metrics={metrics} />;
   }
@@ -429,15 +433,16 @@ function scientificReference(hop: Hop): ScientificReference {
     },
     'gold-commit': {
       formulas: [
-        { label: 'Immutable commit validity', expression: 'valid = manifest COMMITTED ∧ SHA/fingerprint bound ∧ artifacts intact ∧ row parity ∧ projection READY' },
-        { label: 'Row reconciliation', expression: 'batch candidate_rows = manifest row_count = queryable projection rows' },
-        { label: 'Current activation', expression: 'active = pointer(snapshot, fingerprint, manifest key, manifest SHA) matches snapshot' },
+        { label: 'Row reconciliation', expression: 'batch candidate_rows = manifest row_count = ClickHouse queryable rows' },
+        { label: 'Parquet storage density', expression: 'density = stored bytes / artifact candidate rows' },
+        { label: 'Index parity', expression: 'indexed ClickHouse rows / candidate rows × 100%' },
+        { label: 'Immutable commit validity', expression: 'valid = manifest COMMITTED ∧ SHA256 verified ∧ Parquet intact ∧ projection READY' },
       ],
       terms: [
-        { term: 'Immutable snapshot', meaning: 'Manifest và artifact đã commit theo snapshot ID; không thay đổi khi một snapshot mới trở thành current.' },
-        { term: 'End-to-end verified', meaning: 'Toàn bộ storage, provenance, row accounting và analytical projection cùng vượt qua integrity gate.' },
-        { term: 'Current pointer', meaning: 'Con trỏ activation có thể chuyển sang snapshot mới; HISTORY không có nghĩa snapshot cũ bị lỗi.' },
-        { term: 'Fingerprint binding', meaning: 'Snapshot ID, fingerprint và manifest key trong manifest khớp durable batch ledger.' },
+        { term: 'Gold Parquet', meaning: 'Các phân vùng cột nén Snappy lưu trên MinIO object storage.' },
+        { term: 'ReplacingMergeTree', meaning: 'Bảng ClickHouse phân tích low-latency cho candidate exoplanets.' },
+        { term: 'Manifest SHA', meaning: 'Mã băm SHA-256 ký số snapshot xác thực tính bất biến (immutable).' },
+        { term: 'Three-way Parity', meaning: 'Sự đồng bộ tuyệt đối giữa số hàng trong batch, trong Parquet và trong ClickHouse.' },
       ],
     },
   };

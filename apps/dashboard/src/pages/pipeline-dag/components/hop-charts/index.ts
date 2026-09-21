@@ -15,8 +15,6 @@ export { CatalogResolutionChart } from './CatalogResolutionChart';
 export { LightCurveFeaturesChart } from './LightCurveFeaturesChart';
 export { TPFSpatialEvidenceChart } from './TPFSpatialEvidenceChart';
 export { CandidateAssemblyChart } from './CandidateAssemblyChart';
-export { GoldMaterializationChart } from './GoldMaterializationChart';
-export { GoldProjectionChart } from './GoldProjectionChart';
 export { GoldCommitChart } from './GoldCommitChart';
 export { CheckpointMetricsChart } from './CheckpointMetricsChart';
 export { EventPublishChart } from './EventPublishChart';

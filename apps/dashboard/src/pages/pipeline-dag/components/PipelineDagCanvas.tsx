@@ -47,9 +47,7 @@ const BRANCHED_POSITIONS: Record<string, { x: number; y: number }> = {
   'gold-lc-features': { x: 3880, y: 500 },
   'gold-tpf-evidence': { x: 4260, y: 780 },
   'gold-candidate': { x: 4560, y: 500 },
-  'gold-parquet': { x: 4960, y: 500 },
-  'gold-index': { x: 5360, y: 500 },
-  'gold-commit': { x: 5760, y: 500 },
+  'gold-commit': { x: 4960, y: 500 },
 };
 
 const ENRICHMENT_BRANCHED_POSITIONS: Record<string, { x: number; y: number }> = {
@@ -58,9 +56,7 @@ const ENRICHMENT_BRANCHED_POSITIONS: Record<string, { x: number; y: number }> = 
   'gold-lc-features': { x: 450, y: 350 },
   'gold-tpf-evidence': { x: 850, y: 600 },
   'gold-candidate': { x: 1150, y: 350 },
-  'gold-parquet': { x: 1550, y: 350 },
-  'gold-index': { x: 1950, y: 350 },
-  'gold-commit': { x: 2350, y: 350 },
+  'gold-commit': { x: 1550, y: 350 },
 };
 
 function nodePosition(index: number, layout: DagLayout, id?: string, isEnrichmentOnly?: boolean): { x: number; y: number } {

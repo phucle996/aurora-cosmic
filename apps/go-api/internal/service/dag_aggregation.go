@@ -391,11 +391,11 @@ func (s *DAGAggregationService) QueryGraph(ctx context.Context, stage string, ti
 	// Build Pipeline DAG Hops and topology edges
 	hops := dagHops(values, observations, end, nil, runtimeProgress)
 
-	// Append Enrichment Hops (G01 to G08)
+	// Append Enrichment Hops (G01 to G06)
 	control, enrichmentRuntime := s.getEnrichmentOverview(ctx)
 	goldHopIDs := []string{
 		"gold-pairing", "gold-catalog", "gold-lc-features",
-		"gold-tpf-evidence", "gold-candidate", "gold-parquet", "gold-index", "gold-commit",
+		"gold-tpf-evidence", "gold-candidate", "gold-commit",
 	}
 	var evidence *entity.DAGRunEvidence
 	if ticketID != "" && s.dagRepo != nil {
@@ -649,9 +649,7 @@ func (s *DAGAggregationService) QueryGraph(ctx context.Context, stage string, ti
 		{"gold-catalog", "gold-candidate"},
 		{"gold-lc-features", "gold-candidate"},
 		{"gold-tpf-evidence", "gold-candidate"},
-		{"gold-candidate", "gold-parquet"},
-		{"gold-parquet", "gold-index"},
-		{"gold-index", "gold-commit"},
+		{"gold-candidate", "gold-commit"},
 	}
 
 	stage = strings.ToLower(strings.TrimSpace(stage))
@@ -905,11 +903,11 @@ var hopCatalog = map[string]HopMetadata{
 	},
 	"gold-commit": {
 		ID:          "gold-commit",
-		Label:       "Atomic Snapshot Commit & Lineage",
-		Description: "Emits atomic manifest pointer to MinIO, seals data lineage ledger, and updates pipeline state",
-		Contract:    "control/enrichment.json pointer + lineage/gold/<snapshot_id>.json",
-		Input:       "Indexed projection confirmation",
-		Output:      "Atomic snapshot commit",
+		Label:       "Gold Storage & Snapshot Release",
+		Description: "Persists columnar Parquet partitions to MinIO, indexes candidate rows into ClickHouse, and commits immutable release manifest",
+		Contract:    "Snappy Parquet + ClickHouse candidate_features_v1 + control/enrichment.json manifest seal",
+		Input:       "Assembled candidate records",
+		Output:      "Durable Parquet + Indexed ClickHouse rows + committed manifest",
 	},
 }
 
@@ -2405,13 +2403,28 @@ func (s *DAGAggregationService) aggregateGoldCommitHop(ctx context.Context, hop 
 	if detail != nil {
 		if detail.ScientificEvidence != nil {
 			hop.GoldCommitEvidence = detail.ScientificEvidence.GoldCommit
+			hop.GoldMaterializationEvidence = detail.ScientificEvidence.GoldMaterialization
+			hop.GoldProjectionEvidence = detail.ScientificEvidence.GoldProjection
+			if detail.ScientificEvidence.GoldMaterialization != nil {
+				if detail.ScientificEvidence.GoldMaterialization.TotalBytes > 0 {
+					hop.Metrics["parquet_bytes"] = float64(detail.ScientificEvidence.GoldMaterialization.TotalBytes)
+				}
+				if detail.ScientificEvidence.GoldMaterialization.ArtifactCount > 0 {
+					hop.Metrics["artifact_count"] = float64(detail.ScientificEvidence.GoldMaterialization.ArtifactCount)
+				}
+			}
 		}
 		if detail.LastSnapshotID != "" {
 			hop.Metrics["committed_snapshots"] = 1
+			hop.Details["snapshot_id"] = detail.LastSnapshotID
+		}
+		if detail.IndexedRows > 0 {
+			hop.Metrics["indexed_rows"] = float64(detail.IndexedRows)
 		}
 	} else if runtime != nil {
 		if runtime.LastSnapshotID != "" {
 			hop.Metrics["committed_snapshots"] = 1
+			hop.Details["snapshot_id"] = runtime.LastSnapshotID
 		}
 	}
 }
