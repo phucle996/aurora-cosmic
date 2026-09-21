@@ -32,6 +32,7 @@ import {
   QualityMaskChart,
   ResidualsDistributionChart,
   SilverMaterializationChart,
+  TPFQualityWCSChart,
   TPFSpatialEvidenceChart,
 } from './hop-charts';
 
@@ -67,7 +68,7 @@ function renderHopChart(
     case 'lc-quality':
       return <QualityMaskChart mode={mode} totalFiles={totalFiles} metrics={metrics} telemetry={telemetry} modality="lightcurve" />;
     case 'tpf-quality':
-      return <QualityMaskChart mode={mode} totalFiles={totalFiles} metrics={metrics} telemetry={telemetry} modality="target-pixel" />;
+      return <TPFQualityWCSChart mode={mode} totalFiles={totalFiles} metrics={metrics} telemetry={telemetry} />;
     case 'transform':
       return <ResidualsDistributionChart metrics={metrics} telemetry={telemetry} scatterPoints={scatterPoints} tpfTransformPoints={tpfTransformPoints} />;
     case 'lc-transform':
@@ -162,12 +163,15 @@ function scientificReference(hop: Hop): ScientificReference {
     },
     'tpf-quality': {
       formulas: [
-        { label: 'Tỷ lệ giữ lại', expression: 'retention = valid image cadences / input cadences × 100%' },
-        { label: 'Cadence hợp lệ', expression: 'quality = 0 ∧ finite(time) ∧ time > 0' },
+        { label: 'Spatial grid geometry', expression: 'stamp shape = 11 × 11 = 121 px/frame' },
+        { label: 'Finite pixel fraction', expression: 'finite px = finite_count / (N_frames × 121) × 100%' },
+        { label: 'WCS astrometry solution', expression: 'RA/Dec = WCS(x, y, CRVAL, CDELT, PC)' },
       ],
       terms: [
-        { term: 'TPF', meaning: 'Chuỗi ảnh pixel nhỏ quanh một mục tiêu TESS.' },
-        { term: 'Image cadence', meaning: 'Một khung pixel tại một thời điểm quan sát.' },
+        { term: '11×11 Postage Stamp', meaning: 'Ma trận tem ảnh 2 chiều cắt xung quanh tọa độ thiên văn của ngôi sao mục tiêu.' },
+        { term: 'WCS Astrometry', meaning: 'Hệ tọa độ thiên cầu thế giới (World Coordinate System) ánh xạ pixel (x, y) sang thiên kinh RA / thiên vĩ Dec.' },
+        { term: 'Finite Pixel Density', meaning: 'Tỷ lệ điểm ảnh có giá trị số học hữu hạn, không bị dead/null/NaN trên cảm biến CCD.' },
+        { term: 'Aperture Mask', meaning: 'Mặt nạ phân vùng không gian tách biệt giữa ánh sáng sao (Core PSF) và nền trời (Sky Background).' },
       ],
     },
     'lc-transform': {

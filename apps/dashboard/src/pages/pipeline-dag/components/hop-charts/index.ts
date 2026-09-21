@@ -2,6 +2,7 @@
 export { CadenceTimelineChart } from './CadenceTimelineChart';
 export { ProductDemuxChart } from './ProductDemuxChart';
 export { QualityMaskChart } from './QualityMaskChart';
+export { TPFQualityWCSChart } from './TPFQualityWCSChart';
 export { ResidualsDistributionChart } from './ResidualsDistributionChart';
 export { SilverMaterializationChart } from './SilverMaterializationChart';
 export { GoldPhaseChart } from './GoldPhaseChart';
