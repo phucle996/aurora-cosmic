@@ -179,14 +179,18 @@ function scientificReference(hop: Hop): ScientificReference {
     'lc-transform': {
       formulas: [
         { label: 'Median normalization', expression: 'fᵢ = Fᵢ / median(F) − 1' },
-        { label: 'Scatter', expression: 'scatter_ppm = stddev(f) × 10⁶' },
-        { label: 'Sigma clipping', expression: 'reject i when |fᵢ| / stddev(f) > k' },
+        { label: 'Flux Scatter', expression: 'scatter_ppm = stddev(f) × 10⁶' },
+        { label: 'Quy tắc Sigma-clipping', expression: 'reject i khi |fᵢ| / stddev(f) > k (ngưỡng cắt k = 5.0σ)' },
+        { label: 'Phân tầng kiểm soát', expression: '3–4σ (đệm nhẹ) · 4–5σ (nhiễu quang học) · ≥5σ (loại tia vũ trụ)' },
       ],
       terms: [
-        { term: 'Scatter', meaning: 'Mức dao động của flux đã chuẩn hoá quanh 0; thấp thường ổn định hơn.' },
-        { term: 'ppm', meaning: 'Parts per million; 10,000 ppm tương đương 1% biến thiên flux.' },
-        { term: 'σ (sigma)', meaning: 'Một độ lệch chuẩn tính trên flux đã chuẩn hoá.' },
-        { term: 'y = x', meaning: 'Đường không đổi; điểm dưới đường có scatter giảm sau clipping.' },
+        { term: 'Mục tiêu thiên văn', meaning: 'Bảo toàn độ sâu và hình dạng lòng chảo transit hành tinh trong khi triệt tiêu trôi dạt nhiệt (thermal drift).' },
+        { term: 'Ngưỡng 3–4σ (99.73%)', meaning: 'Vùng đệm biến động nhẹ quanh phân bố Gaussian; giữ lại để không làm méo hình học transit.' },
+        { term: 'Ngưỡng 4–5σ (99.99%)', meaning: 'Dao động mạnh do nhiễu hệ thống quang học TESS hoặc stellar flare nhỏ; theo dõi mật độ.' },
+        { term: 'Ngưỡng ≥5σ (Excision)', meaning: 'Các xung đột biến cực đoan do hạt năng lượng cao / tia vũ trụ va chạm CCD; loại bỏ dứt điểm để tránh sinh ứng viên giả.' },
+        { term: 'Bảo toàn transit sâu', meaning: 'Ngưỡng k=5σ đủ rộng để transit sâu của hành tinh khổng lồ (Hot Jupiter ~10,000–20,000 ppm) không bị cắt nhầm.' },
+        { term: 'Scatter (ppm)', meaning: 'Mức dao động thông lượng quanh 0; 10,000 ppm tương đương 1% biến thiên ánh sáng.' },
+        { term: 'Đường y = x', meaning: 'Đường tham chiếu không đổi; điểm dưới đường có scatter giảm sau khi clipping.' },
       ],
     },
     'tpf-transform': {
@@ -571,13 +575,47 @@ export function HopDetailDrawer({
                 </div>
 
                 {/* Astronomy Goal */}
-                <div className="bg-muted/15 p-3 rounded-lg border border-border/60 space-y-1.5">
+                <div className="bg-muted/15 p-3 rounded-lg border border-border/60 space-y-2">
                   <span className="text-muted-foreground uppercase tracking-wider text-[10px] font-bold flex items-center gap-1.5">
                     <FileText className="size-3.5 text-primary" /> Mục tiêu Khoa học Thiên văn
                   </span>
                   <p className="text-xs font-medium text-foreground leading-relaxed">
                     {selectedHop.astronomyGoal}
                   </p>
+
+                  {selectedHop.id === 'lc-transform' && (
+                    <div className="mt-2 space-y-1.5 border-t border-border/50 pt-2">
+                      <span className="block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                        Phân tầng ngưỡng Sigma-clipping (PDC-SAP)
+                      </span>
+                      <div className="grid grid-cols-1 gap-1.5 text-[11px] font-mono">
+                        <div className="flex items-center justify-between rounded border border-emerald-500/30 bg-background/80 px-2 py-1">
+                          <span className="flex items-center gap-1.5 font-semibold text-emerald-600 dark:text-emerald-400">
+                            <span className="size-1.5 rounded-full bg-emerald-500" /> &lt; 3σ · Dữ liệu chuẩn
+                          </span>
+                          <span className="text-[10px] text-muted-foreground">Bảo toàn lòng chảo transit</span>
+                        </div>
+                        <div className="flex items-center justify-between rounded border border-amber-500/30 bg-background/80 px-2 py-1">
+                          <span className="flex items-center gap-1.5 font-semibold text-amber-600 dark:text-amber-400">
+                            <span className="size-1.5 rounded-full bg-amber-500" /> 3–4σ · Biến động nhẹ
+                          </span>
+                          <span className="text-[10px] text-muted-foreground">Vùng đệm kiểm tra (99.73%)</span>
+                        </div>
+                        <div className="flex items-center justify-between rounded border border-orange-500/30 bg-background/80 px-2 py-1">
+                          <span className="flex items-center gap-1.5 font-semibold text-orange-600 dark:text-orange-400">
+                            <span className="size-1.5 rounded-full bg-orange-500" /> 4–5σ · Nhiễu hệ thống
+                          </span>
+                          <span className="text-[10px] text-muted-foreground">Flare sao / nhiễu quang học</span>
+                        </div>
+                        <div className="flex items-center justify-between rounded border border-red-500/30 bg-background/80 px-2 py-1">
+                          <span className="flex items-center gap-1.5 font-semibold text-red-600 dark:text-red-400">
+                            <span className="size-1.5 rounded-full bg-red-500" /> ≥ 5σ · Tia vũ trụ (Excision)
+                          </span>
+                          <span className="text-[10px] text-muted-foreground">Loại bỏ spike cực đoan</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <ScientificMethodCard hop={selectedHop} />
