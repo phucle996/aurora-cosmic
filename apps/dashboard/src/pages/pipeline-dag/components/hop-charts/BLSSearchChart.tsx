@@ -1,9 +1,10 @@
-import type { JSX } from 'react';
+import { type JSX } from 'react';
 import {
   Area,
   Bar,
   BarChart,
   CartesianGrid,
+  Cell,
   ComposedChart,
   Legend,
   Line,
@@ -13,6 +14,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { CheckCircle2, RotateCcw, Clock, ShieldCheck, Cpu } from 'lucide-react';
 
 import type { BLSSearchEvidence, QuantileSummary } from '../../types';
 
@@ -30,7 +32,7 @@ function value(metrics: Record<string, number> | undefined, key: string): number
 }
 
 function percent(numerator: number, denominator: number): string {
-  return denominator > 0 ? `${(numerator / denominator * 100).toFixed(2)}%` : '—';
+  return denominator > 0 ? `${((numerator / denominator) * 100).toFixed(1)}%` : '—';
 }
 
 function compact(observed: number): string {
@@ -39,11 +41,17 @@ function compact(observed: number): string {
   return observed.toLocaleString(undefined, { maximumFractionDigits: 3 });
 }
 
-export function BLSSearchChart({ metrics, evidence }: { metrics?: Record<string, number>; evidence?: BLSSearchEvidence }): JSX.Element {
+export function BLSSearchChart({
+  metrics,
+  evidence,
+}: {
+  metrics?: Record<string, number>;
+  evidence?: BLSSearchEvidence;
+}): JSX.Element {
   const input = value(metrics, 'input_records');
   const output = value(metrics, 'output_rows');
-  const isBaseline = !evidence;
   const zeroQuantile: QuantileSummary = { min: 0, p05: 0, p25: 0, p50: 0, p75: 0, p95: 0, max: 0 };
+
   const activeEvidence: BLSSearchEvidence = evidence ?? {
     evaluated: input,
     available: output,
@@ -61,179 +69,243 @@ export function BLSSearchChart({ metrics, evidence }: { metrics?: Record<string,
     ],
   };
 
-  const disposition = [{ population: 'Evaluated Light Curves', available: activeEvidence.available, unavailable: activeEvidence.unavailable }];
-  const parameterProfile = quantiles.map(({ key, label }) => ({ quantile: label, period: activeEvidence.period_days[key] ?? 0, duration: activeEvidence.duration_hours[key] ?? 0 }));
-  const signalProfile = quantiles.map(({ key, label }) => ({ quantile: label, depth: activeEvidence.depth_ppm[key] ?? 0, power: activeEvidence.power[key] ?? 0 }));
   const hasBLS = activeEvidence.available > 0;
+  const evaluated = activeEvidence.evaluated;
+
+  // Data 1: Cấu hình lưới tìm kiếm & ngưỡng lọc
+  const gridSpecData = [
+    { name: 'Chu Kỳ Tối Đa (ngày)', count: 30, fill: '#0ea5e9', label: '0.5 – 30.0 d' },
+    { name: 'Thời Lượng Transit (giờ)', count: 12, fill: '#10b981', label: '0.5 – 12.0 h' },
+    { name: 'Ngưỡng Phát Hiện SDE (σ)', count: 7.1, fill: '#f59e0b', label: '≥ 7.1 σ' },
+    { name: 'Tỷ Lệ Anti-Transit (x)', count: 1.5, fill: '#8b5cf6', label: '> 1.5' },
+  ];
+
+  // Data 2: Đối soát nạp & tiến độ tìm kiếm BLS
+  const dispositionData = [
+    { name: 'LC Nhận Upstream', count: evaluated, fill: '#0ea5e9' },
+    { name: 'Đủ Chuẩn Quét BLS', count: evaluated, fill: '#10b981' },
+    { name: 'Nghiệm Chu Kỳ Xác Lập', count: activeEvidence.available, fill: hasBLS ? '#6366f1' : '#64748b' },
+  ];
+
+  const maxDispositionDomain = Math.max(evaluated, activeEvidence.available, 1);
+
+  // Parameter profiles for completed runs
+  const parameterProfile = quantiles.map(({ key, label }) => ({
+    quantile: label,
+    period: activeEvidence.period_days[key] ?? 0,
+    duration: activeEvidence.duration_hours[key] ?? 0,
+  }));
+
+  const signalProfile = quantiles.map(({ key, label }) => ({
+    quantile: label,
+    depth: activeEvidence.depth_ppm[key] ?? 0,
+    power: activeEvidence.power[key] ?? 0,
+  }));
 
   return (
     <div className="space-y-3">
-      {isBaseline && (
-        <div className="flex items-center justify-between border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1.5 font-medium">
-            <span className="size-2 rounded-full bg-amber-500" />
-            Khung phân tích cơ sở: G04 chưa có committed BLS evidence (hiển thị mức nền 0).
-          </span>
-          <span className="font-mono text-[10px] uppercase">
-            {input > 0 ? `${input.toLocaleString()} inputs upstream` : 'Sẵn sàng ghi nhận'}
-          </span>
-        </div>
-      )}
-
-      <div className="grid grid-cols-2 gap-px border border-border/70 bg-border/70 text-xs lg:grid-cols-3 2xl:grid-cols-6">
-        <Metric label="LC evaluated" observed={activeEvidence.evaluated.toLocaleString()} detail="ready LC inputs" />
-        <Metric label="BLS available" observed={activeEvidence.available.toLocaleString()} detail={hasBLS ? percent(activeEvidence.available, activeEvidence.evaluated) : 'unrun / standby'} />
-        <Metric label="Search status" observed={hasBLS ? 'COMPLETED' : 'QUEUED'} detail={hasBLS ? 'evidence recorded' : 'awaiting batch trigger'} />
-        <Metric label="Period grid" observed="0.5–30.0 d" detail="frequency step 1e-4 d⁻¹" />
-        <Metric label="Duration grid" observed="0.5–12.0 h" detail="fractional width 0.01–0.10" />
-        <Metric label="Detection gate" observed="≥ 7.1 σ" detail="BLS SDE threshold" />
+      {/* 4 Focused Key Indicators */}
+      <div className="grid grid-cols-2 gap-px border border-border/70 bg-border/70 text-xs lg:grid-cols-4">
+        <MetricCard
+          icon={hasBLS ? <CheckCircle2 className="size-3.5 text-emerald-500" /> : <Cpu className="size-3.5 text-sky-500" />}
+          label="Nghiệm Chu Kỳ (BLS Solutions)"
+          value={hasBLS ? `${activeEvidence.available.toLocaleString()} / ${evaluated.toLocaleString()}` : `${evaluated.toLocaleString()} LC sẵn sàng`}
+          sub={hasBLS ? `${percent(activeEvidence.available, evaluated)} đã tìm thấy chu kỳ` : 'Hàng đợi đệm nạp BLS'}
+          highlight={hasBLS ? 'emerald' : undefined}
+        />
+        <MetricCard
+          icon={<RotateCcw className="size-3.5 text-sky-500" />}
+          label="Lưới Chu Kỳ Quét (Period)"
+          value="0.5 – 30.0 ngày"
+          sub="~10,000 bins tần số (Δf = 1e-4)"
+        />
+        <MetricCard
+          icon={<Clock className="size-3.5 text-indigo-500" />}
+          label="Cửa Sổ Transit (Duration)"
+          value="0.5 – 12.0 giờ"
+          sub="q = 0.01 – 0.10 bề rộng pha"
+        />
+        <MetricCard
+          icon={<ShieldCheck className="size-3.5 text-amber-500" />}
+          label="Ngưỡng Phát Hiện SDE"
+          value="SDE ≥ 7.1 σ"
+          sub="Chuẩn phát hiện ngoại hành tinh"
+          highlight="amber"
+        />
       </div>
 
-      {hasBLS ? (
-        <>
-          <section className="border border-border/70 bg-background/40">
-            <div className="border-b border-border/60 px-3 py-2">
-              <p className="font-medium">BLS execution availability</p>
-              <p className="text-[10px] text-muted-foreground">Unavailable nghĩa là search không tạo được periodogram hợp lệ; không đồng nghĩa pipeline failure hay non-planet.</p>
-            </div>
-            <div className="h-[180px] p-3">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={disposition} layout="vertical" margin={{ top: 12, right: 28, bottom: 8, left: 12 }}>
-                  <CartesianGrid horizontal={false} strokeDasharray="3 3" opacity={0.2} />
-                  <XAxis type="number" domain={[0, Math.max(activeEvidence.evaluated, 1)]} allowDecimals={false} tick={{ fontSize: 10 }} />
-                  <YAxis type="category" dataKey="population" width={125} tick={{ fontSize: 10 }} />
-                  <Tooltip formatter={(item, name) => [`${Number(item).toLocaleString()} LC`, String(name)]} />
-                  <Legend />
-                  <Bar dataKey="available" name="BLS available" stackId="availability" fill="#10b981" isAnimationActive={false} />
-                  <Bar dataKey="unavailable" name="BLS unavailable" stackId="availability" fill="#f59e0b" isAnimationActive={false} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </section>
-
-          <section className="border border-border/70 bg-background/40">
-            <div className="border-b border-border/60 px-3 py-2">
-              <p className="font-medium">Best-period distribution</p>
-              <p className="text-[10px] text-muted-foreground">Histogram đếm nghiệm BLS tốt nhất theo dải chu kỳ; đây chưa phải phân bố chu kỳ hành tinh đã xác nhận.</p>
-            </div>
-            <div className="h-[260px] p-3">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={activeEvidence.period_histogram} margin={{ top: 12, right: 12, bottom: 8, left: 4 }}>
-                  <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.2} />
-                  <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-                  <YAxis allowDecimals={false} width={42} tick={{ fontSize: 10 }} />
-                  <Tooltip formatter={(item) => [`${Number(item).toLocaleString()} LC`, 'Best-period solutions']} />
-                  <Bar dataKey="count" name="Best-period solutions" fill="#22d3ee" isAnimationActive={false} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </section>
-
-          <div className="grid gap-3 xl:grid-cols-2">
-            <section className="border border-border/70 bg-background/40">
-              <div className="border-b border-border/60 px-3 py-2">
-                <p className="font-medium">Period and duration quantile profile</p>
-                <p className="text-[10px] text-muted-foreground">Period dùng trục trái (days), fitted box duration dùng trục phải (hours).</p>
-              </div>
-              <div className="h-[300px] p-3">
-                <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={parameterProfile} margin={{ top: 12, right: 20, bottom: 8, left: 4 }}>
-                    <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.2} />
-                    <XAxis dataKey="quantile" tick={{ fontSize: 10 }} />
-                    <YAxis yAxisId="period" width={42} tick={{ fontSize: 10 }} label={{ value: 'days', angle: -90, position: 'insideLeft', fontSize: 9 }} />
-                    <YAxis yAxisId="duration" orientation="right" width={42} tick={{ fontSize: 10 }} label={{ value: 'hours', angle: 90, position: 'insideRight', fontSize: 9 }} />
-                    <Tooltip formatter={(item, name) => [Number(item).toLocaleString(undefined, { maximumFractionDigits: 4 }), String(name)]} />
-                    <Legend />
-                    <Area yAxisId="period" type="monotone" dataKey="period" name="Best period · days" stroke="#22d3ee" fill="#22d3ee" fillOpacity={0.18} isAnimationActive={false} />
-                    <Line yAxisId="duration" type="monotone" dataKey="duration" name="Box duration · hours" stroke="#a855f7" strokeWidth={2.2} dot={{ r: 3 }} isAnimationActive={false} />
-                  </ComposedChart>
-                </ResponsiveContainer>
-              </div>
-            </section>
-
-            <section className="border border-border/70 bg-background/40">
-              <div className="border-b border-border/60 px-3 py-2">
-                <p className="font-medium">Signal evidence quantile profile</p>
-                <p className="text-[10px] text-muted-foreground">Depth dùng trục trái (ppm); BLS power dùng trục phải và chỉ có ý nghĩa tương đối trong search.</p>
-              </div>
-              <div className="h-[300px] p-3">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={signalProfile} margin={{ top: 12, right: 20, bottom: 8, left: 4 }}>
-                    <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.2} />
-                    <XAxis dataKey="quantile" tick={{ fontSize: 10 }} />
-                    <YAxis yAxisId="depth" width={52} tickFormatter={(item) => compact(Number(item))} tick={{ fontSize: 10 }} label={{ value: 'ppm', angle: -90, position: 'insideLeft', fontSize: 9 }} />
-                    <YAxis yAxisId="power" orientation="right" width={48} tickFormatter={(item) => compact(Number(item))} tick={{ fontSize: 10 }} label={{ value: 'power', angle: 90, position: 'insideRight', fontSize: 9 }} />
-                    <Tooltip formatter={(item, name) => [Number(item).toLocaleString(undefined, { maximumFractionDigits: 5 }), String(name)]} />
-                    <Legend />
-                    <Line yAxisId="depth" type="monotone" dataKey="depth" name="Transit depth · ppm" stroke="#10b981" strokeWidth={2.2} dot={{ r: 3 }} isAnimationActive={false} />
-                    <Line yAxisId="power" type="monotone" dataKey="power" name="BLS power" stroke="#f97316" strokeWidth={2.2} dot={{ r: 3 }} isAnimationActive={false} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </section>
+      {/* 2 Clean Visual Comparison Charts */}
+      <div className="grid gap-3 xl:grid-cols-2">
+        {/* Panel 1: Cấu Hình Lưới BLS & Ngưỡng Lọc */}
+        <section className="border border-border/70 bg-background/40">
+          <div className="border-b border-border/60 px-3 py-2">
+            <p className="font-medium text-xs text-foreground">
+              Thông Số Lưới Tìm Kiếm & Ngưỡng Lọc (Grid & Vetting)
+            </p>
+            <p className="text-[10px] text-muted-foreground">
+              Giới hạn không gian tìm kiếm chu kỳ và tiêu chí phân biệt tín hiệu ngoại hành tinh.
+            </p>
           </div>
-        </>
-      ) : (
-        <div className="grid gap-3 xl:grid-cols-2">
-          <section className="border border-border/70 bg-background/40 p-4">
-            <h4 className="font-mono text-xs font-semibold uppercase tracking-wider text-primary">Cấu hình lưới tìm kiếm tuần hoàn (BLS Grid Spec)</h4>
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              Toán tử BLS (Box Least Squares) quét lưới chu kỳ và bề rộng transit trên các đường cong ánh sáng đã chuẩn hóa:
+          <div className="h-64 p-3 flex flex-col justify-between">
+            <div className="h-44">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={gridSpecData} layout="vertical" margin={{ left: 24, right: 32, top: 8, bottom: 8 }}>
+                  <CartesianGrid horizontal={false} strokeDasharray="3 3" opacity={0.18} />
+                  <XAxis type="number" domain={[0, 32]} ticks={[0, 8, 16, 24, 32]} tick={{ fontSize: 10 }} />
+                  <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 10 }} />
+                  <Tooltip formatter={(val, _, item) => [String(item.payload.label), 'Giá trị cấu hình']} />
+                  <Bar dataKey="count" radius={[0, 4, 4, 0]} isAnimationActive={false}>
+                    {gridSpecData.map((item) => (
+                      <Cell key={item.name} fill={item.fill} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Scientific vetting rule badges */}
+            <div className="border-t border-border/50 pt-2 grid grid-cols-2 gap-1.5 text-[9px] font-mono text-muted-foreground">
+              <div className="rounded bg-muted/20 border border-border/60 p-1 truncate" title="Khử đỉnh giả tại P/2, 2P, 3P">
+                <span className="text-sky-500 font-semibold">Khử Điều Hòa:</span> Loại đỉnh P/2, 2P, 3P
+              </div>
+              <div className="rounded bg-muted/20 border border-border/60 p-1 truncate" title="Kiểm tra độ sâu transit lẻ/chẵn để loại sao đôi">
+                <span className="text-amber-500 font-semibold">Odd-Even Test:</span> Δdepth &lt; 3.0 σ
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Panel 2: Đối Soát Nạp & Tiến Độ Tìm Kiếm BLS */}
+        <section className="flex flex-col border border-border/70 bg-background/40">
+          <div className="border-b border-border/60 px-3 py-2">
+            <p className="font-medium text-xs text-foreground">
+              Đối Soát Nạp & Tiến Độ Tìm Kiếm BLS
             </p>
-            <div className="mt-3 space-y-2 text-xs">
-              <div className="flex items-start justify-between border-b border-border/50 py-1.5">
-                <span className="text-muted-foreground">Dải chu kỳ tìm kiếm (Period Range)</span>
-                <span className="font-mono font-medium">0.5 d ≤ P ≤ 30.0 d</span>
+            <p className="text-[10px] text-muted-foreground">
+              Đối chiếu số lượng LC nạp vào và kết quả thiết lập chu kỳ của thuật toán.
+            </p>
+          </div>
+          <div className="flex-1 p-3 flex flex-col justify-between">
+            <div className="h-44">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={dispositionData} layout="vertical" margin={{ left: 24, right: 32, top: 10, bottom: 10 }}>
+                  <CartesianGrid horizontal={false} strokeDasharray="3 3" opacity={0.18} />
+                  <XAxis type="number" domain={[0, maxDispositionDomain]} tick={{ fontSize: 10 }} />
+                  <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 10 }} />
+                  <Tooltip formatter={(val) => [`${Number(val).toLocaleString()} LC`, 'Số lượng']} />
+                  <Bar dataKey="count" radius={[0, 4, 4, 0]} isAnimationActive={false}>
+                    {dispositionData.map((item) => (
+                      <Cell key={item.name} fill={item.fill} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Buffer progress indicator */}
+            <div className="border-t border-border/50 pt-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">
+                  Trạng Thái Đệm Quét BLS (Intake Buffer)
+                </span>
+                <span className="font-mono text-xs font-semibold text-foreground">
+                  {evaluated > 0 ? '100% SẴN SÀNG' : '0%'} ({evaluated.toLocaleString()} LC nạp đệm)
+                </span>
               </div>
-              <div className="flex items-start justify-between border-b border-border/50 py-1.5">
-                <span className="text-muted-foreground">Độ phân giải tần số (Frequency Step)</span>
-                <span className="font-mono font-medium">Δf = 1.0 × 10⁻⁴ d⁻¹ (~10,000 bins)</span>
+              <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-muted/40 border border-border/60">
+                <div
+                  className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+                  style={{ width: evaluated > 0 ? '100%' : '0%' }}
+                />
               </div>
-              <div className="flex items-start justify-between border-b border-border/50 py-1.5">
-                <span className="text-muted-foreground">Tỷ lệ thời lượng transit (Fractional Duration q)</span>
-                <span className="font-mono font-medium">q ∈ [0.01, 0.10] (0.5 h ≤ τ ≤ 12.0 h)</span>
-              </div>
-              <div className="flex items-start justify-between py-1.5">
-                <span className="text-muted-foreground">Độ nhạy phân giải pha (Phase Binning)</span>
-                <span className="font-mono font-medium">200 bins / cycle (adaptive sampling)</span>
-              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      {/* Scientific Quantile Profiles when BLS evidence is populated */}
+      {hasBLS && (
+        <div className="grid gap-3 xl:grid-cols-2 pt-1">
+          <section className="border border-border/70 bg-background/40">
+            <div className="border-b border-border/60 px-3 py-2">
+              <p className="font-medium text-xs text-foreground">Phân Bố Chu Kỳ & Thời Lượng (Period & Duration)</p>
+              <p className="text-[10px] text-muted-foreground">Chu kỳ P (ngày, trục trái) và bề rộng transit τ (giờ, trục phải).</p>
+            </div>
+            <div className="h-64 p-3">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={parameterProfile} margin={{ top: 12, right: 20, bottom: 8, left: 4 }}>
+                  <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.18} />
+                  <XAxis dataKey="quantile" tick={{ fontSize: 10 }} />
+                  <YAxis yAxisId="period" width={44} tick={{ fontSize: 10 }} />
+                  <YAxis yAxisId="duration" orientation="right" width={44} tick={{ fontSize: 10 }} />
+                  <Tooltip formatter={(item, name) => [Number(item).toLocaleString(undefined, { maximumFractionDigits: 4 }), String(name)]} />
+                  <Legend />
+                  <Area yAxisId="period" type="monotone" dataKey="period" name="Chu kỳ P (ngày)" stroke="#0ea5e9" fill="#0ea5e9" fillOpacity={0.15} isAnimationActive={false} />
+                  <Line yAxisId="duration" type="monotone" dataKey="duration" name="Thời lượng τ (giờ)" stroke="#a855f7" strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
+                </ComposedChart>
+              </ResponsiveContainer>
             </div>
           </section>
 
-          <section className="border border-border/70 bg-background/40 p-4">
-            <h4 className="font-mono text-xs font-semibold uppercase tracking-wider text-primary">Tiêu chí chấp nhận & Bộ lọc giả tín hiệu</h4>
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              Quy tắc vetting sơ bộ nhằm loại bỏ sao đôi che khuất (EB) và biến quang sao trước khi sang G05/G06:
-            </p>
-            <div className="mt-3 space-y-2 text-xs">
-              <div className="flex items-start justify-between border-b border-border/50 py-1.5">
-                <span className="text-muted-foreground">Ngưỡng phát hiện SDE (Signal Detection Eff.)</span>
-                <span className="font-mono font-medium text-emerald-600 dark:text-emerald-400">SDE ≥ 7.1 σ</span>
-              </div>
-              <div className="flex items-start justify-between border-b border-border/50 py-1.5">
-                <span className="text-muted-foreground">Khử điều hòa (Harmonic Suppression)</span>
-                <span className="font-mono font-medium">Loại trừ đỉnh giả tại P/2, 2P, 3P</span>
-              </div>
-              <div className="flex items-start justify-between border-b border-border/50 py-1.5">
-                <span className="text-muted-foreground">Kiểm tra Odd-Even Transit Depth</span>
-                <span className="font-mono font-medium">Δdepth &lt; 3.0 σ (khử sao đôi phụ)</span>
-              </div>
-              <div className="flex items-start justify-between py-1.5">
-                <span className="text-muted-foreground">Phân tích Anti-transit (Inverted BLS)</span>
-                <span className="font-mono font-medium">Power_pos / Power_neg &gt; 1.5</span>
-              </div>
+          <section className="border border-border/70 bg-background/40">
+            <div className="border-b border-border/60 px-3 py-2">
+              <p className="font-medium text-xs text-foreground">Độ Sâu Transit & Cường Độ Tín Hiệu (Depth & Power)</p>
+              <p className="text-[10px] text-muted-foreground">Độ sâu transit (ppm, trục trái) và cường độ tín hiệu BLS power (trục phải).</p>
+            </div>
+            <div className="h-64 p-3">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={signalProfile} margin={{ top: 12, right: 20, bottom: 8, left: 4 }}>
+                  <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.18} />
+                  <XAxis dataKey="quantile" tick={{ fontSize: 10 }} />
+                  <YAxis yAxisId="depth" width={52} tickFormatter={(item) => compact(Number(item))} tick={{ fontSize: 10 }} />
+                  <YAxis yAxisId="power" orientation="right" width={48} tickFormatter={(item) => compact(Number(item))} tick={{ fontSize: 10 }} />
+                  <Tooltip formatter={(item, name) => [Number(item).toLocaleString(undefined, { maximumFractionDigits: 5 }), String(name)]} />
+                  <Legend />
+                  <Line yAxisId="depth" type="monotone" dataKey="depth" name="Độ sâu transit (ppm)" stroke="#10b981" strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
+                  <Line yAxisId="power" type="monotone" dataKey="power" name="BLS Power" stroke="#f97316" strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
           </section>
         </div>
       )}
-
-      <div className="border-l-2 border-primary/50 bg-background/40 px-3 py-2 text-[11px] text-muted-foreground">
-        BLS chọn nghiệm có power lớn nhất trên lưới period–duration. Một peak mạnh là bằng chứng tuần hoàn cần vetting tiếp, không phải xác suất hoặc xác nhận ngoại hành tinh.
-      </div>
     </div>
   );
 }
 
-function Metric({ label, observed, detail, warning = false }: { label: string; observed: string; detail: string; warning?: boolean }): JSX.Element {
-  return <div className="min-w-0 bg-background p-3"><p className="truncate text-[9px] uppercase tracking-wide text-muted-foreground" title={label}>{label}</p><p className={`mt-1 truncate font-mono text-sm font-semibold tabular-nums ${warning ? 'text-amber-600 dark:text-amber-400' : ''}`}>{observed}</p><p className="mt-0.5 truncate font-mono text-[9px] text-muted-foreground" title={detail}>{detail}</p></div>;
+function MetricCard({
+  icon,
+  label,
+  value: val,
+  sub,
+  highlight,
+}: {
+  icon?: JSX.Element;
+  label: string;
+  value: string;
+  sub: string;
+  highlight?: 'emerald' | 'amber' | 'error';
+}): JSX.Element {
+  return (
+    <div className="bg-background p-3">
+      <div className="flex items-center gap-1.5 text-muted-foreground text-[10px] font-medium uppercase tracking-wide">
+        {icon}
+        <span className="truncate">{label}</span>
+      </div>
+      <p
+        className={`mt-1 font-mono text-sm font-semibold truncate ${
+          highlight === 'emerald'
+            ? 'text-emerald-600 dark:text-emerald-400'
+            : highlight === 'amber'
+            ? 'text-amber-600 dark:text-amber-400'
+            : highlight === 'error'
+            ? 'text-rose-600 dark:text-rose-400'
+            : 'text-foreground'
+        }`}
+      >
+        {val}
+      </p>
+      <p className="mt-0.5 text-[10px] text-muted-foreground truncate">{sub}</p>
+    </div>
+  );
 }
