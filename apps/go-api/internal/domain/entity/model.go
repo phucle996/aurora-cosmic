@@ -212,3 +212,32 @@ type ModelEvolutionEvidence struct {
 	ONNXSHA256                  string   `json:"onnx_sha256"`
 	RuntimeManifestKey          string   `json:"runtime_manifest_key"`
 }
+
+// InferenceJob represents an immutable batch scoring task bound to a specific runtime package and Gold snapshot.
+type InferenceJob struct {
+	JobID                   string `json:"job_id"`
+	Task                    string `json:"task"`
+	ModelID                 string `json:"model_id"`
+	ModelVersion            string `json:"model_version"`
+	RuntimePackageID        string `json:"runtime_package_id"`
+	GoldSnapshotID          string `json:"gold_snapshot_id"`
+	GoldArtifactKey         string `json:"gold_artifact_key"`
+	Sector                  int    `json:"sector"`
+	ExpectedPredictionCount int64  `json:"expected_prediction_count"`
+	CreatedAt               string `json:"created_at"`
+	Status                  string `json:"status"`
+	OutputKey               string `json:"output_key,omitempty"`
+	OutputSHA256            string `json:"output_sha256,omitempty"`
+	ProcessedRows           int64  `json:"processed_rows,omitempty"`
+	Attempt                 int64  `json:"attempt,omitempty"`
+	StartedAt               string `json:"started_at,omitempty"`
+	UpdatedAt               string `json:"updated_at,omitempty"`
+	Error                   string `json:"error,omitempty"`
+	Producer                string `json:"producer,omitempty"`
+}
+
+// InferenceJobRetryResult represents the outcome of a retry request for an inference job.
+type InferenceJobRetryResult struct {
+	Status string `json:"status"`
+	JobID  string `json:"job_id"`
+}

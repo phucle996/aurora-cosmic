@@ -24,8 +24,10 @@ type fakeModelService struct {
 	activeState *entity.TrainingActiveState
 	models      []entity.Model
 	evaluation  *entity.ModelEvaluation
-	evolution   *entity.ModelEvolutionEvidence
-	err         error
+	evolution     *entity.ModelEvolutionEvidence
+	inferenceJobs []entity.InferenceJob
+	retryResult   *entity.InferenceJobRetryResult
+	err           error
 }
 
 func (f *fakeModelService) TrainingPreflight(_ context.Context, _ []string) (*entity.TrainingPreflight, error) {
@@ -85,6 +87,27 @@ func (f *fakeModelService) GetModelEvolution(_ context.Context, _ string) (*enti
 		return f.evolution, f.err
 	}
 	return &entity.ModelEvolutionEvidence{RuntimePackageID: "test-runtime", EvaluationRunID: "eval-test"}, f.err
+}
+
+func (f *fakeModelService) ListInferenceJobs(_ context.Context, _, _, _ string) ([]entity.InferenceJob, error) {
+	if f.inferenceJobs != nil {
+		return f.inferenceJobs, f.err
+	}
+	return []entity.InferenceJob{}, f.err
+}
+
+func (f *fakeModelService) RetryInferenceJob(_ context.Context, jobID string) (*entity.InferenceJobRetryResult, error) {
+	if f.retryResult != nil {
+		return f.retryResult, f.err
+	}
+	return &entity.InferenceJobRetryResult{
+		JobID:  jobID,
+		Status: "queued",
+	}, f.err
+}
+
+func (f *fakeModelService) ReconcileChampionInference(_ context.Context) (int, error) {
+	return 0, f.err
 }
 
 func TestModelHandler_TrainingPreflight(t *testing.T) {
@@ -621,5 +644,85 @@ func TestModelHandler_GetModelEvolution(t *testing.T) {
 		}
 	})
 }
+
+func TestModelHandler_ListInferenceJobs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("Returns list of inference jobs", func(t *testing.T) {
+		h := NewModelHandler(&fakeModelService{
+			inferenceJobs: []entity.InferenceJob{
+				{
+					JobID:  "job-1",
+					Task:   "candidate_vetting",
+					Status: "completed",
+				},
+			},
+		})
+		router := gin.New()
+		router.GET("/inference/jobs", h.ListInferenceJobs)
+
+		req := httptest.NewRequest(http.MethodGet, "/inference/jobs?task=candidate_vetting", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		var res struct {
+			Jobs []entity.InferenceJob `json:"jobs"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+			t.Fatal(err)
+		}
+		if len(res.Jobs) != 1 || res.Jobs[0].JobID != "job-1" {
+			t.Fatalf("unexpected jobs: %+v", res.Jobs)
+		}
+	})
+}
+
+func TestModelHandler_RetryInferenceJob(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("Missing job_id returns 400", func(t *testing.T) {
+		h := NewModelHandler(&fakeModelService{})
+		router := gin.New()
+		router.POST("/inference/jobs/:job_id/retry", h.RetryInferenceJob)
+
+		req := httptest.NewRequest(http.MethodPost, "/inference/jobs/%20/retry", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("Returns retry result for valid job", func(t *testing.T) {
+		h := NewModelHandler(&fakeModelService{
+			retryResult: &entity.InferenceJobRetryResult{
+				JobID:  "job-1",
+				Status: "queued",
+			},
+		})
+		router := gin.New()
+		router.POST("/inference/jobs/:job_id/retry", h.RetryInferenceJob)
+
+		req := httptest.NewRequest(http.MethodPost, "/inference/jobs/job-1/retry", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		var res entity.InferenceJobRetryResult
+		if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+			t.Fatal(err)
+		}
+		if res.JobID != "job-1" || res.Status != "queued" {
+			t.Fatalf("unexpected result: %+v", res)
+		}
+	})
+}
+
 
 

@@ -107,6 +107,28 @@ func (fakeModel) GetModelEvolution(context.Context, string) (*entity.ModelEvolut
 	return &entity.ModelEvolutionEvidence{RuntimePackageID: "runtime-test", EvaluationRunID: "eval-test"}, nil
 }
 
+func (fakeModel) ListInferenceJobs(context.Context, string, string, string) ([]entity.InferenceJob, error) {
+	return []entity.InferenceJob{
+		{
+			JobID:             "inf-job-001",
+			Task:              "candidate_vetting",
+			Status:            "completed",
+			RuntimePackageID: "runtime-test",
+		},
+	}, nil
+}
+
+func (fakeModel) RetryInferenceJob(context.Context, string) (*entity.InferenceJobRetryResult, error) {
+	return &entity.InferenceJobRetryResult{
+		JobID:  "inf-job-001",
+		Status: "queued",
+	}, nil
+}
+
+func (fakeModel) ReconcileChampionInference(context.Context) (int, error) {
+	return 0, nil
+}
+
 
 type fakeReadiness struct{}
 
@@ -249,7 +271,7 @@ func newTestRouter() http.Handler {
 
 func TestRouterEndpoints(t *testing.T) {
 	router := newTestRouter()
-	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/dag/hops/bronze", "/api/v1/dag/hops/gold-pairing", "/api/v1/dag/hops/gold-commit", "/api/v1/dag/graph", "/api/v1/dag/graph?stage=enrichment", "/api/v1/dag/graph?stage=preprocessing", "/api/v1/data-factory/runs", "/api/v1/data-factory/tickets", "/api/v1/enrichment/control", "/api/v1/enrichment/snapshots", "/api/v1/enrichment/snapshots/gold-v1-test", "/api/v1/lineage/ledger", "/api/v1/ingest/status", "/api/v1/storage?prefix=bronze/&limit=10", "/api/v1/lakehouse/objects?prefix=bronze/&limit=10", "/api/v1/lakehouse/preview?key=test.txt", "/api/v1/targets", "/api/v1/targets/101?sector=42", "/api/v1/candidates?snapshot_id=gold-v1-test", "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", "/api/v1/lightcurves?tic_id=101&sector=42", "/api/v1/models/training-cohort/review-queue?snapshot_id=gold-v1-test", "/api/v1/models/training-preflight?snapshot_id=gold-v1-test", "/api/v1/models/snapshots", "/api/v1/models/train/active"} {
+	for _, endpoint := range []string{"/healthz", "/api/v1/system", "/api/v1/monitoring?tab=go-api", "/api/v1/dag/hops/bronze", "/api/v1/dag/hops/gold-pairing", "/api/v1/dag/hops/gold-commit", "/api/v1/dag/graph", "/api/v1/dag/graph?stage=enrichment", "/api/v1/dag/graph?stage=preprocessing", "/api/v1/data-factory/runs", "/api/v1/data-factory/tickets", "/api/v1/enrichment/control", "/api/v1/enrichment/snapshots", "/api/v1/enrichment/snapshots/gold-v1-test", "/api/v1/lineage/ledger", "/api/v1/ingest/status", "/api/v1/storage?prefix=bronze/&limit=10", "/api/v1/lakehouse/objects?prefix=bronze/&limit=10", "/api/v1/lakehouse/preview?key=test.txt", "/api/v1/targets", "/api/v1/targets/101?sector=42", "/api/v1/candidates?snapshot_id=gold-v1-test", "/api/v1/candidates/prediction-v1?snapshot_id=gold-v1-test", "/api/v1/lightcurves?tic_id=101&sector=42", "/api/v1/models", "/api/v1/inference/jobs", "/api/v1/models/training-preflight?snapshot_id=gold-v1-test", "/api/v1/models/snapshots", "/api/v1/models/train/active"} {
 		req := httptest.NewRequest(http.MethodGet, endpoint, nil)
 		recorder := httptest.NewRecorder()
 		router.ServeHTTP(recorder, req)
@@ -518,3 +540,24 @@ func TestModelTrainingControlRoute(t *testing.T) {
 		t.Fatalf("expected 400 Bad Request for legacy payload without ticket_id, got %d", recLegacy.Code)
 	}
 }
+
+func TestInferenceRoutes(t *testing.T) {
+	router := newTestRouter()
+
+	// 1. GET /api/v1/inference/jobs
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/inference/jobs", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for GET /api/v1/inference/jobs, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// 2. POST /api/v1/inference/jobs/:job_id/retry
+	reqRetry := httptest.NewRequest(http.MethodPost, "/api/v1/inference/jobs/inf-job-001/retry", nil)
+	recRetry := httptest.NewRecorder()
+	router.ServeHTTP(recRetry, reqRetry)
+	if recRetry.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for POST /api/v1/inference/jobs/:job_id/retry, got %d: %s", recRetry.Code, recRetry.Body.String())
+	}
+}
+

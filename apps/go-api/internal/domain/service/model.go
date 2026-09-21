@@ -18,6 +18,9 @@ type Model interface {
 	ListModels(ctx context.Context, task string) ([]entity.Model, error)
 	GetModelEvaluation(ctx context.Context, runtimePackageID string) (*entity.ModelEvaluation, error)
 	GetModelEvolution(ctx context.Context, runtimePackageID string) (*entity.ModelEvolutionEvidence, error)
+	ListInferenceJobs(ctx context.Context, task, modelID, runtimePackageID string) ([]entity.InferenceJob, error)
+	RetryInferenceJob(ctx context.Context, jobID string) (*entity.InferenceJobRetryResult, error)
+	ReconcileChampionInference(ctx context.Context) (int, error)
 }
 
 

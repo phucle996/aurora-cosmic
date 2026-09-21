@@ -390,3 +390,41 @@ func (h *ModelHandler) GetModelEvolution(c *gin.Context) {
 	c.JSON(http.StatusOK, evidence)
 }
 
+// ListInferenceJobs handles GET requests to retrieve inference execution jobs.
+func (h *ModelHandler) ListInferenceJobs(c *gin.Context) {
+	task := strings.TrimSpace(c.Query("task"))
+	modelID := strings.TrimSpace(c.Query("model_id"))
+	runtimePackageID := strings.TrimSpace(c.Query("runtime_package_id"))
+
+	jobs, err := h.model.ListInferenceJobs(c.Request.Context(), task, modelID, runtimePackageID)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "inference jobs storage is unavailable"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"jobs": jobs})
+}
+
+// RetryInferenceJob handles POST requests to re-queue an inference job.
+func (h *ModelHandler) RetryInferenceJob(c *gin.Context) {
+	jobID := strings.TrimSpace(c.Param("job_id"))
+	if jobID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "job_id parameter is required"})
+		return
+	}
+
+	result, err := h.model.RetryInferenceJob(c.Request.Context(), jobID)
+	if err != nil {
+		if errors.Is(err, provider.ErrObjectNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "inference job was not found"})
+			return
+		}
+		if errors.Is(err, taxonomy.ErrInvalidRequest) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+

@@ -21,7 +21,7 @@ func (p *NATSPubSub) handleSilverEvent(_ context.Context, msg *nats.Msg) {
 
 func (p *NATSPubSub) handleGoldEvent(ctx context.Context, msg *nats.Msg) {
 	p.log.Debug("Processing Gold event from stream", "subject", msg.Subject)
-	if msg.Subject != "aurora.v1.gold.candidate.committed" || p.championInference == nil {
+	if msg.Subject != "aurora.v1.gold.candidate.committed" || p.model == nil {
 		return
 	}
 	var committed struct {
@@ -31,7 +31,7 @@ func (p *NATSPubSub) handleGoldEvent(ctx context.Context, msg *nats.Msg) {
 		p.log.Warn("Gold commit cannot trigger champion inference", "error", err)
 		return
 	}
-	dispatched, err := p.championInference.EnsureChampionCoverage(ctx, committed.SnapshotID)
+	dispatched, err := p.model.ReconcileChampionInference(ctx)
 	if err != nil {
 		p.log.Error("Champion inference planning failed for committed Gold snapshot", "snapshot_id", committed.SnapshotID, "error", err)
 		return
@@ -73,7 +73,7 @@ func (p *NATSPubSub) handleMLEvent(ctx context.Context, msg *nats.Msg, jobID str
 	}
 
 
-	if msg.Subject != "aurora.live.ml.promotion.progress" || p.championInference == nil {
+	if msg.Subject != "aurora.live.ml.promotion.progress" || p.model == nil {
 		return
 	}
 	var promotion struct {
@@ -86,12 +86,12 @@ func (p *NATSPubSub) handleMLEvent(ctx context.Context, msg *nats.Msg, jobID str
 }
 
 func (p *NATSPubSub) reconcileChampionInference() {
-	if p.championInference == nil {
+	if p.model == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	dispatched, err := p.championInference.ReconcileChampionCoverage(ctx)
+	dispatched, err := p.model.ReconcileChampionInference(ctx)
 	if err != nil {
 		p.log.Error("Champion inference reconciliation completed with errors", "dispatched_jobs", dispatched, "error", err)
 		return

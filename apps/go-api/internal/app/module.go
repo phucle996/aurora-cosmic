@@ -156,18 +156,13 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	if modelRepo == nil {
 		return nil, fmt.Errorf("repository ModelClickHouse is nil")
 	}
-	modelService := service.NewModelService(objectRepo, infra.NATS, modelRepo)
+	modelService := service.NewModelServiceWithResults(objectRepo, predictionObjectRepo, infra.NATS, modelRepo)
 	if modelService == nil {
 		return nil, fmt.Errorf("service ModelService is nil")
 	}
 	modelHandler := handler.NewModelHandler(modelService)
 	if modelHandler == nil {
 		return nil, fmt.Errorf("handler ModelHandler is nil")
-	}
-
-	inferenceService := service.NewInferenceServiceWithResults(objectRepo, predictionObjectRepo, infra.NATS, infra.MinIO.Bucket)
-	if inferenceService == nil {
-		return nil, fmt.Errorf("service InferenceService is nil")
 	}
 
 
@@ -303,11 +298,10 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	}
 
 	natsPubSub := pubsub.New(pubsub.Config{
-		NATSURL:           infra.NATS.URL,
-		Broker:            eventBroker,
-		DAGAggregation:    dagAggregationService,
-		ChampionInference: inferenceService,
-		Model:             modelService,
+		NATSURL:        infra.NATS.URL,
+		Broker:         eventBroker,
+		DAGAggregation: dagAggregationService,
+		Model:          modelService,
 	})
 
 	natsStream := stream.New(stream.Config{

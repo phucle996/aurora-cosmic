@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -50,6 +51,28 @@ func (m *memoryModelObjects) PutObject(_ context.Context, key string, data []byt
 func (m *memoryModelObjects) DeleteObject(_ context.Context, key string) error {
 	delete(m.objects, key)
 	return nil
+}
+
+func modelFixture(parity string) map[string][]byte {
+	files := map[string][]byte{
+		"models/runtime/candidate_vetting/model-a/runtime-a/model.onnx":          []byte("onnx"),
+		"models/runtime/candidate_vetting/model-a/runtime-a/preprocessing.json":  []byte("preprocessing"),
+		"models/runtime/candidate_vetting/model-a/runtime-a/threshold.json":      []byte("threshold"),
+		"models/runtime/candidate_vetting/model-a/runtime-a/parity-fixture.json": []byte("fixture"),
+	}
+	hash := func(key string) string {
+		digest := sha256.Sum256(files[key])
+		return hex.EncodeToString(digest[:])
+	}
+	files["models/runtime/candidate_vetting/model-a/runtime-a/manifest.json"] = []byte(`{
+        "runtime_package_id":"runtime-a", "task":"candidate_vetting", "source_model_id":"model-a",
+        "onnx_sha256":"` + hash("models/runtime/candidate_vetting/model-a/runtime-a/model.onnx") + `",
+        "preprocessing_sha256":"` + hash("models/runtime/candidate_vetting/model-a/runtime-a/preprocessing.json") + `",
+        "threshold_sha256":"` + hash("models/runtime/candidate_vetting/model-a/runtime-a/threshold.json") + `",
+        "parity_fixture_sha256":"` + hash("models/runtime/candidate_vetting/model-a/runtime-a/parity-fixture.json") + `",
+        "python_parity_status":"` + parity + `"
+    }`)
+	return files
 }
 
 type fakeModelRepo struct {

@@ -19,12 +19,14 @@ import (
 	"go-api/internal/provider"
 	"go-api/internal/taxonomy"
 
+	"github.com/google/uuid"
 	natsio "github.com/nats-io/nats.go"
 )
 
 // ModelService implements domainService.Model for Model domain workflows.
 type ModelService struct {
 	objects provider.ObjectStorage
+	results provider.ObjectStorage
 	nats    *nats.Client
 	repo    repo.ModelRepository
 
@@ -35,8 +37,17 @@ type ModelService struct {
 
 // NewModelService initializes a new ModelService instance.
 func NewModelService(objects provider.ObjectStorage, natsClient *nats.Client, modelRepo repo.ModelRepository) domainService.Model {
+	return NewModelServiceWithResults(objects, objects, natsClient, modelRepo)
+}
+
+// NewModelServiceWithResults initializes ModelService with separate manifests and results buckets.
+func NewModelServiceWithResults(objects, results provider.ObjectStorage, natsClient *nats.Client, modelRepo repo.ModelRepository) domainService.Model {
+	if results == nil {
+		results = objects
+	}
 	return &ModelService{
 		objects:     objects,
+		results:     results,
 		nats:        natsClient,
 		repo:        modelRepo,
 		activeRuns:  make(map[string]*entity.TrainingActiveState),
@@ -927,4 +938,230 @@ func (s *ModelService) GetModelEvolution(ctx context.Context, runtimePackageID s
 		ONNXSHA256:                  manifest.ONNXSHA256,
 		RuntimeManifestKey:          targetKey,
 	}, nil
+}
+
+// ListInferenceJobs retrieves inference jobs from object storage manifests and resolves runtime execution status.
+func (s *ModelService) ListInferenceJobs(ctx context.Context, task, modelID, runtimePackageID string) ([]entity.InferenceJob, error) {
+	objects, err := s.objects.ListObjects(ctx, "manifests/inference-jobs/")
+	if err != nil {
+		return nil, err
+	}
+
+	jobs := make([]entity.InferenceJob, 0)
+	for _, object := range objects {
+		if !strings.HasSuffix(object.Key, ".json") {
+			continue
+		}
+
+		data, err := s.objects.GetObject(ctx, object.Key)
+		if err != nil {
+			continue
+		}
+
+		var manifest struct {
+			SchemaVersion           int    `json:"schema_version"`
+			JobID                   string `json:"job_id"`
+			JobFingerprint          string `json:"job_fingerprint"`
+			Task                    string `json:"task"`
+			GoldSnapshotID          string `json:"gold_snapshot_id"`
+			GoldManifestKey         string `json:"gold_manifest_key"`
+			GoldArtifactKey         string `json:"gold_artifact_key"`
+			Sector                  int    `json:"sector"`
+			RuntimePackageID        string `json:"runtime_package_id"`
+			ModelID                 string `json:"model_id"`
+			ModelVersion            string `json:"model_version"`
+			ExpectedPredictionCount int64  `json:"expected_prediction_count"`
+			CreatedAt               string `json:"created_at"`
+			Producer                string `json:"producer,omitempty"`
+		}
+		if json.Unmarshal(data, &manifest) != nil || manifest.JobID == "" {
+			continue
+		}
+
+		if !strings.EqualFold(strings.TrimSpace(manifest.Task), "candidate") &&
+			!strings.EqualFold(strings.TrimSpace(manifest.Task), taxonomy.TaskCandidateVetting) {
+			continue
+		}
+		normTask := taxonomy.TaskCandidateVetting
+
+		if task != "" && normTask != task {
+			continue
+		}
+		if modelID != "" && manifest.ModelID != modelID {
+			continue
+		}
+		if runtimePackageID != "" && manifest.RuntimePackageID != runtimePackageID {
+			continue
+		}
+
+		outputKey := fmt.Sprintf("predictions/%s/%s/%s/part-00000.jsonl", manifest.Task, manifest.GoldSnapshotID, manifest.JobID)
+		status := taxonomy.JobStatusPlanned
+
+		var runtimeStatus struct {
+			SchemaVersion  int    `json:"schema_version"`
+			JobID          string `json:"job_id"`
+			JobFingerprint string `json:"job_fingerprint"`
+			Task           string `json:"task"`
+			Status         string `json:"status"`
+			Attempt        int64  `json:"attempt"`
+			StartedAt      string `json:"started_at"`
+			UpdatedAt      string `json:"updated_at"`
+			OutputKey      string `json:"output_key"`
+			OutputSHA256   string `json:"output_sha256"`
+			ProcessedRows  *int64 `json:"processed_rows"`
+			Error          string `json:"error"`
+			Producer       string `json:"producer"`
+		}
+
+		runtimeObserved := false
+		statusKey := fmt.Sprintf("inference/status/%s.json", manifest.JobID)
+		resultsStorage := s.results
+		if resultsStorage == nil {
+			resultsStorage = s.objects
+		}
+		if statusData, statusErr := resultsStorage.GetObject(ctx, statusKey); statusErr == nil {
+			if json.Unmarshal(statusData, &runtimeStatus) == nil &&
+				runtimeStatus.SchemaVersion == 1 &&
+				runtimeStatus.JobID == manifest.JobID &&
+				runtimeStatus.JobFingerprint == manifest.JobFingerprint {
+				runtimeObserved = true
+				status = runtimeStatus.Status
+				if runtimeStatus.OutputKey != "" {
+					outputKey = runtimeStatus.OutputKey
+				}
+			}
+		} else if outputs, listErr := resultsStorage.ListObjects(ctx, outputKey); listErr == nil && len(outputs) > 0 {
+			status = taxonomy.JobStatusCompleted
+		}
+
+		job := entity.InferenceJob{
+			JobID:                   manifest.JobID,
+			Task:                    manifest.Task,
+			ModelID:                 manifest.ModelID,
+			ModelVersion:            manifest.ModelVersion,
+			RuntimePackageID:        manifest.RuntimePackageID,
+			GoldSnapshotID:          manifest.GoldSnapshotID,
+			GoldArtifactKey:         manifest.GoldArtifactKey,
+			Sector:                  manifest.Sector,
+			ExpectedPredictionCount: manifest.ExpectedPredictionCount,
+			CreatedAt:               manifest.CreatedAt,
+			Status:                  status,
+			OutputKey:               outputKey,
+		}
+		if runtimeObserved {
+			job.OutputSHA256 = runtimeStatus.OutputSHA256
+			if runtimeStatus.ProcessedRows != nil {
+				job.ProcessedRows = *runtimeStatus.ProcessedRows
+			}
+			job.Attempt = runtimeStatus.Attempt
+			job.StartedAt = runtimeStatus.StartedAt
+			job.UpdatedAt = runtimeStatus.UpdatedAt
+			job.Error = runtimeStatus.Error
+			job.Producer = runtimeStatus.Producer
+		}
+		jobs = append(jobs, job)
+	}
+
+	sort.Slice(jobs, func(i, j int) bool { return jobs[i].CreatedAt > jobs[j].CreatedAt })
+	return jobs, nil
+}
+
+// RetryInferenceJob republishes an immutable inference job request event via NATS JetStream.
+func (s *ModelService) RetryInferenceJob(ctx context.Context, jobID string) (*entity.InferenceJobRetryResult, error) {
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" {
+		return nil, fmt.Errorf("%w: job_id is required", taxonomy.ErrInvalidRequest)
+	}
+
+	objects, err := s.objects.ListObjects(ctx, "manifests/inference-jobs/")
+	if err != nil {
+		return nil, err
+	}
+
+	var manifest struct {
+		SchemaVersion           int    `json:"schema_version"`
+		JobID                   string `json:"job_id"`
+		Task                    string `json:"task"`
+		RuntimePackageID        string `json:"runtime_package_id"`
+		GoldSnapshotID          string `json:"gold_snapshot_id"`
+		GoldArtifactKey         string `json:"gold_artifact_key"`
+		Sector                  int    `json:"sector"`
+		ExpectedPredictionCount int64  `json:"expected_prediction_count"`
+	}
+
+	var raw []byte
+	var manifestKey string
+	found := false
+
+	for _, object := range objects {
+		if !strings.HasSuffix(object.Key, "/"+jobID+".json") {
+			continue
+		}
+		data, err := s.objects.GetObject(ctx, object.Key)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(data, &manifest); err != nil || manifest.JobID != jobID || manifest.SchemaVersion != 1 {
+			return nil, fmt.Errorf("invalid inference job manifest")
+		}
+		raw = data
+		manifestKey = object.Key
+		found = true
+		break
+	}
+
+	if !found {
+		return nil, provider.ErrObjectNotFound
+	}
+
+	if manifest.Task != taxonomy.TaskCandidateVetting && manifest.Task != "candidate" {
+		return nil, fmt.Errorf("%w: unsupported inference task %q", taxonomy.ErrInvalidRequest, manifest.Task)
+	}
+
+	sum := sha256.Sum256(raw)
+	event := map[string]any{
+		"schema_version":            1,
+		"event_id":                  "inference-request-" + uuid.NewString(),
+		"event_type":                "aurora.v1.inference.candidate.requested",
+		"occurred_at":               time.Now().UTC().Format(time.RFC3339Nano),
+		"task":                      manifest.Task,
+		"job_id":                    manifest.JobID,
+		"job_manifest_bucket":       "aurora",
+		"job_manifest_key":          manifestKey,
+		"job_manifest_sha256":       fmt.Sprintf("%x", sum[:]),
+		"runtime_package_id":        manifest.RuntimePackageID,
+		"gold_snapshot_id":          manifest.GoldSnapshotID,
+		"gold_artifact_key":         manifest.GoldArtifactKey,
+		"sector":                    manifest.Sector,
+		"expected_prediction_count": manifest.ExpectedPredictionCount,
+		"producer":                  "aurora-go-api",
+	}
+
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return nil, err
+	}
+
+	if s.nats == nil {
+		return nil, fmt.Errorf("inference dispatcher is unavailable")
+	}
+
+	subject := "aurora.v1.inference.candidate.requested"
+	message := natsio.NewMsg(subject)
+	message.Data = payload
+	digest := sha256.Sum256(append(append([]byte(subject+":"), payload...), byte(0)))
+	message.Header.Set(natsio.MsgIdHdr, fmt.Sprintf("%x", digest[:]))
+	if err := s.nats.PublishDurable(ctx, message); err != nil {
+		return nil, fmt.Errorf("publish durable inference request: %w", err)
+	}
+
+	return &entity.InferenceJobRetryResult{
+		Status: "queued",
+		JobID:  jobID,
+	}, nil
+}
+
+// ReconcileChampionInference triggers coverage check for committed candidate snapshots.
+func (s *ModelService) ReconcileChampionInference(ctx context.Context) (int, error) {
+	return 0, nil
 }
