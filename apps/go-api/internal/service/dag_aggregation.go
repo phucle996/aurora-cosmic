@@ -239,6 +239,69 @@ func (s *DAGAggregationService) QueryGraph(ctx context.Context, stage string, ti
 		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_tpf_normalization_pixels_total{outcome="invalid_reference"})`, start, end, step); err == nil && len(pts) > 0 {
 			values["tpf_background_pixels"] = pts[len(pts)-1].Value
 		}
+
+		// Fallback to cumulative counters if increase returned zero
+		if values["bronze_bytes"] == 0 {
+			if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_bytes_total{stage="bronze"})`, start, end, step); err == nil && len(pts) > 0 {
+				values["bronze_bytes"] = pts[len(pts)-1].Value
+			}
+		}
+		if values["silver_bytes"] == 0 {
+			if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_bytes_total{stage="silver"})`, start, end, step); err == nil && len(pts) > 0 {
+				values["silver_bytes"] = pts[len(pts)-1].Value
+			}
+		}
+		if values["completed_lightcurves"] == 0 {
+			if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_products_total{kind="lightcurve",status="success"})`, start, end, step); err == nil && len(pts) > 0 {
+				values["completed_lightcurves"] = pts[len(pts)-1].Value
+			}
+		}
+		if values["completed_target_pixels"] == 0 {
+			if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_products_total{kind="target_pixel",status="success"})`, start, end, step); err == nil && len(pts) > 0 {
+				values["completed_target_pixels"] = pts[len(pts)-1].Value
+			}
+		}
+
+		// Light Curve Parquet dynamic metrics
+		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_bytes_total{kind="lightcurve",stage="silver"})`, start, end, step); err == nil && len(pts) > 0 {
+			values["lc_silver_bytes"] = pts[len(pts)-1].Value
+			observations["lc_silver_bytes"] = pts
+		}
+		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_bytes_total{kind="lightcurve",stage="bronze"})`, start, end, step); err == nil && len(pts) > 0 {
+			values["lc_bronze_bytes"] = pts[len(pts)-1].Value
+		}
+		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_science_samples_total{kind="lightcurve",outcome="output"})`, start, end, step); err == nil && len(pts) > 0 {
+			values["lc_rows_total"] = pts[len(pts)-1].Value
+		}
+		if pts, err := s.prometheus.QueryRange(ctx, `histogram_quantile(0.95, sum(aurora_preprocessor_processing_duration_seconds_bucket{kind="lightcurve"}) by (le))`, start, end, step); err == nil && len(pts) > 0 {
+			values["lc_duration_p95"] = pts[len(pts)-1].Value
+			observations["lc_duration_p95"] = pts
+		}
+		for _, le := range []string{"0.025", "0.05", "0.1", "0.25", "0.5", "2.5"} {
+			k := fmt.Sprintf("lc_duration_le_%s", strings.ReplaceAll(le, ".", "_"))
+			if pts, err := s.prometheus.QueryRange(ctx, fmt.Sprintf(`sum(aurora_preprocessor_processing_duration_seconds_bucket{kind="lightcurve",le="%s"})`, le), start, end, step); err == nil && len(pts) > 0 {
+				values[k] = pts[len(pts)-1].Value
+			}
+		}
+
+		// Target Pixel Parquet dynamic metrics
+		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_bytes_total{kind="target_pixel",stage="silver"})`, start, end, step); err == nil && len(pts) > 0 {
+			values["tpf_silver_bytes"] = pts[len(pts)-1].Value
+			observations["tpf_silver_bytes"] = pts
+		}
+		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_bytes_total{kind="target_pixel",stage="bronze"})`, start, end, step); err == nil && len(pts) > 0 {
+			values["tpf_bronze_bytes"] = pts[len(pts)-1].Value
+		}
+		if pts, err := s.prometheus.QueryRange(ctx, `histogram_quantile(0.95, sum(aurora_preprocessor_processing_duration_seconds_bucket{kind="target_pixel"}) by (le))`, start, end, step); err == nil && len(pts) > 0 {
+			values["tpf_duration_p95"] = pts[len(pts)-1].Value
+			observations["tpf_duration_p95"] = pts
+		}
+		for _, le := range []string{"0.5", "1", "2.5", "5"} {
+			k := fmt.Sprintf("tpf_duration_le_%s", strings.ReplaceAll(le, ".", "_"))
+			if pts, err := s.prometheus.QueryRange(ctx, fmt.Sprintf(`sum(aurora_preprocessor_processing_duration_seconds_bucket{kind="target_pixel",le="%s"})`, le), start, end, step); err == nil && len(pts) > 0 {
+				values[k] = pts[len(pts)-1].Value
+			}
+		}
 	}
 
 	if !runtime.ObservedAt.IsZero() {
@@ -1589,6 +1652,86 @@ func dagHops(values map[string]float64, observations map[string][]entity.Monitor
 				hops[i].Metrics["tpf_input_pixels"] = inFrames * 121
 				hops[i].Metrics["tpf_retained_pixels"] = float64(progress.TPFOutputSamples) * 121
 				hops[i].Metrics["tpf_background_pixels"] = float64(progress.TPFQualityRemoved) * 121
+			}
+		}
+		if hops[i].ID == "lc-parquet" {
+			hops[i].Telemetry = dagMetricSeries(observations, "silver_bytes", "silver_bytes_rate", "lc_duration_p95", "lc_silver_bytes")
+			lcComp := values["completed_lightcurves"]
+			if lcComp == 0 {
+				lcComp = float64(progress.SilverLightCurves)
+			}
+			lcSilver := values["lc_silver_bytes"]
+			if lcSilver == 0 && progress.SilverBytes > 0 && progress.SilverTotal > 0 {
+				lcSilver = float64(progress.SilverBytes) * (lcComp / float64(progress.SilverTotal))
+			}
+			lcBronze := values["lc_bronze_bytes"]
+			if lcBronze == 0 && progress.BronzeBytes > 0 && progress.BronzeTotal > 0 {
+				lcBronze = float64(progress.BronzeBytes) * (lcComp / float64(progress.BronzeTotal))
+			}
+			var compRatio float64
+			if lcSilver > 0 && lcBronze > 0 {
+				compRatio = lcBronze / lcSilver
+			}
+			var meanArtifact float64
+			if lcComp > 0 && lcSilver > 0 {
+				meanArtifact = lcSilver / lcComp
+			}
+			hops[i].Metrics = map[string]float64{
+				"completed_lightcurves": lcComp,
+				"silver_bytes":          lcSilver,
+				"bronze_source_bytes":   lcBronze,
+				"compression_ratio":     compRatio,
+				"lc_rows_total":         values["lc_rows_total"],
+				"mean_artifact_bytes":   meanArtifact,
+				"lc_duration_p95":       values["lc_duration_p95"],
+				"silver_bytes_rate":     values["silver_bytes_rate"],
+				"lc_duration_le_0_025":  values["lc_duration_le_0_025"],
+				"lc_duration_le_0_05":   values["lc_duration_le_0_05"],
+				"lc_duration_le_0_1":    values["lc_duration_le_0_1"],
+				"lc_duration_le_0_25":   values["lc_duration_le_0_25"],
+				"lc_duration_le_0_5":    values["lc_duration_le_0_5"],
+				"lc_duration_le_2_5":    values["lc_duration_le_2_5"],
+			}
+		}
+		if hops[i].ID == "tpf-parquet" {
+			hops[i].Telemetry = dagMetricSeries(observations, "silver_bytes", "silver_bytes_rate", "tpf_duration_p95", "tpf_silver_bytes")
+			tpfComp := values["completed_target_pixels"]
+			if tpfComp == 0 {
+				tpfComp = float64(progress.SilverTargetPixels)
+			}
+			tpfSilver := values["tpf_silver_bytes"]
+			if tpfSilver == 0 && progress.SilverBytes > 0 && progress.SilverTotal > 0 {
+				tpfSilver = float64(progress.SilverBytes) * (tpfComp / float64(progress.SilverTotal))
+			}
+			tpfBronze := values["tpf_bronze_bytes"]
+			if tpfBronze == 0 && progress.BronzeBytes > 0 && progress.BronzeTotal > 0 {
+				tpfBronze = float64(progress.BronzeBytes) * (tpfComp / float64(progress.BronzeTotal))
+			}
+			var compRatio float64
+			if tpfSilver > 0 && tpfBronze > 0 {
+				compRatio = tpfBronze / tpfSilver
+			}
+			var meanArtifact float64
+			if tpfComp > 0 && tpfSilver > 0 {
+				meanArtifact = tpfSilver / tpfComp
+			}
+			tpfPixels := values["tpf_pixels_total"]
+			if tpfPixels == 0 {
+				tpfPixels = values["tpf_retained_pixels"]
+			}
+			hops[i].Metrics = map[string]float64{
+				"completed_target_pixels": tpfComp,
+				"silver_bytes":            tpfSilver,
+				"bronze_source_bytes":     tpfBronze,
+				"compression_ratio":       compRatio,
+				"tpf_pixels_total":        tpfPixels,
+				"mean_artifact_bytes":     meanArtifact,
+				"tpf_duration_p95":        values["tpf_duration_p95"],
+				"silver_bytes_rate":       values["silver_bytes_rate"],
+				"tpf_duration_le_0_5":     values["tpf_duration_le_0_5"],
+				"tpf_duration_le_1":       values["tpf_duration_le_1"],
+				"tpf_duration_le_2_5":     values["tpf_duration_le_2_5"],
+				"tpf_duration_le_5":       values["tpf_duration_le_5"],
 			}
 		}
 		if hops[i].ID == "lc-transform" {

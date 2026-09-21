@@ -51,13 +51,13 @@ export function CadenceTimelineChart({
       {/* Top Metric Cards */}
       <div className="grid gap-px border border-border/70 bg-border/70 sm:grid-cols-4 text-xs">
         <Metric label="Bronze Ingested FITS" value={total.toLocaleString()} subtext="Objects staged in MinIO" />
-        <Metric label="Awaiting Checkpoint" value={pending.toLocaleString()} subtext="Uncommitted to Silver" highlightColor="#f59e0b" />
+        <Metric label="Awaiting Checkpoint" value={pending.toLocaleString()} subtext="Uncommitted to Silver" highlightClass="text-amber-600 dark:text-amber-400" />
         <Metric label="Stored Footprint" value={formatBytes(metrics?.bronze_bytes ?? 0)} subtext="Durable Bronze partition" />
         <Metric
           label="Integrity Gate"
           value={failed === 0 ? '100% Valid' : `${failed} Failures`}
           subtext={failed === 0 ? 'SHA-256 verified intact' : 'Checksum mismatch'}
-          highlightColor={failed === 0 ? '#10b981' : '#ef4444'}
+          highlightClass={failed === 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}
         />
       </div>
 
@@ -156,16 +156,21 @@ function Metric({
   value,
   subtext,
   highlightColor,
+  highlightClass,
 }: {
   label: string;
   value: string;
   subtext?: string;
   highlightColor?: string;
+  highlightClass?: string;
 }): JSX.Element {
   return (
     <div className="bg-background p-3">
-      <p className="text-[10px] uppercase text-muted-foreground">{label}</p>
-      <p className="mt-1 font-mono font-semibold text-foreground text-sm" style={highlightColor ? { color: highlightColor } : undefined}>
+      <p className="text-[10px] uppercase font-medium text-muted-foreground">{label}</p>
+      <p
+        className={`mt-1 font-mono font-semibold text-sm ${highlightClass ?? 'text-foreground'}`}
+        style={highlightColor ? { color: highlightColor } : undefined}
+      >
         {value}
       </p>
       {subtext && <p className="mt-0.5 text-[10px] text-muted-foreground">{subtext}</p>}

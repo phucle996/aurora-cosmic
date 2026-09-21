@@ -64,13 +64,13 @@ export function ProductDemuxChart({
           label="Light Curve (03A)"
           value={lightCurves.toLocaleString()}
           subtext={`${lcPercent.toFixed(1)}% of routed volume`}
-          highlightColor="#22d3ee"
+          highlightClass="text-cyan-600 dark:text-cyan-400"
         />
         <Metric
           label="Target Pixel (03B)"
           value={targetPixels.toLocaleString()}
           subtext={`${tpfPercent.toFixed(1)}% of routed volume`}
-          highlightColor="#a855f7"
+          highlightClass="text-purple-600 dark:text-purple-400"
         />
         <Metric
           label="Queue & Status"
@@ -235,17 +235,19 @@ function Metric({
   value,
   subtext,
   highlightColor,
+  highlightClass,
 }: {
   label: string;
   value: string;
   subtext?: string;
   highlightColor?: string;
+  highlightClass?: string;
 }): JSX.Element {
   return (
     <div className="bg-background p-3">
-      <p className="text-[10px] uppercase text-muted-foreground">{label}</p>
+      <p className="text-[10px] uppercase font-medium text-muted-foreground">{label}</p>
       <p
-        className="mt-1 font-mono font-semibold text-foreground text-sm"
+        className={`mt-1 font-mono font-semibold text-sm ${highlightClass ?? 'text-foreground'}`}
         style={highlightColor ? { color: highlightColor } : undefined}
       >
         {value}

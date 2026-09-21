@@ -79,7 +79,7 @@ export function TPFQualityWCSChart({
           label="Stamp Geometry"
           value="11 × 11 pixels"
           subtext="121 spatial pixels/frame"
-          highlightColor="#a855f7"
+          highlightClass="text-purple-600 dark:text-purple-400"
         />
         <Metric
           label="Total Inspected Pixels"
@@ -90,13 +90,13 @@ export function TPFQualityWCSChart({
           label="Finite Pixel Density"
           value={`${(finiteFraction * 100).toFixed(2)}%`}
           subtext="0 dead / NaN / ±Inf pixels"
-          highlightColor="#10b981"
+          highlightClass="text-emerald-600 dark:text-emerald-400"
         />
         <Metric
           label="WCS Astrometry"
           value={wcsSolved ? 'Verified & Solved' : 'Unresolved'}
           subtext={`TESS Plate scale: ${plateScale.toFixed(1)}″/px`}
-          highlightColor={wcsSolved ? '#a855f7' : '#ef4444'}
+          highlightClass={wcsSolved ? 'text-purple-600 dark:text-purple-400' : 'text-rose-600 dark:text-rose-400'}
         />
       </div>
 
@@ -112,7 +112,7 @@ export function TPFQualityWCSChart({
               </p>
             </div>
             {hoveredPixel ? (
-              <span className="font-mono text-[10px] text-purple-400 bg-purple-950/40 px-2 py-0.5 border border-purple-500/30 rounded">
+              <span className="font-mono text-[10px] font-medium text-purple-700 bg-purple-100/90 border border-purple-300 dark:text-purple-300 dark:bg-purple-950/60 dark:border-purple-500/40 px-2 py-0.5 rounded">
                 [{hoveredPixel.r}, {hoveredPixel.c}] · {getPixelRole(hoveredPixel.r, hoveredPixel.c)}
               </span>
             ) : (
@@ -122,19 +122,19 @@ export function TPFQualityWCSChart({
 
           <div className="p-3 flex flex-col items-center justify-center">
             {/* 11x11 Grid Matrix */}
-            <div className="grid grid-cols-11 gap-1 p-2 bg-black/40 border border-border/60 rounded max-w-[280px] w-full aspect-square">
+            <div className="grid grid-cols-11 gap-1 p-2 bg-slate-950 border border-border/80 shadow-inner rounded max-w-[280px] w-full aspect-square">
               {Array.from({ length: 11 }).map((_, r) =>
                 Array.from({ length: 11 }).map((__, c) => {
                   const role = getPixelRole(r, c);
                   const isHovered = hoveredPixel?.r === r && hoveredPixel?.c === c;
 
-                  let cellColor = 'bg-slate-900/80 border-slate-800 text-slate-500'; // background
+                  let cellColor = 'bg-slate-900/90 border-slate-800 text-slate-500'; // background
                   if (role === 'Core Aperture') {
-                    cellColor = 'bg-amber-500/80 border-amber-400 text-amber-950 shadow-[0_0_8px_rgba(245,158,11,0.4)]';
+                    cellColor = 'bg-amber-500 border-amber-400 text-amber-950 shadow-[0_0_8px_rgba(245,158,11,0.4)]';
                   } else if (role === 'PSF Envelope') {
-                    cellColor = 'bg-purple-600/70 border-purple-500 text-purple-200';
+                    cellColor = 'bg-purple-600 border-purple-500 text-purple-100';
                   } else if (role === 'Inner Halo') {
-                    cellColor = 'bg-purple-900/60 border-purple-800/80 text-purple-400';
+                    cellColor = 'bg-purple-900/80 border-purple-700 text-purple-300';
                   }
 
                   return (
@@ -181,8 +181,8 @@ export function TPFQualityWCSChart({
               </p>
             </div>
             <div className="text-right font-mono text-[10px]">
-              <span className="text-emerald-400 font-semibold">{pixelRetentionPercent.toFixed(1)}% pixels</span> ·{' '}
-              <span className="text-purple-400 font-semibold">{frameRetentionPercent.toFixed(1)}% frames</span>
+              <span className="text-emerald-600 dark:text-emerald-400 font-semibold">{pixelRetentionPercent.toFixed(1)}% pixels</span> ·{' '}
+              <span className="text-purple-600 dark:text-purple-400 font-semibold">{frameRetentionPercent.toFixed(1)}% frames</span>
             </div>
           </div>
 
@@ -190,7 +190,7 @@ export function TPFQualityWCSChart({
             {/* Level 1: Spatial Pixels */}
             <div>
               <div className="flex items-center justify-between text-xs mb-1.5">
-                <span className="font-medium text-muted-foreground">1. Spatial Pixels Inspected (533.96M)</span>
+                <span className="font-medium text-muted-foreground">1. Spatial Pixels Inspected ({formatCompact(totalPixels)})</span>
                 <span className="font-mono text-[11px] text-foreground">
                   {formatCompact(retainedPixels)} retained ({pixelRetentionPercent.toFixed(2)}%)
                 </span>
@@ -210,15 +210,15 @@ export function TPFQualityWCSChart({
                             : 'Dead/Nonfinite Pixels',
                       ]}
                     />
-                    <Bar dataKey="retained" name="retained" stackId="px" fill="#a855f7" isAnimationActive={false} />
+                    <Bar dataKey="retained" name="retained" stackId="px" fill="#9333ea" isAnimationActive={false} />
                     <Bar dataKey="background" name="background" stackId="px" fill="#64748b" isAnimationActive={false} />
                     <Bar dataKey="nonfinite" name="nonfinite" stackId="px" fill="#ef4444" isAnimationActive={false} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
               <div className="flex items-center justify-between text-[10px] text-muted-foreground mt-1">
-                <span>Aperture: {formatCompact(retainedPixels)} (97.4%)</span>
-                <span>Background: {formatCompact(backgroundPixels)} (2.6%)</span>
+                <span>Aperture: {formatCompact(retainedPixels)} ({pixelRetentionPercent.toFixed(1)}%)</span>
+                <span>Background: {formatCompact(backgroundPixels)} ({(totalPixels > 0 ? (backgroundPixels / totalPixels) * 100 : 0).toFixed(1)}%)</span>
                 <span>Nonfinite: 0 (0.0%)</span>
               </div>
             </div>
@@ -226,7 +226,7 @@ export function TPFQualityWCSChart({
             {/* Level 2: 2D Image Frames */}
             <div>
               <div className="flex items-center justify-between text-xs mb-1.5">
-                <span className="font-medium text-muted-foreground">2. 2D Image Frames (4.79M frames)</span>
+                <span className="font-medium text-muted-foreground">2. 2D Image Frames ({formatCompact(inputFrames)} frames)</span>
                 <span className="font-mono text-[11px] text-foreground">
                   {formatCompact(retainedFrames)} valid frames ({frameRetentionPercent.toFixed(2)}%)
                 </span>
@@ -249,19 +249,19 @@ export function TPFQualityWCSChart({
                 </ResponsiveContainer>
               </div>
               <div className="flex items-center justify-between text-[10px] text-muted-foreground mt-1">
-                <span>Retained: {formatCompact(retainedFrames)} (91.35%)</span>
-                <span>Dropped Flag: {formatCompact(qualityDropped)} (8.65%)</span>
+                <span>Retained: {formatCompact(retainedFrames)} ({frameRetentionPercent.toFixed(2)}%)</span>
+                <span>Dropped Flag: {formatCompact(qualityDropped)} ({(inputFrames > 0 ? (qualityDropped / inputFrames) * 100 : 0).toFixed(2)}%)</span>
                 <span>Corrupt: 0 (0.0%)</span>
               </div>
             </div>
 
             {/* WCS Astrometry Summary Banner */}
-            <div className="border border-purple-500/20 bg-purple-950/20 p-2.5 rounded text-[11px] flex items-center justify-between">
+            <div className="border border-purple-200 bg-purple-50/90 dark:border-purple-500/30 dark:bg-purple-950/30 p-2.5 rounded text-[11px] flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className="size-2 rounded-full bg-purple-400 animate-pulse" />
-                <span className="font-medium text-purple-200">WCS World Coordinate Astrometry</span>
+                <span className="size-2 rounded-full bg-purple-600 dark:bg-purple-400 animate-pulse" />
+                <span className="font-medium text-purple-900 dark:text-purple-200">WCS World Coordinate Astrometry</span>
               </div>
-              <span className="font-mono text-[10px] text-purple-300">
+              <span className="font-mono text-[10px] text-purple-700 dark:text-purple-300 font-semibold">
                 CRVAL1/2 solution valid · 21.0″/px scale
               </span>
             </div>
@@ -281,7 +281,7 @@ export function TPFQualityWCSChart({
             </div>
             <div className="flex items-center gap-3 text-[10px]">
               <span className="flex items-center gap-1">
-                <span className="size-2 rounded-full bg-[#a855f7]" /> Frame Input Rate
+                <span className="size-2 rounded-full bg-[#9333ea]" /> Frame Input Rate
               </span>
               <span className="flex items-center gap-1">
                 <span className="size-2 rounded-full bg-[#f59e0b]" /> Dropped Flag Rate
@@ -293,11 +293,11 @@ export function TPFQualityWCSChart({
               <AreaChart data={seriesData}>
                 <defs>
                   <linearGradient id="tpf-rate-grad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#a855f7" stopOpacity={0.4} />
-                    <stop offset="95%" stopColor="#a855f7" stopOpacity={0.02} />
+                    <stop offset="5%" stopColor="#9333ea" stopOpacity={0.35} />
+                    <stop offset="95%" stopColor="#9333ea" stopOpacity={0.02} />
                   </linearGradient>
                   <linearGradient id="tpf-drop-grad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.4} />
+                    <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.35} />
                     <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.02} />
                   </linearGradient>
                 </defs>
@@ -321,7 +321,7 @@ export function TPFQualityWCSChart({
                   type="monotone"
                   dataKey="tpf_input_rate"
                   name="tpf_input_rate"
-                  stroke="#a855f7"
+                  stroke="#9333ea"
                   fill="url(#tpf-rate-grad)"
                   strokeWidth={1.5}
                   dot={false}
@@ -363,17 +363,19 @@ function Metric({
   value,
   subtext,
   highlightColor,
+  highlightClass,
 }: {
   label: string;
   value: string;
   subtext?: string;
   highlightColor?: string;
+  highlightClass?: string;
 }): JSX.Element {
   return (
     <div className="bg-background p-3">
-      <p className="text-[10px] uppercase text-muted-foreground">{label}</p>
+      <p className="text-[10px] uppercase font-medium text-muted-foreground">{label}</p>
       <p
-        className="mt-1 font-mono font-semibold text-foreground text-sm"
+        className={`mt-1 font-mono font-semibold text-sm ${highlightClass ?? 'text-foreground'}`}
         style={highlightColor ? { color: highlightColor } : undefined}
       >
         {value}
