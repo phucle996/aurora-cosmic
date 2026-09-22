@@ -55,13 +55,7 @@ func (s *PreprocessingService) Start(ctx context.Context, request entity.Preproc
 		workerCount = 1
 	}
 
-	s.runtimeMu.RLock()
-	if s.runtimeJob != nil && (s.runtimeJob.Status == "running" || s.runtimeJob.Status == "accepted" || s.runtimeJob.Status == "cancelling") {
-		activeTicketID := s.runtimeJob.TicketID
-		s.runtimeMu.RUnlock()
-		return nil, fmt.Errorf("preprocessing ticket %q is still active (cannot start %q)", activeTicketID, request.TicketID)
-	}
-	s.runtimeMu.RUnlock()
+	// No "active ticket" guard — tickets are stateless, each Start() supersedes any prior job.
 
 	job := &entity.PreprocessingControlJob{
 		TicketID:    request.TicketID,

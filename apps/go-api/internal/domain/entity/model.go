@@ -25,7 +25,7 @@ type ModelTrainingSnapshot struct {
 	ManifestKey    string `json:"manifest_key" ch:"manifest_key"`
 	LastModified   string `json:"last_modified" ch:"last_modified"`
 	SizeBytes      int64  `json:"size_bytes" ch:"size_bytes"`
-	CandidateCount int64  `json:"candidate_count" db:"candidate_count"`
+	CandidateCount int64  `json:"candidate_count" ch:"candidate_count"`
 }
 
 // StartTrainingSpec defines the parameters to initiate a training run.

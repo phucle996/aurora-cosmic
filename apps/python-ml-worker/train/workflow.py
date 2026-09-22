@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
+import random
 import tempfile
 from typing import Any, Callable, Mapping
 
@@ -19,7 +20,11 @@ from post_train.evaluate import (
     MlEvaluationError,
 )
 from post_train.export import ModelRegistry, OnnxRuntimeExporter
-from pre_train import build_candidate_ml_view, create_deterministic_group_split
+from pre_train import (
+    build_candidate_ml_view,
+    create_deterministic_group_split,
+    derive_group_key,
+)
 from store import MinioObjectStore, TrainingStore
 from train.loop import train_candidate_model
 
@@ -104,11 +109,56 @@ class TrainingRequest:
 
 
 def _development_rows(rows: list[dict[str, Any]], seed: int) -> list[dict[str, Any]]:
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        lbl = str(row.get("training_label", "")).strip().upper()
+        if lbl in ("POSITIVE", "NEGATIVE"):
+            gk = derive_group_key(row)
+            groups.setdefault(gk, []).append(row)
+
+    # Need at least 3 groups: 2 for train/val split + 1 for golden test.
+    # With <= 2 groups, return everything (evaluation will be skipped).
+    if len(groups) <= 2:
+        return [r for group_rows in groups.values() for r in group_rows]
+
+    pos_groups = sorted(
+        k for k, g_rows in groups.items()
+        if any(str(r.get("training_label", "")).strip().upper() == "POSITIVE" for r in g_rows)
+    )
+    neg_groups = sorted(
+        k for k, g_rows in groups.items()
+        if all(str(r.get("training_label", "")).strip().upper() == "NEGATIVE" for r in g_rows)
+    )
+
+    rng = random.Random(seed)
+    rng.shuffle(pos_groups)
+    rng.shuffle(neg_groups)
+
+    # Reserve groups for golden test: at least 1 per class when possible,
+    # but never consume so many that < 2 groups remain for train/val.
+    total_groups = len(groups)
+    max_reserve = total_groups - 2  # must keep >= 2 for split
+
+    n_pos_test = min(
+        max(1, int(len(pos_groups) * 0.15)),
+        len(pos_groups) - 1 if len(pos_groups) > 1 else 0,
+    )
+    n_neg_test = min(
+        max(1, int(len(neg_groups) * 0.15)),
+        len(neg_groups) - 1 if len(neg_groups) > 1 else 0,
+    )
+
+    # Clamp total reserved to max_reserve
+    if n_pos_test + n_neg_test > max_reserve:
+        # Prefer reserving at least 1 positive group for golden test
+        n_pos_test = min(n_pos_test, max(1, max_reserve))
+        n_neg_test = min(n_neg_test, max_reserve - n_pos_test)
+
+    golden_groups = set(pos_groups[:n_pos_test] + neg_groups[:n_neg_test])
     return [
-        row
-        for row in rows
-        if str(row.get("training_label", "")).strip().upper()
-        in ("POSITIVE", "NEGATIVE")
+        r for k, group_rows in groups.items()
+        if k not in golden_groups
+        for r in group_rows
     ]
 
 
@@ -298,7 +348,7 @@ class TrainingApplication:
             msg = f"Epoch {ep}/{tot} — train_loss: {tl_str} · val_loss: {vl_str}{' ★ (Best)' if is_best else ''}"
             self._log(request, msg, level="success" if is_best else "info")
 
-        training_manifest, _ = train_candidate_model(
+        training_manifest, checkpoint = train_candidate_model(
             gold_manifest=loaded.manifest,
             split_manifest=split,
             rows=development_rows,
@@ -315,9 +365,12 @@ class TrainingApplication:
             progress_callback=on_epoch_progress,
             control_check=lambda: self.get_control(request.ticket_id),
         )
+        best_val = getattr(checkpoint, "best_val_loss", None)
+        if best_val is None or best_val == float("inf"):
+            best_val = getattr(training_manifest, "best_validation_loss", 0.0)
         self._log(
             request,
-            f"Training complete: best epoch {training_manifest.best_epoch} with val_loss {training_manifest.best_validation_loss:.4f}",
+            f"Training complete: best epoch {training_manifest.best_epoch} with val_loss {best_val:.4f}",
             level="success",
         )
 
@@ -326,9 +379,17 @@ class TrainingApplication:
             request,
             "Evaluating multi-cohort generalizability (Golden Test & Recent Holdout)...",
         )
-        golden = build_candidate_golden_cohort(loaded.manifest, rows, split)
         try:
-            recent = build_candidate_recent_cohort(loaded.manifest, rows, split, golden)
+            golden = build_candidate_golden_cohort(loaded.manifest, rows, split)
+        except MlEvaluationError as exc:
+            self._log(
+                request,
+                f"Golden Test cohort skipped (insufficient unseen groups): {exc}",
+                level="warn",
+            )
+            golden = None
+        try:
+            recent = build_candidate_recent_cohort(loaded.manifest, rows, split, golden) if golden else None
         except MlEvaluationError:
             recent = None
 
@@ -337,20 +398,23 @@ class TrainingApplication:
             map_location="cpu",
             weights_only=True,
         )
-        evaluation, _, _ = evaluate_candidate_model(
-            training_manifest=training_manifest,
-            training_split=split,
-            golden_cohort=golden,
-            training_rows=development_rows,
-            golden_rows=rows,
-            model_state_dict=model_state,
-            preprocessor_json_path=str(
-                artifacts_dir / "training" / "preprocessing.json"
-            ),
-            recent_cohort=recent,
-            recent_rows=rows if recent else None,
-            dest_dir=str(artifacts_dir / "evaluation"),
-        )
+        if golden is not None:
+            evaluation, _, _ = evaluate_candidate_model(
+                training_manifest=training_manifest,
+                training_split=split,
+                golden_cohort=golden,
+                training_rows=development_rows,
+                golden_rows=rows,
+                model_state_dict=model_state,
+                preprocessor_json_path=str(
+                    artifacts_dir / "training" / "preprocessing.json"
+                ),
+                recent_cohort=recent,
+                recent_rows=rows if recent else None,
+                dest_dir=str(artifacts_dir / "evaluation"),
+            )
+        else:
+            evaluation = None
         task_dir = "candidate"
         registry_task = TASK_CANDIDATE
 

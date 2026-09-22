@@ -18,14 +18,12 @@ import torch
 
 from post_train.export.registry import ModelRegistry
 from pre_train import CandidatePreprocessor
-from train import CandidateTabularMLP
 
 
 class OnnxExportError(Exception):
     """Base exception for ONNX Runtime Export failures."""
 
     pass
-
 
 class OnnxParityError(OnnxExportError):
     """Raised when Python native vs ONNX Runtime deviation exceeds 1e-5 tolerance."""
@@ -221,6 +219,8 @@ class RuntimeExporter:
 
         # 2. Rebuild PyTorch model on CPU
         device = torch.device("cpu")
+        from train.model import CandidateTabularMLP
+
         native_model = CandidateTabularMLP(input_dim=len(model_pkg.feature_order))
         model_pt_path = os.path.join(pkg_dir, "model.pt")
         state_dict = torch.load(model_pt_path, map_location=device, weights_only=True)

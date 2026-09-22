@@ -139,6 +139,10 @@ class TrainingRunManifest:
     def to_json(self, indent: Optional[int] = 2) -> str:
         return json.dumps(self.to_dict(), indent=indent)
 
+    @property
+    def best_validation_loss(self) -> float:
+        return float(self.artifacts.get("best_validation_loss") or self.hyperparameters.get("best_val_loss") or 0.0)
+
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "TrainingRunManifest":
         return cls(

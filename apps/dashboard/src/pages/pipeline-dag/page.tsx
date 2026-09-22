@@ -201,8 +201,10 @@ export default function PipelineDagPage(): JSX.Element {
       return false;
     };
     const upstreamStatus = (id: string): HopStatus => {
-      if (isHistory) return 'not_observed';
       const reported = runtimeStatuses.get(id) ?? graph?.status ?? 'not_observed';
+      if (isHistory) {
+        return reported === 'completed' || reported === 'running' ? reported : 'completed';
+      }
       return reported === 'completed' && !upstreamEvidence(id) ? 'not_observed' : reported;
     };
     const liveGoldStatus = goldBuilderStatus(goldControl);
@@ -287,12 +289,11 @@ export default function PipelineDagPage(): JSX.Element {
       { id: 'gold-commit', stepNumber: 'G06', label: 'Gold Storage & Snapshot Release', shortTitle: 'Storage & Release Seal', description: 'Persists Snappy-compressed Parquet files to MinIO, indexes candidate rows into ClickHouse ReplacingMergeTree, and commits immutable release manifest.', astronomyGoal: historicalRun ? (historicalRun.run.last_snapshot_id ? `Committed snapshot ${historicalRun.run.last_snapshot_id} as immutable release.` : 'Durable run completed without an active snapshot seal.') : (goldControl?.runtime?.last_snapshot_id ? `Committed snapshot ${goldControl.runtime.last_snapshot_id} as immutable release.` : 'Awaiting complete batch before committing immutable snapshot.'), contract: 'Snappy Parquet + ClickHouse candidate_features_v1 + control/enrichment.json seal', status: goldCommitStatus, input: 'Candidate Gold records', output: 'Durable Parquet + Indexed ClickHouse rows + committed manifest', metrics: componentMetrics('gold-commit', historicalOutputs || evidenceOutputs, historicalOutputs || evidenceOutputs, historicalRun?.run.indexed_rows || livePending), telemetry: componentTelemetry('gold-commit') },
     ];
 
-    const goldPhaseOrder = ['gold-pairing', 'gold-catalog', 'gold-lc-features', 'gold-tpf-evidence', 'gold-candidate', 'gold-commit'];
     const numberedHops = pipelineHops.map((hop, index) => ({
       ...hop,
       stepNumber: String(index + 1).padStart(2, '0'),
     }));
-    return isHistory ? numberedHops.filter((hop) => goldPhaseOrder.includes(hop.id)) : numberedHops;
+    return numberedHops;
   }, [goldControl, graph, historicalRun, liveEvidenceRun, selectedRunID]);
 
   const selectedHop = selectedHopID ? hops.find((hop) => hop.id === selectedHopID) : undefined;

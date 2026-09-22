@@ -247,21 +247,26 @@ export function PipelineDagCanvas({
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
   useEffect(() => {
-    setNodes((current) =>
-      current.map((node) => {
-        const hop = hops.find((item) => item.id === node.id);
-        if (!hop) return node;
-        const position = positions.get(hop.id) ?? node.position;
-        const incomingCenter = averagePosition(graphConnections
-          .filter((connection) => connection.target === hop.id)
-          .map((connection) => positions.get(connection.source))
-          .filter((item): item is { x: number; y: number } => Boolean(item)));
-        const outgoingCenter = averagePosition(graphConnections
-          .filter((connection) => connection.source === hop.id)
-          .map((connection) => positions.get(connection.target))
-          .filter((item): item is { x: number; y: number } => Boolean(item)));
+    setNodes((current) => {
+      const currentMap = new Map(current.map((n) => [n.id, n]));
+      return hops.map((hop) => {
+        const existing = currentMap.get(hop.id);
+        const position = existing?.position ?? positions.get(hop.id) ?? { x: 0, y: 0 };
+        const incomingCenter = averagePosition(
+          graphConnections
+            .filter((connection) => connection.target === hop.id)
+            .map((connection) => positions.get(connection.source))
+            .filter((item): item is { x: number; y: number } => Boolean(item))
+        );
+        const outgoingCenter = averagePosition(
+          graphConnections
+            .filter((connection) => connection.source === hop.id)
+            .map((connection) => positions.get(connection.target))
+            .filter((item): item is { x: number; y: number } => Boolean(item))
+        );
         return {
-          ...node,
+          id: hop.id,
+          type: 'preprocess',
           position,
           data: {
             ...hop,
@@ -270,8 +275,8 @@ export function PipelineDagCanvas({
             sourceHandle: outgoingCenter ? handleDirection(position, outgoingCenter) : Position.Right,
           },
         };
-      })
-    );
+      });
+    });
   }, [graphConnections, hops, openHop, positions, setNodes]);
 
   useEffect(() => {

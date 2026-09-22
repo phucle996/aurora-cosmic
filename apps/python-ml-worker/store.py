@@ -174,8 +174,8 @@ class TrainingStore:
             )
             labels = client.query(
                 """
-                SELECT source_product_id, review_decision
-                FROM candidate_training_cohort_final
+                SELECT source_product_id, training_label, label_source, train_eligible
+                FROM candidate_training_cohort_v1 FINAL
                 WHERE snapshot_id = %(snapshot_id)s
                 """,
                 parameters={"snapshot_id": snapshot_id},
@@ -183,20 +183,24 @@ class TrainingStore:
         except Exception:
             return rows
 
-        overlay: dict[str, str] = {}
-        for source_product_id, review_decision in labels:
-            if review_decision == "CONFIRMED_PLANET":
-                overlay[str(source_product_id)] = "POSITIVE"
-            elif review_decision in ("FALSE_POSITIVE", "REJECTED"):
-                overlay[str(source_product_id)] = "NEGATIVE"
+        overlay: dict[str, tuple[str, str]] = {}
+        for r in labels:
+            src_id = str(r[0]).strip()
+            lbl = str(r[1]).strip().upper()
+            src = str(r[2]).strip() if len(r) > 2 and r[2] else "COHORT"
+            eligible = bool(r[3]) if len(r) > 3 else True
+            if not eligible:
+                continue
+            if lbl in ("POSITIVE", "NEGATIVE", "EXCLUDED"):
+                overlay[src_id] = (lbl, src)
 
         merged: list[dict[str, Any]] = []
         for row in rows:
             source_id = str(row.get("source_product_id", "")).strip()
             curated = dict(row)
             if source_id in overlay:
-                curated["training_label"] = overlay[source_id]
-                curated["training_label_source"] = "CURATED_REVIEW"
+                curated["training_label"] = overlay[source_id][0]
+                curated["training_label_source"] = overlay[source_id][1]
             merged.append(curated)
         return merged
 
@@ -204,11 +208,18 @@ class TrainingStore:
         self, task: str, snapshot_id: str, raw_manifest: dict[str, Any]
     ) -> list[dict[str, Any]]:
         prefix = f"gold/snapshots/{snapshot_id}"
-        partition_keys = [
-            f"{prefix}/{item['object_name']}"
-            for item in raw_manifest.get("partitions", [])
-            if item.get("object_name")
-        ]
+        partition_keys: list[str] = []
+        for item in raw_manifest.get("artifacts", []):
+            if isinstance(item, dict):
+                obj_key = item.get("object_key") or item.get("key")
+                if obj_key and str(obj_key).endswith(".parquet"):
+                    partition_keys.append(str(obj_key))
+        if not partition_keys:
+            partition_keys = [
+                f"{prefix}/{item['object_name']}"
+                for item in raw_manifest.get("partitions", [])
+                if isinstance(item, dict) and item.get("object_name")
+            ]
         if not partition_keys:
             partition_keys = [f"{prefix}/data.parquet"]
 
@@ -234,6 +245,9 @@ class TrainingStore:
         if raw_manifest.get("snapshot_id") != snapshot_id:
             raise TrainingDataError(f"GOLD_SNAPSHOT_ID_MISMATCH: {snapshot_id}")
 
+        manifest_sha = hashlib.sha256(raw_bytes).hexdigest()
+        if "manifest_sha256" not in raw_manifest:
+            raw_manifest["manifest_sha256"] = manifest_sha
         manifest = SnapshotManifest.from_dict(raw_manifest)
         rows = self._attach_curated_labels(
             snapshot_id,
@@ -246,7 +260,7 @@ class TrainingStore:
             snapshot_id=snapshot_id,
             manifest=manifest,
             raw_manifest=raw_manifest,
-            manifest_sha256=hashlib.sha256(raw_bytes).hexdigest(),
+            manifest_sha256=manifest_sha,
             rows=rows,
         )
 

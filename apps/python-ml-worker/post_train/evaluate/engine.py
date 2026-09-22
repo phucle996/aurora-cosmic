@@ -11,7 +11,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 
-from train import CandidateTabularMLP, TrainingRunManifest
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from train.manifest import TrainingRunManifest
 from post_train.evaluate.cohort import EvaluationCohort, check_group_contamination
 from post_train.evaluate.threshold import (
     calculate_candidate_cohort_metrics,
@@ -147,6 +150,8 @@ def evaluate_candidate_model(*args: Any, **kwargs: Any) -> Any:
 
     # 2. Load preprocessor and model
     preprocessor = CandidatePreprocessor.from_json_file(preprocessor_json_path)
+    from train.model import CandidateTabularMLP
+
     model = CandidateTabularMLP(input_dim=len(CANDIDATE_MODEL_INPUT_FEATURES))
     model.load_state_dict(model_state_dict)
     model.eval()

@@ -213,61 +213,97 @@ func (s *DAGAggregationService) QueryGraph(ctx context.Context, stage string, ti
 			values["backlog"] = pts[len(pts)-1].Value
 		}
 
-		// Cumulative totals for the ENTIRE ticket lifespan
-		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_products_total)`, start, end, step); err == nil && len(pts) > 0 {
-			values["bronze_total_files"] = math.Round(pts[len(pts)-1].Value)
-		}
-		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_products_total{kind="lightcurve"})`, start, end, step); err == nil && len(pts) > 0 {
-			values["bronze_lightcurves"] = math.Round(pts[len(pts)-1].Value)
-		}
-		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_products_total{kind="target_pixel"})`, start, end, step); err == nil && len(pts) > 0 {
-			values["bronze_target_pixels"] = math.Round(pts[len(pts)-1].Value)
-		}
-		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_products_total{status="failed"})`, start, end, step); err == nil && len(pts) > 0 {
-			values["failed_files"] = math.Round(pts[len(pts)-1].Value)
-		}
-		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_bytes_total{stage="bronze"})`, start, end, step); err == nil && len(pts) > 0 {
-			values["bronze_bytes"] = pts[len(pts)-1].Value
-		}
-		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_bytes_total{stage="silver"})`, start, end, step); err == nil && len(pts) > 0 {
-			values["silver_bytes"] = pts[len(pts)-1].Value
-		}
-		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_products_total{kind="lightcurve",status=~"success|recovered"})`, start, end, step); err == nil && len(pts) > 0 {
-			values["completed_lightcurves"] = math.Round(pts[len(pts)-1].Value)
-		}
-		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_products_total{kind="target_pixel",status=~"success|recovered"})`, start, end, step); err == nil && len(pts) > 0 {
-			values["completed_target_pixels"] = math.Round(pts[len(pts)-1].Value)
-		}
-		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_tpf_normalization_pixels_total{outcome="input"})`, start, end, step); err == nil && len(pts) > 0 {
-			values["tpf_input_pixels"] = pts[len(pts)-1].Value
-		}
-		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_tpf_normalization_pixels_total{outcome="retained"})`, start, end, step); err == nil && len(pts) > 0 {
-			values["tpf_retained_pixels"] = pts[len(pts)-1].Value
-		}
-		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_tpf_normalization_pixels_total{outcome="invalid_reference"})`, start, end, step); err == nil && len(pts) > 0 {
-			values["tpf_background_pixels"] = pts[len(pts)-1].Value
+		extractCumulative := func(pts []entity.MonitoringPoint) float64 {
+			if len(pts) == 0 {
+				return 0
+			}
+			last := pts[len(pts)-1].Value
+			var maxVal float64
+			for _, pt := range pts {
+				if !math.IsNaN(pt.Value) && !math.IsInf(pt.Value, 0) && pt.Value > maxVal {
+					maxVal = pt.Value
+				}
+			}
+			if last > maxVal {
+				return last
+			}
+			return maxVal
 		}
 
-		// Fallback to cumulative counters if increase returned zero
-		if values["bronze_bytes"] == 0 {
-			if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_bytes_total{stage="bronze"})`, start, end, step); err == nil && len(pts) > 0 {
-				values["bronze_bytes"] = pts[len(pts)-1].Value
+		// Cumulative totals for the ENTIRE ticket lifespan
+		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_products_total)`, start, end, step); err == nil && len(pts) > 0 {
+			values["bronze_total_files"] = math.Round(extractCumulative(pts))
+		}
+		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_products_total{kind="lightcurve"})`, start, end, step); err == nil && len(pts) > 0 {
+			values["bronze_lightcurves"] = math.Round(extractCumulative(pts))
+		}
+		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_products_total{kind="target_pixel"})`, start, end, step); err == nil && len(pts) > 0 {
+			values["bronze_target_pixels"] = math.Round(extractCumulative(pts))
+		}
+		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_products_total{status="failed"})`, start, end, step); err == nil && len(pts) > 0 {
+			values["failed_files"] = math.Round(extractCumulative(pts))
+		}
+		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_bytes_total{stage="bronze"})`, start, end, step); err == nil && len(pts) > 0 {
+			values["bronze_bytes"] = extractCumulative(pts)
+		}
+		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_bytes_total{stage="silver"})`, start, end, step); err == nil && len(pts) > 0 {
+			values["silver_bytes"] = extractCumulative(pts)
+		}
+		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_products_total{kind="lightcurve",status=~"success|recovered"})`, start, end, step); err == nil && len(pts) > 0 {
+			values["completed_lightcurves"] = math.Round(extractCumulative(pts))
+		}
+		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_products_total{kind="target_pixel",status=~"success|recovered"})`, start, end, step); err == nil && len(pts) > 0 {
+			values["completed_target_pixels"] = math.Round(extractCumulative(pts))
+		}
+		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_tpf_normalization_pixels_total{outcome="input"})`, start, end, step); err == nil && len(pts) > 0 {
+			values["tpf_input_pixels"] = extractCumulative(pts)
+		}
+		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_tpf_normalization_pixels_total{outcome="retained"})`, start, end, step); err == nil && len(pts) > 0 {
+			values["tpf_retained_pixels"] = extractCumulative(pts)
+		}
+		if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_tpf_normalization_pixels_total{outcome="invalid_reference"})`, start, end, step); err == nil && len(pts) > 0 {
+			values["tpf_background_pixels"] = extractCumulative(pts)
+		}
+
+		// Fallback to max_over_time if recent window or process restart resulted in zero
+		lookbackStart := end.Add(-2 * time.Hour)
+		if values["bronze_total_files"] == 0 {
+			if pts, err := s.prometheus.QueryRange(ctx, `sum(max_over_time(aurora_preprocessor_products_total{status=~"success|recovered"}[2h]))`, lookbackStart, end, step); err == nil && len(pts) > 0 {
+				values["bronze_total_files"] = math.Round(extractCumulative(pts))
 			}
 		}
-		if values["silver_bytes"] == 0 {
-			if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_bytes_total{stage="silver"})`, start, end, step); err == nil && len(pts) > 0 {
-				values["silver_bytes"] = pts[len(pts)-1].Value
+		if values["bronze_lightcurves"] == 0 {
+			if pts, err := s.prometheus.QueryRange(ctx, `sum(max_over_time(aurora_preprocessor_products_total{kind="lightcurve",status=~"success|recovered"}[2h]))`, lookbackStart, end, step); err == nil && len(pts) > 0 {
+				values["bronze_lightcurves"] = math.Round(extractCumulative(pts))
+			}
+		}
+		if values["bronze_target_pixels"] == 0 {
+			if pts, err := s.prometheus.QueryRange(ctx, `sum(max_over_time(aurora_preprocessor_products_total{kind="target_pixel",status=~"success|recovered"}[2h]))`, lookbackStart, end, step); err == nil && len(pts) > 0 {
+				values["bronze_target_pixels"] = math.Round(extractCumulative(pts))
 			}
 		}
 		if values["completed_lightcurves"] == 0 {
-			if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_products_total{kind="lightcurve",status=~"success|recovered"})`, start, end, step); err == nil && len(pts) > 0 {
-				values["completed_lightcurves"] = pts[len(pts)-1].Value
+			if pts, err := s.prometheus.QueryRange(ctx, `sum(max_over_time(aurora_preprocessor_products_total{kind="lightcurve",status=~"success|recovered"}[2h]))`, lookbackStart, end, step); err == nil && len(pts) > 0 {
+				values["completed_lightcurves"] = math.Round(extractCumulative(pts))
 			}
 		}
 		if values["completed_target_pixels"] == 0 {
-			if pts, err := s.prometheus.QueryRange(ctx, `sum(aurora_preprocessor_products_total{kind="target_pixel",status=~"success|recovered"})`, start, end, step); err == nil && len(pts) > 0 {
-				values["completed_target_pixels"] = pts[len(pts)-1].Value
+			if pts, err := s.prometheus.QueryRange(ctx, `sum(max_over_time(aurora_preprocessor_products_total{kind="target_pixel",status=~"success|recovered"}[2h]))`, lookbackStart, end, step); err == nil && len(pts) > 0 {
+				values["completed_target_pixels"] = math.Round(extractCumulative(pts))
 			}
+		}
+		if values["bronze_bytes"] == 0 {
+			if pts, err := s.prometheus.QueryRange(ctx, `sum(max_over_time(aurora_preprocessor_bytes_total{stage="bronze"}[2h]))`, lookbackStart, end, step); err == nil && len(pts) > 0 {
+				values["bronze_bytes"] = extractCumulative(pts)
+			}
+		}
+		if values["silver_bytes"] == 0 {
+			if pts, err := s.prometheus.QueryRange(ctx, `sum(max_over_time(aurora_preprocessor_bytes_total{stage="silver"}[2h]))`, lookbackStart, end, step); err == nil && len(pts) > 0 {
+				values["silver_bytes"] = extractCumulative(pts)
+			}
+		}
+		if values["bronze_total_files"] == 0 && (values["completed_lightcurves"] > 0 || values["completed_target_pixels"] > 0) {
+			values["bronze_total_files"] = values["completed_lightcurves"] + values["completed_target_pixels"]
 		}
 
 		// Light Curve Parquet dynamic metrics
@@ -1028,6 +1064,9 @@ func (s *DAGAggregationService) resolveTicketTimeRange(ctx context.Context, tick
 					}
 				} else {
 					end = time.Now().UTC()
+					if end.Sub(start) < 1*time.Hour {
+						start = end.Add(-1 * time.Hour)
+					}
 				}
 			}
 		}
@@ -1052,15 +1091,23 @@ func (s *DAGAggregationService) queryMetric(ctx context.Context, hop *entity.DAG
 	}
 	finite := make([]entity.MonitoringPoint, 0, len(points))
 	var lastVal float64
+	var peakVal float64
 	for _, pt := range points {
 		if !math.IsNaN(pt.Value) && !math.IsInf(pt.Value, 0) {
 			finite = append(finite, pt)
 			lastVal = pt.Value
+			if pt.Value > peakVal {
+				peakVal = pt.Value
+			}
 		}
 	}
 	if len(finite) > 0 {
 		hop.Telemetry[key] = finite
-		hop.Metrics[key] = lastVal
+		if lastVal == 0 && peakVal > 0 {
+			hop.Metrics[key] = peakVal
+		} else {
+			hop.Metrics[key] = lastVal
+		}
 	}
 }
 
