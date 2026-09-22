@@ -53,6 +53,8 @@ func RegisterRoutes(engine *gin.Engine, module *Module) {
 	engine.GET("/api/v1/labeling/snapshots", module.LabelingHandler.ListSnapshots)
 	engine.GET("/api/v1/labeling/workspace", module.LabelingHandler.GetCohortWorkspace)
 	engine.GET("/api/v1/labeling/target-evidence", module.LabelingHandler.GetTargetEvidence)
+	engine.POST("/api/v1/labeling/cohort/labels", module.LabelingHandler.SaveCohortLabel)
+	engine.POST("/api/v1/models/training-cohort/labels", module.LabelingHandler.SaveCohortLabel)
 	engine.GET("/api/v1/models/training-preflight", module.ModelHandler.TrainingPreflight)
 	engine.GET("/api/v1/models/snapshots", module.ModelHandler.ListSnapshots)
 	engine.POST("/api/v1/models/train", module.ModelHandler.StartTraining)

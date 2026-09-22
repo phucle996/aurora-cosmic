@@ -272,10 +272,10 @@ func TestDAGAggregationQueryCumulativePrometheusMetrics(t *testing.T) {
 			`sum(aurora_preprocessor_products_total{kind="target_pixel"})`: {
 				{Timestamp: float64(now.Unix()), Value: 20.0},
 			},
-			`sum(aurora_preprocessor_products_total{kind="lightcurve",status="success"})`: {
+			`sum(aurora_preprocessor_products_total{kind="lightcurve",status=~"success|recovered"})`: {
 				{Timestamp: float64(now.Unix()), Value: 28.0},
 			},
-			`sum(aurora_preprocessor_products_total{kind="target_pixel",status="success"})`: {
+			`sum(aurora_preprocessor_products_total{kind="target_pixel",status=~"success|recovered"})`: {
 				{Timestamp: float64(now.Unix()), Value: 18.0},
 			},
 			`sum(aurora_preprocessor_bytes_total{stage="silver"})`: {

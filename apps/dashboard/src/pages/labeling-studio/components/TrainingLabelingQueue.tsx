@@ -84,10 +84,14 @@ export function TrainingLabelingQueue({
 
   const selected = useMemo(() => {
     if (!selectedDetail) return undefined;
-    const modelSuggestion =
-      selectedDetail.candidate_score !== undefined && selectedDetail.candidate_score !== null
-        ? {
-          candidate_score: selectedDetail.candidate_score,
+    const hasPrediction =
+      Boolean(selectedDetail.prediction_available) &&
+      selectedDetail.candidate_score !== undefined &&
+      selectedDetail.candidate_score !== null;
+
+    const modelSuggestion = hasPrediction
+      ? {
+          candidate_score: selectedDetail.candidate_score as number,
           decision_threshold: selectedDetail.decision_threshold ?? 0,
           above_threshold: selectedDetail.above_threshold ?? false,
           model_id: selectedDetail.model_id ?? '',
@@ -95,7 +99,7 @@ export function TrainingLabelingQueue({
           runtime_package_id: selectedDetail.runtime_package_id ?? '',
           predicted_at: selectedDetail.predicted_at ?? '',
         }
-        : undefined;
+      : undefined;
 
     return {
       ...selectedDetail,
@@ -339,76 +343,42 @@ export function TrainingLabelingQueue({
       )}
 
       {selected && (
-        <div className="sticky bottom-0 z-20 flex flex-wrap items-center justify-between gap-3 border-t border-border/80 bg-background/95 px-4 py-2.5 shadow-lg backdrop-blur">
+        <div className="sticky bottom-0 z-20 flex flex-wrap items-center justify-between gap-3 border-t border-border/80 bg-background/95 px-4 py-2 text-xs shadow-md backdrop-blur">
           <div className="flex items-center gap-2">
             <span className="font-mono text-xs font-semibold text-primary">
               TIC {selected.tic_id} · S{selected.sector}
             </span>
+            <span className="rounded border border-border/60 bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground uppercase">
+              {selected.review_status || 'UNRESOLVED'}
+            </span>
             {recommendation && (
-              <span className="hidden items-center gap-1 rounded border border-primary/20 bg-primary/10 px-2 py-0.5 font-mono text-[11px] text-primary sm:inline-flex">
-                Gợi ý: <strong>{recommendation.suggestedLabel}</strong> ({recommendation.suggestedReasonLabel})
+              <span className="hidden items-center gap-1 font-mono text-[11px] text-muted-foreground sm:inline-flex">
+                · Gợi ý: <strong className="text-foreground">{recommendation.suggestedLabel}</strong>
               </span>
             )}
           </div>
 
-          <div className="flex items-center gap-1.5">
-            {recommendation && (
-              <Button
-                type="button"
-                size="sm"
-                className={`h-7 rounded-none font-mono text-xs font-semibold ${recommendation.suggestedLabel === 'POSITIVE'
-                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                  : recommendation.suggestedLabel === 'NEGATIVE'
-                    ? 'bg-rose-600 hover:bg-rose-700 text-white'
-                    : 'bg-primary text-primary-foreground'
-                  }`}
-                disabled={reviewing}
-                onClick={() => void acceptRecommendation()}
-              >
-                <span>Chấp nhận ({recommendation.suggestedLabel})</span>
-                <kbd className="ml-1 rounded border border-white/30 bg-black/20 px-1 py-0.5 font-mono text-[9px] leading-none">Space</kbd>
-              </Button>
-            )}
+          <div className="flex flex-wrap items-center gap-2 font-mono text-[11px] text-muted-foreground">
+            <div className="hidden items-center gap-1.5 lg:flex">
+              <span className="text-[10px] uppercase text-muted-foreground/80">Phím tắt:</span>
+              <span className="inline-flex items-center gap-0.5">
+                <kbd className="rounded border border-border px-1 py-0.5 text-[10px]">Space</kbd> Duyệt
+              </span>
+              <span className="inline-flex items-center gap-0.5">
+                <kbd className="rounded border border-border px-1 py-0.5 text-[10px]">1</kbd> Pos
+              </span>
+              <span className="inline-flex items-center gap-0.5">
+                <kbd className="rounded border border-border px-1 py-0.5 text-[10px]">2</kbd> Neg
+              </span>
+              <span className="inline-flex items-center gap-0.5">
+                <kbd className="rounded border border-border px-1 py-0.5 text-[10px]">3</kbd> Unres
+              </span>
+            </div>
 
-            <Button
-              type="button"
-              size="sm"
-              className="h-7 rounded-none font-mono text-xs"
-              disabled={reviewing || !reviewReason}
-              onClick={() => void saveLabel('POSITIVE')}
-            >
-              <span>Pos</span>
-              <kbd className="ml-1 rounded border border-current/30 px-1 py-0.5 font-mono text-[9px] leading-none opacity-80">1</kbd>
-            </Button>
-
-            <Button
-              type="button"
-              size="sm"
-              variant="destructive"
-              className="h-7 rounded-none font-mono text-xs"
-              disabled={reviewing || !reviewReason}
-              onClick={() => void saveLabel('NEGATIVE')}
-            >
-              <span>Neg</span>
-              <kbd className="ml-1 rounded border border-white/30 px-1 py-0.5 font-mono text-[9px] leading-none opacity-80">2</kbd>
-            </Button>
-
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-7 rounded-none font-mono text-xs"
-              disabled={reviewing || !reviewReason}
-              onClick={() => void saveLabel('UNRESOLVED')}
-            >
-              <span>Unres</span>
-              <kbd className="ml-1 rounded border border-border px-1 py-0.5 font-mono text-[9px] leading-none opacity-80">3</kbd>
-            </Button>
-
-            <div className="hidden items-center gap-1 border-l border-border/60 pl-2 font-mono text-[10px] text-muted-foreground md:flex">
-              <span>Next/Prev:</span>
-              <kbd className="rounded border border-border px-1 py-0.5">J</kbd>
-              <kbd className="rounded border border-border px-1 py-0.5">K</kbd>
+            <div className="flex items-center gap-1 border-l border-border/60 pl-2">
+              <span className="text-[10px] text-muted-foreground">Di chuyển:</span>
+              <kbd className="rounded border border-border px-1 py-0.5 text-[10px]">J</kbd>
+              <kbd className="rounded border border-border px-1 py-0.5 text-[10px]">K</kbd>
             </div>
           </div>
         </div>

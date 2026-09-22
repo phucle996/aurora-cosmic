@@ -1,6 +1,7 @@
 import { type JSX, useMemo } from 'react';
 import {
   Area,
+  AreaChart,
   Bar,
   CartesianGrid,
   ComposedChart,

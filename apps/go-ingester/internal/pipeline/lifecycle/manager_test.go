@@ -553,3 +553,19 @@ func TestCheckProjectedCapacity_PausesAtActiveWaveLimitWithoutEvictableLineage(t
 		t.Fatalf("expected storage pressure at HIGH watermark, got %v", err)
 	}
 }
+
+func TestCheckProjectedCapacity_EvictsEligibleWhenProjectedExceedsHigh(t *testing.T) {
+	fs := newFakeStorage()
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	// 44 MiB existing, of which 10 MiB is eligible for eviction
+	addEligibleLineage(t, fs, "aa", "bronze/a.fits", "silver/a.parquet", 10*mib, base)
+	fs.bronzeObjects["bronze/current-wave.fits"] = 34 * mib
+	mgr := newManager(t, fs)
+
+	// Adding 2 MiB puts projected at 46 MiB > 45 MiB HIGH.
+	// Since 10 MiB is eligible, it should evict bronze/a.fits and succeed.
+	err := mgr.CheckProjectedCapacity(context.Background(), 2*mib)
+	if err != nil {
+		t.Fatalf("expected successful capacity check after evicting eligible lineage, got: %v", err)
+	}
+}

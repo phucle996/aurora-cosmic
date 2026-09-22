@@ -63,8 +63,8 @@ func (r *LabelingClickHouse) GetCohortWorkspace(ctx context.Context, snapshotIDs
 			toFloat64(ifNull(f.bls_power, 0)) AS bls_power,
 			toString(ifNull(f.toi_match_status, '')) AS toi_match_status,
 			toString(ifNull(f.matched_toi_id, '')) AS matched_toi_id,
-			p.candidate_score AS candidate_score,
-			p.above_threshold AS above_threshold
+			if(p.pred_snapshot_id != '', p.candidate_score, NULL) AS candidate_score,
+			if(p.pred_snapshot_id != '', p.above_threshold, NULL) AS above_threshold
 		FROM latest_cohort AS c
 		LEFT JOIN candidate_features_current_v1 AS f 
 			ON f.snapshot_id = c.snap_id AND f.source_product_id = c.source_product_id
@@ -262,14 +262,14 @@ func (r *LabelingClickHouse) GetTargetEvidence(ctx context.Context, snapshotID s
 		if(f.logg IS NOT NULL, toFloat64(f.logg), NULL) AS logg,
 		ifNull(f.toi_match_status, '') AS toi_match_status,
 		ifNull(f.matched_toi_id, '') AS matched_toi_id,
-		cast(if(p.source_product_id != '', 1, 0) AS Bool) AS prediction_available,
-		p.candidate_score AS candidate_score,
-		p.decision_threshold AS decision_threshold,
-		p.above_threshold AS above_threshold,
-		ifNull(p.model_id, '') AS model_id,
-		ifNull(p.model_version, '') AS model_version,
-		ifNull(p.runtime_package_id, '') AS runtime_package_id,
-		ifNull(p.predicted_at, '') AS predicted_at
+		cast(if(p.gold_snapshot_id != '', 1, 0) AS Bool) AS prediction_available,
+		if(p.gold_snapshot_id != '', p.candidate_score, NULL) AS candidate_score,
+		if(p.gold_snapshot_id != '', p.decision_threshold, NULL) AS decision_threshold,
+		if(p.gold_snapshot_id != '', p.above_threshold, NULL) AS above_threshold,
+		if(p.gold_snapshot_id != '', ifNull(p.model_id, ''), '') AS model_id,
+		if(p.gold_snapshot_id != '', ifNull(p.model_version, ''), '') AS model_version,
+		if(p.gold_snapshot_id != '', ifNull(p.runtime_package_id, ''), '') AS runtime_package_id,
+		if(p.gold_snapshot_id != '', ifNull(p.predicted_at, ''), '') AS predicted_at
 	FROM target_cohort AS c
 	LEFT JOIN candidate_features_current_v1 AS f 
 		ON f.snapshot_id = c.snapshot_id AND f.source_product_id = c.source_product_id
@@ -287,4 +287,63 @@ func (r *LabelingClickHouse) GetTargetEvidence(ctx context.Context, snapshotID s
 	}
 
 	return &rows[0], nil
+}
+
+// SaveCohortLabel chèn bản ghi nhãn mới do con người chỉ định vào candidate_training_cohort_v1.
+// Sử dụng cơ chế ReplacingMergeTree(updated_at) để ghi đè nhãn tự động trước đó mà không làm thay đổi các bảng raw/gold.
+func (r *LabelingClickHouse) SaveCohortLabel(ctx context.Context, req entity.SaveCohortLabelRequest) error {
+	query := `INSERT INTO aurora.candidate_training_cohort_v1 (
+		snapshot_id,
+		source_product_id,
+		tic_id,
+		sector,
+		training_label,
+		confidence,
+		label_source,
+		review_status,
+		train_eligible,
+		policy_version,
+		evidence_json,
+		review_reason,
+		updated_at
+	)
+	SELECT
+		f.snapshot_id,
+		f.source_product_id,
+		f.tic_id,
+		toInt32(f.sector),
+		?,
+		?,
+		'HUMAN_SUPERVISION',
+		'REVIEWED',
+		if(? IN ('POSITIVE', 'NEGATIVE'), toUInt8(1), toUInt8(0)),
+		'human-v1',
+		ifNull(c.evidence_json, '{}'),
+		?,
+		now64(3, 'UTC')
+	FROM aurora.candidate_features_current_v1 AS f
+	LEFT JOIN (
+		SELECT snapshot_id, source_product_id, evidence_json
+		FROM aurora.candidate_training_cohort_v1
+		WHERE snapshot_id = ? AND source_product_id = ?
+		ORDER BY updated_at DESC
+		LIMIT 1
+	) AS c ON c.snapshot_id = f.snapshot_id AND c.source_product_id = f.source_product_id
+	WHERE f.snapshot_id = ? AND f.source_product_id = ?
+	LIMIT 1`
+
+	err := r.client.Exec(ctx, query,
+		req.TrainingLabel,
+		req.Confidence,
+		req.TrainingLabel,
+		req.ReviewReason,
+		req.SnapshotID,
+		req.SourceProductID,
+		req.SnapshotID,
+		req.SourceProductID,
+	)
+	if err != nil {
+		return fmt.Errorf("save cohort label: %w", err)
+	}
+	return nil
 }

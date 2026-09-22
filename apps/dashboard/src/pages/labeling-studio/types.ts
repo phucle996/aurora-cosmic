@@ -149,7 +149,7 @@ export const DECISION_BASIS_OPTIONS: { value: string; label: string; description
 ];
 
 export const CONFIDENCE_OPTIONS: { value: '0.9' | '0.7' | '0.5'; label: string; tier: string }[] = [
-  { value: '0.9', label: 'High · 90%', tier: 'Độ tin cậy cao (High)' },
-  { value: '0.7', label: 'Medium · 70%', tier: 'Độ tin cậy trung bình (Medium)' },
-  { value: '0.5', label: 'Low · 50%', tier: 'Độ tin cậy thấp / Thận trọng (Low)' },
+  { value: '0.9', label: 'High (90%)', tier: 'Độ tin cậy cao (High)' },
+  { value: '0.7', label: 'Medium (70%)', tier: 'Độ tin cậy trung bình (Medium)' },
+  { value: '0.5', label: 'Low (50%)', tier: 'Độ tin cậy thấp / Thận trọng (Low)' },
 ];

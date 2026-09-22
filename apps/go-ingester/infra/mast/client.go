@@ -60,7 +60,7 @@ func NewClient(baseURL string, timeout time.Duration) *Client {
 	if timeout <= 0 {
 		timeout = 90 * time.Second
 	}
-	metadataTimeout := min(timeout, 25*time.Second)
+	metadataTimeout := timeout
 	downloadDialer := &rotatingDialer{dialer: net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}, resolver: net.DefaultResolver}
 	queryDialer := &rotatingDialer{dialer: net.Dialer{Timeout: 10 * time.Second}, resolver: net.DefaultResolver}
 	return &Client{

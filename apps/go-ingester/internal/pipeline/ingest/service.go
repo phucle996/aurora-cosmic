@@ -66,6 +66,21 @@ func (s *Service) Run(ctx context.Context, command control.Command) (runErr erro
 	if err != nil {
 		return fmt.Errorf("create Bronze storage client: %w", err)
 	}
+
+	// Proactively evict eligible Bronze lineage at the start of ingestion to ensure full wave capacity.
+	if capacityMgr, err := lifecycle.NewManager(minioClient, s.cfg.MinIO.Bucket, lifecycle.Policy{
+		MaxBytes:           s.cfg.Bronze.MaxBytes,
+		HighWatermarkBytes: s.cfg.Bronze.HighWatermarkBytes,
+		LowWatermarkBytes:  s.cfg.Bronze.LowWatermarkBytes,
+	}, s.log); err == nil {
+		if res, cleanupErr := capacityMgr.RunCleanupForced(ctx, false); cleanupErr == nil && res.BytesDeleted > 0 {
+			s.log.Info("initial bronze cleanup freed storage",
+				slog.Int("objects_deleted", res.ObjectsDeleted),
+				slog.Int64("bytes_deleted", res.BytesDeleted),
+				slog.Int64("usage_after", res.UsageAfter),
+			)
+		}
+	}
 	preferredTICs, toiSnapshotID, toiRows, err := catalog.SyncTOI(ctx, minioClient, s.cfg.MinIO.Bucket)
 	if err != nil {
 		s.reportPlanningTerminal(ctx, minioClient, "DOWNLOADING_TOI", err)

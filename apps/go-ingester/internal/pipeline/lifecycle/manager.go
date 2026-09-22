@@ -263,6 +263,14 @@ func NewManager(storage rawStorageClient, bucket string, policy Policy, log *slo
 //
 // When dryRun is true no DeleteObject calls are made.
 func (m *Manager) RunCleanup(ctx context.Context, dryRun bool) (*EvictionResult, error) {
+	return m.runCleanup(ctx, dryRun, false)
+}
+
+func (m *Manager) RunCleanupForced(ctx context.Context, dryRun bool) (*EvictionResult, error) {
+	return m.runCleanup(ctx, dryRun, true)
+}
+
+func (m *Manager) runCleanup(ctx context.Context, dryRun bool, force bool) (*EvictionResult, error) {
 	// Measure current Bronze usage from actual MinIO objects.
 	usageBefore, _, err := m.storage.ListBronzeUsage(ctx, m.bucket)
 	if err != nil {
@@ -284,8 +292,8 @@ func (m *Manager) RunCleanup(ctx context.Context, dryRun bool) (*EvictionResult,
 		DryRun:      dryRun,
 	}
 
-	// Hysteresis: do nothing below HIGH watermark.
-	if usageBefore < m.policy.HighWatermarkBytes {
+	// Hysteresis: do nothing below HIGH watermark unless cleanup was explicitly triggered (e.g. preflight capacity pressure).
+	if !force && usageBefore < m.policy.HighWatermarkBytes {
 		result.TargetReached = true
 		return result, nil
 	}
@@ -414,7 +422,7 @@ func (m *Manager) CheckProjectedCapacity(ctx context.Context, expectedBytes int6
 		slog.Int64("high_bytes", m.policy.HighWatermarkBytes),
 	)
 
-	result, cleanupErr := m.RunCleanup(ctx, false)
+	result, cleanupErr := m.runCleanup(ctx, false, true)
 	if cleanupErr != nil {
 		return fmt.Errorf("preflight cleanup failed: %w", cleanupErr)
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -48,6 +49,16 @@ func (s *labelingServiceStub) GetTargetEvidence(_ context.Context, _ string, _ s
 		return nil, fmt.Errorf("unexpected database failure")
 	}
 	return s.mockedDetail, nil
+}
+
+func (s *labelingServiceStub) SaveCohortLabel(_ context.Context, _ entity.SaveCohortLabelRequest) error {
+	if s.shouldErr {
+		if s.errToReturn != nil {
+			return s.errToReturn
+		}
+		return fmt.Errorf("unexpected database failure")
+	}
+	return nil
 }
 
 func TestLabelingHandler_ListSnapshots(t *testing.T) {
@@ -260,5 +271,71 @@ func TestLabelingHandler_GetTargetEvidence(t *testing.T) {
 	router.ServeHTTP(w, req)
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500 for internal error, got %d", w.Code)
+	}
+}
+
+func TestLabelingHandler_SaveCohortLabel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	stub := &labelingServiceStub{}
+	router := gin.New()
+	h := NewLabelingHandler(stub)
+	router.POST("/api/v1/labeling/cohort/labels", h.SaveCohortLabel)
+	router.POST("/api/v1/models/training-cohort/labels", h.SaveCohortLabel)
+
+	// 1. Success (200 OK)
+	payload := `{"snapshot_id":"gold-v1-s01","source_product_id":"p1","training_label":"POSITIVE","review_reason":"clear dips","confidence":0.95}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/labeling/cohort/labels", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// 2. Also works via models route
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/models/training-cohort/labels", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// 3. Validation errors
+	invalidCases := []struct {
+		name    string
+		payload string
+	}{
+		{"invalid json", `{invalid`},
+		{"missing snapshot_id", `{"source_product_id":"p1","training_label":"POSITIVE"}`},
+		{"invalid snapshot_id prefix", `{"snapshot_id":"bronze-s01","source_product_id":"p1","training_label":"POSITIVE"}`},
+		{"missing source_product_id", `{"snapshot_id":"gold-v1-s01","source_product_id":"","training_label":"POSITIVE"}`},
+		{"invalid training_label", `{"snapshot_id":"gold-v1-s01","source_product_id":"p1","training_label":"MAYBE"}`},
+	}
+
+	for _, tc := range invalidCases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "/api/v1/labeling/cohort/labels", strings.NewReader(tc.payload))
+			r.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, r)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400 for %s, got %d: %s", tc.name, rec.Code, rec.Body.String())
+			}
+		})
+	}
+
+	// 4. Server error (500)
+	stub.shouldErr = true
+	stub.errToReturn = fmt.Errorf("clickhouse insert failed")
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/labeling/cohort/labels", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
 	}
 }

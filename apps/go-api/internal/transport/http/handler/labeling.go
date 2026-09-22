@@ -126,3 +126,55 @@ func (h *LabelingHandler) GetTargetEvidence(c *gin.Context) {
 
 	c.JSON(http.StatusOK, detail)
 }
+
+// SaveCohortLabel xử lý lưu nhãn huấn luyện do human reviewer quyết định.
+func (h *LabelingHandler) SaveCohortLabel(c *gin.Context) {
+	var req entity.SaveCohortLabelRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request payload: %v", err)})
+		return
+	}
+
+	req.SnapshotID = strings.TrimSpace(req.SnapshotID)
+	if req.SnapshotID == "" || !strings.HasPrefix(req.SnapshotID, "gold-v1-") || strings.Contains(req.SnapshotID, "/") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid snapshot_id: must start with 'gold-v1-' and contain no slashes"})
+		return
+	}
+	req.SourceProductID = strings.TrimSpace(req.SourceProductID)
+	if req.SourceProductID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "source_product_id is required"})
+		return
+	}
+
+	req.TrainingLabel = strings.ToUpper(strings.TrimSpace(req.TrainingLabel))
+	switch req.TrainingLabel {
+	case "POSITIVE", "NEGATIVE", "UNRESOLVED":
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid training_label %q: must be POSITIVE, NEGATIVE, or UNRESOLVED", req.TrainingLabel)})
+		return
+	}
+
+	if req.Confidence < 0 {
+		req.Confidence = 0
+	} else if req.Confidence > 1.0 {
+		if req.Confidence <= 100.0 {
+			req.Confidence = req.Confidence / 100.0
+		} else {
+			req.Confidence = 1.0
+		}
+	}
+
+	req.ReviewReason = strings.TrimSpace(req.ReviewReason)
+
+	if err := h.labeling.SaveCohortLabel(c.Request.Context(), req); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":            "ok",
+		"snapshot_id":       req.SnapshotID,
+		"source_product_id": req.SourceProductID,
+		"training_label":    req.TrainingLabel,
+	})
+}

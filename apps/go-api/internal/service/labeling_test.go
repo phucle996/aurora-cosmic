@@ -36,6 +36,13 @@ func (m *mockLabelingRepo) GetTargetEvidence(_ context.Context, _ string, _ stri
 	return m.detail, nil
 }
 
+func (m *mockLabelingRepo) SaveCohortLabel(_ context.Context, _ entity.SaveCohortLabelRequest) error {
+	if m.err != nil {
+		return m.err
+	}
+	return nil
+}
+
 func TestListSnapshots_Success(t *testing.T) {
 	mockRepo := &mockLabelingRepo{
 		snapshots: []entity.LabelingSnapshotItem{
@@ -176,5 +183,30 @@ func TestGetTargetEvidence_RepoError(t *testing.T) {
 	_, err := svc.GetTargetEvidence(context.Background(), "gold-v1-s01", "p1")
 	if err == nil {
 		t.Fatalf("expected error from repo failure, got nil")
+	}
+}
+
+func TestSaveCohortLabel(t *testing.T) {
+	mockRepo := &mockLabelingRepo{}
+	svc := NewLabelingService(mockRepo)
+
+	err := svc.SaveCohortLabel(context.Background(), entity.SaveCohortLabelRequest{
+		SnapshotID:      "gold-v1-s01",
+		SourceProductID: "p1",
+		TrainingLabel:   "POSITIVE",
+		Confidence:      0.95,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	mockRepo.err = errors.New("write failed")
+	err = svc.SaveCohortLabel(context.Background(), entity.SaveCohortLabelRequest{
+		SnapshotID:      "gold-v1-s01",
+		SourceProductID: "p1",
+		TrainingLabel:   "POSITIVE",
+	})
+	if err == nil {
+		t.Fatalf("expected error, got nil")
 	}
 }

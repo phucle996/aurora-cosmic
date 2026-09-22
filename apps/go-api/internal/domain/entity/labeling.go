@@ -101,3 +101,12 @@ type LabelingTargetDetail struct {
 	RuntimePackageID    string   `json:"runtime_package_id,omitempty" ch:"runtime_package_id"`
 	PredictedAt         string   `json:"predicted_at,omitempty" ch:"predicted_at"`
 }
+
+// SaveCohortLabelRequest chứa thông tin khi reviewer gán nhãn cho một candidate trong cohort.
+type SaveCohortLabelRequest struct {
+	SnapshotID      string  `json:"snapshot_id"`
+	SourceProductID string  `json:"source_product_id"`
+	TrainingLabel   string  `json:"training_label"`
+	ReviewReason    string  `json:"review_reason"`
+	Confidence      float64 `json:"confidence"`
+}

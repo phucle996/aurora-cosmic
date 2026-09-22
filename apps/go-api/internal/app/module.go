@@ -150,7 +150,7 @@ func NewModule(infra Infrastructure) (*Module, error) {
 	if labelingRepo == nil {
 		return nil, fmt.Errorf("repository LabelingClickHouse is nil")
 	}
-	labelingService := service.NewLabelingService(labelingRepo)
+	labelingService := service.NewLabelingService(labelingRepo, eventBroker)
 	if labelingService == nil {
 		return nil, fmt.Errorf("service LabelingService is nil")
 	}
